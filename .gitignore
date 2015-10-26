@@ -1,18 +1,12 @@
 # Object files
 *.o
 *.ko
-*.obj
-*.elf
-
-# Precompiled Headers
-*.gch
-*.pch
+*.lo
 
 # Libraries
 *.lib
 *.a
 *.la
-*.lo
 
 # Shared objects (inc. Windows DLLs)
 *.dll
@@ -24,9 +18,36 @@
 *.exe
 *.out
 *.app
-*.i*86
-*.x86_64
-*.hex
 
-# Debug files
-*.dSYM/
+# autoconf misc
+aclocal.m4
+lt*.m4
+*.cache
+config.*
+configure
+libtool
+libtool.m4
+*.log
+*.gz
+Makefile
+Makefile.in
+*.deps
+.dirstamp
+*.libs
+stamp-h
+src/stamp-h1
+build-aux/
+wolfmqtt-config
+aminclude.am
+
+# vim
+*.swp
+tags
+diff
+.vimrc
+
+# test output
+
+# scan-build
+client.plist
+examples/mqttclient/mqttclient

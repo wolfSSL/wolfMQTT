@@ -1,0 +1,13 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+noinst_PROGRAMS += examples/mqttclient/mqttclient
+noinst_HEADERS += examples/mqttclient/mqttclient.h
+examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
+                                              examples/mqttclient/mqttnet_linux.c
+examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
+examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
+
+dist_example_DATA+= examples/mqttclient/mqttclient.c
+dist_example_DATA+= examples/mqttclient/mqttnet_linux.c
+DISTCLEANFILES+= examples/mqttclient/.libs/mqttclient

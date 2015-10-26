@@ -1,0 +1,11 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+#
+
+nobase_include_HEADERS+= \
+                         wolfmqtt/version.h \
+                         wolfmqtt/mqtt_types.h \
+						 wolfmqtt/mqtt_client.h \
+                         wolfmqtt/mqtt_packet.h \
+                         wolfmqtt/mqtt_socket.h \
+                         wolfmqtt/visibility.h
