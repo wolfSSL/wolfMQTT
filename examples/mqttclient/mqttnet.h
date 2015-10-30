@@ -1,4 +1,4 @@
-/* mqttnet_linux.h
+/* mqttnet.h
  *
  * Copyright (C) 2006-2015 wolfSSL Inc.
  *
@@ -19,8 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#ifndef WOLFMQTT_NET_LINUX_H
-#define WOLFMQTT_NET_LINUX_H
+#ifndef WOLFMQTT_NET_H
+#define WOLFMQTT_NET_H
 
 #ifdef __cplusplus
     extern "C" {
@@ -36,4 +36,4 @@ int MqttClientNet_DeInit(MqttNet* net);
     } /* extern "C" */
 #endif
 
-#endif /* WOLFMQTT_NET_LINUX_H */
+#endif /* WOLFMQTT_NET_H */

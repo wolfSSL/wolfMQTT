@@ -1,4 +1,4 @@
-/* mqttnet_linux.c
+/* mqttnet.c
  *
  * Copyright (C) 2006-2015 wolfSSL Inc.
  *
@@ -25,8 +25,30 @@
 #endif
 
 #include <wolfmqtt/mqtt_client.h>
-#include "examples/mqttclient/mqttnet_linux.h"
+#include "examples/mqttclient/mqttnet.h"
 
+/* Standard includes. */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+/* FreeRTOS and LWIP */
+#ifdef FREERTOS
+/* Scheduler includes. */
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
+
+/* lwIP includes. */
+#include "lwip/api.h"
+#include "lwip/tcpip.h"
+#include "lwip/memp.h"
+#include "lwip/stats.h"
+#include "lwip/sockets.h"
+#include "lwip/netdb.h"
+
+/* Linux */
+#else
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/param.h>
@@ -36,14 +58,12 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
-
-#include <stdlib.h>
-#include <string.h>
 #include <signal.h>
+
+#endif
 
 
 /* Local context for Net callbacks */

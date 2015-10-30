@@ -58,7 +58,7 @@ typedef struct _MqttClient {
 
 /* Application Interfaces */
 /*! \brief      Initializes the MqttClient structure
- *  \param      client      Pointer to MqttClient structure
+ *  \param      client      Pointer to MqttClient structure (uninitialized is okay)
  *  \param      net         Pointer to MqttNet structure that has been initialized with callback pointers and context
  *  \param      tx_buf      Pointer to transmit buffer used during encoding
  *  \param      tx_buf_len  Maximum length of the transmit buffer
@@ -77,7 +77,7 @@ WOLFMQTT_API int MqttClient_Init(MqttClient *client, MqttNet *net,
  *  \discussion This is a blocking function that will wait for MqttNet.read data
  *  \param      client      Pointer to MqttClient structure
  *  \param      connect     Pointer to MqttConnect structure initialized with connect parameters
- *  \return     Length of encoded packet or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Connect(MqttClient *client, MqttConnect *connect);
 
@@ -103,7 +103,7 @@ WOLFMQTT_API int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscri
 /*! \brief      Encodes and sends the MQTT Unsubscribe packet and waits for the Unsubscribe Acknowledgement packet
  *  \discussion This is a blocking function that will wait for MqttNet.read data
  *  \param      client      Pointer to MqttClient structure
- *  \param      connect     Pointer to MqttUnsubscribe structure initialized with topic list.
+ *  \param      unsubscribe Pointer to MqttUnsubscribe structure initialized with topic list.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe);
@@ -126,7 +126,8 @@ WOLFMQTT_API int MqttClient_Disconnect(MqttClient *client);
 /*! \brief      Waits for Publish packets to arrive
  *  \discussion This is a blocking function that will wait for MqttNet.read data
  *  \param      client      Pointer to MqttClient structure
- *  \param      message     Pointer to MqttMessage structure (un-initialized is okay)
+ *  \param      message     Pointer to MqttMessage structure (uninitialized is okay)
+ *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_WaitMessage(MqttClient *client, MqttMessage *message,
@@ -136,7 +137,7 @@ WOLFMQTT_API int MqttClient_WaitMessage(MqttClient *client, MqttMessage *message
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)
  *  \discussion Will perform the MqttTlsCb callback if use_tls is non-zero value.
  *  \param      client      Pointer to MqttClient structure
- *  \param      host        Address of the broker sever
+ *  \param      host        Address of the broker server
  *  \param      port        Optional custom port. If zero will use defaults
  *  \param      use_tls     If non-zero value will connect with and use TLS for encryption of data
  *  \param      cb          A function callback for configuration of the SSL context certificate checking
@@ -153,7 +154,7 @@ WOLFMQTT_API int MqttClient_NetDisconnect(MqttClient *client);
 
 /*! \brief      Performs lookup of the WOLFMQTT_API return values
  *  \param      return_code The return value from a WOLFMQTT_API function
- *  \return     Srting representation of the return code
+ *  \return     String representation of the return code
  */
 WOLFMQTT_API const char* MqttClient_ReturnCodeToString(int return_code);
 

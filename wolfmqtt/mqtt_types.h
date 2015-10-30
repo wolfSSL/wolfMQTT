@@ -70,16 +70,6 @@ enum MqttPacketResponseCodes {
     #endif
 #endif
 
-#ifndef WOLFMQTT_CUSTOM_MALLOC
-    #include <stdlib.h>
-    #ifndef XMALLOC
-        #define XMALLOC(s, h, t)     ((void)h, (void)t, malloc((s)))
-    #endif
-    #ifndef XFREE
-        #define XFREE(p, h, t)       {void* xp = (p); if ((xp)) free((xp));}
-    #endif
-#endif
-
 #ifndef WOLFMQTT_PACK
     #if defined(__GNUC__)
         #define WOLFMQTT_PACK __attribute__ ((packed))

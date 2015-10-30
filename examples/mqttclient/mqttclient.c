@@ -25,8 +25,13 @@
 #endif
 
 #include <wolfmqtt/mqtt_client.h>
+#include <wolfssl/ssl.h>
 #include "examples/mqttclient/mqttclient.h"
-#include "examples/mqttclient/mqttnet_linux.h"
+#include "examples/mqttclient/mqttnet.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
 
 /* Configuration */
 #define DEFAULT_MQTT_HOST       "iot.eclipse.org"
@@ -141,8 +146,9 @@ static int mygetopt(int argc, char** argv, const char* optstring)
 static void err_sys(const char* msg)
 {
     printf("wolfMQTT error: %s\n", msg);
-    if (msg)
+    if (msg) {
         exit(EXIT_FAILURE);
+    }
 }
 
 static int mqttclient_tls_cb(MqttClient* client)
@@ -150,7 +156,9 @@ static int mqttclient_tls_cb(MqttClient* client)
     int rc = SSL_SUCCESS;
     printf("MQTT TLS Setup\n");
     if (mTlsFile) {
+#if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
         rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
+#endif
     }
     return rc;
 }
@@ -179,7 +187,8 @@ void* mqttclient_test(void* args)
 
     ((func_args*)args)->return_code = -1; /* error state */
 
-    while ((ch = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:")) != -1) {
+    while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:")) != -1) {
+        ch = (char)rc;
         switch (ch) {
             case '?' :
                 Usage();
@@ -269,7 +278,7 @@ void* mqttclient_test(void* args)
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
-        /* Last will and testement sent by broker to subscribers of topic when broker connection is lost */
+        /* Last will and testament sent by broker to subscribers of topic when broker connection is lost */
         memset(&lwt_msg, 0, sizeof(lwt_msg));
         connect.lwt_msg = &lwt_msg;
         connect.enable_lwt = enable_lwt;
@@ -342,7 +351,7 @@ void* mqttclient_test(void* args)
                 rc = MqttClient_WaitMessage(&client, &msg, DEFAULT_CMD_TIMEOUT_MS);
 
                 if (rc >= 0) {
-                    /* Print incomming message */
+                    /* Print incoming message */
                     printf("MQTT Message: Topic %s, Len %u\n", msg.topic_name, msg.message_len);
                 }
                 else if (rc != MQTT_CODE_ERROR_TIMEOUT) {
