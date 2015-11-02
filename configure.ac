@@ -51,8 +51,8 @@ AC_PROG_INSTALL
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_SIZEOF(long long, 8)
-AC_CHECK_SIZEOF(long, 4)
+AC_CHECK_SIZEOF([long long], 8)
+AC_CHECK_SIZEOF([long], 4)
 
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname])
