@@ -216,7 +216,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     if (connect->enable_lwt) {
         /* Verify all required fields are present */
         if (connect->lwt_msg == NULL || connect->lwt_msg->topic_name == NULL ||
-            connect->lwt_msg->message == NULL || connect->lwt_msg->message_len < 0)
+            connect->lwt_msg->message == NULL || connect->lwt_msg->message_len <= 0)
         {
             return MQTT_CODE_ERROR_BAD_ARG;
         }

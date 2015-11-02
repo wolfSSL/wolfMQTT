@@ -73,7 +73,6 @@ typedef struct _MqttNet {
 int MqttSocket_Init(struct _MqttClient *client, MqttNet* net);
 int MqttSocket_Write(struct _MqttClient *client, const byte* buf, int buf_len, int timeout_ms);
 int MqttSocket_Read(struct _MqttClient *client, byte* buf, int buf_len, int timeout_ms);
-int MqttSocket_Disconnect(struct _MqttClient *client);
 
 int MqttSocket_Connect(struct _MqttClient *client, const char* host, word16 port,
     int timeout_ms, int use_tls, MqttTlsCb cb);
