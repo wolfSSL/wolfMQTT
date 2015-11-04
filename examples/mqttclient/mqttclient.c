@@ -214,8 +214,8 @@ void* mqttclient_test(void* args)
                 break;
 
             case 'q' :
-                qos = atoi(myoptarg);
-                if (qos < 0 || qos > 2) {
+                qos = (byte)atoi(myoptarg);
+                if (qos > MQTT_QOS_2) {
                     err_sys("Invalid QoS value!");
                 }
                 break;
