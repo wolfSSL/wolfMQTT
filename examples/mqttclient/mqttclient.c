@@ -154,6 +154,8 @@ static void err_sys(const char* msg)
 static int mqttclient_tls_cb(MqttClient* client)
 {
     int rc = SSL_SUCCESS;
+    (void)client; /* Supress un-used argument */
+    
     printf("MQTT TLS Setup\n");
     if (mTlsFile) {
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)

@@ -300,7 +300,7 @@ static int NetDisconnect(void *context)
     SocketContext *sock = context;
     if (sock) {
         if (sock->fd != -1) {
-#if _WIN32
+#ifdef _WIN32
 			closesocket(sock->fd);
 #else
             close(sock->fd);
