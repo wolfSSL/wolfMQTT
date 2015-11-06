@@ -51,3 +51,8 @@ diff
 # scan-build
 client.plist
 examples/mqttclient/mqttclient
+Debug
+.vs
+*.aps
+*.sdf
+*.user

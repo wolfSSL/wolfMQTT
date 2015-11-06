@@ -38,7 +38,7 @@
         #define WOLFMQTT_API   __global
         #define WOLFMQTT_LOCAL __hidden
     #elif defined(_MSC_VER)
-        #ifdef WOLFMQTT_DLL
+        #ifdef _WINDLL
             #define WOLFMQTT_API __declspec(dllexport)
         #else
             #define WOLFMQTT_API
@@ -50,11 +50,7 @@
     #endif /* HAVE_VISIBILITY */
 #else /* BUILDING_WOLFMQTT */
     #if defined(_MSC_VER)
-        #ifdef WOLFMQTT_DLL
-            #define WOLFMQTT_API __declspec(dllimport)
-        #else
-            #define WOLFMQTT_API
-        #endif
+        #define WOLFMQTT_API __declspec(dllimport)
         #define WOLFMQTT_LOCAL
     #else
         #define WOLFMQTT_API

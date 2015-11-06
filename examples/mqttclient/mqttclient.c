@@ -157,7 +157,7 @@ static int mqttclient_tls_cb(MqttClient* client)
     printf("MQTT TLS Setup\n");
     if (mTlsFile) {
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
-        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
+        //rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
 #endif
     }
     return rc;
@@ -287,7 +287,7 @@ void* mqttclient_test(void* args)
             lwt_msg.retain = 0;
             lwt_msg.topic_name = "lwttopic";
             lwt_msg.message = (byte*)DEFAULT_CLIENT_ID;
-            lwt_msg.message_len = strlen(DEFAULT_CLIENT_ID);
+            lwt_msg.message_len = (word16)strlen(DEFAULT_CLIENT_ID);
         }
         /* Optional authentication */
         connect.username = username;
@@ -340,7 +340,7 @@ void* mqttclient_test(void* args)
             publish.topic_name = "pubtopic";
             publish.packet_id = ++packet_id;
             publish.message = (byte*)TEST_MESSAGE;
-            publish.message_len = strlen(TEST_MESSAGE);
+            publish.message_len = (word16)strlen(TEST_MESSAGE);
             rc = MqttClient_Publish(&client, &publish);
             printf("MQTT Publish: Topic %s, %s (%d)\n", publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 
@@ -392,7 +392,17 @@ void* mqttclient_test(void* args)
 
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
-    #if HAVE_SIGNAL
+	#ifdef _WIN32
+		BOOL CtrlHandler(DWORD fdwCtrlType)
+		{
+			if(fdwCtrlType == CTRL_C_EVENT) {
+				mStopRead = 1;
+				printf("Received Ctrl+c\n");
+				return TRUE;
+			}
+			return FALSE;
+		}
+    #elif HAVE_SIGNAL
         #include <signal.h>
         static void sig_handler(int signo)
         {
@@ -410,7 +420,11 @@ void* mqttclient_test(void* args)
         args.argc = argc;
         args.argv = argv;
 
-#if HAVE_SIGNAL
+#ifdef _WIN32
+		if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE)) {
+			printf("Error setting Ctrl Handler!\n");
+		}
+#elif HAVE_SIGNAL
         if (signal(SIGINT, sig_handler) == SIG_ERR) {
             printf("Can't catch SIGINT\n");
         }

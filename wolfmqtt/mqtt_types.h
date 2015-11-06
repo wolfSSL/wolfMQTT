@@ -32,6 +32,10 @@
 #endif
 
 #include "wolfmqtt/visibility.h"
+        
+#if defined(__BIG_ENDIAN__) || defined(BIG_ENDIAN_ORDER)
+    #error Big Endian is not yet supported. Please contact us if you are interested in this feature.
+#endif
 
 /* Allow custom override of data types */
 #ifndef WOLFMQTT_CUSTOM_TYPES

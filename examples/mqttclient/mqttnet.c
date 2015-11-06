@@ -47,6 +47,13 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 
+/* Windows */
+#elif defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <stdio.h>
+#define SOCKET_T SOCKET
+
 /* Linux */
 #else
 #include <sys/types.h>
@@ -65,10 +72,14 @@
 
 #endif
 
+#ifndef SOCKET_T
+	#define SOCKET_T int
+#endif
+
 
 /* Local context for Net callbacks */
 typedef struct _SocketContext {
-    int fd;
+	SOCKET_T fd;
 } SocketContext;
 
 
@@ -84,19 +95,42 @@ static void _setupTimeout(struct timeval* tv, int timeout_ms)
     }
 }
 
+static void tcp_set_nonblocking(SOCKET_T* sockfd)
+{
+#if defined(_WIN32)
+	unsigned long blocking = 1;
+	int ret = ioctlsocket(*sockfd, FIONBIO, &blocking);
+	if (ret == SOCKET_ERROR)
+		printf("ioctlsocket failed!\n");
+#else
+	int flags = fcntl(*sockfd, F_GETFL, 0);
+	if (flags < 0)
+		printf("fcntl get failed!\n");
+	flags = fcntl(*sockfd, F_SETFL, flags | O_NONBLOCK);
+	if (flags < 0)
+		printf("fcntl set failed!\n");
+#endif
+}
+
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
     SocketContext *sock = context;
     int type = SOCK_STREAM;
     struct sockaddr_in address;
-    int rc, so_error = 0;
-    sa_family_t family = AF_INET;
+	int rc;
+	char so_error = 0;
     struct addrinfo *result = NULL;
-    struct addrinfo hints = {0, AF_UNSPEC, SOCK_STREAM, IPPROTO_TCP, 0, NULL, NULL, NULL};
+	struct addrinfo hints;
+	
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
 
     /* Get address information for host and locate IPv4 */
-    if ((rc = getaddrinfo(host, NULL, &hints, &result)) == 0) {
+	rc = getaddrinfo(host, NULL, &hints, &result);
+    if (rc >= 0 && result != NULL) {
         struct addrinfo* res = result;
 
         /* prefer ip4 addresses */
@@ -110,7 +144,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 
         if (result->ai_family == AF_INET) {
             address.sin_port = htons(port);
-            address.sin_family = family = AF_INET;
+            address.sin_family = AF_INET;
             address.sin_addr = ((struct sockaddr_in*)(result->ai_addr))->sin_addr;
         }
         else {
@@ -125,7 +159,7 @@ static int NetConnect(void *context, const char* host, word16 port,
         rc = -1;
 
         /* Create socket */
-        sock->fd = socket(family, type, 0);
+        sock->fd = socket(address.sin_family, type, 0);
         if (sock->fd != -1) {
             fd_set fdset;
             struct timeval tv;
@@ -136,13 +170,13 @@ static int NetConnect(void *context, const char* host, word16 port,
             FD_SET(sock->fd, &fdset);
 
             /* Set socket as non-blocking */
-            fcntl(sock->fd, F_SETFL, O_NONBLOCK);
+			tcp_set_nonblocking(&sock->fd);
 
             /* Start connect */
             connect(sock->fd, (struct sockaddr*)&address, sizeof(address));
 
             /* Wait for connect */
-            if (select(sock->fd + 1, NULL, &fdset, NULL, &tv) == 1)
+            if (select(sock->fd, NULL, &fdset, NULL, &tv) == 1)
             {
                 socklen_t len = sizeof(so_error);
 
@@ -167,7 +201,8 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
     SocketContext *sock = context;
-    int rc, so_error = 0;
+	int rc;
+	char so_error = 0;
     struct timeval tv;
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
@@ -178,7 +213,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     _setupTimeout(&tv, timeout_ms);
     setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
 
-    rc = (int)write(sock->fd, buf, (size_t)buf_len);
+    rc = (int)send(sock->fd, buf, (size_t)buf_len, 0);
     if (rc == -1) {
         /* Get error */
         socklen_t len = sizeof(so_error);
@@ -198,7 +233,8 @@ static int NetRead(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
     SocketContext *sock = context;
-    int rc = -1, so_error = 0, bytes = 0;
+    int rc = -1, bytes = 0;
+	char so_error = 0;
     fd_set recvfds, errfds;
     struct timeval tv;
 
@@ -217,7 +253,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     while (bytes < buf_len)
     {
         /* Wait for rx data to be available */
-        rc = select(sock->fd + 1, &recvfds, NULL, &errfds, &tv);
+        rc = select(sock->fd, &recvfds, NULL, &errfds, &tv);
         if (rc > 0) {
             /* Check if rx or error */
             if (FD_ISSET(sock->fd, &recvfds)) {
@@ -264,7 +300,11 @@ static int NetDisconnect(void *context)
     SocketContext *sock = context;
     if (sock) {
         if (sock->fd != -1) {
+#if _WIN32
+			closesocket(sock->fd);
+#else
             close(sock->fd);
+#endif
             sock->fd = -1;
         }
     }
@@ -274,6 +314,11 @@ static int NetDisconnect(void *context)
 
 int MqttClientNet_Init(MqttNet* net)
 {
+#ifdef _WIN32
+	WSADATA wsd;
+	WSAStartup(0x0002, &wsd);
+#endif
+
     if (net) {
         memset(net, 0, sizeof(MqttNet));
         net->connect = NetConnect;
