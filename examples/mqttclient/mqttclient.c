@@ -394,7 +394,7 @@ void* mqttclient_test(void* args)
 
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
-	#ifdef _WIN32
+	#ifdef USE_WINDOWS_API
 		BOOL CtrlHandler(DWORD fdwCtrlType)
 		{
 			if(fdwCtrlType == CTRL_C_EVENT) {
@@ -422,7 +422,7 @@ void* mqttclient_test(void* args)
         args.argc = argc;
         args.argv = argv;
 
-#ifdef _WIN32
+#ifdef USE_WINDOWS_API
 		if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE)) {
 			printf("Error setting Ctrl Handler!\n");
 		}

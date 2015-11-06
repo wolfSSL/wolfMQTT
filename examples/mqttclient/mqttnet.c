@@ -48,7 +48,7 @@
 #include "lwip/netdb.h"
 
 /* Windows */
-#elif defined(_WIN32)
+#elif defined(USE_WINDOWS_API)
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <stdio.h>
@@ -97,7 +97,7 @@ static void _setupTimeout(struct timeval* tv, int timeout_ms)
 
 static void tcp_set_nonblocking(SOCKET_T* sockfd)
 {
-#if defined(_WIN32)
+#if defined(USE_WINDOWS_API)
 	unsigned long blocking = 1;
 	int ret = ioctlsocket(*sockfd, FIONBIO, &blocking);
 	if (ret == SOCKET_ERROR)
@@ -300,7 +300,7 @@ static int NetDisconnect(void *context)
     SocketContext *sock = context;
     if (sock) {
         if (sock->fd != -1) {
-#ifdef _WIN32
+#ifdef USE_WINDOWS_API
 			closesocket(sock->fd);
 #else
             close(sock->fd);
@@ -314,7 +314,7 @@ static int NetDisconnect(void *context)
 
 int MqttClientNet_Init(MqttNet* net)
 {
-#ifdef _WIN32
+#ifdef USE_WINDOWS_API
 	WSADATA wsd;
 	WSAStartup(0x0002, &wsd);
 #endif

@@ -37,6 +37,10 @@
     #error Big Endian is not yet supported. Please contact us if you are interested in this feature.
 #endif
 
+#ifdef _WIN32
+#define USE_WINDOWS_API
+#endif
+
 /* Allow custom override of data types */
 #ifndef WOLFMQTT_CUSTOM_TYPES
     /* Basic Types */
