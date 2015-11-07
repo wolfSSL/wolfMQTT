@@ -35,6 +35,10 @@
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"
 
+/* Message callback */
+struct _MqttClient;
+typedef int (*MqttMsgCb)(struct _MqttClient *client, MqttMessage *message);
+
 /* Client flags */
 enum MqttClientFlags {
     MQTT_CLIENT_FLAG_IS_CONNECTED = 0x01,
@@ -53,6 +57,8 @@ typedef struct _MqttClient {
 
     MqttNet     *net;   /* Pointer to network callbacks and context */
     MqttTls      tls;   /* WolfSSL context for TLS */
+    
+    MqttMsgCb    msg_cb;
 } MqttClient;
 
 
@@ -60,6 +66,7 @@ typedef struct _MqttClient {
 /*! \brief      Initializes the MqttClient structure
  *  \param      client      Pointer to MqttClient structure (uninitialized is okay)
  *  \param      net         Pointer to MqttNet structure that has been initialized with callback pointers and context
+ *  \param      msgCb       Pointer to message callback function
  *  \param      tx_buf      Pointer to transmit buffer used during encoding
  *  \param      tx_buf_len  Maximum length of the transmit buffer
  *  \param      rx_buf      Pointer to receive buffer used during decoding
@@ -68,6 +75,7 @@ typedef struct _MqttClient {
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Init(MqttClient *client, MqttNet *net,
+    MqttMsgCb msg_cb,
     byte *tx_buf, int tx_buf_len,
     byte *rx_buf, int rx_buf_len,
     int cmd_timeout_ms);
@@ -130,8 +138,7 @@ WOLFMQTT_API int MqttClient_Disconnect(MqttClient *client);
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
-WOLFMQTT_API int MqttClient_WaitMessage(MqttClient *client, MqttMessage *message,
-    int timeout_ms);
+WOLFMQTT_API int MqttClient_WaitMessage(MqttClient *client, int timeout_ms);
 
 
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)

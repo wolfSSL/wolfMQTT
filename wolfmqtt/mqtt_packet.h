@@ -262,8 +262,8 @@ int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, in
 int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);
 int MqttEncode_RemainLen(MqttPacket *header, int remain_len);
 
-int MqttDecode_Len(byte* buf, word16 *len);
-int MqttEncode_Len(byte *buf, word16 len);
+int MqttDecode_Num(byte* buf, word16 *len);
+int MqttEncode_Num(byte *buf, word16 len);
 
 int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len);
 int MqttEncode_String(byte *buf, const char *str);

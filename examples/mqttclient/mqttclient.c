@@ -151,6 +151,14 @@ static void err_sys(const char* msg)
     }
 }
 
+#define MAX_PACKET_ID   ((1 << 16) - 1)
+static int mPacketIdLast;
+static word16 mqttclient_get_packetid(void)
+{
+    mPacketIdLast = (mPacketIdLast >= MAX_PACKET_ID) ? 1 : mPacketIdLast + 1;
+    return (word16)mPacketIdLast;
+}
+
 static int mqttclient_tls_cb(MqttClient* client)
 {
     int rc = SSL_SUCCESS;
@@ -165,6 +173,16 @@ static int mqttclient_tls_cb(MqttClient* client)
     return rc;
 }
 
+static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
+{
+    (void)client; /* Supress un-used argument */
+    
+    /* Print incoming message */
+    printf("MQTT Message: Topic %s, Len %u\n", msg->topic_name, msg->message_len);
+    
+    return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
+}
+
 void* mqttclient_test(void* args)
 {
     int rc;
@@ -175,7 +193,6 @@ void* mqttclient_test(void* args)
     int use_tls = 0;
     byte qos = DEFAULT_MQTT_QOS;
     byte clean_session = 1;
-    word16 packet_id = 0;
     word16 keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
     const char* client_id = DEFAULT_CLIENT_ID;
     int enable_lwt = 0;
@@ -264,7 +281,7 @@ void* mqttclient_test(void* args)
     /* Initialize MqttClient structure */
     tx_buf = malloc(MAX_BUFFER_SIZE);
     rx_buf = malloc(MAX_BUFFER_SIZE);
-    rc = MqttClient_Init(&client, &net,
+    rc = MqttClient_Init(&client, &net, mqttclient_message_cb,
         tx_buf, MAX_BUFFER_SIZE, rx_buf, MAX_BUFFER_SIZE,
         DEFAULT_CMD_TIMEOUT_MS);
     printf("MQTT Init: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
@@ -303,7 +320,6 @@ void* mqttclient_test(void* args)
             MqttUnsubscribe unsubscribe;
             MqttTopic topics[TEST_TOPIC_COUNT], *topic;
             MqttPublish publish;
-            MqttMessage msg;
             int i;
 
             /* Build list of topics */
@@ -324,7 +340,7 @@ void* mqttclient_test(void* args)
             printf("MQTT Ping: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
 
             /* Subscribe Topic */
-            subscribe.packet_id = ++packet_id;
+            subscribe.packet_id = mqttclient_get_packetid();
             subscribe.topic_count = TEST_TOPIC_COUNT;
             subscribe.topics = topics;
             rc = MqttClient_Subscribe(&client, &subscribe);
@@ -340,7 +356,7 @@ void* mqttclient_test(void* args)
             publish.qos = qos;
             publish.duplicate = 0;
             publish.topic_name = "pubtopic";
-            publish.packet_id = ++packet_id;
+            publish.packet_id = mqttclient_get_packetid();
             publish.message = (byte*)TEST_MESSAGE;
             publish.message_len = (word16)strlen(TEST_MESSAGE);
             rc = MqttClient_Publish(&client, &publish);
@@ -350,13 +366,8 @@ void* mqttclient_test(void* args)
             printf("MQTT Waiting for message...\n");
             while (mStopRead == 0) {
                 /* Try and read packet */
-                rc = MqttClient_WaitMessage(&client, &msg, DEFAULT_CMD_TIMEOUT_MS);
-
-                if (rc >= 0) {
-                    /* Print incoming message */
-                    printf("MQTT Message: Topic %s, Len %u\n", msg.topic_name, msg.message_len);
-                }
-                else if (rc != MQTT_CODE_ERROR_TIMEOUT) {
+                rc = MqttClient_WaitMessage(&client, DEFAULT_CMD_TIMEOUT_MS);
+                if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_ERROR_TIMEOUT) {
                     /* There was an error */
                     printf("MQTT Message Wait: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
                     break;
@@ -364,7 +375,7 @@ void* mqttclient_test(void* args)
             }
 
             /* Unsubscribe Topics */
-            unsubscribe.packet_id = ++packet_id;
+            unsubscribe.packet_id = mqttclient_get_packetid();
             unsubscribe.topic_count = TEST_TOPIC_COUNT;
             unsubscribe.topics = topics;
             rc = MqttClient_Unsubscribe(&client, &unsubscribe);

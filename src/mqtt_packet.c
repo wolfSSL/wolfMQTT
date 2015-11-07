@@ -144,7 +144,7 @@ int MqttEncode_RemainLen(MqttPacket *header, int remain_len)
 }
 
 /* Returns number of buffer bytes decoded */
-int MqttDecode_Len(byte* buf, word16 *len)
+int MqttDecode_Num(byte* buf, word16 *len)
 {
     if (len) {
         *len = buf[0];
@@ -154,7 +154,7 @@ int MqttDecode_Len(byte* buf, word16 *len)
 }
 
 /* Returns number of buffer bytes encoded */
-int MqttEncode_Len(byte *buf, word16 len)
+int MqttEncode_Num(byte *buf, word16 len)
 {
     buf[0] = len >> 8;
     buf[1] = len & 0xFF;
@@ -167,7 +167,7 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len)
 {
     int len;
     word16 str_len;
-    len = MqttDecode_Len(buf, &str_len);
+    len = MqttDecode_Num(buf, &str_len);
     buf += len;
     if (pstr_len) {
         *pstr_len = str_len;
@@ -182,7 +182,7 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len)
 int MqttEncode_String(byte *buf, const char *str)
 {
     int str_len = (int)XSTRLEN(str);
-    int len = MqttEncode_Len(buf, str_len);
+    int len = MqttEncode_Num(buf, str_len);
     buf += len;
     XMEMCPY(buf, str, str_len);
     return len + str_len;
@@ -191,7 +191,7 @@ int MqttEncode_String(byte *buf, const char *str)
 /* Returns number of buffer bytes encoded */
 int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
 {
-    int len = MqttEncode_Len(buf, data_len);
+    int len = MqttEncode_Num(buf, data_len);
     buf += len;
     XMEMCPY(buf, data, data_len);
     return len + data_len;
@@ -260,7 +260,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     if (connect->password) {
         packet.flags |= MQTT_CONNECT_FLAG_PASSWORD;
     }
-    MqttEncode_Len((byte*)&packet.keep_alive, connect->keep_alive_sec);
+    MqttEncode_Num((byte*)&packet.keep_alive, connect->keep_alive_sec);
     XMEMCPY(tx_payload, &packet, sizeof(MqttConnectPacket));
     tx_payload += sizeof(MqttConnectPacket);
 
@@ -342,7 +342,7 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
     /* Encode variable header */
     tx_payload += MqttEncode_String(tx_payload, publish->topic_name);
     if (publish->qos > MQTT_QOS_0) {
-        tx_payload += MqttEncode_Len(tx_payload, publish->packet_id);
+        tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
     }
 
     /* Encode payload */
@@ -379,7 +379,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     vheader_len = MqttDecode_String(rx_payload, &publish->topic_name, &topic_name_len);
     rx_payload += vheader_len;
     if (MQTT_PACKET_FLAGS_GET_QOS(header->type_flags) > MQTT_QOS_0) {
-        vheader_len += MqttDecode_Len(rx_payload, &publish->packet_id);
+        vheader_len += MqttDecode_Num(rx_payload, &publish->packet_id);
         rx_payload += MQTT_DATA_LEN_SIZE;
     }
 
@@ -423,7 +423,7 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
-    tx_payload += MqttEncode_Len(&tx_buf[header_len], publish_resp->packet_id);
+    tx_payload += MqttEncode_Num(&tx_buf[header_len], publish_resp->packet_id);
 
     /* Return total length of packet */
     return header_len + remain_len;
@@ -449,7 +449,7 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
 
     /* Decode variable header */
     if (publish_resp) {
-        rx_payload += MqttDecode_Len(rx_payload, &publish_resp->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &publish_resp->packet_id);
     }
 
     /* Return total length of packet */
@@ -484,7 +484,7 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len, MqttSubscribe *subscribe)
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
-    tx_payload += MqttEncode_Len(&tx_buf[header_len], subscribe->packet_id);
+    tx_payload += MqttEncode_Num(&tx_buf[header_len], subscribe->packet_id);
 
     /* Encode payload */
     for (i = 0; i < subscribe->topic_count; i++) {
@@ -518,7 +518,7 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len, MqttSubscribeAck *subs
 
     /* Decode variable header */
     if (subscribe_ack) {
-        rx_payload += MqttDecode_Len(rx_payload, &subscribe_ack->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &subscribe_ack->packet_id);
         subscribe_ack->return_codes = rx_payload; /* List of return codes */
     }
 
@@ -553,7 +553,7 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len, MqttUnsubscribe *unsubs
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
-    tx_payload += MqttEncode_Len(&tx_buf[header_len], unsubscribe->packet_id);
+    tx_payload += MqttEncode_Num(&tx_buf[header_len], unsubscribe->packet_id);
 
     /* Encode payload */
     for (i = 0; i < unsubscribe->topic_count; i++) {
@@ -585,7 +585,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len, MqttUnsubscribeAck *
 
     /* Decode variable header */
     if (unsubscribe_ack) {
-        rx_payload += MqttDecode_Len(rx_payload, &unsubscribe_ack->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &unsubscribe_ack->packet_id);
     }
 
     /* Return total length of packet */
