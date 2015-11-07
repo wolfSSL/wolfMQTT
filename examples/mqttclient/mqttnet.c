@@ -52,7 +52,9 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <stdio.h>
-#define SOCKET_T SOCKET
+#define SOCKET_T        SOCKET
+#define SOERROR_T       char
+#define SELECT_FD(fd)   (fd)
 
 /* Linux */
 #else
@@ -73,17 +75,22 @@
 #endif
 
 #ifndef SOCKET_T
-	#define SOCKET_T int
+	#define SOCKET_T        int
 #endif
-
+#ifndef SOERROR_T
+    #define SOERROR_T       int
+#endif
+#ifndef SELECT_FD
+    #define SELECT_FD(fd)   ((fd) + 1)
+#endif
 
 /* Local context for Net callbacks */
 typedef struct _SocketContext {
 	SOCKET_T fd;
 } SocketContext;
 
-
-static void _setupTimeout(struct timeval* tv, int timeout_ms)
+/* Private functions */
+static void setup_timeout(struct timeval* tv, int timeout_ms)
 {
     tv->tv_sec = timeout_ms / 1000;
     tv->tv_usec = (timeout_ms % 1000) * 1000;
@@ -97,7 +104,7 @@ static void _setupTimeout(struct timeval* tv, int timeout_ms)
 
 static void tcp_set_nonblocking(SOCKET_T* sockfd)
 {
-#if defined(USE_WINDOWS_API)
+#ifdef USE_WINDOWS_API
 	unsigned long blocking = 1;
 	int ret = ioctlsocket(*sockfd, FIONBIO, &blocking);
 	if (ret == SOCKET_ERROR)
@@ -119,7 +126,7 @@ static int NetConnect(void *context, const char* host, word16 port,
     int type = SOCK_STREAM;
     struct sockaddr_in address;
 	int rc;
-	char so_error = 0;
+	SOERROR_T so_error = 0;
     struct addrinfo *result = NULL;
 	struct addrinfo hints;
 	
@@ -165,7 +172,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             struct timeval tv;
 
             /* Setup timeout and FD's */
-            _setupTimeout(&tv, timeout_ms);
+            setup_timeout(&tv, timeout_ms);
             FD_ZERO(&fdset);
             FD_SET(sock->fd, &fdset);
 
@@ -176,7 +183,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             connect(sock->fd, (struct sockaddr*)&address, sizeof(address));
 
             /* Wait for connect */
-            if (select(sock->fd, NULL, &fdset, NULL, &tv) == 1)
+            if (select(SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0)
             {
                 socklen_t len = sizeof(so_error);
 
@@ -202,7 +209,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 {
     SocketContext *sock = context;
 	int rc;
-	char so_error = 0;
+	SOERROR_T so_error = 0;
     struct timeval tv;
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
@@ -210,7 +217,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 
     /* Setup timeout */
-    _setupTimeout(&tv, timeout_ms);
+    setup_timeout(&tv, timeout_ms);
     setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
 
     rc = (int)send(sock->fd, buf, (size_t)buf_len, 0);
@@ -234,7 +241,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 {
     SocketContext *sock = context;
     int rc = -1, bytes = 0;
-	char so_error = 0;
+	SOERROR_T so_error = 0;
     fd_set recvfds, errfds;
     struct timeval tv;
 
@@ -243,7 +250,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
 
     /* Setup timeout and FD's */
-    _setupTimeout(&tv, timeout_ms);
+    setup_timeout(&tv, timeout_ms);
     FD_ZERO(&recvfds);
     FD_SET(sock->fd, &recvfds);
     FD_ZERO(&errfds);
@@ -253,7 +260,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     while (bytes < buf_len)
     {
         /* Wait for rx data to be available */
-        rc = select(sock->fd, &recvfds, NULL, &errfds, &tv);
+        rc = select(SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
         if (rc > 0) {
             /* Check if rx or error */
             if (FD_ISSET(sock->fd, &recvfds)) {
@@ -312,6 +319,7 @@ static int NetDisconnect(void *context)
     return 0;
 }
 
+/* Public Functions */
 int MqttClientNet_Init(MqttNet* net)
 {
 #ifdef USE_WINDOWS_API
