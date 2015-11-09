@@ -264,13 +264,13 @@ static int NetRead(void *context, byte* buf, int buf_len,
         if (rc > 0) {
             /* Check if rx or error */
             if (FD_ISSET(sock->fd, &recvfds)) {
-
                 /* Try and read number of buf_len provided, minus what's already been read */
                 rc = (int)recv(sock->fd, &buf[bytes], (size_t)(buf_len - bytes), 0);
-                if (rc < 0) {
+                if (rc <= 0) {
+                    rc = -1;
                     break; /* Error */
                 }
-                else if (rc > 0) {
+                else {
                     bytes += rc; /* Data */
                 }
             }
@@ -288,7 +288,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
         /* Get error */
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-        if (so_error == 0) {
+        if (so_error == 0 && !FD_ISSET(sock->fd, &recvfds)) {
             rc = 0; /* Handle signal */
         }
         else {

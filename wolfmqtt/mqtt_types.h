@@ -61,6 +61,7 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_ERROR_PACKET_ID = -5,
     MQTT_CODE_ERROR_TLS_CONNECT = -6,
     MQTT_CODE_ERROR_TIMEOUT = -7,
+    MQTT_CODE_ERROR_NETWORK = -8,
 };
 
 

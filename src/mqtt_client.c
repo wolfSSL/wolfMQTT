@@ -411,6 +411,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (TLS Connect)";
         case MQTT_CODE_ERROR_TIMEOUT:
             return "Error (Timeout)";
+        case MQTT_CODE_ERROR_NETWORK:
+            return "Error (Network)";
     }
     return "Unknown";
 }

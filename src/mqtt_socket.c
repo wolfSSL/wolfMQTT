@@ -107,6 +107,11 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len, int timeo
         printf("MqttSocket_Write: Len=%d, Rc=%d\n", buf_len, rc);
 #endif
     }
+    
+    /* Check for error */
+    if (rc < 0) {
+        rc = MQTT_CODE_ERROR_NETWORK;
+    }
 
     return rc;
 }
@@ -143,6 +148,9 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     /* Check for timeout */
     if (rc == 0) {
         rc = MQTT_CODE_ERROR_TIMEOUT;
+    }
+    else if (rc < 0) {
+        rc = MQTT_CODE_ERROR_NETWORK;
     }
 
     return rc;
@@ -230,6 +238,11 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 #ifdef DEBUG_SOCKET
     printf("MqttSocket_Connect: Rc=%d\n", rc);
 #endif
+    
+    /* Check for error */
+    if (rc < 0) {
+        rc = MQTT_CODE_ERROR_NETWORK;
+    }
 
     return rc;
 }
@@ -252,5 +265,11 @@ int MqttSocket_Disconnect(MqttClient *client)
 #ifdef DEBUG_SOCKET
     printf("MqttSocket_Disconnect: Rc=%d\n", rc);
 #endif
+    
+    /* Check for error */
+    if (rc < 0) {
+        rc = MQTT_CODE_ERROR_NETWORK;
+    }
+    
     return rc;
 }
