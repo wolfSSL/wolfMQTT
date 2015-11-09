@@ -64,7 +64,15 @@ Here are the steps for creating your own implementation.
 6. Call `MqttClient_Subscribe` passing pointer to `MqttSubscribe` structure to send MQTT Subscribe command and wait for Subscribe Ack (depending on QoS level).
 7. Call `MqttClient_WaitMessage` passing pointer to `MqttMessage` to wait for incoming MQTT Publish message.
 
-## Other Notes
-* Strings should be UTF-8 encoded.
-* Publish message payloads are raw bytes.
+## Release Notes
+
+### v0.2
+* Fixes to handle receival of publish and QoS messages while performing packet writes/waits.
+* Added support / tested with Windows.
+* Added Visual Studio 2015 solution and projects.
+* Added support / tested with FreeRTOS and Lwip.
+* Fixes for compiler warnings.
+
+### v0.1
+* Initial release with support for MQTT v3.1.1, QoS 0-2, TLS and example client.
 

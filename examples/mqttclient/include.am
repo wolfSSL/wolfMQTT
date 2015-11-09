@@ -11,5 +11,7 @@ examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
 dist_example_DATA+= examples/mqttclient/mqttclient.c
 dist_example_DATA+= examples/mqttclient/mqttnet.c
 DISTCLEANFILES+= examples/mqttclient/.libs/mqttclient
-EXTRA_DIST+= examples/mqttclient/mqttnet.h
-EXTRA_DIST+= examples/mqttclient/mqttclient.h
+EXTRA_DIST+= examples/mqttclient/mqttnet.h \
+             examples/mqttclient/mqttclient.h \
+             examples/mqttclient/mqttclient.vcxproj \
+             examples/mqttclient/mqttclient.vcxproj.filters

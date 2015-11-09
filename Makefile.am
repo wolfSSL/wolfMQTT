@@ -32,6 +32,13 @@ include src/include.am
 include wolfmqtt/include.am
 include examples/mqttclient/include.am
 
+EXTRA_DIST+= README.md
+EXTRA_DIST+= LICENSE
+EXTRA_DIST+= wolfmqtt.sln
+EXTRA_DIST+= wolfmqtt.vcxproj
+EXTRA_DIST+= wolfmqtt.vcxproj.filters
+EXTRA_DIST+= autogen.sh
+
 TESTS += $(check_PROGRAMS)
 test: check
 
