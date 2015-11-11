@@ -52,8 +52,9 @@ typedef struct _MqttMessage {
     byte        retain;
     byte        duplicate;
     const char *topic_name;
+    word16      topic_name_len;
     byte       *message;
-    word16      message_len;
+    word32      message_len;
 } MqttMessage;
 
 /* Topic */

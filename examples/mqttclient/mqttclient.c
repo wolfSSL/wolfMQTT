@@ -173,12 +173,33 @@ static int mqttclient_tls_cb(MqttClient* client)
     return rc;
 }
 
+#define PRINT_BUFFER_SIZE    80
 static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
 {
+    byte buf[PRINT_BUFFER_SIZE+1];
+    uint32_t len;
+    
     (void)client; /* Supress un-used argument */
     
+    /* Determine min size to dump */
+    len = msg->topic_name_len;
+    if(len > PRINT_BUFFER_SIZE) {
+        len = PRINT_BUFFER_SIZE;
+    }
+    memcpy(buf, msg->topic_name, len);
+    buf[len] = '\0'; /* Make sure its null terminated */
+    
     /* Print incoming message */
-    printf("MQTT Message: Topic %s, Len %u\n", msg->topic_name, msg->message_len);
+    printf("MQTT Message: Topic %s, Qos %d, Len %u\n", buf, msg->qos, msg->message_len);
+    
+    /* Print message payload */
+    len = msg->message_len;
+    if(len > PRINT_BUFFER_SIZE) {
+        len = PRINT_BUFFER_SIZE;
+    }
+    memcpy(buf, msg->message, len);
+    buf[len] = '\0'; /* Make sure its null terminated */
+    printf("  Payload: %s\n", buf);
     
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }

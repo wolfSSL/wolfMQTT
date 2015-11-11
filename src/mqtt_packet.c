@@ -358,7 +358,6 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
 int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 {
     int header_len, remain_len, vheader_len;
-    word16 topic_name_len;
     byte *rx_payload;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
@@ -374,11 +373,18 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         return header_len;
     }
     rx_payload = &rx_buf[header_len];
+    
+    /* Extract header flags */
+    publish->qos = MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
+    publish->retain = (MQTT_PACKET_FLAGS_GET(header->type_flags) & MQTT_PACKET_FLAG_RETAIN) ? 1 : 0;
+    publish->duplicate = (MQTT_PACKET_FLAGS_GET(header->type_flags) & MQTT_PACKET_FLAG_DUPLICATE) ? 1 : 0;
 
     /* Decode variable header */
-    vheader_len = MqttDecode_String(rx_payload, &publish->topic_name, &topic_name_len);
+    vheader_len = MqttDecode_String(rx_payload, &publish->topic_name, &publish->topic_name_len);
     rx_payload += vheader_len;
-    if (MQTT_PACKET_FLAGS_GET_QOS(header->type_flags) > MQTT_QOS_0) {
+
+    /* If QoS > 0 then get packet Id */
+    if (publish->qos > MQTT_QOS_0) {
         vheader_len += MqttDecode_Num(rx_payload, &publish->packet_id);
         rx_payload += MQTT_DATA_LEN_SIZE;
     }
@@ -387,10 +393,6 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     /* Remainder is message */
     publish->message_len = remain_len - vheader_len;
     publish->message = rx_payload;
-
-    /* Null terminate decoded values */
-    *(char*)(&publish->topic_name[topic_name_len]) = '\0';
-    *(char*)(&publish->message[publish->message_len]) = '\0';
 
     /* Return total length of packet */
     return header_len + remain_len;
