@@ -163,7 +163,7 @@ static int mqttclient_tls_cb(MqttClient* client)
 {
     int rc = SSL_SUCCESS;
     (void)client; /* Supress un-used argument */
-    
+
     printf("MQTT TLS Setup\n");
     if (mTlsFile) {
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
@@ -177,10 +177,10 @@ static int mqttclient_tls_cb(MqttClient* client)
 static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
-    uint32_t len;
-    
+    word32 len;
+
     (void)client; /* Supress un-used argument */
-    
+
     /* Determine min size to dump */
     len = msg->topic_name_len;
     if(len > PRINT_BUFFER_SIZE) {
@@ -188,10 +188,10 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
     }
     memcpy(buf, msg->topic_name, len);
     buf[len] = '\0'; /* Make sure its null terminated */
-    
+
     /* Print incoming message */
     printf("MQTT Message: Topic %s, Qos %d, Len %u\n", buf, msg->qos, msg->message_len);
-    
+
     /* Print message payload */
     len = msg->message_len;
     if(len > PRINT_BUFFER_SIZE) {
@@ -200,7 +200,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
     memcpy(buf, msg->message, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     printf("  Payload: %s\n", buf);
-    
+
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }
 
@@ -426,16 +426,16 @@ void* mqttclient_test(void* args)
 
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
-	#ifdef USE_WINDOWS_API
-		BOOL CtrlHandler(DWORD fdwCtrlType)
-		{
-			if(fdwCtrlType == CTRL_C_EVENT) {
-				mStopRead = 1;
-				printf("Received Ctrl+c\n");
-				return TRUE;
-			}
-			return FALSE;
-		}
+    #ifdef USE_WINDOWS_API
+        BOOL CtrlHandler(DWORD fdwCtrlType)
+        {
+            if(fdwCtrlType == CTRL_C_EVENT) {
+                mStopRead = 1;
+                printf("Received Ctrl+c\n");
+                return TRUE;
+            }
+            return FALSE;
+        }
     #elif HAVE_SIGNAL
         #include <signal.h>
         static void sig_handler(int signo)
@@ -455,9 +455,9 @@ void* mqttclient_test(void* args)
         args.argv = argv;
 
 #ifdef USE_WINDOWS_API
-		if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE)) {
-			printf("Error setting Ctrl Handler!\n");
-		}
+        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE)) {
+            printf("Error setting Ctrl Handler!\n");
+        }
 #elif HAVE_SIGNAL
         if (signal(SIGINT, sig_handler) == SIG_ERR) {
             printf("Can't catch SIGINT\n");
