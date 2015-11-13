@@ -1,0 +1,39 @@
+# vim:ft=automake
+# All paths should be given relative to the root
+
+noinst_PROGRAMS += examples/mqttclient/mqttclient \
+                   examples/firmware/fwpush \
+                   examples/firmware/fwclient
+noinst_HEADERS += examples/mqttclient/mqttclient.h \
+                  examples/firmware/fwpush.h \
+                  examples/firmware/fwclient.h \
+                  examples/firmware/firmware.h
+
+examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
+                                              examples/mqttnet.c
+examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
+examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
+
+examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
+                                              examples/mqttnet.c
+examples_firmware_fwpush_LDADD              = src/libwolfmqtt.la
+examples_firmware_fwpush_DEPENDENCIES       = src/libwolfmqtt.la
+
+examples_firmware_fwclient_SOURCES          = examples/firmware/fwclient.c \
+                                              examples/mqttnet.c
+examples_firmware_fwclient_LDADD            = src/libwolfmqtt.la
+examples_firmware_fwclient_DEPENDENCIES     = src/libwolfmqtt.la
+
+dist_example_DATA+= examples/mqttclient/mqttclient.c \
+                    examples/firmware/fwpush.c \
+                    examples/firmware/fwclient.c \
+                    examples/mqttnet.c
+
+DISTCLEANFILES+= examples/mqttclient/.libs/mqttclient \
+                 examples/firmware/.libs/fwpush \
+                 examples/firmware/.libs/fwclient
+
+EXTRA_DIST+= examples/mqttnet.h \
+             examples/mqttclient/mqttclient.h \
+             examples/mqttclient/mqttclient.vcxproj \
+             examples/mqttclient/mqttclient.vcxproj.filters

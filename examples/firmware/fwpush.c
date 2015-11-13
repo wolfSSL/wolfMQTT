@@ -1,4 +1,4 @@
-/* mqttclient.c
+/* fwpush.c
  *
  * Copyright (C) 2006-2015 wolfSSL Inc.
  *
@@ -28,6 +28,8 @@
 #include <wolfssl/ssl.h>
 #include "examples/mqttclient/mqttclient.h"
 #include "examples/mqttnet.h"
+#include "examples/firmware/fwpush.h"
+#include "examples/firmware/firmware.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -37,13 +39,11 @@
 #define DEFAULT_MQTT_HOST       "iot.eclipse.org"
 #define DEFAULT_CMD_TIMEOUT_MS  1000
 #define DEFAULT_CON_TIMEOUT_MS  5000
-#define DEFAULT_MQTT_QOS        MQTT_QOS_0
+#define DEFAULT_MQTT_QOS        MQTT_QOS_2
 #define DEFAULT_KEEP_ALIVE_SEC  60
-#define DEFAULT_CLIENT_ID       "WolfMQTTClient"
+#define DEFAULT_CLIENT_ID       "WolfMQTTFwPush"
 
-#define MAX_BUFFER_SIZE         1024
-#define TEST_MESSAGE            "test" /* NULL */
-#define TEST_TOPIC_COUNT        2
+#define MAX_BUFFER_SIZE         FIRMWARE_MAX_PACKET
 
 /* Globals */
 static int mStopRead = 0;
@@ -52,8 +52,9 @@ const char* mTlsFile = NULL;
 /* Usage */
 static void Usage(void)
 {
-    printf("mqttclient:\n");
+    printf("fwpush:\n");
     printf("-?          Help, print this usage\n");
+    printf("-f <file>   Firmware file to send\n");
     printf("-h <host>   Host to connect to, default %s\n", DEFAULT_MQTT_HOST);
     printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n", MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
     printf("-t          Enable TLS\n");
@@ -204,7 +205,60 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }
 
-void* mqttclient_test(void* args)
+static int fwfile_load(const char* filePath, int *fileLen, byte** fileBuf)
+{
+    int ret = 0;
+    FILE* file = NULL;
+    
+    /* Check arguments */
+    if(filePath == NULL || strlen(filePath) == 0 || fileLen == NULL || fileBuf == NULL) {
+        return EXIT_FAILURE;
+    }
+    
+    /* Open file */
+    file = fopen(filePath, "rb");
+    if (file == NULL) {
+        printf("File %s does not exist!\n", filePath);
+        ret = EXIT_FAILURE;
+        goto exit;
+    }
+
+    /* Determine length of file */
+    fseek(file, 0, SEEK_END);
+    *fileLen = (int) ftell(file);
+    fseek(file, 0, SEEK_SET);
+    printf("File %s is %d bytes\n", filePath, *fileLen);
+
+    /* Allocate buffer for image */
+    *fileBuf = malloc(*fileLen);
+    if(*fileBuf == NULL) {
+        printf("File buffer malloc failed!\n");
+        ret = EXIT_FAILURE;
+        goto exit;
+    }
+
+    /* Load file into buffer */
+    ret = (int)fread(*fileBuf, 1, *fileLen, file);
+    if(ret != *fileLen) {
+        printf("Error reading file! %d", ret);
+        ret = EXIT_FAILURE;
+        goto exit;
+    }
+
+exit:
+    if(file) {
+        fclose(file);
+    }
+    if(ret != 0) {
+        if(*fileBuf) {
+            free(*fileBuf);
+            *fileBuf = NULL;
+        }
+    }
+    return ret;
+}
+
+void* fwpush_test(void* args)
 {
     int rc;
     char ch;
@@ -221,18 +275,25 @@ void* mqttclient_test(void* args)
     const char* password = NULL;
     MqttNet net;
     byte *tx_buf = NULL, *rx_buf = NULL;
+    byte *fwBuf = NULL;
+    int fwLen = 0;
+    const char* fwFile = NULL;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
 
     ((func_args*)args)->return_code = -1; /* error state */
 
-    while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:")) != -1) {
+    while ((rc = mygetopt(argc, argv, "?f:h:p:tc:q:sk:i:lu:w:")) != -1) {
         ch = (char)rc;
         switch (ch) {
             case '?' :
                 Usage();
                 exit(EXIT_SUCCESS);
+
+            case 'f':
+                fwFile = myoptarg;
+                break;
 
             case 'h' :
                 host   = myoptarg;
@@ -291,9 +352,16 @@ void* mqttclient_test(void* args)
     }
 
     myoptind = 0; /* reset for test cases */
+    
+    /* Verify file can be loaded */
+    rc = fwfile_load(fwFile, &fwLen, &fwBuf);
+    if(rc != 0) {
+        printf("Firmware File Load Error!\n");
+        exit(rc);
+    }
 
     /* Start example MQTT Client */
-    printf("MQTT Client\n");
+    printf("MQTT Firmware Push Client\n");
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
@@ -328,7 +396,6 @@ void* mqttclient_test(void* args)
             lwt_msg.topic_name = "lwttopic";
             lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
             lwt_msg.len = (word16)strlen(DEFAULT_CLIENT_ID);
-            lwt_msg.len = lwt_msg.len;
         }
         /* Optional authentication */
         connect.username = username;
@@ -338,17 +405,7 @@ void* mqttclient_test(void* args)
         rc = MqttClient_Connect(&client, &connect);
         printf("MQTT Connect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
         if (rc == MQTT_CODE_SUCCESS) {
-            MqttSubscribe subscribe;
-            MqttUnsubscribe unsubscribe;
-            MqttTopic topics[TEST_TOPIC_COUNT], *topic;
             MqttPublish publish;
-            int i;
-
-            /* Build list of topics */
-            topics[0].topic_filter = "subtopic1";
-            topics[0].qos = qos;
-            topics[1].topic_filter = "subtopic2";
-            topics[1].qos = qos;
 
             /* Validate Connect Ack info */
             rc = connect.ack.return_code;
@@ -357,52 +414,18 @@ void* mqttclient_test(void* args)
                 connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT ? 1 : 0
             );
 
-            /* Send Ping */
-            rc = MqttClient_Ping(&client);
-            printf("MQTT Ping: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
-
-            /* Subscribe Topic */
-            subscribe.packet_id = mqttclient_get_packetid();
-            subscribe.topic_count = TEST_TOPIC_COUNT;
-            subscribe.topics = topics;
-            rc = MqttClient_Subscribe(&client, &subscribe);
-            printf("MQTT Subscribe: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
-            for (i = 0; i < subscribe.topic_count; i++) {
-                topic = &subscribe.topics[i];
-                printf("  Topic %s, Qos %u, Return Code %u\n",
-                    topic->topic_filter, topic->qos, topic->return_code);
-            }
-
             /* Publish Topic */
             publish.retain = 0;
             publish.qos = qos;
             publish.duplicate = 0;
-            publish.topic_name = "pubtopic";
+            publish.topic_name = FIRMWARE_TOPIC_NAME;
             publish.packet_id = mqttclient_get_packetid();
-            publish.buffer = (byte*)TEST_MESSAGE;
-            publish.len = (word16)strlen(TEST_MESSAGE);
+            publish.buffer = fwBuf;
+            publish.len = fwLen;
             rc = MqttClient_Publish(&client, &publish);
             printf("MQTT Publish: Topic %s, %s (%d)\n", publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 
-            /* Read Loop */
-            printf("MQTT Waiting for message...\n");
-            while (mStopRead == 0) {
-                /* Try and read packet */
-                rc = MqttClient_WaitMessage(&client, DEFAULT_CMD_TIMEOUT_MS);
-                if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_ERROR_TIMEOUT) {
-                    /* There was an error */
-                    printf("MQTT Message Wait: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
-                    break;
-                }
-            }
-
-            /* Unsubscribe Topics */
-            unsubscribe.packet_id = mqttclient_get_packetid();
-            unsubscribe.topic_count = TEST_TOPIC_COUNT;
-            unsubscribe.topics = topics;
-            rc = MqttClient_Unsubscribe(&client, &unsubscribe);
-            printf("MQTT Unsubscribe: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
-
+            /* Disconnect */
             rc = MqttClient_Disconnect(&client);
             printf("MQTT Disconnect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
         }
@@ -414,7 +437,8 @@ void* mqttclient_test(void* args)
     /* Free resources */
     if (tx_buf) free(tx_buf);
     if (rx_buf) free(rx_buf);
-
+    if (fwBuf) free(fwBuf);
+    
     /* Cleanup network */
     rc = MqttClientNet_DeInit(&net);
     printf("MQTT Net DeInit: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
@@ -465,7 +489,7 @@ void* mqttclient_test(void* args)
         }
 #endif
 
-        mqttclient_test(&args);
+        fwpush_test(&args);
 
         return args.return_code;
     }

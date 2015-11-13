@@ -53,8 +53,10 @@ typedef struct _MqttMessage {
     byte        duplicate;
     const char *topic_name;
     word16      topic_name_len;
-    byte       *message;
-    word32      message_len;
+    byte       *buffer;       /* Payload buffer */
+    word32      buffer_len;   /* Length of buffer pointer */
+    word32      buffer_pos;   /* Buffer position */
+    word32      len;    /* Total length of payload */
 } MqttMessage;
 
 /* Topic */
@@ -257,7 +259,7 @@ typedef struct _MqttUnsubscribeAck {
 struct _MqttClient;
 /* Packet Read/Write */
 int MqttPacket_Write(struct _MqttClient *client, byte* tx_buf, int tx_buf_len);
-int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms);
+int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms, int *p_remain_len);
 
 /* Packet Element Encoders/Decoders */
 int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);

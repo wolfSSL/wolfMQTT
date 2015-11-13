@@ -30,7 +30,7 @@ ACLOCAL_AMFLAGS= -I m4
 
 include src/include.am
 include wolfmqtt/include.am
-include examples/mqttclient/include.am
+include examples/include.am
 
 EXTRA_DIST+= README.md
 EXTRA_DIST+= LICENSE

@@ -1,4 +1,4 @@
-/* mqttclient.c
+/* fwclient.c
  *
  * Copyright (C) 2006-2015 wolfSSL Inc.
  *
@@ -28,6 +28,8 @@
 #include <wolfssl/ssl.h>
 #include "examples/mqttclient/mqttclient.h"
 #include "examples/mqttnet.h"
+#include "examples/firmware/fwclient.h"
+#include "examples/firmware/firmware.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -35,15 +37,13 @@
 
 /* Configuration */
 #define DEFAULT_MQTT_HOST       "iot.eclipse.org"
-#define DEFAULT_CMD_TIMEOUT_MS  1000
+#define DEFAULT_CMD_TIMEOUT_MS  10000
 #define DEFAULT_CON_TIMEOUT_MS  5000
-#define DEFAULT_MQTT_QOS        MQTT_QOS_0
-#define DEFAULT_KEEP_ALIVE_SEC  60
-#define DEFAULT_CLIENT_ID       "WolfMQTTClient"
+#define DEFAULT_MQTT_QOS        MQTT_QOS_2
+#define DEFAULT_KEEP_ALIVE_SEC  240
+#define DEFAULT_CLIENT_ID       "WolfMQTTFwClient"
 
-#define MAX_BUFFER_SIZE         1024
-#define TEST_MESSAGE            "test" /* NULL */
-#define TEST_TOPIC_COUNT        2
+#define MAX_BUFFER_SIZE         FIRMWARE_MAX_PACKET
 
 /* Globals */
 static int mStopRead = 0;
@@ -52,7 +52,7 @@ const char* mTlsFile = NULL;
 /* Usage */
 static void Usage(void)
 {
-    printf("mqttclient:\n");
+    printf("fwclient:\n");
     printf("-?          Help, print this usage\n");
     printf("-h <host>   Host to connect to, default %s\n", DEFAULT_MQTT_HOST);
     printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n", MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
@@ -204,7 +204,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }
 
-void* mqttclient_test(void* args)
+void* fwclient_test(void* args)
 {
     int rc;
     char ch;
@@ -293,7 +293,7 @@ void* mqttclient_test(void* args)
     myoptind = 0; /* reset for test cases */
 
     /* Start example MQTT Client */
-    printf("MQTT Client\n");
+    printf("MQTT Firmware Client\n");
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
@@ -328,7 +328,6 @@ void* mqttclient_test(void* args)
             lwt_msg.topic_name = "lwttopic";
             lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
             lwt_msg.len = (word16)strlen(DEFAULT_CLIENT_ID);
-            lwt_msg.len = lwt_msg.len;
         }
         /* Optional authentication */
         connect.username = username;
@@ -339,16 +338,8 @@ void* mqttclient_test(void* args)
         printf("MQTT Connect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
         if (rc == MQTT_CODE_SUCCESS) {
             MqttSubscribe subscribe;
-            MqttUnsubscribe unsubscribe;
-            MqttTopic topics[TEST_TOPIC_COUNT], *topic;
-            MqttPublish publish;
+            MqttTopic topics[1], *topic;
             int i;
-
-            /* Build list of topics */
-            topics[0].topic_filter = "subtopic1";
-            topics[0].qos = qos;
-            topics[1].topic_filter = "subtopic2";
-            topics[1].qos = qos;
 
             /* Validate Connect Ack info */
             rc = connect.ack.return_code;
@@ -357,14 +348,12 @@ void* mqttclient_test(void* args)
                 connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT ? 1 : 0
             );
 
-            /* Send Ping */
-            rc = MqttClient_Ping(&client);
-            printf("MQTT Ping: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
-
             /* Subscribe Topic */
             subscribe.packet_id = mqttclient_get_packetid();
-            subscribe.topic_count = TEST_TOPIC_COUNT;
+            subscribe.topic_count = 1;
             subscribe.topics = topics;
+            topics[0].topic_filter = FIRMWARE_TOPIC_NAME;
+            topics[0].qos = qos;
             rc = MqttClient_Subscribe(&client, &subscribe);
             printf("MQTT Subscribe: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
             for (i = 0; i < subscribe.topic_count; i++) {
@@ -372,17 +361,6 @@ void* mqttclient_test(void* args)
                 printf("  Topic %s, Qos %u, Return Code %u\n",
                     topic->topic_filter, topic->qos, topic->return_code);
             }
-
-            /* Publish Topic */
-            publish.retain = 0;
-            publish.qos = qos;
-            publish.duplicate = 0;
-            publish.topic_name = "pubtopic";
-            publish.packet_id = mqttclient_get_packetid();
-            publish.buffer = (byte*)TEST_MESSAGE;
-            publish.len = (word16)strlen(TEST_MESSAGE);
-            rc = MqttClient_Publish(&client, &publish);
-            printf("MQTT Publish: Topic %s, %s (%d)\n", publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 
             /* Read Loop */
             printf("MQTT Waiting for message...\n");
@@ -395,13 +373,6 @@ void* mqttclient_test(void* args)
                     break;
                 }
             }
-
-            /* Unsubscribe Topics */
-            unsubscribe.packet_id = mqttclient_get_packetid();
-            unsubscribe.topic_count = TEST_TOPIC_COUNT;
-            unsubscribe.topics = topics;
-            rc = MqttClient_Unsubscribe(&client, &unsubscribe);
-            printf("MQTT Unsubscribe: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
 
             rc = MqttClient_Disconnect(&client);
             printf("MQTT Disconnect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
@@ -465,7 +436,7 @@ void* mqttclient_test(void* args)
         }
 #endif
 
-        mqttclient_test(&args);
+        fwclient_test(&args);
 
         return args.return_code;
     }

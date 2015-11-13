@@ -33,10 +33,11 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
     MqttPacket* header;
     byte msg_type, msg_qos;
     word16 packet_id = 0;
+    int remain_len;
 
     while (1) {
         /* Wait for packet */
-        rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms);
+        rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms, &remain_len);
         if (rc <= 0) { return rc; }
         len = rc;
 
@@ -61,8 +62,9 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
             }
             case MQTT_PACKET_TYPE_PUBLISH:
             {
-                /* Decode publish message */
                 MqttMessage message;
+                    
+                /* Decode publish message */
                 rc = MqttDecode_Publish(client->rx_buf, len, &message);
                 if (rc <= 0) { return rc; }
 
@@ -71,6 +73,8 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
                     rc = client->msg_cb(client, &message);
                     if (rc != MQTT_CODE_SUCCESS) { return rc; };
                 }
+                
+                /* If more data needs read */
             
                 /* Handle Qos */
                 if(msg_qos > MQTT_QOS_0) {
