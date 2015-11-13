@@ -27,10 +27,14 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_socket.h"
 
+/* Options */
 #if 0
 #define DEBUG_SOCKET
 #endif
 
+
+/* Private Functions */
+#ifdef ENABLE_MQTT_TLS
 static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz, void *ptr)
 {
     int rc;
@@ -60,16 +64,20 @@ static int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz, void *ptr)
     }
     return rc;
 }
+#endif
 
 
+/* Public Functions */
 int MqttSocket_Init(MqttClient *client, MqttNet *net)
 {
     int rc = MQTT_CODE_ERROR_BAD_ARG;
     if (client) {
         client->net = net;
         client->flags &= ~(MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_IS_TLS);
+#ifdef ENABLE_MQTT_TLS
         client->tls.ctx = NULL;
         client->tls.ssl = NULL;
+#endif
 
         /* Validate callbacks are not null! */
         if (net && net->connect && net->read && net->write && net->disconnect) {
@@ -89,6 +97,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len, int timeo
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+#ifdef ENABLE_MQTT_TLS
     if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
         int error;
         rc = wolfSSL_write(client->tls.ssl, (char*)buf, buf_len);
@@ -100,7 +109,9 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len, int timeo
             rc = 0; /* Timeout */
         }
     }
-    else {
+    else
+#endif
+    {
         rc = client->net->write(client->net->context, buf, buf_len, timeout_ms);
 
 #ifdef DEBUG_SOCKET
@@ -126,6 +137,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+#ifdef ENABLE_MQTT_TLS
     if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
         int error;
         rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
@@ -137,7 +149,9 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
             rc = 0; /* Timeout */
         }
     }
-    else {
+    else
+#endif
+    {
         rc = client->net->read(client->net->context, buf, buf_len, timeout_ms);
 
 #ifdef DEBUG_SOCKET
@@ -178,6 +192,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
     }
     client->flags |= MQTT_CLIENT_FLAG_IS_CONNECTED;
 
+#ifdef ENABLE_MQTT_TLS
     if (use_tls) {
         /* Setup the WolfSSL library */
         wolfSSL_Init();
@@ -234,6 +249,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             rc = MQTT_CODE_ERROR_TLS_CONNECT;
         }
     }
+#endif /* ENABLE_MQTT_TLS */
 
 #ifdef DEBUG_SOCKET
     printf("MqttSocket_Connect: Rc=%d\n", rc);
@@ -251,10 +267,12 @@ int MqttSocket_Disconnect(MqttClient *client)
 {
     int rc = MQTT_CODE_SUCCESS;
     if (client) {
+#ifdef ENABLE_MQTT_TLS
         if (client->tls.ssl) wolfSSL_free(client->tls.ssl);
         if (client->tls.ctx) wolfSSL_CTX_free(client->tls.ctx);
         wolfSSL_Cleanup();
         client->flags &= ~MQTT_CLIENT_FLAG_IS_TLS;
+#endif
 
         /* Make sure socket is closed */
         if (client->net && client->net->disconnect) {

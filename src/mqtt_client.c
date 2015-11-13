@@ -26,26 +26,26 @@
 
 #include "wolfmqtt/mqtt_client.h"
 
-static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_type, 
+static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_type,
     word16 wait_packet_id, void* p_decode)
 {
-    int rc, len;
+    int rc;
     MqttPacket* header;
     byte msg_type, msg_qos;
     word16 packet_id = 0;
-    int remain_len;
+    int packet_len, remain_len;
 
     while (1) {
         /* Wait for packet */
         rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms, &remain_len);
         if (rc <= 0) { return rc; }
-        len = rc;
+        packet_len = rc;
 
         /* Determine packet type */
         header = (MqttPacket*)client->rx_buf;
         msg_type = MQTT_PACKET_TYPE_GET(header->type_flags);
         msg_qos = MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
-        
+
         //printf("Read Packet: Len %d, Type %d, Qos %d\n", len, msg_type, msg_qos);
 
         switch(msg_type) {
@@ -53,35 +53,59 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
             {
                 /* Decode connect ack */
                 MqttConnectAck connect_ack, *p_connect_ack = &connect_ack;
-                if(p_decode) {
+                if (p_decode) {
                     p_connect_ack = p_decode;
                 }
-                rc = MqttDecode_ConenctAck(client->rx_buf, len, p_connect_ack);
+                rc = MqttDecode_ConenctAck(client->rx_buf, packet_len, p_connect_ack);
                 if (rc <= 0) { return rc; }
                 break;
             }
             case MQTT_PACKET_TYPE_PUBLISH:
             {
-                MqttMessage message;
-                    
-                /* Decode publish message */
-                rc = MqttDecode_Publish(client->rx_buf, len, &message);
-                if (rc <= 0) { return rc; }
+                MqttMessage msg;
+                byte msg_new = 1;
+                byte msg_done;
+                int msg_len;
 
-                /* Issue callback for new message */
-                if(client->msg_cb) {
-                    rc = client->msg_cb(client, &message);
-                    if (rc != MQTT_CODE_SUCCESS) { return rc; };
-                }
-                
-                /* If more data needs read */
-            
+                /* Decode publish message */
+                rc = MqttDecode_Publish(client->rx_buf, packet_len, &msg);
+                if (rc <= 0) { return rc; }
+                msg_len = rc;
+
+                do {
+                    /* Determine if message is done */
+                    msg_done = (msg_len < packet_len) ? 0 : 1;
+
+                    /* Issue callback for new message */
+                    if (client->msg_cb) {
+                        rc = client->msg_cb(client, &msg, msg_new, msg_done);
+                        if (rc != MQTT_CODE_SUCCESS) { return rc; };
+                    }
+
+                    /* If more data needs read */
+                    if (!msg_done) {
+                        int read_len = (packet_len - msg_len);
+                        if (read_len > client->rx_buf_len) {
+                            read_len = client->rx_buf_len;
+                        }
+                        rc = MqttSocket_Read(client, client->rx_buf, read_len, timeout_ms);
+                        if (rc != read_len) { return rc; }
+                        msg_len += read_len;
+
+                        /* Update message */
+                        msg.buffer = client->rx_buf;
+                        msg.buffer_len = read_len;
+                        msg.buffer_pos += read_len;
+                    }
+                    msg_new = 0;
+                } while(!msg_done);
+
                 /* Handle Qos */
-                if(msg_qos > MQTT_QOS_0) {
+                if (msg_qos > MQTT_QOS_0) {
                     MqttPublishResp publish_resp;
                     MqttPacketType type;
-                    
-                    packet_id = message.packet_id;
+
+                    packet_id = msg.packet_id;
 
                     /* Determine packet type to write */
                     type = (msg_qos == MQTT_QOS_1) ? MQTT_PACKET_TYPE_PUBLISH_ACK : MQTT_PACKET_TYPE_PUBLISH_REC;
@@ -90,11 +114,11 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
                     /* Encode publish response */
                     rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len, type, &publish_resp);
                     if (rc <= 0) { return rc; }
-                    len = rc;
+                    packet_len = rc;
 
                     /* Send packet */
-                    rc = MqttPacket_Write(client, client->tx_buf, len);
-                    if (rc != len) { return rc; }
+                    rc = MqttPacket_Write(client, client->tx_buf, packet_len);
+                    if (rc != packet_len) { return rc; }
                 }
                 break;
             }
@@ -104,26 +128,26 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
             case MQTT_PACKET_TYPE_PUBLISH_COMP:
             {
                 MqttPublishResp publish_resp, *p_publish_resp = &publish_resp;
-                if(p_decode) {
+                if (p_decode) {
                     p_publish_resp = p_decode;
                 }
 
                 /* Decode publish response message */
-                rc = MqttDecode_PublishResp(client->rx_buf, len, msg_type, p_publish_resp);
+                rc = MqttDecode_PublishResp(client->rx_buf, packet_len, msg_type, p_publish_resp);
                 if (rc <= 0) { return rc; }
                 packet_id = p_publish_resp->packet_id;
-            
+
                 /* If Qos then send response */
-                if(msg_type == MQTT_PACKET_TYPE_PUBLISH_REC || msg_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
+                if (msg_type == MQTT_PACKET_TYPE_PUBLISH_REC || msg_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
                     /* Encode publish response */
                     publish_resp.packet_id = packet_id;
                     rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len, msg_type+1, &publish_resp);
                     if (rc <= 0) { return rc; }
-                    len = rc;
+                    packet_len = rc;
 
                     /* Send packet */
-                    rc = MqttPacket_Write(client, client->tx_buf, len);
-                    if (rc != len) { return rc; }
+                    rc = MqttPacket_Write(client, client->tx_buf, packet_len);
+                    if (rc != packet_len) { return rc; }
                 }
                 break;
             }
@@ -131,10 +155,10 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
             {
                 /* Decode subscribe ack */
                 MqttSubscribeAck subscribe_ack, *p_subscribe_ack = &subscribe_ack;
-                if(p_decode) {
+                if (p_decode) {
                     p_subscribe_ack = p_decode;
                 }
-                rc = MqttDecode_SubscribeAck(client->rx_buf, len, p_subscribe_ack);
+                rc = MqttDecode_SubscribeAck(client->rx_buf, packet_len, p_subscribe_ack);
                 if (rc <= 0) { return rc; }
                 packet_id = p_subscribe_ack->packet_id;
                 break;
@@ -143,17 +167,17 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
             {
                 /* Decode unsubscribe ack */
                 MqttUnsubscribeAck unsubscribe_ack, *p_unsubscribe_ack = &unsubscribe_ack;
-                if(p_decode) {
+                if (p_decode) {
                     p_unsubscribe_ack = p_decode;
                 }
-                rc = MqttDecode_UnsubscribeAck(client->rx_buf, len, p_unsubscribe_ack);
+                rc = MqttDecode_UnsubscribeAck(client->rx_buf, packet_len, p_unsubscribe_ack);
                 if (rc <= 0) { return rc; }
                 packet_id = p_unsubscribe_ack->packet_id;
                 break;
             }
             case MQTT_PACKET_TYPE_PING_RESP:
                 /* Decode ping */
-                rc = MqttDecode_Ping(client->rx_buf, len);
+                rc = MqttDecode_Ping(client->rx_buf, packet_len);
                 if (rc <= 0) { return rc; }
                 break;
 
@@ -162,11 +186,11 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
                 //printf("MqttClient_WaitMessage: Invalid client packet type %u!\n", msg_type);
                 break;
         }
-    
+
         /* Check for type and packet id */
         if (wait_type < MQTT_PACKET_TYPE_MAX) {
             if (wait_type == msg_type) {
-                if(wait_packet_id == 0 || wait_packet_id == packet_id) {
+                if (wait_packet_id == 0 || wait_packet_id == packet_id) {
                     /* We found the packet type and id */
                     break;
                 }
@@ -228,9 +252,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
     /* Send connect packet */
     rc = MqttPacket_Write(client, client->tx_buf, len);
     if (rc != len) { return rc; }
-    
+
     /* Wait for connect ack packet */
-    rc = MqttClient_WaitType(client, client->cmd_timeout_ms, 
+    rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_CONNECT_ACK, 0, &connect->ack);
     if (rc <= 0) { return rc; }
 
@@ -254,14 +278,14 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
     /* Send publish packet */
     rc = MqttPacket_Write(client, client->tx_buf, len);
     if (rc != len) { return rc; }
-    
-    if(publish->qos > MQTT_QOS_0) {
+
+    if (publish->qos > MQTT_QOS_0) {
         /* Determine packet type to wait for */
-        MqttPacketType type = (publish->qos == MQTT_QOS_1) ? 
+        MqttPacketType type = (publish->qos == MQTT_QOS_1) ?
             MQTT_PACKET_TYPE_PUBLISH_ACK : MQTT_PACKET_TYPE_PUBLISH_COMP;
 
         /* Wait for publish response packet */
-        rc = MqttClient_WaitType(client, client->cmd_timeout_ms, 
+        rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
             type, publish->packet_id, NULL);
         if (rc <= 0) { return rc; }
     }
@@ -290,10 +314,10 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     if (rc != len) { return rc; }
 
     /* Wait for subscribe ack packet */
-    rc = MqttClient_WaitType(client, client->cmd_timeout_ms, 
+    rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_SUBSCRIBE_ACK, subscribe->packet_id, &subscribe_ack);
     if (rc <= 0) { return rc; }
-    
+
     /* Populate return codes */
     for (i = 0; i < subscribe->topic_count; i++) {
         topic = &subscribe->topics[i];
@@ -323,7 +347,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     if (rc != len) { return rc; }
 
     /* Wait for unsubscribe ack packet */
-    rc = MqttClient_WaitType(client, client->cmd_timeout_ms, 
+    rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK, unsubscribe->packet_id, &unsubscribe_ack);
     if (rc <= 0) { return rc; }
 
@@ -349,10 +373,10 @@ int MqttClient_Ping(MqttClient *client)
     if (rc != len) { return rc; }
 
     /* Wait for ping resp packet */
-    rc = MqttClient_WaitType(client, client->cmd_timeout_ms, 
+    rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_PING_RESP, 0, NULL);
     if (rc <= 0) { return rc; }
-    
+
     return MQTT_CODE_SUCCESS;
 }
 

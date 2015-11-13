@@ -174,7 +174,7 @@ static int mqttclient_tls_cb(MqttClient* client)
 }
 
 #define PRINT_BUFFER_SIZE    80
-static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
+static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
     word32 len;
@@ -183,18 +183,19 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
 
     /* Determine min size to dump */
     len = msg->topic_name_len;
-    if(len > PRINT_BUFFER_SIZE) {
+    if (len > PRINT_BUFFER_SIZE) {
         len = PRINT_BUFFER_SIZE;
     }
     memcpy(buf, msg->topic_name, len);
     buf[len] = '\0'; /* Make sure its null terminated */
 
     /* Print incoming message */
-    printf("MQTT Message: Topic %s, Qos %d, Len %u\n", buf, msg->qos, msg->len);
+    printf("MQTT Message: Topic %s, Qos %d, Len %u, New %d, Done %d\n", 
+        buf, msg->qos, msg->len, msg_new, msg_done);
 
     /* Print message payload */
     len = msg->len;
-    if(len > PRINT_BUFFER_SIZE) {
+    if (len > PRINT_BUFFER_SIZE) {
         len = PRINT_BUFFER_SIZE;
     }
     memcpy(buf, msg->buffer, len);
@@ -430,7 +431,7 @@ void* mqttclient_test(void* args)
     #ifdef USE_WINDOWS_API
         BOOL CtrlHandler(DWORD fdwCtrlType)
         {
-            if(fdwCtrlType == CTRL_C_EVENT) {
+            if (fdwCtrlType == CTRL_C_EVENT) {
                 mStopRead = 1;
                 printf("Received Ctrl+c\n");
                 return TRUE;

@@ -34,10 +34,12 @@
 #include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"
+        
 
 /* Message callback */
 struct _MqttClient;
-typedef int (*MqttMsgCb)(struct _MqttClient *client, MqttMessage *message);
+typedef int (*MqttMsgCb)(struct _MqttClient *client, MqttMessage *message,
+    byte is_new, byte is_done);
 
 /* Client flags */
 enum MqttClientFlags {
@@ -56,8 +58,10 @@ typedef struct _MqttClient {
     int          rx_buf_len;
 
     MqttNet     *net;   /* Pointer to network callbacks and context */
+#ifdef ENABLE_MQTT_TLS
     MqttTls      tls;   /* WolfSSL context for TLS */
-    
+#endif
+
     MqttMsgCb    msg_cb;
 } MqttClient;
 

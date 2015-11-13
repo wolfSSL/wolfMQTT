@@ -24,8 +24,14 @@
     #include <config.h>
 #endif
 
-#include <wolfmqtt/mqtt_client.h>
+#include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/signature.h>
+#include <wolfssl/wolfcrypt/hash.h>
+
+#include <wolfmqtt/mqtt_client.h>
+
 #include "examples/mqttclient/mqttclient.h"
 #include "examples/mqttnet.h"
 #include "examples/firmware/fwclient.h"
@@ -48,6 +54,7 @@
 /* Globals */
 static int mStopRead = 0;
 const char* mTlsFile = NULL;
+static byte* mFwBuf;
 
 /* Usage */
 static void Usage(void)
@@ -173,34 +180,101 @@ static int mqttclient_tls_cb(MqttClient* client)
     return rc;
 }
 
-#define PRINT_BUFFER_SIZE    80
-static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
+static int fwfile_save(const char* filePath, byte* fileBuf, int fileLen)
 {
-    byte buf[PRINT_BUFFER_SIZE+1];
-    word32 len;
+    int ret = 0;
+    FILE* file = NULL;
+    
+    /* Check arguments */
+    if (filePath == NULL || strlen(filePath) == 0 || fileLen == 0 || fileBuf == NULL) {
+        return EXIT_FAILURE;
+    }
+    
+    /* Open file */
+    file = fopen(filePath, "wb");
+    if (file == NULL) {
+        printf("File %s write error!\n", filePath);
+        ret = EXIT_FAILURE;
+        goto exit;
+    }
 
+    /* Save file */
+    ret = (int)fwrite(fileBuf, 1, fileLen, file);
+    if (ret != fileLen) {
+        printf("Error reading file! %d", ret);
+        ret = EXIT_FAILURE;
+        goto exit;
+    }
+
+exit:
+    if (file) {
+        fclose(file);
+    }
+    return ret;
+}
+
+static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_new, byte msg_done)
+{
     (void)client; /* Supress un-used argument */
+    
+    /* Verify this message is for the firmware topic */
+    if (memcmp(msg->topic_name, FIRMWARE_TOPIC_NAME, msg->topic_name_len) == 0) {
 
-    /* Determine min size to dump */
-    len = msg->topic_name_len;
-    if(len > PRINT_BUFFER_SIZE) {
-        len = PRINT_BUFFER_SIZE;
+        if (msg_new) {
+            /* Allocate buffer for entire message */
+            /* Note: On an embedded system this could just be a write to flash */
+            /*       If writting to flash change FIRMWARE_MAX_BUFFER to match block size */
+            mFwBuf = malloc(msg->len);
+            if (mFwBuf == NULL) {
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+
+            /* Print incoming message */
+            printf("MQTT Firmware Message: Qos %d, Len %u\n", msg->qos, msg->len);
+        }
+    
+        if (msg_done) {
+            int ret;
+            FirmwareHeader* header = (FirmwareHeader*)mFwBuf;
+            byte *sig, *pubKey, *fw;
+            ecc_key eccKey;
+            
+            /* Get pointers to structure elements */
+            sig = (mFwBuf + sizeof(FirmwareHeader));
+            pubKey = (mFwBuf + sizeof(FirmwareHeader) + header->sigLen);
+            fw = (mFwBuf + sizeof(FirmwareHeader) + header->sigLen + header->pubKeyLen);
+
+            /* Import the public key */
+            wc_ecc_init(&eccKey);
+            ret = wc_ecc_import_x963(pubKey, header->pubKeyLen, &eccKey);
+            if (ret == 0) {
+                /* Perform signature verification using public key */
+                ret = wc_SignatureVerify(
+                    FIRMWARE_HASH_TYPE, WC_SIGNATURE_TYPE_ECC,
+                    fw, header->fwLen,
+                    sig, header->sigLen,
+                    &eccKey, sizeof(eccKey));
+                printf("Signature Verification: %s (%d)\n", (ret == 0) ? "Pass" : "Fail", ret);
+                
+                if (ret == 0) {
+                    /* TODO: Process firmware image */
+                    /* For example, save to disk using topic name */
+                    fwfile_save(FIRMWARE_TOPIC_NAME, fw, header->fwLen);
+                }
+            }
+            else {
+                printf("ECC public key import failed! %d\n", ret);
+            }
+
+            /* Free */
+            if (mFwBuf) {
+                free(mFwBuf);
+                mFwBuf = NULL;
+            }
+            wc_ecc_free(&eccKey);        
+        }
     }
-    memcpy(buf, msg->topic_name, len);
-    buf[len] = '\0'; /* Make sure its null terminated */
-
-    /* Print incoming message */
-    printf("MQTT Message: Topic %s, Qos %d, Len %u\n", buf, msg->qos, msg->len);
-
-    /* Print message payload */
-    len = msg->len;
-    if(len > PRINT_BUFFER_SIZE) {
-        len = PRINT_BUFFER_SIZE;
-    }
-    memcpy(buf, msg->buffer, len);
-    buf[len] = '\0'; /* Make sure its null terminated */
-    printf("  Payload: %s\n", buf);
-
+    
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }
 
@@ -401,7 +475,7 @@ void* fwclient_test(void* args)
     #ifdef USE_WINDOWS_API
         BOOL CtrlHandler(DWORD fdwCtrlType)
         {
-            if(fdwCtrlType == CTRL_C_EVENT) {
+            if (fdwCtrlType == CTRL_C_EVENT) {
                 mStopRead = 1;
                 printf("Received Ctrl+c\n");
                 return TRUE;

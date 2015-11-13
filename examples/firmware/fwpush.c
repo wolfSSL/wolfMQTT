@@ -24,8 +24,11 @@
     #include <config.h>
 #endif
 
-#include <wolfmqtt/mqtt_client.h>
+
 #include <wolfssl/ssl.h>
+
+#include <wolfmqtt/mqtt_client.h>
+
 #include "examples/mqttclient/mqttclient.h"
 #include "examples/mqttnet.h"
 #include "examples/firmware/fwpush.h"
@@ -174,44 +177,23 @@ static int mqttclient_tls_cb(MqttClient* client)
     return rc;
 }
 
-#define PRINT_BUFFER_SIZE    80
-static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg)
+static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_new, byte msg_done)
 {
-    byte buf[PRINT_BUFFER_SIZE+1];
-    word32 len;
-
     (void)client; /* Supress un-used argument */
-
-    /* Determine min size to dump */
-    len = msg->topic_name_len;
-    if(len > PRINT_BUFFER_SIZE) {
-        len = PRINT_BUFFER_SIZE;
-    }
-    memcpy(buf, msg->topic_name, len);
-    buf[len] = '\0'; /* Make sure its null terminated */
-
-    /* Print incoming message */
-    printf("MQTT Message: Topic %s, Qos %d, Len %u\n", buf, msg->qos, msg->len);
-
-    /* Print message payload */
-    len = msg->len;
-    if(len > PRINT_BUFFER_SIZE) {
-        len = PRINT_BUFFER_SIZE;
-    }
-    memcpy(buf, msg->buffer, len);
-    buf[len] = '\0'; /* Make sure its null terminated */
-    printf("  Payload: %s\n", buf);
+    (void)msg;
+    (void)msg_new;
+    (void)msg_done;
 
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }
 
-static int fwfile_load(const char* filePath, int *fileLen, byte** fileBuf)
+static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
 {
     int ret = 0;
     FILE* file = NULL;
     
     /* Check arguments */
-    if(filePath == NULL || strlen(filePath) == 0 || fileLen == NULL || fileBuf == NULL) {
+    if (filePath == NULL || strlen(filePath) == 0 || fileLen == NULL || fileBuf == NULL) {
         return EXIT_FAILURE;
     }
     
@@ -231,7 +213,7 @@ static int fwfile_load(const char* filePath, int *fileLen, byte** fileBuf)
 
     /* Allocate buffer for image */
     *fileBuf = malloc(*fileLen);
-    if(*fileBuf == NULL) {
+    if (*fileBuf == NULL) {
         printf("File buffer malloc failed!\n");
         ret = EXIT_FAILURE;
         goto exit;
@@ -239,18 +221,18 @@ static int fwfile_load(const char* filePath, int *fileLen, byte** fileBuf)
 
     /* Load file into buffer */
     ret = (int)fread(*fileBuf, 1, *fileLen, file);
-    if(ret != *fileLen) {
+    if (ret != *fileLen) {
         printf("Error reading file! %d", ret);
         ret = EXIT_FAILURE;
         goto exit;
     }
 
 exit:
-    if(file) {
+    if (file) {
         fclose(file);
     }
-    if(ret != 0) {
-        if(*fileBuf) {
+    if (ret != 0) {
+        if (*fileBuf) {
             free(*fileBuf);
             *fileBuf = NULL;
         }
@@ -354,8 +336,8 @@ void* fwpush_test(void* args)
     myoptind = 0; /* reset for test cases */
     
     /* Verify file can be loaded */
-    rc = fwfile_load(fwFile, &fwLen, &fwBuf);
-    if(rc != 0) {
+    rc = fwfile_load(fwFile, &fwBuf, &fwLen);
+    if (rc != 0) {
         printf("Firmware File Load Error!\n");
         exit(rc);
     }
@@ -454,7 +436,7 @@ void* fwpush_test(void* args)
     #ifdef USE_WINDOWS_API
         BOOL CtrlHandler(DWORD fdwCtrlType)
         {
-            if(fdwCtrlType == CTRL_C_EVENT) {
+            if (fdwCtrlType == CTRL_C_EVENT) {
                 mStopRead = 1;
                 printf("Received Ctrl+c\n");
                 return TRUE;

@@ -31,14 +31,19 @@
     extern "C" {
 #endif
 
-#include "wolfmqtt/mqtt_types.h"
+/* Option to use without WolfSSL (on by default) */
+#define ENABLE_MQTT_TLS
 
+#include "wolfmqtt/mqtt_types.h"
+#ifdef ENABLE_MQTT_TLS
 #include <wolfssl/ssl.h>
 #include <wolfssl/wolfcrypt/error-crypt.h>
+#endif
 
 /* Default Port Numbers */
 #define MQTT_DEFAULT_PORT   1883
 #define MQTT_SECURE_PORT    8883
+
 
 struct _MqttClient;
 

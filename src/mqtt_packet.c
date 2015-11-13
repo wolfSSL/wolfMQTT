@@ -45,7 +45,7 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     if (duplicate) {
         header->type_flags |= MQTT_PACKET_FLAGS_SET(MQTT_PACKET_FLAG_DUPLICATE);
     }
-    
+
     /* Encode the length remaining into the header */
     header_len = MqttEncode_RemainLen(header, remain_len);
     if (header_len < 0) {
@@ -83,13 +83,13 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     }
 
     /* Extract header flags */
-    if(p_qos) {
+    if (p_qos) {
         *p_qos = MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
     }
-    if(p_retain) {
+    if (p_retain) {
         *p_retain = (MQTT_PACKET_FLAGS_GET(header->type_flags) & MQTT_PACKET_FLAG_RETAIN) ? 1 : 0;
     }
-    if(p_duplicate) {
+    if (p_duplicate) {
         *p_duplicate = (MQTT_PACKET_FLAGS_GET(header->type_flags) & MQTT_PACKET_FLAG_DUPLICATE) ? 1 : 0;
     }
 
@@ -399,11 +399,14 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     payload_len = remain_len - variable_len;
     publish->len = payload_len;
     publish->buffer = rx_payload;
-    
+    publish->buffer_pos = 0;
+
     /* Only return the length provided in rx_buf_len */
     if (payload_len > (rx_buf_len - (header_len + variable_len))) {
         payload_len = (rx_buf_len - (header_len + variable_len));
     }
+    publish->buffer_len = payload_len;
+
     return header_len + variable_len + payload_len;
 }
 
@@ -452,7 +455,7 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
     }
 
     /* Decode fixed header */
-    header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len, &remain_len, 
+    header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len, &remain_len,
         type, NULL, NULL, NULL);
     if (header_len < 0) {
         return header_len;
@@ -702,9 +705,9 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeou
             return rc;
         }
     } while (header_len < (int)sizeof(MqttPacket));
-    
-    /* Capture full packet's remainding length, if pointer provided */
-    if(p_remain_len) {
+
+    /* Capture full packet's remaining length, if pointer provided */
+    if (p_remain_len) {
         *p_remain_len = remain_len;
     }
 
