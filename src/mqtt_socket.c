@@ -249,6 +249,8 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             rc = MQTT_CODE_ERROR_TLS_CONNECT;
         }
     }
+#else
+    (void)cb;
 #endif /* ENABLE_MQTT_TLS */
 
 #ifdef DEBUG_SOCKET

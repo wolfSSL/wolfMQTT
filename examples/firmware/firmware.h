@@ -12,9 +12,9 @@
 
 /* Signature Len, Public Key Len, Firmware Len, Signature, Public Key, Data */
 typedef struct _FirmwareHeader {
-    uint16_t sigLen;
-    uint16_t pubKeyLen;
-    uint32_t fwLen;
+    word16 sigLen;
+    word16 pubKeyLen;
+    word32 fwLen;
 } __attribute__ ((packed)) FirmwareHeader;
 
 

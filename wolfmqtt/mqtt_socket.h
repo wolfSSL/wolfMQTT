@@ -59,10 +59,12 @@ typedef int (*MqttNetReadCb)(void *context,
 typedef int (*MqttNetDisconnectCb)(void *context);
 
 /* Strucutre for Network Security */
+#ifdef ENABLE_MQTT_TLS
 typedef struct _MqttTls {
     WOLFSSL_CTX         *ctx;
     WOLFSSL             *ssl;
 } MqttTls;
+#endif
 
 /* Structure for Network callbacks */
 typedef struct _MqttNet {

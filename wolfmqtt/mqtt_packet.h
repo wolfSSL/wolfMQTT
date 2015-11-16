@@ -121,7 +121,7 @@ typedef struct _MqttPacket {
     /* Note: Also included in PUBLISH after topic field (see MqttPublish) */
     /* Must be non-zero value */
 } WOLFMQTT_PACK MqttPacket;
-
+#define MQTT_PACKET_MAX_SIZE        (int)sizeof(MqttPacket)
 
 /* CONNECT PACKET */
 /* Connect flag bit-mask: Located in byte 8 of the MqttConnect packet */
@@ -259,7 +259,7 @@ typedef struct _MqttUnsubscribeAck {
 struct _MqttClient;
 /* Packet Read/Write */
 int MqttPacket_Write(struct _MqttClient *client, byte* tx_buf, int tx_buf_len);
-int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms, int *p_remain_len);
+int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms);
 
 /* Packet Element Encoders/Decoders */
 int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);

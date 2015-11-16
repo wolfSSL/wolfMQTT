@@ -180,27 +180,33 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_
     word32 len;
 
     (void)client; /* Supress un-used argument */
+    
+    if (msg_new) {
+        /* Determine min size to dump */
+        len = msg->topic_name_len;
+        if (len > PRINT_BUFFER_SIZE) {
+            len = PRINT_BUFFER_SIZE;
+        }
+        memcpy(buf, msg->topic_name, len);
+        buf[len] = '\0'; /* Make sure its null terminated */
 
-    /* Determine min size to dump */
-    len = msg->topic_name_len;
-    if (len > PRINT_BUFFER_SIZE) {
-        len = PRINT_BUFFER_SIZE;
+        /* Print incoming message */
+        printf("MQTT Message: Topic %s, Qos %d, Len %u\n", 
+            buf, msg->qos, msg->len);
     }
-    memcpy(buf, msg->topic_name, len);
-    buf[len] = '\0'; /* Make sure its null terminated */
-
-    /* Print incoming message */
-    printf("MQTT Message: Topic %s, Qos %d, Len %u, New %d, Done %d\n", 
-        buf, msg->qos, msg->len, msg_new, msg_done);
 
     /* Print message payload */
-    len = msg->len;
+    len = msg->buffer_len;
     if (len > PRINT_BUFFER_SIZE) {
         len = PRINT_BUFFER_SIZE;
     }
     memcpy(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
-    printf("  Payload: %s\n", buf);
+    printf("Payload (%d - %d): %s\n", msg->buffer_pos, msg->buffer_pos + len, buf);
+
+    if (msg_done) {
+        printf("MQTT Message: Done\n");
+    }
 
     return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
 }

@@ -72,11 +72,6 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
         return header_len;
     }
 
-    /* Validate remaining length */
-    if (rx_buf_len < (header_len + *remain_len)) {
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-    }
-
     /* Validate packet type */
     if (MQTT_PACKET_TYPE_GET(header->type_flags) != type) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
@@ -105,14 +100,14 @@ int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len)
     int multiplier = 1;
     byte tmp_len;
 
-    if (header == NULL || remain_len == NULL) {
+    if (header == NULL || remain_len == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
     *remain_len = 0;
     do {
         /* Check decoded length byte count */
-        if (decode_bytes >= buf_len) {
+        if ((decode_bytes + 1) >= buf_len) {
             return 0; /* Zero incidates we need another byte */
         }
         if (decode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
@@ -361,6 +356,9 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
             payload_len = (tx_buf_len - (header_len + variable_len));
         }
         XMEMCPY(tx_payload, publish->buffer, payload_len);
+
+        publish->buffer_pos = 0;
+        publish->buffer_len = payload_len;
     }
 
     /* Return length of packet placed into tx_buf */
@@ -397,15 +395,15 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 
     /* Decode Payload */
     payload_len = remain_len - variable_len;
-    publish->len = payload_len;
     publish->buffer = rx_payload;
     publish->buffer_pos = 0;
+    publish->buffer_len = payload_len;
+    publish->len = payload_len;
 
     /* Only return the length provided in rx_buf_len */
-    if (payload_len > (rx_buf_len - (header_len + variable_len))) {
-        payload_len = (rx_buf_len - (header_len + variable_len));
+    if ((int)publish->buffer_len > (rx_buf_len - (header_len + variable_len))) {
+        publish->buffer_len = (rx_buf_len - (header_len + variable_len));
     }
-    publish->buffer_len = payload_len;
 
     return header_len + variable_len + payload_len;
 }
@@ -676,9 +674,9 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 }
 
 /* Read return code is length when > 0 */
-int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms, int *p_remain_len)
+int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms)
 {
-    int rc, header_len = 2, remain_len = 0;
+    int rc, len, header_len = 2, remain_len = 0;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
     /* Read fix header portion */
@@ -693,26 +691,22 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeou
         if (rc < 0) { /* Indicates error */
             return rc;
         }
-        if (rc > 0) { /* Indicates decode sucess and rc is len of header */
+        else if (rc > 0) { /* Indicates decode success and rc is len of header */
             header_len = rc;
             break;
         }
 
-        /* Increment header_len and read next byte */
-        header_len++;
-        rc = MqttSocket_Read(client, &rx_buf[header_len], 1, timeout_ms);
-        if (rc != remain_len) {
+        /* Read next byte and try decode again */
+        len = 1;
+        rc = MqttSocket_Read(client, &rx_buf[header_len], len, timeout_ms);
+        if (rc != len) {
             return rc;
         }
-    } while (header_len < (int)sizeof(MqttPacket));
-
-    /* Capture full packet's remaining length, if pointer provided */
-    if (p_remain_len) {
-        *p_remain_len = remain_len;
-    }
+        header_len += len;
+    } while (header_len < MQTT_PACKET_MAX_SIZE);
 
     /* Make sure it does not overflow rx_buf */
-    if (rx_buf_len < (header_len + remain_len)) {
+    if (remain_len > (rx_buf_len - header_len)) {
         remain_len = rx_buf_len - header_len;
     }
 
