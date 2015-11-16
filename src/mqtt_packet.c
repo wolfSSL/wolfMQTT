@@ -47,14 +47,9 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     }
 
     /* Encode the length remaining into the header */
-    header_len = MqttEncode_RemainLen(header, remain_len);
+    header_len = MqttEncode_RemainLen(header, tx_buf_len, remain_len);
     if (header_len < 0) {
         return header_len;
-    }
-
-    /* Check to make sure length is within max provided buffer */
-    if ((header_len + remain_len) > tx_buf_len) {
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
     return header_len;
@@ -114,6 +109,7 @@ int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len)
             return MQTT_CODE_ERROR_MALFORMED_DATA;
         }
 
+        /* Decode Length */
         tmp_len = header->len[decode_bytes++];
         *remain_len += (tmp_len & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
         multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
@@ -123,7 +119,7 @@ int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len)
 }
 
 /* Returns number of encoded bytes, errors are negative value */
-int MqttEncode_RemainLen(MqttPacket *header, int remain_len)
+int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len)
 {
     int encode_bytes = 0;
     byte tmp_len;
@@ -133,6 +129,15 @@ int MqttEncode_RemainLen(MqttPacket *header, int remain_len)
     }
 
     do {
+        /* Check decoded length byte count */
+        if ((encode_bytes + 1) >= buf_len) {
+            return 0; /* Zero incidates we need another byte */
+        }
+        if (encode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
+            return MQTT_CODE_ERROR_MALFORMED_DATA;
+        }
+        
+        /* Encode length */
         tmp_len = (remain_len % MQTT_PACKET_LEN_ENCODE_MASK);
         remain_len /= MQTT_PACKET_LEN_ENCODE_MASK;
 
@@ -219,13 +224,13 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     if (connect->enable_lwt) {
         /* Verify all required fields are present */
         if (connect->lwt_msg == NULL || connect->lwt_msg->topic_name == NULL ||
-            connect->lwt_msg->buffer == NULL || connect->lwt_msg->len <= 0)
+            connect->lwt_msg->buffer == NULL || connect->lwt_msg->total_len <= 0)
         {
             return MQTT_CODE_ERROR_BAD_ARG;
         }
 
         remain_len += (int)XSTRLEN(connect->lwt_msg->topic_name) + MQTT_DATA_LEN_SIZE;
-        remain_len += connect->lwt_msg->len + MQTT_DATA_LEN_SIZE;
+        remain_len += connect->lwt_msg->total_len + MQTT_DATA_LEN_SIZE;
     }
     if (connect->username) {
         remain_len += (int)XSTRLEN(connect->username) + MQTT_DATA_LEN_SIZE;
@@ -271,7 +276,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     tx_payload += MqttEncode_String(tx_payload, connect->client_id);
     if (connect->enable_lwt) {
         tx_payload += MqttEncode_String(tx_payload, connect->lwt_msg->topic_name);
-        tx_payload += MqttEncode_Data(tx_payload, connect->lwt_msg->buffer, connect->lwt_msg->len);
+        tx_payload += MqttEncode_Data(tx_payload, connect->lwt_msg->buffer, connect->lwt_msg->total_len);
     }
     if (connect->username) {
         tx_payload += MqttEncode_String(tx_payload, connect->username);
@@ -330,8 +335,8 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
         }
         variable_len += MQTT_DATA_LEN_SIZE; /* For packet_id */
     }
-    if (publish->buffer && publish->len > 0) {
-        payload_len = publish->len;
+    if (publish->buffer && publish->total_len > 0) {
+        payload_len = publish->total_len;
     }
 
     /* Encode fixed header */
@@ -356,10 +361,9 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
             payload_len = (tx_buf_len - (header_len + variable_len));
         }
         XMEMCPY(tx_payload, publish->buffer, payload_len);
-
-        publish->buffer_pos = 0;
-        publish->buffer_len = payload_len;
     }
+    publish->buffer_pos = 0;
+    publish->buffer_len = payload_len;
 
     /* Return length of packet placed into tx_buf */
     return header_len + variable_len + payload_len;
@@ -398,7 +402,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     publish->buffer = rx_payload;
     publish->buffer_pos = 0;
     publish->buffer_len = payload_len;
-    publish->len = payload_len;
+    publish->total_len = payload_len;
 
     /* Only return the length provided in rx_buf_len */
     if ((int)publish->buffer_len > (rx_buf_len - (header_len + variable_len))) {

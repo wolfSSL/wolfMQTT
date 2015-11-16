@@ -129,7 +129,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len, int timeo
 
 int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 {
-    int rc;
+    int rc, pos, len;
 
     /* Validate arguments */
     if (client == NULL || client->net == NULL || client->net->read == NULL ||
@@ -137,27 +137,39 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    pos = 0;
+    len = buf_len;
+    do {
 #ifdef ENABLE_MQTT_TLS
-    if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
-        int error;
-        rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
-        error = wolfSSL_get_error(client->tls.ssl, 0);
-#ifdef DEBUG_SOCKET
-        printf("MqttSocket_Read: Len=%d, Rc=%d, Error=%d\n", buf_len, rc, error);
-#endif
-        if (error == SSL_ERROR_WANT_READ) {
-            rc = 0; /* Timeout */
+        if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
+            int error;
+            rc = wolfSSL_read(client->tls.ssl, (char*)&buf[pos], len);
+            error = wolfSSL_get_error(client->tls.ssl, 0);
+    #ifdef DEBUG_SOCKET
+            printf("MqttSocket_Read: Len=%d, Rc=%d, Error=%d\n", len, rc, error);
+    #endif
+            if (error == SSL_ERROR_WANT_READ) {
+                rc = 0; /* Timeout */
+            }
         }
-    }
-    else
-#endif
-    {
-        rc = client->net->read(client->net->context, buf, buf_len, timeout_ms);
+        else
+    #endif
+        {
+            rc = client->net->read(client->net->context, &buf[pos], len, timeout_ms);
 
-#ifdef DEBUG_SOCKET
-        printf("MqttSocket_Read: Len=%d, Rc=%d\n", buf_len, rc);
-#endif
-    }
+    #ifdef DEBUG_SOCKET
+            printf("MqttSocket_Read: Len=%d, Rc=%d\n", len, rc);
+    #endif
+        }
+        
+        if (rc > 0) {
+            pos += rc;
+            len -= rc;
+        }
+        else {
+            break;
+        }
+    } while(len > 0);
 
     /* Check for timeout */
     if (rc == 0) {
@@ -165,6 +177,9 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     }
     else if (rc < 0) {
         rc = MQTT_CODE_ERROR_NETWORK;
+    }
+    else {
+        rc = pos;
     }
 
     return rc;

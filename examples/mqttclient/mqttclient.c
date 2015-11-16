@@ -180,7 +180,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_
     word32 len;
 
     (void)client; /* Supress un-used argument */
-    
+
     if (msg_new) {
         /* Determine min size to dump */
         len = msg->topic_name_len;
@@ -191,8 +191,8 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_
         buf[len] = '\0'; /* Make sure its null terminated */
 
         /* Print incoming message */
-        printf("MQTT Message: Topic %s, Qos %d, Len %u\n", 
-            buf, msg->qos, msg->len);
+        printf("MQTT Message: Topic %s, Qos %d, Len %u\n",
+            buf, msg->qos, msg->total_len);
     }
 
     /* Print message payload */
@@ -334,8 +334,7 @@ void* mqttclient_test(void* args)
             lwt_msg.retain = 0;
             lwt_msg.topic_name = "lwttopic";
             lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
-            lwt_msg.len = (word16)strlen(DEFAULT_CLIENT_ID);
-            lwt_msg.len = lwt_msg.len;
+            lwt_msg.total_len = (word16)strlen(DEFAULT_CLIENT_ID);
         }
         /* Optional authentication */
         connect.username = username;
@@ -387,7 +386,7 @@ void* mqttclient_test(void* args)
             publish.topic_name = "pubtopic";
             publish.packet_id = mqttclient_get_packetid();
             publish.buffer = (byte*)TEST_MESSAGE;
-            publish.len = (word16)strlen(TEST_MESSAGE);
+            publish.total_len = (word16)strlen(TEST_MESSAGE);
             rc = MqttClient_Publish(&client, &publish);
             printf("MQTT Publish: Topic %s, %s (%d)\n", publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 

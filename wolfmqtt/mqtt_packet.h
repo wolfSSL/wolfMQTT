@@ -53,10 +53,12 @@ typedef struct _MqttMessage {
     byte        duplicate;
     const char *topic_name;
     word16      topic_name_len;
+    word32      total_len;    /* Payload total length */
     byte       *buffer;       /* Payload buffer */
-    word32      buffer_len;   /* Length of buffer pointer */
+
+    /* Used internally for TX/RX */
+    word32      buffer_len;   /* Buffer length */
     word32      buffer_pos;   /* Buffer position */
-    word32      len;    /* Total length of payload */
 } MqttMessage;
 
 /* Topic */
@@ -263,7 +265,7 @@ int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, in
 
 /* Packet Element Encoders/Decoders */
 int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);
-int MqttEncode_RemainLen(MqttPacket *header, int remain_len);
+int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len);
 
 int MqttDecode_Num(byte* buf, word16 *len);
 int MqttEncode_Num(byte *buf, word16 len);

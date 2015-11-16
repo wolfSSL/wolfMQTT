@@ -24,9 +24,11 @@
     #include <config.h>
 #endif
 
-
+#include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
-
+#include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/signature.h>
+#include <wolfssl/wolfcrypt/hash.h>
 #include <wolfmqtt/mqtt_client.h>
 
 #include "examples/mqttclient/mqttclient.h"
@@ -189,19 +191,19 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_
 
 static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
 {
-    int ret = 0;
+    int rc = 0;
     FILE* file = NULL;
-    
+
     /* Check arguments */
     if (filePath == NULL || strlen(filePath) == 0 || fileLen == NULL || fileBuf == NULL) {
         return EXIT_FAILURE;
     }
-    
+
     /* Open file */
     file = fopen(filePath, "rb");
     if (file == NULL) {
         printf("File %s does not exist!\n", filePath);
-        ret = EXIT_FAILURE;
+        rc = EXIT_FAILURE;
         goto exit;
     }
 
@@ -209,35 +211,147 @@ static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
     fseek(file, 0, SEEK_END);
     *fileLen = (int) ftell(file);
     fseek(file, 0, SEEK_SET);
-    printf("File %s is %d bytes\n", filePath, *fileLen);
+    //printf("File %s is %d bytes\n", filePath, *fileLen);
 
     /* Allocate buffer for image */
     *fileBuf = malloc(*fileLen);
     if (*fileBuf == NULL) {
         printf("File buffer malloc failed!\n");
-        ret = EXIT_FAILURE;
+        rc = EXIT_FAILURE;
         goto exit;
     }
 
     /* Load file into buffer */
-    ret = (int)fread(*fileBuf, 1, *fileLen, file);
-    if (ret != *fileLen) {
-        printf("Error reading file! %d", ret);
-        ret = EXIT_FAILURE;
+    rc = (int)fread(*fileBuf, 1, *fileLen, file);
+    if (rc != *fileLen) {
+        printf("Error reading file! %d", rc);
+        rc = EXIT_FAILURE;
         goto exit;
     }
+    rc = 0; /* Success */
 
 exit:
     if (file) {
         fclose(file);
     }
-    if (ret != 0) {
+    if (rc != 0) {
         if (*fileBuf) {
             free(*fileBuf);
             *fileBuf = NULL;
         }
     }
-    return ret;
+    return rc;
+}
+
+static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
+{
+    int rc;
+    byte *msgBuf = NULL, *sigBuf = NULL, *keyBuf = NULL, *fwBuf = NULL;
+    int msgLen = 0, fwLen = 0;
+    word32 keyLen = 0, sigLen = 0;
+    FirmwareHeader *header;
+    ecc_key eccKey;
+    RNG rng;
+
+    wc_InitRng(&rng);
+
+    /* Verify file can be loaded */
+    rc = fwfile_load(fwFile, &fwBuf, &fwLen);
+    if (rc < 0) {
+        printf("Firmware File %s Load Error!\n", fwFile);
+        Usage();
+        goto exit;
+    }
+
+    /* Generate Key */
+    /* Note: Real implementation would use previously exchanged/signed key */
+    wc_ecc_init(&eccKey);
+    rc = wc_ecc_make_key(&rng, 32, &eccKey);
+    if (rc != 0) {
+        printf("Make ECC Key Failed! %d\n", rc);
+        goto exit;
+    }
+    keyLen = ECC_BUFSIZE;
+    keyBuf = malloc(keyLen);
+    if (!keyBuf) {
+        printf("Key malloc failed! %d\n", keyLen);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+    rc = wc_ecc_export_x963(&eccKey, keyBuf, &keyLen);
+    if (rc != 0) {
+        printf("ECC public key x963 export failed! %d\n", rc);
+        goto exit;
+    }
+
+    /* Sign Firmware */
+    sigLen = wc_SignatureGetSize(FIRMWARE_SIG_TYPE, &eccKey, sizeof(eccKey));
+    if (sigLen <= 0) {
+        printf("Signature type %d not supported!\n", FIRMWARE_SIG_TYPE);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+    sigBuf = malloc(sigLen);
+    if (!sigBuf) {
+        printf("Signature malloc failed!\n");
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+
+    /* Display lengths */
+    printf("Firmware Message: Sig %d bytes, Key %d bytes, File %d bytes\n", sigLen, keyLen, fwLen);
+
+    /* Generate Signature */
+    rc = wc_SignatureGenerate(
+        FIRMWARE_HASH_TYPE, FIRMWARE_SIG_TYPE,
+        fwBuf, fwLen,
+        sigBuf, &sigLen,
+        &eccKey, sizeof(eccKey),
+        &rng);
+    if (rc != 0) {
+        printf("Signature Generate Failed! %d\n", rc);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+
+    /* Assemble message */
+    msgLen = sizeof(FirmwareHeader) + sigLen + keyLen + fwLen;
+    msgBuf = malloc(msgLen);
+    if (!msgBuf) {
+        printf("Message malloc failed! %d\n", msgLen);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+    header = (FirmwareHeader*)msgBuf;
+    header->sigLen = sigLen;
+    header->pubKeyLen = keyLen;
+    header->fwLen = fwLen;
+    memcpy(&msgBuf[sizeof(FirmwareHeader)], sigBuf, sigLen);
+    memcpy(&msgBuf[sizeof(FirmwareHeader) + sigLen], keyBuf, keyLen);
+    memcpy(&msgBuf[sizeof(FirmwareHeader) + sigLen + keyLen], fwBuf, fwLen);
+
+    rc = 0;
+
+exit:
+
+    if (rc == 0) {
+        /* Return values */
+        if (p_msgBuf) *p_msgBuf = msgBuf;
+        if (p_msgLen) *p_msgLen = msgLen;
+    }
+    else {
+        if (msgBuf) free(msgBuf);
+    }
+
+    /* Free resources */
+    if (keyBuf) free(keyBuf);
+    if (sigBuf) free(sigBuf);
+    if (fwBuf) free(fwBuf);
+
+    wc_ecc_free(&eccKey);
+    wc_FreeRng(&rng);
+
+    return rc;
 }
 
 void* fwpush_test(void* args)
@@ -257,8 +371,8 @@ void* fwpush_test(void* args)
     const char* password = NULL;
     MqttNet net;
     byte *tx_buf = NULL, *rx_buf = NULL;
-    byte *fwBuf = NULL;
-    int fwLen = 0;
+    byte *msgBuf = NULL;
+    int msgLen = 0;
     const char* fwFile = NULL;
 
     int     argc = ((func_args*)args)->argc;
@@ -334,16 +448,16 @@ void* fwpush_test(void* args)
     }
 
     myoptind = 0; /* reset for test cases */
-    
-    /* Verify file can be loaded */
-    rc = fwfile_load(fwFile, &fwBuf, &fwLen);
-    if (rc != 0) {
-        printf("Firmware File Load Error!\n");
-        exit(rc);
-    }
 
     /* Start example MQTT Client */
     printf("MQTT Firmware Push Client\n");
+
+    /* Load firmware, sign firmware and create message */
+    rc = fw_message_build(fwFile, &msgBuf, &msgLen);
+    if (rc != 0) {
+        printf("Firmware message build failed! %d\n", rc);
+        exit(rc);
+    }
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
@@ -377,7 +491,7 @@ void* fwpush_test(void* args)
             lwt_msg.retain = 0;
             lwt_msg.topic_name = "lwttopic";
             lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
-            lwt_msg.len = (word16)strlen(DEFAULT_CLIENT_ID);
+            lwt_msg.total_len = (word16)strlen(DEFAULT_CLIENT_ID);
         }
         /* Optional authentication */
         connect.username = username;
@@ -402,8 +516,8 @@ void* fwpush_test(void* args)
             publish.duplicate = 0;
             publish.topic_name = FIRMWARE_TOPIC_NAME;
             publish.packet_id = mqttclient_get_packetid();
-            publish.buffer = fwBuf;
-            publish.len = fwLen;
+            publish.buffer = msgBuf;
+            publish.total_len = msgLen;
             rc = MqttClient_Publish(&client, &publish);
             printf("MQTT Publish: Topic %s, %s (%d)\n", publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 
@@ -419,13 +533,13 @@ void* fwpush_test(void* args)
     /* Free resources */
     if (tx_buf) free(tx_buf);
     if (rx_buf) free(rx_buf);
-    if (fwBuf) free(fwBuf);
-    
+    if (msgBuf) free(msgBuf);
+
     /* Cleanup network */
     rc = MqttClientNet_DeInit(&net);
     printf("MQTT Net DeInit: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
 
-    ((func_args*)args)->return_code = 0;
+    ((func_args*)args)->return_code = rc;
 
     return 0;
 }

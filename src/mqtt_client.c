@@ -75,7 +75,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
                 /* Handle packet callback and read remaining payload */
                 do {
                     /* Determine if message is done */
-                    msg_done = ((msg.buffer_pos + msg.buffer_len) >= msg.len) ? 1 : 0;
+                    msg_done = ((msg.buffer_pos + msg.buffer_len) >= msg.total_len) ? 1 : 0;
 
                     /* Issue callback for new message */
                     if (client->msg_cb) {
@@ -88,7 +88,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms, byte wait_typ
                         msg.buffer_pos += msg.buffer_len;
                         msg.buffer_len = 0;
 
-                        msg_len = (msg.len - msg.buffer_pos);
+                        msg_len = (msg.total_len - msg.buffer_pos);
                         if (msg_len > client->rx_buf_len) {
                             msg_len = client->rx_buf_len;
                         }
@@ -285,18 +285,18 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
         publish->buffer_len = 0;
 
         /* Check if there is anything left to send */
-        if (publish->len >= publish->buffer_pos) {
+        if (publish->buffer_pos >= publish->total_len) {
             break;
         }
 
         /* Build packet payload to send */
-        len = (publish->len - publish->buffer_pos);
+        len = (publish->total_len - publish->buffer_pos);
         if (len > client->tx_buf_len) {
             len = client->tx_buf_len;
         }
         publish->buffer_len = len;
         XMEMCPY(client->tx_buf, &publish->buffer[publish->buffer_pos], len);
-    } while(publish->len < publish->buffer_pos);
+    } while(publish->buffer_pos < publish->total_len);
 
     /* Handle QoS */
     if (publish->qos > MQTT_QOS_0) {
