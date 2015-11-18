@@ -32,9 +32,11 @@
 #endif
 
 #include "wolfmqtt/visibility.h"
-        
+
+/* Endianess check */
 #if defined(__BIG_ENDIAN__) || defined(BIG_ENDIAN_ORDER)
-    #error Big Endian is not yet supported. Please contact us if you are interested in this feature.
+    #error Big Endian is not yet supported. Please contact us if \
+        you are interested in this feature.
 #endif
 
 #ifdef _WIN32
@@ -56,7 +58,7 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_SUCCESS = 0,
     MQTT_CODE_ERROR_BAD_ARG = -1,
     MQTT_CODE_ERROR_OUT_OF_BUFFER = -2,
-    MQTT_CODE_ERROR_MALFORMED_DATA = -3, /* Error (Malformed Remaining Length) */
+    MQTT_CODE_ERROR_MALFORMED_DATA = -3, /* Error (Malformed Remaining Len) */
     MQTT_CODE_ERROR_PACKET_TYPE = -4,
     MQTT_CODE_ERROR_PACKET_ID = -5,
     MQTT_CODE_ERROR_TLS_CONNECT = -6,

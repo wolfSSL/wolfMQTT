@@ -31,7 +31,8 @@
     extern "C" {
 #endif
 
-/* Option to use without WolfSSL (on by default) */
+/* Options */
+/* Use without WolfSSL (on by default) */
 #define ENABLE_MQTT_TLS
 
 #include "wolfmqtt/mqtt_types.h"
@@ -78,11 +79,13 @@ typedef struct _MqttNet {
 
 /* MQTT SOCKET APPLICATION INTERFACE */
 int MqttSocket_Init(struct _MqttClient *client, MqttNet* net);
-int MqttSocket_Write(struct _MqttClient *client, const byte* buf, int buf_len, int timeout_ms);
-int MqttSocket_Read(struct _MqttClient *client, byte* buf, int buf_len, int timeout_ms);
+int MqttSocket_Write(struct _MqttClient *client, const byte* buf, int buf_len,
+    int timeout_ms);
+int MqttSocket_Read(struct _MqttClient *client, byte* buf, int buf_len,
+    int timeout_ms);
 
-int MqttSocket_Connect(struct _MqttClient *client, const char* host, word16 port,
-    int timeout_ms, int use_tls, MqttTlsCb cb);
+int MqttSocket_Connect(struct _MqttClient *client, const char* host,
+    word16 port, int timeout_ms, int use_tls, MqttTlsCb cb);
 int MqttSocket_Disconnect(struct _MqttClient *client);
 
 

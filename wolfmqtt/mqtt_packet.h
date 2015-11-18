@@ -98,9 +98,11 @@ typedef enum _MqttPacketType {
 #define MQTT_PACKET_FLAGS_GET(x) ((x) & 0xF)
 #define MQTT_PACKET_FLAGS_SET(x) (x)
 #define MQTT_PACKET_FLAGS_GET_QOS(type_flags)   \
-    ((MQTT_PACKET_FLAGS_GET((type_flags)) & MQTT_PACKET_FLAG_QOS_MASK) >> MQTT_PACKET_FLAG_QOS_SHIFT)
+    ((MQTT_PACKET_FLAGS_GET((type_flags)) & \
+        MQTT_PACKET_FLAG_QOS_MASK) >> MQTT_PACKET_FLAG_QOS_SHIFT)
 #define MQTT_PACKET_FLAGS_SET_QOS(qos)   \
-    (MQTT_PACKET_FLAGS_SET(((qos) << MQTT_PACKET_FLAG_QOS_SHIFT) & MQTT_PACKET_FLAG_QOS_MASK))
+    (MQTT_PACKET_FLAGS_SET(((qos) << MQTT_PACKET_FLAG_QOS_SHIFT) & \
+        MQTT_PACKET_FLAG_QOS_MASK))
 enum MqttPacketFlags {
     MQTT_PACKET_FLAG_RETAIN = 0x1,
     MQTT_PACKET_FLAG_QOS_SHIFT = 0x1,
@@ -115,7 +117,8 @@ typedef struct _MqttPacket {
     /* Type = bits 4-7, Flags = 0-3 are flags */
     byte        type_flags; /* MqttPacketType and MqttPacketFlags */
 
-    /* Remaining Length: variable 1-4 bytes, encoded using scheme where bit 7 = continuation bit */
+    /* Remaining Length: variable 1-4 bytes, encoded using scheme
+       where bit 7 = continuation bit */
     byte        len[MQTT_PACKET_MAX_LEN_BYTES];
 
     /* Then packet_id if type is PUBLISH through UNSUBSCRIBE_ACK */
@@ -128,9 +131,11 @@ typedef struct _MqttPacket {
 /* CONNECT PACKET */
 /* Connect flag bit-mask: Located in byte 8 of the MqttConnect packet */
 #define MQTT_CONNECT_FLAG_GET_QOS(flags) \
-    (((flags) MQTT_CONNECT_FLAG_WILL_QOS_MASK) >> MQTT_CONNECT_FLAG_WILL_QOS_SHIFT)
+    (((flags) MQTT_CONNECT_FLAG_WILL_QOS_MASK) >> \
+        MQTT_CONNECT_FLAG_WILL_QOS_SHIFT)
 #define MQTT_CONNECT_FLAG_SET_QOS(qos) \
-    (((qos) << MQTT_CONNECT_FLAG_WILL_QOS_SHIFT) & MQTT_CONNECT_FLAG_WILL_QOS_MASK)
+    (((qos) << MQTT_CONNECT_FLAG_WILL_QOS_SHIFT) & \
+        MQTT_CONNECT_FLAG_WILL_QOS_MASK)
 enum MqttConnectFlags {
     MQTT_CONNECT_FLAG_RESERVED = 0x01,
     MQTT_CONNECT_FLAG_CLEAN_SESSION = 0x02,
@@ -149,7 +154,9 @@ enum MqttConnectFlags {
 #define MQTT_CONNECT_PROTOCOL_LEVEL     4
 
 /* Initializer */
-#define MQTT_CONNECT_INIT               {{0, MQTT_CONNECT_PROTOCOL_NAME_LEN}, {'M', 'Q', 'T', 'T'}, MQTT_CONNECT_PROTOCOL_LEVEL, 0, 0}
+#define MQTT_CONNECT_INIT               \
+    {{0, MQTT_CONNECT_PROTOCOL_NAME_LEN}, {'M', 'Q', 'T', 'T'}, \
+        MQTT_CONNECT_PROTOCOL_LEVEL, 0, 0}
 
 /* Connect packet structure */
 typedef struct _MqttConnectPacket {
@@ -168,12 +175,25 @@ enum MqttConnectAckFlags {
 
 /* Connect Ack return codes */
 enum MqttConnectAckReturnCodes {
-    MQTT_CONNECT_ACK_CODE_ACCEPTED = 0,             /* Connection accepted */
-    MQTT_CONNECT_ACK_CODE_REFUSED_PROTO = 1,        /* The Server does not support the level of the MQTT protocol requested by the Client */
-    MQTT_CONNECT_ACK_CODE_REFUSED_ID = 2,           /* The Client identifier is correct UTF-8 but not allowed by the Server */
-    MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL = 3,      /* The Network Connection has been made but the MQTT service is unavailable */
-    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD = 4, /* The data in the user name or password is malformed */
-    MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH = 5,     /* The Client is not authorized to connect */
+    /* Connection accepted */
+    MQTT_CONNECT_ACK_CODE_ACCEPTED = 0,
+
+    /* The Server does not support the level of the MQTT protocol requested
+       by the Client */
+    MQTT_CONNECT_ACK_CODE_REFUSED_PROTO = 1,
+
+    /* The Client identifier is correct UTF-8 but not allowed by the Server */
+    MQTT_CONNECT_ACK_CODE_REFUSED_ID = 2,
+
+    /* The Network Connection has been made but the MQTT service is
+       unavailable */
+    MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL = 3,
+
+    /* The data in the user name or password is malformed */
+    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD = 4,
+
+    /* The Client is not authorized to connect */
+    MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH = 5,
 };
 
 /* Connect Ack packet structure */
@@ -210,11 +230,14 @@ typedef MqttMessage MqttPublish; /* Publish is message */
 /* PUBLISH RESPONSE PACKET */
 /* This is the response struct for PUBLISH_ACK, PUBLISH_REC and PUBLISH_COMP */
 /* If QoS = 0: No response */
-/* If QoS = 1: Expect response packet with type = MQTT_PACKET_TYPE_PUBLISH_ACK */
-/* If QoS = 2: Expect response packet with type = MQTT_PACKET_TYPE_PUBLISH_REC */
+/* If QoS = 1: Expect response packet with type =
+    MQTT_PACKET_TYPE_PUBLISH_ACK */
+/* If QoS = 2: Expect response packet with type =
+    MQTT_PACKET_TYPE_PUBLISH_REC */
 /* Packet Id required if QoS is 1 or 2 */
-/* If Qos = 2: Send MQTT_PACKET_TYPE_PUBLISH_REL with PacketId to complete QoS2 protcol exchange */
-/*  Expect response packet with type = MQTT_PACKET_TYPE_PUBLISH_COMP */
+/* If Qos = 2: Send MQTT_PACKET_TYPE_PUBLISH_REL with PacketId to complete
+    QoS2 protcol exchange */
+/* Expect response packet with type = MQTT_PACKET_TYPE_PUBLISH_COMP */
 typedef struct _MqttPublishResp {
     word16      packet_id;
 } MqttPublishResp;
@@ -228,7 +251,8 @@ typedef struct _MqttSubscribe {
 } MqttSubscribe;
 
 /* SUBSCRIBE ACK PACKET */
-/* Packet Id followed by list of return codes coorisponding to subscription topic list sent. */
+/* Packet Id followed by list of return codes coorisponding to subscription
+    topic list sent. */
 enum MqttSubscribeAckReturnCodes {
     MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS0 = 0,
     MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS1 = 1,
@@ -261,7 +285,8 @@ typedef struct _MqttUnsubscribeAck {
 struct _MqttClient;
 /* Packet Read/Write */
 int MqttPacket_Write(struct _MqttClient *client, byte* tx_buf, int tx_buf_len);
-int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms);
+int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len,
+    int timeout_ms);
 
 /* Packet Element Encoders/Decoders */
 int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);
@@ -276,16 +301,25 @@ int MqttEncode_String(byte *buf, const char *str);
 int MqttEncode_Data(byte *buf, const byte *data, word16 data_len);
 
 /* Packet Encoders/Decoders */
-int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect);
-int MqttDecode_ConenctAck(byte *rx_buf, int rx_buf_len, MqttConnectAck *connect_ack);
-int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish);
-int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish);
-int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type, MqttPublishResp *publish_resp);
-int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type, MqttPublishResp *publish_resp);
+int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,
+    MqttConnect *connect);
+int MqttDecode_ConenctAck(byte *rx_buf, int rx_buf_len,
+    MqttConnectAck *connect_ack);
+int MqttEncode_Publish(byte *tx_buf, int tx_buf_len,
+    MqttPublish *publish);
+int MqttDecode_Publish(byte *rx_buf, int rx_buf_len,
+    MqttPublish *publish);
+int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
+    MqttPublishResp *publish_resp);
+int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
+    MqttPublishResp *publish_resp);
 int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len, MqttSubscribe *subscribe);
-int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len, MqttSubscribeAck *subscribe_ack);
-int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len, MqttUnsubscribe *unsubscribe);
-int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len, MqttUnsubscribeAck *unsubscribe_ack);
+int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
+    MqttSubscribeAck *subscribe_ack);
+int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
+    MqttUnsubscribe *unsubscribe);
+int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
+    MqttUnsubscribeAck *unsubscribe_ack);
 int MqttEncode_Ping(byte *tx_buf, int tx_buf_len);
 int MqttDecode_Ping(byte *rx_buf, int rx_buf_len);
 int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);

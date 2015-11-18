@@ -60,14 +60,19 @@ static void Usage(void)
     printf("fwpush:\n");
     printf("-?          Help, print this usage\n");
     printf("-f <file>   Firmware file to send\n");
-    printf("-h <host>   Host to connect to, default %s\n", DEFAULT_MQTT_HOST);
-    printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n", MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
+    printf("-h <host>   Host to connect to, default %s\n",
+        DEFAULT_MQTT_HOST);
+    printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n",
+        MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
     printf("-t          Enable TLS\n");
     printf("-c <file>   Use provided certificate file\n");
-    printf("-q <num>    Qos Level 0-2, default %d\n", DEFAULT_MQTT_QOS);
+    printf("-q <num>    Qos Level 0-2, default %d\n",
+        DEFAULT_MQTT_QOS);
     printf("-s          Disable clean session connect flag\n");
-    printf("-k <num>    Keep alive seconds, default %d\n", DEFAULT_KEEP_ALIVE_SEC);
-    printf("-i <id>     Client Id, default %s\n", DEFAULT_CLIENT_ID);
+    printf("-k <num>    Keep alive seconds, default %d\n",
+        DEFAULT_KEEP_ALIVE_SEC);
+    printf("-i <id>     Client Id, default %s\n",
+        DEFAULT_CLIENT_ID);
     printf("-l          Enable LWT (Last Will and Testament)\n");
     printf("-u <str>    Username\n");
     printf("-w <str>    Password\n");
@@ -179,14 +184,16 @@ static int mqttclient_tls_cb(MqttClient* client)
     return rc;
 }
 
-static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_new, byte msg_done)
+static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
+    byte msg_new, byte msg_done)
 {
     (void)client; /* Supress un-used argument */
     (void)msg;
     (void)msg_new;
     (void)msg_done;
 
-    return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
+    /* Return negative to termine publish processing */
+    return MQTT_CODE_SUCCESS;
 }
 
 static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
@@ -195,7 +202,8 @@ static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
     FILE* file = NULL;
 
     /* Check arguments */
-    if (filePath == NULL || strlen(filePath) == 0 || fileLen == NULL || fileBuf == NULL) {
+    if (filePath == NULL || strlen(filePath) == 0 || fileLen == NULL ||
+        fileBuf == NULL) {
         return EXIT_FAILURE;
     }
 
@@ -299,7 +307,8 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
     }
 
     /* Display lengths */
-    printf("Firmware Message: Sig %d bytes, Key %d bytes, File %d bytes\n", sigLen, keyLen, fwLen);
+    printf("Firmware Message: Sig %d bytes, Key %d bytes, File %d bytes\n",
+        sigLen, keyLen, fwLen);
 
     /* Generate Signature */
     rc = wc_SignatureGenerate(
@@ -461,7 +470,8 @@ void* fwpush_test(void* args)
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
-    printf("MQTT Net Init: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    printf("MQTT Net Init: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     /* Initialize MqttClient structure */
     tx_buf = malloc(MAX_BUFFER_SIZE);
@@ -469,11 +479,14 @@ void* fwpush_test(void* args)
     rc = MqttClient_Init(&client, &net, mqttclient_message_cb,
         tx_buf, MAX_BUFFER_SIZE, rx_buf, MAX_BUFFER_SIZE,
         DEFAULT_CMD_TIMEOUT_MS);
-    printf("MQTT Init: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    printf("MQTT Init: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     /* Connect to broker */
-    rc = MqttClient_NetConnect(&client, host, port, DEFAULT_CON_TIMEOUT_MS, use_tls, mqttclient_tls_cb);
-    printf("MQTT Socket Connect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    rc = MqttClient_NetConnect(&client, host, port, DEFAULT_CON_TIMEOUT_MS,
+        use_tls, mqttclient_tls_cb);
+    printf("MQTT Socket Connect: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     if (rc == 0) {
         /* Define connect parameters */
@@ -482,7 +495,8 @@ void* fwpush_test(void* args)
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
-        /* Last will and testament sent by broker to subscribers of topic when broker connection is lost */
+        /* Last will and testament sent by broker to subscribers of topic when
+           broker connection is lost */
         memset(&lwt_msg, 0, sizeof(lwt_msg));
         connect.lwt_msg = &lwt_msg;
         connect.enable_lwt = enable_lwt;
@@ -499,15 +513,16 @@ void* fwpush_test(void* args)
 
         /* Send Connect and wait for Connect Ack */
         rc = MqttClient_Connect(&client, &connect);
-        printf("MQTT Connect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+        printf("MQTT Connect: %s (%d)\n",
+            MqttClient_ReturnCodeToString(rc), rc);
         if (rc == MQTT_CODE_SUCCESS) {
             MqttPublish publish;
 
             /* Validate Connect Ack info */
-            rc = connect.ack.return_code;
             printf("MQTT Connect Ack: Return Code %u, Session Present %d\n",
                 connect.ack.return_code,
-                connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT ? 1 : 0
+                (connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ?
+                    1 : 0
             );
 
             /* Publish Topic */
@@ -519,15 +534,18 @@ void* fwpush_test(void* args)
             publish.buffer = msgBuf;
             publish.total_len = msgLen;
             rc = MqttClient_Publish(&client, &publish);
-            printf("MQTT Publish: Topic %s, %s (%d)\n", publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+            printf("MQTT Publish: Topic %s, %s (%d)\n",
+                publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 
             /* Disconnect */
             rc = MqttClient_Disconnect(&client);
-            printf("MQTT Disconnect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+            printf("MQTT Disconnect: %s (%d)\n",
+                MqttClient_ReturnCodeToString(rc), rc);
         }
 
         rc = MqttClient_NetDisconnect(&client);
-        printf("MQTT Socket Disconnect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+        printf("MQTT Socket Disconnect: %s (%d)\n",
+            MqttClient_ReturnCodeToString(rc), rc);
     }
 
     /* Free resources */
@@ -537,7 +555,8 @@ void* fwpush_test(void* args)
 
     /* Cleanup network */
     rc = MqttClientNet_DeInit(&net);
-    printf("MQTT Net DeInit: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    printf("MQTT Net DeInit: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     ((func_args*)args)->return_code = rc;
 

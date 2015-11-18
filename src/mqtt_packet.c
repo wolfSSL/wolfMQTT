@@ -77,10 +77,12 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
         *p_qos = MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
     }
     if (p_retain) {
-        *p_retain = (MQTT_PACKET_FLAGS_GET(header->type_flags) & MQTT_PACKET_FLAG_RETAIN) ? 1 : 0;
+        *p_retain = (MQTT_PACKET_FLAGS_GET(header->type_flags) &
+            MQTT_PACKET_FLAG_RETAIN) ? 1 : 0;
     }
     if (p_duplicate) {
-        *p_duplicate = (MQTT_PACKET_FLAGS_GET(header->type_flags) & MQTT_PACKET_FLAG_DUPLICATE) ? 1 : 0;
+        *p_duplicate = (MQTT_PACKET_FLAGS_GET(header->type_flags) &
+            MQTT_PACKET_FLAG_DUPLICATE) ? 1 : 0;
     }
 
     return header_len;
@@ -136,7 +138,7 @@ int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len)
         if (encode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
             return MQTT_CODE_ERROR_MALFORMED_DATA;
         }
-        
+
         /* Encode length */
         tmp_len = (remain_len % MQTT_PACKET_LEN_ENCODE_MASK);
         remain_len /= MQTT_PACKET_LEN_ENCODE_MASK;
@@ -219,18 +221,23 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     }
 
     /* Determine packet length */
-    remain_len = sizeof(MqttConnectPacket); /* MQTT Version 4 header is 10 bytes */
+    /* MQTT Version 4 header is 10 bytes */
+    remain_len = sizeof(MqttConnectPacket);
     remain_len += (int)XSTRLEN(connect->client_id) + MQTT_DATA_LEN_SIZE;
     if (connect->enable_lwt) {
         /* Verify all required fields are present */
-        if (connect->lwt_msg == NULL || connect->lwt_msg->topic_name == NULL ||
-            connect->lwt_msg->buffer == NULL || connect->lwt_msg->total_len <= 0)
+        if (connect->lwt_msg == NULL ||
+            connect->lwt_msg->topic_name == NULL ||
+            connect->lwt_msg->buffer == NULL ||
+            connect->lwt_msg->total_len <= 0)
         {
             return MQTT_CODE_ERROR_BAD_ARG;
         }
 
-        remain_len += (int)XSTRLEN(connect->lwt_msg->topic_name) + MQTT_DATA_LEN_SIZE;
-        remain_len += connect->lwt_msg->total_len + MQTT_DATA_LEN_SIZE;
+        remain_len += (int)XSTRLEN(connect->lwt_msg->topic_name);
+        remain_len += MQTT_DATA_LEN_SIZE;
+        remain_len += connect->lwt_msg->total_len;
+        remain_len += MQTT_DATA_LEN_SIZE;
     }
     if (connect->username) {
         remain_len += (int)XSTRLEN(connect->username) + MQTT_DATA_LEN_SIZE;
@@ -275,8 +282,10 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     /* Encode payload */
     tx_payload += MqttEncode_String(tx_payload, connect->client_id);
     if (connect->enable_lwt) {
-        tx_payload += MqttEncode_String(tx_payload, connect->lwt_msg->topic_name);
-        tx_payload += MqttEncode_Data(tx_payload, connect->lwt_msg->buffer, connect->lwt_msg->total_len);
+        tx_payload += MqttEncode_String(tx_payload,
+            connect->lwt_msg->topic_name);
+        tx_payload += MqttEncode_Data(tx_payload,
+            connect->lwt_msg->buffer, connect->lwt_msg->total_len);
     }
     if (connect->username) {
         tx_payload += MqttEncode_String(tx_payload, connect->username);
@@ -340,8 +349,9 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
     }
 
     /* Encode fixed header */
-    header_len = MqttEncode_FixedHeader(tx_buf, tx_buf_len, variable_len + payload_len,
-        MQTT_PACKET_TYPE_PUBLISH, publish->retain, publish->qos, publish->duplicate);
+    header_len = MqttEncode_FixedHeader(tx_buf, tx_buf_len,
+        variable_len + payload_len, MQTT_PACKET_TYPE_PUBLISH,
+        publish->retain, publish->qos, publish->duplicate);
     if (header_len < 0) {
         return header_len;
     }
@@ -380,15 +390,17 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     }
 
     /* Decode fixed header */
-    header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len, &remain_len,
-        MQTT_PACKET_TYPE_PUBLISH, &publish->qos, &publish->retain, &publish->duplicate);
+    header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len,
+        &remain_len, MQTT_PACKET_TYPE_PUBLISH, &publish->qos,
+        &publish->retain, &publish->duplicate);
     if (header_len < 0) {
         return header_len;
     }
     rx_payload = &rx_buf[header_len];
 
     /* Decode variable header */
-    variable_len = MqttDecode_String(rx_payload, &publish->topic_name, &publish->topic_name_len);
+    variable_len = MqttDecode_String(rx_payload, &publish->topic_name,
+        &publish->topic_name_len);
     rx_payload += variable_len;
 
     /* If QoS > 0 then get packet Id */
@@ -515,7 +527,8 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len, MqttSubscribe *subscribe)
     return header_len + remain_len;
 }
 
-int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len, MqttSubscribeAck *subscribe_ack)
+int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
+    MqttSubscribeAck *subscribe_ack)
 {
     int header_len, remain_len;
     byte *rx_payload;
@@ -543,7 +556,8 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len, MqttSubscribeAck *subs
     return header_len + remain_len;
 }
 
-int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len, MqttUnsubscribe *unsubscribe)
+int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
+    MqttUnsubscribe *unsubscribe)
 {
     int header_len, remain_len, i;
     byte *tx_payload;
@@ -582,7 +596,8 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len, MqttUnsubscribe *unsubs
     return header_len + remain_len;
 }
 
-int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len, MqttUnsubscribeAck *unsubscribe_ack)
+int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
+    MqttUnsubscribeAck *unsubscribe_ack)
 {
     int header_len, remain_len;
     byte *rx_payload;
@@ -678,7 +693,8 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 }
 
 /* Read return code is length when > 0 */
-int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeout_ms)
+int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
+    int timeout_ms)
 {
     int rc, len, header_len = 2, remain_len = 0;
     MqttPacket* header = (MqttPacket*)rx_buf;
@@ -695,7 +711,8 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeou
         if (rc < 0) { /* Indicates error */
             return rc;
         }
-        else if (rc > 0) { /* Indicates decode success and rc is len of header */
+        /* Indicates decode success and rc is len of header */
+        else if (rc > 0) {
             header_len = rc;
             break;
         }
@@ -716,7 +733,8 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len, int timeou
 
     /* Read remaining */
     if (remain_len > 0) {
-        rc = MqttSocket_Read(client, &rx_buf[header_len], remain_len, timeout_ms);
+        rc = MqttSocket_Read(client, &rx_buf[header_len], remain_len,
+            timeout_ms);
         if (rc != remain_len) {
             return rc;
         }

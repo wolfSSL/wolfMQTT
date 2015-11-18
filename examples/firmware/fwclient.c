@@ -63,15 +63,21 @@ static void Usage(void)
 {
     printf("fwclient:\n");
     printf("-?          Help, print this usage\n");
-    printf("-f <file>   Save firmware file as, default %s\n", DEFAULT_SAVE_AS);
-    printf("-h <host>   Host to connect to, default %s\n", DEFAULT_MQTT_HOST);
-    printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n", MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
+    printf("-f <file>   Save firmware file as, default %s\n",
+        DEFAULT_SAVE_AS);
+    printf("-h <host>   Host to connect to, default %s\n",
+        DEFAULT_MQTT_HOST);
+    printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n",
+        MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
     printf("-t          Enable TLS\n");
     printf("-c <file>   Use provided certificate file\n");
-    printf("-q <num>    Qos Level 0-2, default %d\n", DEFAULT_MQTT_QOS);
+    printf("-q <num>    Qos Level 0-2, default %d\n",
+        DEFAULT_MQTT_QOS);
     printf("-s          Disable clean session connect flag\n");
-    printf("-k <num>    Keep alive seconds, default %d\n", DEFAULT_KEEP_ALIVE_SEC);
-    printf("-i <id>     Client Id, default %s\n", DEFAULT_CLIENT_ID);
+    printf("-k <num>    Keep alive seconds, default %d\n",
+        DEFAULT_KEEP_ALIVE_SEC);
+    printf("-i <id>     Client Id, default %s\n",
+        DEFAULT_CLIENT_ID);
     printf("-l          Enable LWT (Last Will and Testament)\n");
     printf("-u <str>    Username\n");
     printf("-w <str>    Password\n");
@@ -189,7 +195,8 @@ static int fwfile_save(const char* filePath, byte* fileBuf, int fileLen)
     FILE* file = NULL;
 
     /* Check arguments */
-    if (filePath == NULL || strlen(filePath) == 0 || fileLen == 0 || fileBuf == NULL) {
+    if (filePath == NULL || strlen(filePath) == 0 || fileLen == 0 ||
+        fileBuf == NULL) {
         return EXIT_FAILURE;
     }
 
@@ -224,18 +231,21 @@ static int fw_message_process(byte* buffer, word32 len)
     FirmwareHeader* header = (FirmwareHeader*)buffer;
     byte *sigBuf, *pubKeyBuf, *fwBuf;
     ecc_key eccKey;
-    word32 check_len = sizeof(FirmwareHeader) + header->sigLen + header->pubKeyLen + header->fwLen;
+    word32 check_len = sizeof(FirmwareHeader) + header->sigLen +
+        header->pubKeyLen + header->fwLen;
 
-    /* Verify entire message was recevied */
+    /* Verify entire message was received */
     if (len != check_len) {
-        printf("Message header vs. actual size mismatch! %d != %d\n", len, check_len);
+        printf("Message header vs. actual size mismatch! %d != %d\n",
+            len, check_len);
         return EXIT_FAILURE;
     }
 
     /* Get pointers to structure elements */
     sigBuf = (buffer + sizeof(FirmwareHeader));
     pubKeyBuf = (buffer + sizeof(FirmwareHeader) + header->sigLen);
-    fwBuf = (buffer + sizeof(FirmwareHeader) + header->sigLen + header->pubKeyLen);
+    fwBuf = (buffer + sizeof(FirmwareHeader) + header->sigLen +
+        header->pubKeyLen);
 
     /* Import the public key */
     wc_ecc_init(&eccKey);
@@ -247,7 +257,8 @@ static int fw_message_process(byte* buffer, word32 len)
             fwBuf, header->fwLen,
             sigBuf, header->sigLen,
             &eccKey, sizeof(eccKey));
-        printf("Firmware Signature Verification: %s (%d)\n", (rc == 0) ? "Pass" : "Fail", rc);
+        printf("Firmware Signature Verification: %s (%d)\n",
+            (rc == 0) ? "Pass" : "Fail", rc);
 
         if (rc == 0) {
             /* TODO: Process firmware image */
@@ -263,23 +274,29 @@ static int fw_message_process(byte* buffer, word32 len)
     return rc;
 }
 
-static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_new, byte msg_done)
+static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
+    byte msg_new, byte msg_done)
 {
     (void)client; /* Supress un-used argument */
 
     /* Verify this message is for the firmware topic */
-    if (msg_new && memcmp(msg->topic_name, FIRMWARE_TOPIC_NAME, msg->topic_name_len) == 0 && !mFwBuf) {
-
+    if (msg_new &&
+        memcmp(msg->topic_name, FIRMWARE_TOPIC_NAME,
+            msg->topic_name_len) == 0 &&
+        !mFwBuf)
+    {
         /* Allocate buffer for entire message */
-        /* Note: On an embedded system this could just be a write to flash */
-        /*       If writting to flash change FIRMWARE_MAX_BUFFER to match block size */
+        /* Note: On an embedded system this could just be a write to flash.
+                 If writting to flash change FIRMWARE_MAX_BUFFER to match
+                 block size */
         mFwBuf = malloc(msg->total_len);
         if (mFwBuf == NULL) {
             return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
 
         /* Print incoming message */
-        printf("MQTT Firmware Message: Qos %d, Len %u\n", msg->qos, msg->total_len);
+        printf("MQTT Firmware Message: Qos %d, Len %u\n",
+            msg->qos, msg->total_len);
     }
 
     if (mFwBuf) {
@@ -295,7 +312,8 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg, byte msg_
         }
     }
 
-    return MQTT_CODE_SUCCESS; /* Return negative to termine publish processing */
+    /* Return negative to termine publish processing */
+    return MQTT_CODE_SUCCESS;
 }
 
 void* fwclient_test(void* args)
@@ -395,7 +413,8 @@ void* fwclient_test(void* args)
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
-    printf("MQTT Net Init: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    printf("MQTT Net Init: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     /* Initialize MqttClient structure */
     tx_buf = malloc(MAX_BUFFER_SIZE);
@@ -403,11 +422,14 @@ void* fwclient_test(void* args)
     rc = MqttClient_Init(&client, &net, mqttclient_message_cb,
         tx_buf, MAX_BUFFER_SIZE, rx_buf, MAX_BUFFER_SIZE,
         DEFAULT_CMD_TIMEOUT_MS);
-    printf("MQTT Init: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    printf("MQTT Init: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     /* Connect to broker */
-    rc = MqttClient_NetConnect(&client, host, port, DEFAULT_CON_TIMEOUT_MS, use_tls, mqttclient_tls_cb);
-    printf("MQTT Socket Connect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    rc = MqttClient_NetConnect(&client, host, port, DEFAULT_CON_TIMEOUT_MS,
+        use_tls, mqttclient_tls_cb);
+    printf("MQTT Socket Connect: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     if (rc == 0) {
         /* Define connect parameters */
@@ -416,7 +438,8 @@ void* fwclient_test(void* args)
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
-        /* Last will and testament sent by broker to subscribers of topic when broker connection is lost */
+        /* Last will and testament sent by broker to subscribers of topic
+           when broker connection is lost */
         memset(&lwt_msg, 0, sizeof(lwt_msg));
         connect.lwt_msg = &lwt_msg;
         connect.enable_lwt = enable_lwt;
@@ -433,17 +456,18 @@ void* fwclient_test(void* args)
 
         /* Send Connect and wait for Connect Ack */
         rc = MqttClient_Connect(&client, &connect);
-        printf("MQTT Connect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+        printf("MQTT Connect: %s (%d)\n",
+            MqttClient_ReturnCodeToString(rc), rc);
         if (rc == MQTT_CODE_SUCCESS) {
             MqttSubscribe subscribe;
             MqttTopic topics[1], *topic;
             int i;
 
             /* Validate Connect Ack info */
-            rc = connect.ack.return_code;
             printf("MQTT Connect Ack: Return Code %u, Session Present %d\n",
                 connect.ack.return_code,
-                connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT ? 1 : 0
+                (connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ?
+                    1 : 0
             );
 
             /* Subscribe Topic */
@@ -453,7 +477,8 @@ void* fwclient_test(void* args)
             topics[0].topic_filter = FIRMWARE_TOPIC_NAME;
             topics[0].qos = qos;
             rc = MqttClient_Subscribe(&client, &subscribe);
-            printf("MQTT Subscribe: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+            printf("MQTT Subscribe: %s (%d)\n",
+                MqttClient_ReturnCodeToString(rc), rc);
             for (i = 0; i < subscribe.topic_count; i++) {
                 topic = &subscribe.topics[i];
                 printf("  Topic %s, Qos %u, Return Code %u\n",
@@ -467,17 +492,20 @@ void* fwclient_test(void* args)
                 rc = MqttClient_WaitMessage(&client, DEFAULT_CMD_TIMEOUT_MS);
                 if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_ERROR_TIMEOUT) {
                     /* There was an error */
-                    printf("MQTT Message Wait: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+                    printf("MQTT Message Wait: %s (%d)\n",
+                        MqttClient_ReturnCodeToString(rc), rc);
                     break;
                 }
             }
 
             rc = MqttClient_Disconnect(&client);
-            printf("MQTT Disconnect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+            printf("MQTT Disconnect: %s (%d)\n",
+                MqttClient_ReturnCodeToString(rc), rc);
         }
 
         rc = MqttClient_NetDisconnect(&client);
-        printf("MQTT Socket Disconnect: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+        printf("MQTT Socket Disconnect: %s (%d)\n",
+            MqttClient_ReturnCodeToString(rc), rc);
     }
 
     /* Free resources */
@@ -486,7 +514,8 @@ void* fwclient_test(void* args)
 
     /* Cleanup network */
     rc = MqttClientNet_DeInit(&net);
-    printf("MQTT Net DeInit: %s (%d)\n", MqttClient_ReturnCodeToString(rc), rc);
+    printf("MQTT Net DeInit: %s (%d)\n",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     ((func_args*)args)->return_code = 0;
 

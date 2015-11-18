@@ -66,19 +66,19 @@ Here are the steps for creating your own implementation.
 
 ## Release Notes
 
-### v0.3
+### v0.3 (11/18/2015)
 * Fixes bug with first byte of payload being null'd if QoS level was 0.
 * Fixed issue with stdint types (uint#_t) being used.
 * Fixes for remaining length encoding/decoding for large packets.
 * Added support for large payloads using new message callback flags `msg_done` and `msg_new` along with MqttMessage `buffer_pos` and `buffer_len`.
-* Added example for secure firmware upgrade. Uses the MQTT client library to push a signed payload `fwpush` to a broker, then uses another client `fwclient` to recevie the signed payload and verify its signature using a provided public key.
+* Added example for secure firmware upgrade. Uses the MQTT client library to push a signed payload `fwpush` to a broker, then uses another client `fwclient` to receive the signed payload and verify its signature using a provided public key.
 
-### v0.2
+### v0.2 (11/06/2015)
 * Fixes to handle receival of publish and QoS messages while performing packet writes/waits.
 * Added support / tested with Windows.
 * Added Visual Studio 2015 solution and projects.
 * Added support / tested with FreeRTOS and Lwip.
 * Fixes for compiler warnings.
 
-### v0.1
+### v0.1 (10/26/15)
 * Initial release with support for MQTT v3.1.1, QoS 0-2, TLS and example client.

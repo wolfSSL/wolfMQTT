@@ -134,6 +134,9 @@ static int NetConnect(void *context, const char* host, word16 port,
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
+    
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
 
     /* Get address information for host and locate IPv4 */
     rc = getaddrinfo(host, NULL, &hints, &result);
@@ -152,7 +155,8 @@ static int NetConnect(void *context, const char* host, word16 port,
         if (result->ai_family == AF_INET) {
             address.sin_port = htons(port);
             address.sin_family = AF_INET;
-            address.sin_addr = ((struct sockaddr_in*)(result->ai_addr))->sin_addr;
+            address.sin_addr =
+                ((struct sockaddr_in*)(result->ai_addr))->sin_addr;
         }
         else {
             rc = -1;
@@ -264,8 +268,12 @@ static int NetRead(void *context, byte* buf, int buf_len,
         if (rc > 0) {
             /* Check if rx or error */
             if (FD_ISSET(sock->fd, &recvfds)) {
-                /* Try and read number of buf_len provided, minus what's already been read */
-                rc = (int)recv(sock->fd, &buf[bytes], (size_t)(buf_len - bytes), 0);
+                /* Try and read number of buf_len provided,
+                    minus what's already been read */
+                rc = (int)recv(sock->fd,
+                               &buf[bytes],
+                               (size_t)(buf_len - bytes),
+                               0);
                 if (rc <= 0) {
                     rc = -1;
                     break; /* Error */
