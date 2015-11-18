@@ -70,12 +70,10 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
                 MqttMessage msg;
                 byte msg_new = 1;
                 byte msg_done;
-                int msg_len;
 
                 /* Decode publish message */
                 rc = MqttDecode_Publish(client->rx_buf, packet_len, &msg);
                 if (rc <= 0) { return rc; }
-                msg_len = rc;
 
                 /* Handle packet callback and read remaining payload */
                 do {
@@ -92,6 +90,8 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
 
                     /* Read payload */
                     if (!msg_done) {
+                        int msg_len;
+
                         msg.buffer_pos += msg.buffer_len;
                         msg.buffer_len = 0;
 
