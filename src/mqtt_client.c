@@ -108,7 +108,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
                         msg.buffer_len = msg_len;
                     }
                     msg_new = 0;
-                } while(!msg_done);
+                } while (!msg_done);
 
                 /* Handle Qos */
                 if (msg_qos > MQTT_QOS_0) {
@@ -451,7 +451,8 @@ int MqttClient_Disconnect(MqttClient *client)
 
 int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
 {
-    return MqttClient_WaitType(client, timeout_ms, MQTT_PACKET_TYPE_MAX, 0, NULL);
+    return MqttClient_WaitType(client, timeout_ms, MQTT_PACKET_TYPE_MAX, 
+        0, NULL);
 }
 
 int MqttClient_NetConnect(MqttClient *client, const char* host,

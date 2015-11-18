@@ -43,7 +43,8 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
         header->type_flags |= MQTT_PACKET_FLAGS_SET_QOS(qos);
     }
     if (duplicate) {
-        header->type_flags |= MQTT_PACKET_FLAGS_SET(MQTT_PACKET_FLAG_DUPLICATE);
+        header->type_flags |=
+            MQTT_PACKET_FLAGS_SET(MQTT_PACKET_FLAG_DUPLICATE);
     }
 
     /* Encode the length remaining into the header */
@@ -55,8 +56,9 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     return header_len;
 }
 
-static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
-    byte type, MqttQoS *p_qos, byte *p_retain, byte *p_duplicate)
+static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len,
+    int *remain_len, byte type, MqttQoS *p_qos, byte *p_retain,
+    byte *p_duplicate)
 {
     int header_len;
     MqttPacket* header = (MqttPacket*)rx_buf;
@@ -298,7 +300,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     return header_len + remain_len;
 }
 
-int MqttDecode_ConenctAck(byte *rx_buf, int rx_buf_len, MqttConnectAck *connect_ack)
+int MqttDecode_ConenctAck(byte *rx_buf, int rx_buf_len,
+    MqttConnectAck *connect_ack)
 {
     int header_len, remain_len;
     byte *rx_payload;
@@ -417,7 +420,9 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     publish->total_len = payload_len;
 
     /* Only return the length provided in rx_buf_len */
-    if ((int)publish->buffer_len > (rx_buf_len - (header_len + variable_len))) {
+    if ((int)publish->buffer_len >
+        (rx_buf_len - (header_len + variable_len)))
+    {
         publish->buffer_len = (rx_buf_len - (header_len + variable_len));
     }
 
@@ -485,7 +490,8 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
     return header_len + remain_len;
 }
 
-int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len, MqttSubscribe *subscribe)
+int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
+    MqttSubscribe *subscribe)
 {
     int header_len, remain_len, i;
     byte *tx_payload;

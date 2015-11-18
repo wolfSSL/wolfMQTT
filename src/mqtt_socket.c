@@ -180,7 +180,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         else {
             break;
         }
-    } while(len > 0);
+    } while (len > 0);
 
     /* Check for timeout */
     if (rc == 0) {
