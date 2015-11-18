@@ -281,9 +281,8 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
     /* Wait for connect ack packet */
     rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_CONNECT_ACK, 0, &connect->ack);
-    if (rc <= 0) { return rc; }
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
@@ -309,6 +308,7 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
 
         /* Check if there is anything left to send */
         if (publish->buffer_pos >= publish->total_len) {
+            rc = MQTT_CODE_SUCCESS;
             break;
         }
 
@@ -319,7 +319,7 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
         }
         publish->buffer_len = len;
         XMEMCPY(client->tx_buf, &publish->buffer[publish->buffer_pos], len);
-    } while(publish->buffer_pos < publish->total_len);
+    } while (publish->buffer_pos < publish->total_len);
 
     /* Handle QoS */
     if (publish->qos > MQTT_QOS_0) {
@@ -330,10 +330,9 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
         /* Wait for publish response packet */
         rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
             type, publish->packet_id, NULL);
-        if (rc <= 0) { return rc; }
     }
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
@@ -359,15 +358,16 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     /* Wait for subscribe ack packet */
     rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_SUBSCRIBE_ACK, subscribe->packet_id, &subscribe_ack);
-    if (rc <= 0) { return rc; }
 
     /* Populate return codes */
-    for (i = 0; i < subscribe->topic_count; i++) {
-        topic = &subscribe->topics[i];
-        topic->return_code = subscribe_ack.return_codes[i];
+    if (rc == MQTT_CODE_SUCCESS) {
+        for (i = 0; i < subscribe->topic_count; i++) {
+            topic = &subscribe->topics[i];
+            topic->return_code = subscribe_ack.return_codes[i];
+        }
     }
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
@@ -394,9 +394,8 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK, unsubscribe->packet_id,
             &unsubscribe_ack);
-    if (rc <= 0) { return rc; }
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 int MqttClient_Ping(MqttClient *client)
@@ -420,9 +419,8 @@ int MqttClient_Ping(MqttClient *client)
     /* Wait for ping resp packet */
     rc = MqttClient_WaitType(client, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_PING_RESP, 0, NULL);
-    if (rc <= 0) { return rc; }
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 int MqttClient_Disconnect(MqttClient *client)
