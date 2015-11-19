@@ -56,3 +56,5 @@ Debug
 *.aps
 *.sdf
 *.user
+examples/firmware/fwclient
+examples/firmware/fwpush

@@ -120,12 +120,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\mqttnet.c" />
     <ClCompile Include="mqttclient.c" />
-    <ClCompile Include="mqttnet.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\mqttnet.h" />
     <ClInclude Include="mqttclient.h" />
-    <ClInclude Include="mqttnet.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\wolfmqtt.vcxproj">

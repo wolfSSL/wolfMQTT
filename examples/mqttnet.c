@@ -187,7 +187,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             connect(sock->fd, (struct sockaddr*)&address, sizeof(address));
 
             /* Wait for connect */
-            if (select(SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0)
+            if (select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0)
             {
                 socklen_t len = sizeof(so_error);
 
@@ -264,7 +264,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     while (bytes < buf_len)
     {
         /* Wait for rx data to be available */
-        rc = select(SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
+        rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
         if (rc > 0) {
             /* Check if rx or error */
             if (FD_ISSET(sock->fd, &recvfds)) {
