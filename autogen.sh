@@ -16,6 +16,16 @@ set -e
 # touch config/config.rpath
 # touch config.rpath
 
+if test ! -d build-aux; then
+  echo "Making missing build-aux directory."
+  mkdir -p build-aux
+fi
+
+if test ! -f build-aux/config.rpath; then
+  echo "Touching missing build-aux/config.rpath file."
+  touch build-aux/config.rpath
+fi
+
 
 # If this is a source checkout then call autoreconf with error as well
 if test -d .git; then
