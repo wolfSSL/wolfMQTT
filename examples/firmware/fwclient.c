@@ -25,21 +25,36 @@
 #endif
 
 #include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-#include <wolfssl/wolfcrypt/ecc.h>
-#include <wolfssl/wolfcrypt/signature.h>
-#include <wolfssl/wolfcrypt/hash.h>
-
-#include <wolfmqtt/mqtt_client.h>
-
-#include "examples/mqttclient/mqttclient.h"
-#include "examples/mqttnet.h"
-#include "examples/firmware/fwclient.h"
-#include "examples/firmware/firmware.h"
+#include <wolfssl/version.h>
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+typedef struct func_args {
+    int    argc;
+    char** argv;
+    int    return_code;
+} func_args;
+
+
+/* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001
+#undef ENABLE_FIRMWARE_EXAMPLE
+#define ENABLE_FIRMWARE_EXAMPLE
+#endif
+
+#if defined(ENABLE_FIRMWARE_EXAMPLE)
+
+#include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/ecc.h>
+#include <wolfssl/wolfcrypt/signature.h>
+#include <wolfssl/wolfcrypt/hash.h>
+#include <wolfmqtt/mqtt_client.h>
+
+#include "examples/mqttnet.h"
+#include "examples/firmware/fwclient.h"
+#include "examples/firmware/firmware.h"
 
 /* Configuration */
 #define DEFAULT_MQTT_HOST       "iot.eclipse.org"
@@ -85,12 +100,6 @@ static void Usage(void)
 
 
 /* Argument Parsing */
-typedef struct func_args {
-    int    argc;
-    char** argv;
-    int    return_code;
-} func_args;
-
 #define MY_EX_USAGE 2 /* Exit reason code */
 
 static int myoptind = 0;
@@ -522,6 +531,7 @@ void* fwclient_test(void* args)
     return 0;
 }
 
+#endif /* ENABLE_FIRMWARE_EXAMPLE */
 
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
@@ -540,7 +550,9 @@ void* fwclient_test(void* args)
         static void sig_handler(int signo)
         {
             if (signo == SIGINT) {
+#if defined(ENABLE_FIRMWARE_EXAMPLE)
                 mStopRead = 1;
+#endif
                 printf("Received SIGINT\n");
             }
         }
@@ -563,7 +575,9 @@ void* fwclient_test(void* args)
         }
 #endif
 
+#if defined(ENABLE_FIRMWARE_EXAMPLE)
         fwclient_test(&args);
+#endif
 
         return args.return_code;
     }
