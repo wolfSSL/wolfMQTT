@@ -610,8 +610,8 @@ void* fwpush_test(void* args)
         args.argv = argv;
 
 #ifdef USE_WINDOWS_API
-        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE)) {
-            printf("Error setting Ctrl Handler!\n");
+        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
+            printf("Error setting Ctrl Handler! Error %d\n", GetLastError());
         }
 #elif HAVE_SIGNAL
         if (signal(SIGINT, sig_handler) == SIG_ERR) {
