@@ -35,7 +35,9 @@
 #include "wolfmqtt/mqtt_socket.h"
 
 
+/* Size of a data length elements in protocol */
 #define MQTT_DATA_LEN_SIZE   2
+
 
 /* QoS */
 typedef enum _MqttQoS {
@@ -45,13 +47,14 @@ typedef enum _MqttQoS {
     MQTT_QOS_3 = 3, /* Reserved - must not be used */
 } MqttQoS;
 
+
 /* Generic Message */
 typedef struct _MqttMessage {
     word16      packet_id;
     MqttQoS     qos;
     byte        retain;
     byte        duplicate;
-    const char *topic_name;
+    const char *topic_name;   /* Pointer is valid only when msg_new set in callback */
     word16      topic_name_len;
     word32      total_len;    /* Payload total length */
     byte       *buffer;       /* Payload buffer */
@@ -61,6 +64,7 @@ typedef struct _MqttMessage {
     word32      buffer_pos;   /* Buffer position */
 } MqttMessage;
 
+
 /* Topic */
 typedef struct _MqttTopic {
     const char* topic_filter;
@@ -69,6 +73,24 @@ typedef struct _MqttTopic {
     MqttQoS     qos; /* Bits 0-1 = MqttQoS */
     byte        return_code; /* MqttSubscribeAckReturnCodes */
 } MqttTopic;
+
+/* Topic naming */
+/* Be specific, use readable characters only.
+ * Use forward slashes to denote levels.
+ * Do not start name with forward slash (/) or $ (reserved for broker)
+ * Example: "main/sub/detail/unique" */
+
+/* The forward slash is used to define levels of topic matching */
+#define TOPIC_LEVEL_SEPERATOR   '/'
+
+/* These are available for Topic Filters on Subscribe only */
+/* The plus is used to match on a single level */
+/* Example: "user/home/+/light" */
+#define TOPIC_LEVEL_SINGLE      '+'
+
+/* The hash is used to match on a multiple levels */
+/* Example: "user/home/#" */
+#define TOPIC_LEVEL_MULTI       '#'
 
 
 /* PACKET HEADER */

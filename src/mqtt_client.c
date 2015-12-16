@@ -84,6 +84,11 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
 
                     /* Issue callback for new message */
                     if (client->msg_cb) {
+                        if (!msg_new) {
+                            /* Reset topic name since valid on new message only */
+                            msg.topic_name = NULL;
+                            msg.topic_name_len = 0;
+                        }
                         rc = client->msg_cb(client, &msg, msg_new, msg_done);
                         if (rc != MQTT_CODE_SUCCESS) { return rc; };
                     }
