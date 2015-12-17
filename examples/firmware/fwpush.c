@@ -58,7 +58,6 @@ typedef struct func_args {
 
 
 /* Configuration */
-#define DEFAULT_MQTT_HOST       "iot.eclipse.org"
 #define DEFAULT_CMD_TIMEOUT_MS  1000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_2
@@ -90,9 +89,9 @@ static void Usage(void)
         DEFAULT_KEEP_ALIVE_SEC);
     printf("-i <id>     Client Id, default %s\n",
         DEFAULT_CLIENT_ID);
-    printf("-l          Enable LWT (Last Will and Testament)\n");
     printf("-u <str>    Username\n");
     printf("-w <str>    Password\n");
+    printf("-r          Set Retain flag on firmware publish message\n");
 }
 
 
@@ -181,17 +180,43 @@ static word16 mqttclient_get_packetid(void)
     return (word16)mPacketIdLast;
 }
 
+static int mqttclient_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
+{
+    char buffer[WOLFSSL_MAX_ERROR_SZ];
+
+    printf("MQTT TLS Verify Callback: PreVerify %d, Error %d (%s)\n", preverify, 
+        store->error, wolfSSL_ERR_error_string(store->error, buffer));
+    printf("  Subject's domain name is %s\n", store->domain);
+
+    /* Allowing to continue */
+    /* Should check certificate and return 0 if not okay */
+    printf("  Allowing cert anyways\n");
+
+    return 1;
+}
+
+/* Use this callback to setup TLS certificates and verify callbacks */
 static int mqttclient_tls_cb(MqttClient* client)
 {
-    int rc = SSL_SUCCESS;
+    int rc = SSL_FAILURE;
     (void)client; /* Supress un-used argument */
 
-    printf("MQTT TLS Setup\n");
+    wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqttclient_tls_verify_cb);
+
     if (mTlsFile) {
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
-        //rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
+        /* Load CA certificate file */
+        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
+#else
+        rc = SSL_SUCCESS;
 #endif
     }
+    else {
+        rc = SSL_SUCCESS;
+    }
+
+    printf("MQTT TLS Setup (%d)\n", rc);
+
     return rc;
 }
 
@@ -377,19 +402,18 @@ exit:
 void* fwpush_test(void* args)
 {
     int rc;
-    char ch;
+    MqttClient client;
+    MqttNet net;
     word16 port = 0;
     const char* host = DEFAULT_MQTT_HOST;
-    MqttClient client;
     int use_tls = 0;
     byte qos = DEFAULT_MQTT_QOS;
     byte clean_session = 1;
+    byte retain = 0;
     word16 keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
     const char* client_id = DEFAULT_CLIENT_ID;
-    int enable_lwt = 0;
     const char* username = NULL;
     const char* password = NULL;
-    MqttNet net;
     byte *tx_buf = NULL, *rx_buf = NULL;
     byte *msgBuf = NULL;
     int msgLen = 0;
@@ -400,9 +424,8 @@ void* fwpush_test(void* args)
 
     ((func_args*)args)->return_code = -1; /* error state */
 
-    while ((rc = mygetopt(argc, argv, "?f:h:p:tc:q:sk:i:lu:w:")) != -1) {
-        ch = (char)rc;
-        switch (ch) {
+    while ((rc = mygetopt(argc, argv, "?f:h:p:tc:q:sk:i:u:w:r")) != -1) {
+        switch ((char)rc) {
             case '?' :
                 Usage();
                 exit(EXIT_SUCCESS);
@@ -449,16 +472,16 @@ void* fwpush_test(void* args)
                 client_id = myoptarg;
                 break;
 
-            case 'l':
-                enable_lwt = 1;
-                break;
-
             case 'u':
                 username = myoptarg;
                 break;
 
             case 'w':
                 password = myoptarg;
+                break;
+                
+            case 'r':
+                retain = 1;
                 break;
 
             default:
@@ -470,7 +493,7 @@ void* fwpush_test(void* args)
     myoptind = 0; /* reset for test cases */
 
     /* Start example MQTT Client */
-    printf("MQTT Firmware Push Client\n");
+    printf("MQTT Firmware Push Client: QoS %d\n", qos);
 
     /* Load firmware, sign firmware and create message */
     rc = fw_message_build(fwFile, &msgBuf, &msgLen);
@@ -502,22 +525,11 @@ void* fwpush_test(void* args)
     if (rc == 0) {
         /* Define connect parameters */
         MqttConnect connect;
-        MqttMessage lwt_msg;
+        memset(&connect, 0, sizeof(MqttConnect));
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
-        /* Last will and testament sent by broker to subscribers of topic when
-           broker connection is lost */
-        memset(&lwt_msg, 0, sizeof(lwt_msg));
-        connect.lwt_msg = &lwt_msg;
-        connect.enable_lwt = enable_lwt;
-        if (enable_lwt) {
-            lwt_msg.qos = qos;
-            lwt_msg.retain = 0;
-            lwt_msg.topic_name = "lwttopic";
-            lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
-            lwt_msg.total_len = (word16)strlen(DEFAULT_CLIENT_ID);
-        }
+
         /* Optional authentication */
         connect.username = username;
         connect.password = password;
@@ -537,7 +549,8 @@ void* fwpush_test(void* args)
             );
 
             /* Publish Topic */
-            publish.retain = 0;
+            memset(&publish, 0, sizeof(MqttPublish));
+            publish.retain = retain;
             publish.qos = qos;
             publish.duplicate = 0;
             publish.topic_name = FIRMWARE_TOPIC_NAME;

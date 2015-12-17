@@ -27,6 +27,10 @@
 #endif
 
 
+/* Default MQTT host broker to use, when none is specified in the examples */
+#define DEFAULT_MQTT_HOST       "iot.eclipse.org" /* broker.hivemq.com */
+
+
 /* Functions used to handle the MqttNet structure creation / destruction */
 int MqttClientNet_Init(MqttNet* net);
 int MqttClientNet_DeInit(MqttNet* net);

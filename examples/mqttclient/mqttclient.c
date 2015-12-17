@@ -34,15 +34,15 @@
 #include <stdio.h>
 
 /* Configuration */
-#define DEFAULT_MQTT_HOST       "iot.eclipse.org"
 #define DEFAULT_CMD_TIMEOUT_MS  1000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0
 #define DEFAULT_KEEP_ALIVE_SEC  60
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
+#define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
 
 #define MAX_BUFFER_SIZE         1024
-#define TEST_MESSAGE            "test" /* NULL */
+#define TEST_MESSAGE            "test"
 #define TEST_TOPIC_COUNT        2
 
 /* Globals */
@@ -165,18 +165,43 @@ static word16 mqttclient_get_packetid(void)
     return (word16)mPacketIdLast;
 }
 
+static int mqttclient_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
+{
+    char buffer[WOLFSSL_MAX_ERROR_SZ];
+
+    printf("MQTT TLS Verify Callback: PreVerify %d, Error %d (%s)\n", preverify, 
+        store->error, wolfSSL_ERR_error_string(store->error, buffer));
+    printf("  Subject's domain name is %s\n", store->domain);
+
+    /* Allowing to continue */
+    /* Should check certificate and return 0 if not okay */
+    printf("  Allowing cert anyways\n");
+
+    return 1;
+}
+
+/* Use this callback to setup TLS certificates and verify callbacks */
 static int mqttclient_tls_cb(MqttClient* client)
 {
-    int rc = SSL_SUCCESS;
+    int rc = SSL_FAILURE;
     (void)client; /* Supress un-used argument */
 
-    printf("MQTT TLS Setup\n");
+    wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqttclient_tls_verify_cb);
+
     if (mTlsFile) {
 #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
-        //rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx,
-        //    mTlsFile, 0);
+        /* Load CA certificate file */
+        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
+#else
+        rc = SSL_SUCCESS;
 #endif
     }
+    else {
+        rc = SSL_SUCCESS;
+    }
+
+    printf("MQTT TLS Setup (%d)\n", rc);
+
     return rc;
 }
 
@@ -224,10 +249,10 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
 void* mqttclient_test(void* args)
 {
     int rc;
-    char ch;
+    MqttClient client;
+    MqttNet net;
     word16 port = 0;
     const char* host = DEFAULT_MQTT_HOST;
-    MqttClient client;
     int use_tls = 0;
     byte qos = DEFAULT_MQTT_QOS;
     byte clean_session = 1;
@@ -236,7 +261,6 @@ void* mqttclient_test(void* args)
     int enable_lwt = 0;
     const char* username = NULL;
     const char* password = NULL;
-    MqttNet net;
     byte *tx_buf = NULL, *rx_buf = NULL;
 
     int     argc = ((func_args*)args)->argc;
@@ -245,14 +269,13 @@ void* mqttclient_test(void* args)
     ((func_args*)args)->return_code = -1; /* error state */
 
     while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:")) != -1) {
-        ch = (char)rc;
-        switch (ch) {
+        switch ((char)rc) {
             case '?' :
                 Usage();
                 exit(EXIT_SUCCESS);
 
             case 'h' :
-                host   = myoptarg;
+                host = myoptarg;
                 break;
 
             case 'p' :
@@ -310,7 +333,7 @@ void* mqttclient_test(void* args)
     myoptind = 0; /* reset for test cases */
 
     /* Start example MQTT Client */
-    printf("MQTT Client\n");
+    printf("MQTT Client: QoS %d\n", qos);
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
@@ -336,6 +359,7 @@ void* mqttclient_test(void* args)
         /* Define connect parameters */
         MqttConnect connect;
         MqttMessage lwt_msg;
+        memset(&connect, 0, sizeof(MqttConnect));
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
@@ -345,9 +369,10 @@ void* mqttclient_test(void* args)
         connect.lwt_msg = &lwt_msg;
         connect.enable_lwt = enable_lwt;
         if (enable_lwt) {
+            /* Send client id in LWT payload */
             lwt_msg.qos = qos;
             lwt_msg.retain = 0;
-            lwt_msg.topic_name = "lwttopic";
+            lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
             lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
             lwt_msg.total_len = (word16)strlen(DEFAULT_CLIENT_ID);
         }
@@ -367,9 +392,9 @@ void* mqttclient_test(void* args)
             int i;
 
             /* Build list of topics */
-            topics[0].topic_filter = "subtopic1";
+            topics[0].topic_filter = WOLFMQTT_TOPIC_NAME"subtopic1";
             topics[0].qos = qos;
-            topics[1].topic_filter = "subtopic2";
+            topics[1].topic_filter = WOLFMQTT_TOPIC_NAME"subtopic2";
             topics[1].qos = qos;
 
             /* Validate Connect Ack info */
@@ -385,6 +410,7 @@ void* mqttclient_test(void* args)
                 MqttClient_ReturnCodeToString(rc), rc);
 
             /* Subscribe Topic */
+            memset(&subscribe, 0, sizeof(MqttSubscribe));
             subscribe.packet_id = mqttclient_get_packetid();
             subscribe.topic_count = TEST_TOPIC_COUNT;
             subscribe.topics = topics;
@@ -398,10 +424,11 @@ void* mqttclient_test(void* args)
             }
 
             /* Publish Topic */
+            memset(&publish, 0, sizeof(MqttPublish));
             publish.retain = 0;
             publish.qos = qos;
             publish.duplicate = 0;
-            publish.topic_name = "pubtopic";
+            publish.topic_name = WOLFMQTT_TOPIC_NAME"pubtopic";
             publish.packet_id = mqttclient_get_packetid();
             publish.buffer = (byte*)TEST_MESSAGE;
             publish.total_len = (word16)strlen(TEST_MESSAGE);
@@ -423,6 +450,7 @@ void* mqttclient_test(void* args)
             }
 
             /* Unsubscribe Topics */
+            memset(&unsubscribe, 0, sizeof(MqttUnsubscribe));
             unsubscribe.packet_id = mqttclient_get_packetid();
             unsubscribe.topic_count = TEST_TOPIC_COUNT;
             unsubscribe.topics = topics;
@@ -430,6 +458,7 @@ void* mqttclient_test(void* args)
             printf("MQTT Unsubscribe: %s (%d)\n",
                 MqttClient_ReturnCodeToString(rc), rc);
 
+            /* Disconnect */
             rc = MqttClient_Disconnect(&client);
             printf("MQTT Disconnect: %s (%d)\n",
                 MqttClient_ReturnCodeToString(rc), rc);

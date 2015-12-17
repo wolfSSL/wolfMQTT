@@ -58,3 +58,5 @@ Debug
 *.user
 examples/firmware/fwclient
 examples/firmware/fwpush
+*.opensdf
+firmware.bin

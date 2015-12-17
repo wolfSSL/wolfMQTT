@@ -2,7 +2,7 @@
 #define MQTT_EXAMPLE_FIRMWARE_H
 
 
-#define FIRMWARE_TOPIC_NAME     "wolfmqttfw"
+#define FIRMWARE_TOPIC_NAME     "wolfMQTT/example/firmware"
 #define FIRMWARE_MAX_BUFFER     2048
 #define FIRMWARE_MAX_PACKET     (FIRMWARE_MAX_BUFFER + sizeof(MqttPacket) + strlen(FIRMWARE_TOPIC_NAME) + MQTT_DATA_LEN_SIZE)
 
