@@ -2,7 +2,7 @@
 # Copyright (C) 2015 wolfSSL Inc.
 # All right reserved.
 
-AC_INIT([wolfmqtt], [0.3], [http://wolfssl.com], [wolfmqtt])
+AC_INIT([wolfmqtt], [0.4], [http://wolfssl.com], [wolfmqtt])
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
