@@ -49,8 +49,12 @@
     #ifndef byte
         typedef unsigned char  byte;
     #endif
-    typedef unsigned short word16;
-    typedef unsigned int   word32;
+    #ifndef word16
+        typedef unsigned short word16;
+    #endif
+    #ifndef word32
+        typedef unsigned int   word32;
+    #endif
 #endif
 
 /* Response Codes */
@@ -71,13 +75,31 @@ enum MqttPacketResponseCodes {
 #ifndef WOLFMQTT_CUSTOM_STRING
     #include <string.h>
     #ifndef XSTRLEN
-        #define XSTRLEN(s1)       strlen((s1))
+        #define XSTRLEN(s1)         strlen((s1))
+    #endif
+    #ifndef XSTRCHR
+        #define XSTRCHR(s,c)        strchr((s),(c))
+    #endif
+    #ifndef XSTRCMP
+        #define XSTRCMP(s1,s2)      strcmp((s1),(s2))
     #endif
     #ifndef XMEMCPY
-        #define XMEMCPY(d,s,l)    memcpy((d),(s),(l))
+        #define XMEMCPY(d,s,l)      memcpy((d),(s),(l))
     #endif
     #ifndef XMEMSET
-        #define XMEMSET(b,c,l)    memset((b),(c),(l))
+        #define XMEMSET(b,c,l)      memset((b),(c),(l))
+    #endif
+    #ifndef XATOI
+        #define XATOI(s)            atoi((s))
+    #endif
+#endif
+
+#ifndef WOLFMQTT_CUSTOM_MALLOC
+    #ifndef WOLFMQTT_MALLOC
+        #define WOLFMQTT_MALLOC(s)  malloc((s))
+    #endif
+    #ifndef WOLFMQTT_FREE
+        #define WOLFMQTT_FREE(p)    {void* xp = (p); if((xp)) free((xp));}
     #endif
 #endif
 

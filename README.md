@@ -75,6 +75,8 @@ Here are the steps for creating your own implementation.
 * Fixed possible ./autogen.sh error with missing "config.rpath".
 * Fixed Windows issue with SetConsoleCtrlHandler incorrectly reporting error.
 * Fixed issue with Visual Studio 2015 wolfssl.lib reference.
+* Fixed build errors with G++ (./configure CC=g++).
+* Fixed "FirmwareHeader" to use WOLFMQTT_PACK macro. 
 * Added helper macro's and comments for topic names/filters.
 * Added TLS certification verification reference implementation to examples.
 * Updated the topic names in examples to use "wolfMQTT/example/".
@@ -82,6 +84,8 @@ Here are the steps for creating your own implementation.
 * Added memset to initialize some of the example stack variables.
 * Removed the LWT from the firmware examples.
 * Added retain flag "-r" option on the "fwpush" example.
+* Updated the examples to use macros for all memory and string functions, so they are more portable.
+* Added Visual Studio projects for "fwpush" and "fwclient".
 
 ### v0.3 (11/18/2015)
 * Fixes bug with first byte of payload being null'd if QoS level was 0.

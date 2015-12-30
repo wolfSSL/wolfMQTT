@@ -19,7 +19,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
-#pragma once
+#ifndef WOLFMQTT_MQTTCLIENT_H
+#define WOLFMQTT_MQTTCLIENT_H
 
 /* Exposed functions */
 void* mqttclient_test(void* args);
+
+#endif /* WOLFMQTT_MQTTCLIENT_H */

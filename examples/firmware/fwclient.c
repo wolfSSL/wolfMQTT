@@ -39,9 +39,10 @@ typedef struct func_args {
 
 
 /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
-#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001
-#undef ENABLE_FIRMWARE_EXAMPLE
-#define ENABLE_FIRMWARE_EXAMPLE
+#if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
+	    && defined(HAVE_ECC)
+    #undef ENABLE_FIRMWARE_EXAMPLE
+    #define ENABLE_FIRMWARE_EXAMPLE
 #endif
 
 #if defined(ENABLE_FIRMWARE_EXAMPLE)
@@ -126,7 +127,7 @@ static int mygetopt(int argc, char** argv, const char* optstring)
             return -1;
         }
 
-        if (strcmp(argv[myoptind], "--") == 0) {
+        if (XSTRCMP(argv[myoptind], "--") == 0) {
             myoptind++;
             myoptarg = NULL;
 
@@ -143,7 +144,7 @@ static int mygetopt(int argc, char** argv, const char* optstring)
 
     c  = *next++;
     /* The C++ strchr can return a different value */
-    cp = (char*)strchr(optstring, c);
+    cp = (char*)XSTRCHR(optstring, c);
 
     if (cp == NULL || c == ':')
         return '?';
@@ -228,7 +229,7 @@ static int fwfile_save(const char* filePath, byte* fileBuf, int fileLen)
     FILE* file = NULL;
 
     /* Check arguments */
-    if (filePath == NULL || strlen(filePath) == 0 || fileLen == 0 ||
+    if (filePath == NULL || XSTRLEN(filePath) == 0 || fileLen == 0 ||
         fileBuf == NULL) {
         return EXIT_FAILURE;
     }
@@ -322,7 +323,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
         /* Note: On an embedded system this could just be a write to flash.
                  If writting to flash change FIRMWARE_MAX_BUFFER to match
                  block size */
-        mFwBuf = malloc(msg->total_len);
+        mFwBuf = (byte*)WOLFMQTT_MALLOC(msg->total_len);
         if (mFwBuf == NULL) {
             return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
@@ -333,14 +334,14 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
     }
 
     if (mFwBuf) {
-        memcpy(&mFwBuf[msg->buffer_pos], msg->buffer, msg->buffer_len);
+        XMEMCPY(&mFwBuf[msg->buffer_pos], msg->buffer, msg->buffer_len);
 
         /* Process message if done */
         if (msg_done) {
             fw_message_process(mFwBuf, msg->total_len);
 
             /* Free */
-            free(mFwBuf);
+            WOLFMQTT_FREE(mFwBuf);
             mFwBuf = NULL;
         }
     }
@@ -357,7 +358,7 @@ void* fwclient_test(void* args)
     word16 port = 0;
     const char* host = DEFAULT_MQTT_HOST;
     int use_tls = 0;
-    byte qos = DEFAULT_MQTT_QOS;
+    MqttQoS qos = DEFAULT_MQTT_QOS;
     byte clean_session = 1;
     word16 keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
     const char* client_id = DEFAULT_CLIENT_ID;
@@ -400,7 +401,7 @@ void* fwclient_test(void* args)
                 break;
 
             case 'q' :
-                qos = (byte)atoi(myoptarg);
+                qos = (MqttQoS)((byte)XATOI(myoptarg));
                 if (qos > MQTT_QOS_2) {
                     err_sys("Invalid QoS value!");
                 }
@@ -411,7 +412,7 @@ void* fwclient_test(void* args)
                 break;
 
             case 'k':
-                keep_alive_sec = atoi(myoptarg);
+                keep_alive_sec = XATOI(myoptarg);
                 break;
 
             case 'i':
@@ -443,8 +444,8 @@ void* fwclient_test(void* args)
         MqttClient_ReturnCodeToString(rc), rc);
 
     /* Initialize MqttClient structure */
-    tx_buf = malloc(MAX_BUFFER_SIZE);
-    rx_buf = malloc(MAX_BUFFER_SIZE);
+    tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
+    rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     rc = MqttClient_Init(&client, &net, mqttclient_message_cb,
         tx_buf, MAX_BUFFER_SIZE, rx_buf, MAX_BUFFER_SIZE,
         DEFAULT_CMD_TIMEOUT_MS);
@@ -460,7 +461,7 @@ void* fwclient_test(void* args)
     if (rc == 0) {
         /* Define connect parameters */
         MqttConnect connect;
-        memset(&connect, 0, sizeof(MqttConnect));
+        XMEMSET(&connect, 0, sizeof(MqttConnect));
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
@@ -486,7 +487,7 @@ void* fwclient_test(void* args)
             );
 
             /* Subscribe Topic */
-            memset(&subscribe, 0, sizeof(MqttSubscribe));
+            XMEMSET(&subscribe, 0, sizeof(MqttSubscribe));
             subscribe.packet_id = mqttclient_get_packetid();
             subscribe.topic_count = 1;
             subscribe.topics = topics;
@@ -526,8 +527,8 @@ void* fwclient_test(void* args)
     }
 
     /* Free resources */
-    if (tx_buf) free(tx_buf);
-    if (rx_buf) free(rx_buf);
+    if (tx_buf) WOLFMQTT_FREE(tx_buf);
+    if (rx_buf) WOLFMQTT_FREE(rx_buf);
 
     /* Cleanup network */
     rc = MqttClientNet_DeInit(&net);

@@ -58,7 +58,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
                 /* Decode connect ack */
                 MqttConnectAck connect_ack, *p_connect_ack = &connect_ack;
                 if (p_decode) {
-                    p_connect_ack = p_decode;
+                    p_connect_ack = (MqttConnectAck*)p_decode;
                 }
                 rc = MqttDecode_ConenctAck(client->rx_buf, packet_len,
                     p_connect_ack);
@@ -147,7 +147,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
             {
                 MqttPublishResp publish_resp, *p_publish_resp = &publish_resp;
                 if (p_decode) {
-                    p_publish_resp = p_decode;
+                    p_publish_resp = (MqttPublishResp*)p_decode;
                 }
 
                 /* Decode publish response message */
@@ -179,7 +179,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
                 MqttSubscribeAck subscribe_ack;
                 MqttSubscribeAck *p_subscribe_ack = &subscribe_ack;
                 if (p_decode) {
-                    p_subscribe_ack = p_decode;
+                    p_subscribe_ack = (MqttSubscribeAck*)p_decode;
                 }
                 rc = MqttDecode_SubscribeAck(client->rx_buf, packet_len,
                     p_subscribe_ack);
@@ -194,7 +194,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
                 MqttUnsubscribeAck *p_unsubscribe_ack = &unsubscribe_ack;
 
                 if (p_decode) {
-                    p_unsubscribe_ack = p_decode;
+                    p_unsubscribe_ack = (MqttUnsubscribeAck*)p_decode;
                 }
                 rc = MqttDecode_UnsubscribeAck(client->rx_buf, packet_len,
                     p_unsubscribe_ack);

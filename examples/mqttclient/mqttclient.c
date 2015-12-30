@@ -108,7 +108,7 @@ static int mygetopt(int argc, char** argv, const char* optstring)
             return -1;
         }
 
-        if (strcmp(argv[myoptind], "--") == 0) {
+        if (XSTRCMP(argv[myoptind], "--") == 0) {
             myoptind++;
             myoptarg = NULL;
 
@@ -125,7 +125,7 @@ static int mygetopt(int argc, char** argv, const char* optstring)
 
     c  = *next++;
     /* The C++ strchr can return a different value */
-    cp = (char*)strchr(optstring, c);
+    cp = (char*)XSTRCHR(optstring, c);
 
     if (cp == NULL || c == ':')
         return '?';
@@ -220,7 +220,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
         if (len > PRINT_BUFFER_SIZE) {
             len = PRINT_BUFFER_SIZE;
         }
-        memcpy(buf, msg->topic_name, len);
+        XMEMCPY(buf, msg->topic_name, len);
         buf[len] = '\0'; /* Make sure its null terminated */
 
         /* Print incoming message */
@@ -233,7 +233,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
     if (len > PRINT_BUFFER_SIZE) {
         len = PRINT_BUFFER_SIZE;
     }
-    memcpy(buf, msg->buffer, len);
+    XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     printf("Payload (%d - %d): %s\n",
         msg->buffer_pos, msg->buffer_pos + len, buf);
@@ -254,7 +254,7 @@ void* mqttclient_test(void* args)
     word16 port = 0;
     const char* host = DEFAULT_MQTT_HOST;
     int use_tls = 0;
-    byte qos = DEFAULT_MQTT_QOS;
+    MqttQoS qos = DEFAULT_MQTT_QOS;
     byte clean_session = 1;
     word16 keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
     const char* client_id = DEFAULT_CLIENT_ID;
@@ -279,7 +279,7 @@ void* mqttclient_test(void* args)
                 break;
 
             case 'p' :
-                port = (word16)atoi(myoptarg);
+                port = (word16)XATOI(myoptarg);
                 if (port == 0) {
                     err_sys("Invalid Port Number!");
                 }
@@ -294,7 +294,7 @@ void* mqttclient_test(void* args)
                 break;
 
             case 'q' :
-                qos = (byte)atoi(myoptarg);
+                qos = (MqttQoS)((byte)XATOI(myoptarg));
                 if (qos > MQTT_QOS_2) {
                     err_sys("Invalid QoS value!");
                 }
@@ -305,7 +305,7 @@ void* mqttclient_test(void* args)
                 break;
 
             case 'k':
-                keep_alive_sec = atoi(myoptarg);
+                keep_alive_sec = XATOI(myoptarg);
                 break;
 
             case 'i':
@@ -341,8 +341,8 @@ void* mqttclient_test(void* args)
         MqttClient_ReturnCodeToString(rc), rc);
 
     /* Initialize MqttClient structure */
-    tx_buf = malloc(MAX_BUFFER_SIZE);
-    rx_buf = malloc(MAX_BUFFER_SIZE);
+    tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
+    rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     rc = MqttClient_Init(&client, &net, mqttclient_message_cb,
         tx_buf, MAX_BUFFER_SIZE, rx_buf, MAX_BUFFER_SIZE,
         DEFAULT_CMD_TIMEOUT_MS);
@@ -359,13 +359,13 @@ void* mqttclient_test(void* args)
         /* Define connect parameters */
         MqttConnect connect;
         MqttMessage lwt_msg;
-        memset(&connect, 0, sizeof(MqttConnect));
+        XMEMSET(&connect, 0, sizeof(MqttConnect));
         connect.keep_alive_sec = keep_alive_sec;
         connect.clean_session = clean_session;
         connect.client_id = client_id;
         /* Last will and testament sent by broker to subscribers
             of topic when broker connection is lost */
-        memset(&lwt_msg, 0, sizeof(lwt_msg));
+        XMEMSET(&lwt_msg, 0, sizeof(lwt_msg));
         connect.lwt_msg = &lwt_msg;
         connect.enable_lwt = enable_lwt;
         if (enable_lwt) {
@@ -374,7 +374,7 @@ void* mqttclient_test(void* args)
             lwt_msg.retain = 0;
             lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
             lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
-            lwt_msg.total_len = (word16)strlen(DEFAULT_CLIENT_ID);
+            lwt_msg.total_len = (word16)XSTRLEN(DEFAULT_CLIENT_ID);
         }
         /* Optional authentication */
         connect.username = username;
@@ -410,7 +410,7 @@ void* mqttclient_test(void* args)
                 MqttClient_ReturnCodeToString(rc), rc);
 
             /* Subscribe Topic */
-            memset(&subscribe, 0, sizeof(MqttSubscribe));
+            XMEMSET(&subscribe, 0, sizeof(MqttSubscribe));
             subscribe.packet_id = mqttclient_get_packetid();
             subscribe.topic_count = TEST_TOPIC_COUNT;
             subscribe.topics = topics;
@@ -424,14 +424,14 @@ void* mqttclient_test(void* args)
             }
 
             /* Publish Topic */
-            memset(&publish, 0, sizeof(MqttPublish));
+            XMEMSET(&publish, 0, sizeof(MqttPublish));
             publish.retain = 0;
             publish.qos = qos;
             publish.duplicate = 0;
             publish.topic_name = WOLFMQTT_TOPIC_NAME"pubtopic";
             publish.packet_id = mqttclient_get_packetid();
             publish.buffer = (byte*)TEST_MESSAGE;
-            publish.total_len = (word16)strlen(TEST_MESSAGE);
+            publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
             rc = MqttClient_Publish(&client, &publish);
             printf("MQTT Publish: Topic %s, %s (%d)\n",
                 publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
@@ -450,7 +450,7 @@ void* mqttclient_test(void* args)
             }
 
             /* Unsubscribe Topics */
-            memset(&unsubscribe, 0, sizeof(MqttUnsubscribe));
+            XMEMSET(&unsubscribe, 0, sizeof(MqttUnsubscribe));
             unsubscribe.packet_id = mqttclient_get_packetid();
             unsubscribe.topic_count = TEST_TOPIC_COUNT;
             unsubscribe.topics = topics;
@@ -470,8 +470,8 @@ void* mqttclient_test(void* args)
     }
 
     /* Free resources */
-    if (tx_buf) free(tx_buf);
-    if (rx_buf) free(rx_buf);
+    if (tx_buf) WOLFMQTT_FREE(tx_buf);
+    if (rx_buf) WOLFMQTT_FREE(rx_buf);
 
     /* Cleanup network */
     rc = MqttClientNet_DeInit(&net);

@@ -39,7 +39,7 @@ static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     void *ptr)
 {
     int rc;
-    MqttClient *client = ptr;
+    MqttClient *client = (MqttClient*)ptr;
     (void)ssl; /* Not used */
     rc = client->net->read(client->net->context, (byte*)buf, sz,
         client->cmd_timeout_ms);
@@ -56,7 +56,7 @@ static int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     void *ptr)
 {
     int rc;
-    MqttClient *client = ptr;
+    MqttClient *client = (MqttClient*)ptr;
     (void)ssl; /* Not used */
     rc = client->net->write(client->net->context, (byte*)buf, sz,
         client->cmd_timeout_ms);

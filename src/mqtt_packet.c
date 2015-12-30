@@ -76,7 +76,7 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len,
 
     /* Extract header flags */
     if (p_qos) {
-        *p_qos = MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
+        *p_qos = (MqttQoS)MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
     }
     if (p_retain) {
         *p_retain = (MQTT_PACKET_FLAGS_GET(header->type_flags) &

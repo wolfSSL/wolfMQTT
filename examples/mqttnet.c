@@ -122,7 +122,7 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
-    SocketContext *sock = context;
+    SocketContext *sock = (SocketContext*)context;
     int type = SOCK_STREAM;
     struct sockaddr_in address;
     int rc;
@@ -130,12 +130,12 @@ static int NetConnect(void *context, const char* host, word16 port,
     struct addrinfo *result = NULL;
     struct addrinfo hints;
 
-    memset(&hints, 0, sizeof(hints));
+    XMEMSET(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
     
-    memset(&address, 0, sizeof(address));
+    XMEMSET(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
 
     /* Get address information for host and locate IPv4 */
@@ -211,7 +211,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 static int NetWrite(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
-    SocketContext *sock = context;
+    SocketContext *sock = (SocketContext*)context;
     int rc;
     SOERROR_T so_error = 0;
     struct timeval tv;
@@ -243,7 +243,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 static int NetRead(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
-    SocketContext *sock = context;
+    SocketContext *sock = (SocketContext*)context;
     int rc = -1, bytes = 0;
     SOERROR_T so_error = 0;
     fd_set recvfds, errfds;
@@ -312,7 +312,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
 static int NetDisconnect(void *context)
 {
-    SocketContext *sock = context;
+    SocketContext *sock = (SocketContext*)context;
     if (sock) {
         if (sock->fd != -1) {
 #ifdef USE_WINDOWS_API
@@ -336,12 +336,12 @@ int MqttClientNet_Init(MqttNet* net)
 #endif
 
     if (net) {
-        memset(net, 0, sizeof(MqttNet));
+        XMEMSET(net, 0, sizeof(MqttNet));
         net->connect = NetConnect;
         net->read = NetRead;
         net->write = NetWrite;
         net->disconnect = NetDisconnect;
-        net->context = malloc(sizeof(SocketContext));
+        net->context = WOLFMQTT_MALLOC(sizeof(SocketContext));
     }
     return 0;
 }
@@ -350,9 +350,9 @@ int MqttClientNet_DeInit(MqttNet* net)
 {
     if (net) {
         if (net->context) {
-            free(net->context);
+            WOLFMQTT_FREE(net->context);
         }
-        memset(net, 0, sizeof(MqttNet));
+        XMEMSET(net, 0, sizeof(MqttNet));
     }
     return 0;
 }
