@@ -622,6 +622,7 @@ void* fwpush_test(void* args)
 
         args.argc = argc;
         args.argv = argv;
+        args.return_code = 0;
 
 #ifdef USE_WINDOWS_API
         if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
