@@ -59,7 +59,7 @@ typedef struct func_args {
 
 
 /* Configuration */
-#define DEFAULT_CMD_TIMEOUT_MS  1000
+#define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_2
 #define DEFAULT_KEEP_ALIVE_SEC  60

@@ -58,7 +58,7 @@ typedef struct func_args {
 #include "examples/firmware/firmware.h"
 
 /* Configuration */
-#define DEFAULT_CMD_TIMEOUT_MS  10000
+#define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_2
 #define DEFAULT_KEEP_ALIVE_SEC  240
@@ -510,6 +510,14 @@ void* fwclient_test(void* args)
                 if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_ERROR_TIMEOUT) {
                     /* There was an error */
                     printf("MQTT Message Wait: %s (%d)\n",
+                        MqttClient_ReturnCodeToString(rc), rc);
+                    break;
+                }
+
+                /* Keep Alive */
+                rc = MqttClient_Ping(&client);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    printf("MQTT Ping Keep Alive Error: %s (%d)\n",
                         MqttClient_ReturnCodeToString(rc), rc);
                     break;
                 }

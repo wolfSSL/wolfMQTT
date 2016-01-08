@@ -34,7 +34,7 @@
 #include <stdio.h>
 
 /* Configuration */
-#define DEFAULT_CMD_TIMEOUT_MS  1000
+#define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0
 #define DEFAULT_KEEP_ALIVE_SEC  60
@@ -408,11 +408,6 @@ void* mqttclient_test(void* args)
                     1 : 0
             );
 
-            /* Send Ping */
-            rc = MqttClient_Ping(&client);
-            printf("MQTT Ping: %s (%d)\n",
-                MqttClient_ReturnCodeToString(rc), rc);
-
             /* Subscribe Topic */
             XMEMSET(&subscribe, 0, sizeof(MqttSubscribe));
             subscribe.packet_id = mqttclient_get_packetid();
@@ -448,6 +443,31 @@ void* mqttclient_test(void* args)
                 if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_ERROR_TIMEOUT) {
                     /* There was an error */
                     printf("MQTT Message Wait: %s (%d)\n",
+                        MqttClient_ReturnCodeToString(rc), rc);
+                    break;
+                }
+                
+                /* Check to see if command data (stdin) is available */
+                rc = MqttClientNet_CheckForCommand(&net, rx_buf, MAX_BUFFER_SIZE);
+                if (rc > 0) {
+                    /* Publish Topic */
+                    XMEMSET(&publish, 0, sizeof(MqttPublish));
+                    publish.retain = 0;
+                    publish.qos = qos;
+                    publish.duplicate = 0;
+                    publish.topic_name = topicName;
+                    publish.packet_id = mqttclient_get_packetid();
+                    publish.buffer = rx_buf;
+                    publish.total_len = (word16)rc;
+                    rc = MqttClient_Publish(&client, &publish);
+                    printf("MQTT Publish: Topic %s, %s (%d)\n",
+                        publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+                }
+
+                /* Keep Alive */
+                rc = MqttClient_Ping(&client);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    printf("MQTT Ping Keep Alive Error: %s (%d)\n",
                         MqttClient_ReturnCodeToString(rc), rc);
                     break;
                 }

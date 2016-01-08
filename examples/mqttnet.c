@@ -34,44 +34,47 @@
 
 /* FreeRTOS and LWIP */
 #ifdef FREERTOS
-/* Scheduler includes. */
-#include "FreeRTOS.h"
-#include "task.h"
-#include "semphr.h"
+    /* Scheduler includes. */
+    #include "FreeRTOS.h"
+    #include "task.h"
+    #include "semphr.h"
 
-/* lwIP includes. */
-#include "lwip/api.h"
-#include "lwip/tcpip.h"
-#include "lwip/memp.h"
-#include "lwip/stats.h"
-#include "lwip/sockets.h"
-#include "lwip/netdb.h"
+    /* lwIP includes. */
+    #include "lwip/api.h"
+    #include "lwip/tcpip.h"
+    #include "lwip/memp.h"
+    #include "lwip/stats.h"
+    #include "lwip/sockets.h"
+    #include "lwip/netdb.h"
 
 /* Windows */
 #elif defined(USE_WINDOWS_API)
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <stdio.h>
-#define SOCKET_T        SOCKET
-#define SOERROR_T       char
-#define SELECT_FD(fd)   (fd)
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #include <stdio.h>
+    #define SOCKET_T        SOCKET
+    #define SOERROR_T       char
+    #define SELECT_FD(fd)   (fd)
 
 /* Linux */
 #else
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/param.h>
-#include <sys/time.h>
-#include <sys/select.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <signal.h>
+    #include <sys/types.h>
+    #include <sys/socket.h>
+    #include <sys/param.h>
+    #include <sys/time.h>
+    #include <sys/select.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <unistd.h>
+    #include <errno.h>
+    #include <fcntl.h>
+    #include <signal.h>
 
+    /* Wake on stdin activity */
+    #define ENABLE_STDIN_CAPTURE
+    #define STDIN   0
 #endif
 
 #ifndef SOCKET_T
@@ -87,6 +90,9 @@
 /* Local context for Net callbacks */
 typedef struct _SocketContext {
     SOCKET_T fd;
+#ifdef ENABLE_STDIN_CAPTURE
+    int stdin_has_data;
+#endif
 } SocketContext;
 
 /* Private functions */
@@ -260,6 +266,11 @@ static int NetRead(void *context, byte* buf, int buf_len,
     FD_ZERO(&errfds);
     FD_SET(sock->fd, &errfds);
 
+#ifdef ENABLE_STDIN_CAPTURE
+    FD_SET(STDIN, &recvfds); /* STDIN */
+    sock->stdin_has_data = 0;
+#endif
+
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len)
     {
@@ -282,6 +293,13 @@ static int NetRead(void *context, byte* buf, int buf_len,
                     bytes += rc; /* Data */
                 }
             }
+#ifdef ENABLE_STDIN_CAPTURE
+            if (FD_ISSET(STDIN, &recvfds)) {
+                sock->stdin_has_data = 1;
+                rc = 0;
+                break;
+            }
+#endif
             if (FD_ISSET(sock->fd, &errfds)) {
                 rc = -1;
                 break;
@@ -355,4 +373,26 @@ int MqttClientNet_DeInit(MqttNet* net)
         XMEMSET(net, 0, sizeof(MqttNet));
     }
     return 0;
+}
+
+/* Return length of data */
+int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
+{
+    int stdin_has_data = 0;
+    if (net && net->context) {
+        SocketContext *sock = (SocketContext*)net->context;
+#ifdef ENABLE_STDIN_CAPTURE
+        stdin_has_data = sock->stdin_has_data;
+#endif
+    }
+    
+    if (stdin_has_data) {
+#ifdef ENABLE_STDIN_CAPTURE
+        stdin_has_data = 0;
+        if(fgets((char*)buffer, length, stdin) != NULL) {
+            stdin_has_data = (int)XSTRLEN((char*)buffer);
+        }
+#endif
+    }
+    return stdin_has_data;
 }
