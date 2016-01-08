@@ -40,10 +40,10 @@
 #define DEFAULT_KEEP_ALIVE_SEC  60
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
 #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
+#define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
 
 #define MAX_BUFFER_SIZE         1024
 #define TEST_MESSAGE            "test"
-#define TEST_TOPIC_COUNT        2
 
 /* Globals */
 static int mStopRead = 0;
@@ -70,6 +70,7 @@ static void Usage(void)
     printf("-l          Enable LWT (Last Will and Testament)\n");
     printf("-u <str>    Username\n");
     printf("-w <str>    Password\n");
+    printf("-n <str>    Topic name, default %s\n", DEFAULT_TOPIC_NAME);
 }
 
 
@@ -262,13 +263,14 @@ void* mqttclient_test(void* args)
     const char* username = NULL;
     const char* password = NULL;
     byte *tx_buf = NULL, *rx_buf = NULL;
+    const char* topicName = DEFAULT_TOPIC_NAME;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
 
     ((func_args*)args)->return_code = -1; /* error state */
 
-    while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:")) != -1) {
+    while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:n:")) != -1) {
         switch ((char)rc) {
             case '?' :
                 Usage();
@@ -322,6 +324,10 @@ void* mqttclient_test(void* args)
 
             case 'w':
                 password = myoptarg;
+                break;
+
+            case 'n':
+                topicName = myoptarg;
                 break;
 
             default:
@@ -387,15 +393,13 @@ void* mqttclient_test(void* args)
         if (rc == MQTT_CODE_SUCCESS) {
             MqttSubscribe subscribe;
             MqttUnsubscribe unsubscribe;
-            MqttTopic topics[TEST_TOPIC_COUNT], *topic;
+            MqttTopic topics[1], *topic;
             MqttPublish publish;
             int i;
 
             /* Build list of topics */
-            topics[0].topic_filter = WOLFMQTT_TOPIC_NAME"subtopic1";
+            topics[0].topic_filter = topicName;
             topics[0].qos = qos;
-            topics[1].topic_filter = WOLFMQTT_TOPIC_NAME"subtopic2";
-            topics[1].qos = qos;
 
             /* Validate Connect Ack info */
             printf("MQTT Connect Ack: Return Code %u, Session Present %d\n",
@@ -412,7 +416,7 @@ void* mqttclient_test(void* args)
             /* Subscribe Topic */
             XMEMSET(&subscribe, 0, sizeof(MqttSubscribe));
             subscribe.packet_id = mqttclient_get_packetid();
-            subscribe.topic_count = TEST_TOPIC_COUNT;
+            subscribe.topic_count = sizeof(topics)/sizeof(MqttTopic);
             subscribe.topics = topics;
             rc = MqttClient_Subscribe(&client, &subscribe);
             printf("MQTT Subscribe: %s (%d)\n",
@@ -428,7 +432,7 @@ void* mqttclient_test(void* args)
             publish.retain = 0;
             publish.qos = qos;
             publish.duplicate = 0;
-            publish.topic_name = WOLFMQTT_TOPIC_NAME"pubtopic";
+            publish.topic_name = topicName;
             publish.packet_id = mqttclient_get_packetid();
             publish.buffer = (byte*)TEST_MESSAGE;
             publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
@@ -452,7 +456,7 @@ void* mqttclient_test(void* args)
             /* Unsubscribe Topics */
             XMEMSET(&unsubscribe, 0, sizeof(MqttUnsubscribe));
             unsubscribe.packet_id = mqttclient_get_packetid();
-            unsubscribe.topic_count = TEST_TOPIC_COUNT;
+            unsubscribe.topic_count = sizeof(topics)/sizeof(MqttTopic);
             unsubscribe.topics = topics;
             rc = MqttClient_Unsubscribe(&client, &unsubscribe);
             printf("MQTT Unsubscribe: %s (%d)\n",
