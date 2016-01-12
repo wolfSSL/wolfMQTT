@@ -223,16 +223,24 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
     if (use_tls) {
         /* Setup the WolfSSL library */
         wolfSSL_Init();
+        
+        /* Issue callback to allow setup of the wolfSSL_CTX and cert 
+           verification settings */
+        if (cb) {
+            rc = cb(client);
+        }
 
         /* Create and initialize the WOLFSSL_CTX structure */
-        client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
-        if (client->tls.ctx) {
-            wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_NONE, 0);
-
-            rc = SSL_SUCCESS;
-            if (cb) {
-                rc = cb(client);
+        if (client->tls.ctx == NULL) {
+            /* Use defaults */
+            client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+            if (client->tls.ctx) {
+                wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_NONE, 0);
             }
+        }
+
+        if (client->tls.ctx) {
+            rc = SSL_SUCCESS;
 
             if (rc == SSL_SUCCESS) {
                 /* Seutp the async IO callbacks */

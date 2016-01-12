@@ -201,19 +201,22 @@ static int mqttclient_tls_cb(MqttClient* client)
 {
     int rc = SSL_FAILURE;
     (void)client; /* Supress un-used argument */
+    
+    client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+    if (client->tls.ctx) {
+        wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqttclient_tls_verify_cb);
 
-    wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqttclient_tls_verify_cb);
-
-    if (mTlsFile) {
-#if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
-        /* Load CA certificate file */
-        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
-#else
-        rc = SSL_SUCCESS;
-#endif
-    }
-    else {
-        rc = SSL_SUCCESS;
+        if (mTlsFile) {
+    #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
+            /* Load CA certificate file */
+            rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
+    #else
+            rc = SSL_SUCCESS;
+    #endif
+        }
+        else {
+            rc = SSL_SUCCESS;
+        }
     }
 
     printf("MQTT TLS Setup (%d)\n", rc);
