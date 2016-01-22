@@ -40,7 +40,11 @@
 #endif
 
 #ifdef _WIN32
-#define USE_WINDOWS_API
+    #define USE_WINDOWS_API
+#endif
+
+#ifndef WOLFMQTT_NO_STDIO
+    #include <stdio.h>
 #endif
 
 /* Allow custom override of data types */
