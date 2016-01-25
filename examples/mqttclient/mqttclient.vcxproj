@@ -90,7 +90,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>../../;../../../wolfssl/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../;../../;../../../wolfssl/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -130,6 +130,7 @@
     <ClCompile Include="mqttclient.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\mqttexample.h" />
     <ClInclude Include="..\mqttnet.h" />
     <ClInclude Include="mqttclient.h" />
   </ItemGroup>

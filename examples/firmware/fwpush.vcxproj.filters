@@ -32,5 +32,8 @@
     <ClInclude Include="firmware.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\mqttexample.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

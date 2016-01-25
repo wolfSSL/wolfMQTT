@@ -91,7 +91,7 @@
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
-      <AdditionalIncludeDirectories>../../;../../../wolfssl/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>../;../../;../../../wolfssl/;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_MBCS;%(PreprocessorDefinitions);_CRT_SECURE_NO_WARNINGS</PreprocessorDefinitions>
     </ClCompile>
     <Link>
@@ -132,6 +132,7 @@
     <ClCompile Include="fwclient.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="..\mqttexample.h" />
     <ClInclude Include="..\mqttnet.h" />
     <ClInclude Include="firmware.h" />
     <ClInclude Include="fwclient.h" />

@@ -23,6 +23,6 @@
 #define WOLFMQTT_MQTTCLIENT_H
 
 /* Exposed functions */
-void* mqttclient_test(void* args);
+int mqttclient_test(void* args);
 
 #endif /* WOLFMQTT_MQTTCLIENT_H */

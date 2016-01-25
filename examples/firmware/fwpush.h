@@ -23,6 +23,6 @@
 #define WOLFMQTT_FWPUSH_H
 
 /* Exposed functions */
-void* fwpush_test(void* args);
+int fwpush_test(void* args);
 
 #endif /* WOLFMQTT_FWPUSH_H */

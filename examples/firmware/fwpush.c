@@ -27,23 +27,13 @@
 #include <wolfssl/options.h>
 #include <wolfssl/version.h>
 
-#include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
-
-typedef struct func_args {
-    int    argc;
-    char** argv;
-    int    return_code;
-} func_args;
-
-
 /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
 #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
 	    && defined(HAVE_ECC)
     #undef ENABLE_FIRMWARE_EXAMPLE
     #define ENABLE_FIRMWARE_EXAMPLE
 #endif
+
 
 #if defined(ENABLE_FIRMWARE_EXAMPLE)
 
@@ -56,125 +46,50 @@ typedef struct func_args {
 #include "mqttnet.h"
 #include "fwpush.h"
 #include "firmware.h"
+#include "mqttexample.h"
 
 
 /* Configuration */
-#define DEFAULT_CMD_TIMEOUT_MS  30000
-#define DEFAULT_CON_TIMEOUT_MS  5000
+#undef DEFAULT_MQTT_QOS
 #define DEFAULT_MQTT_QOS        MQTT_QOS_2
-#define DEFAULT_KEEP_ALIVE_SEC  60
 #define DEFAULT_CLIENT_ID       "WolfMQTTFwPush"
-
 #define MAX_BUFFER_SIZE         FIRMWARE_MAX_PACKET
 
 /* Globals */
+int myoptind = 0;
+char* myoptarg = NULL;
+
+/* Locals */
 static int mStopRead = 0;
-const char* mTlsFile = NULL;
+static const char* mTlsFile = NULL;
+static int mPacketIdLast;
 
 /* Usage */
 static void Usage(void)
 {
-    printf("fwpush:\n");
-    printf("-?          Help, print this usage\n");
-    printf("-f <file>   Firmware file to send\n");
-    printf("-h <host>   Host to connect to, default %s\n",
+    PRINTF("fwpush:");
+    PRINTF("-?          Help, print this usage");
+    PRINTF("-f <file>   Firmware file to send");
+    PRINTF("-h <host>   Host to connect to, default %s",
         DEFAULT_MQTT_HOST);
-    printf("-p <num>    Port to connect on, default: Normal %d, TLS %d\n",
+    PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
         MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
-    printf("-t          Enable TLS\n");
-    printf("-c <file>   Use provided certificate file\n");
-    printf("-q <num>    Qos Level 0-2, default %d\n",
+    PRINTF("-t          Enable TLS");
+    PRINTF("-c <file>   Use provided certificate file");
+    PRINTF("-q <num>    Qos Level 0-2, default %d",
         DEFAULT_MQTT_QOS);
-    printf("-s          Disable clean session connect flag\n");
-    printf("-k <num>    Keep alive seconds, default %d\n",
+    PRINTF("-s          Disable clean session connect flag");
+    PRINTF("-k <num>    Keep alive seconds, default %d",
         DEFAULT_KEEP_ALIVE_SEC);
-    printf("-i <id>     Client Id, default %s\n",
+    PRINTF("-i <id>     Client Id, default %s",
         DEFAULT_CLIENT_ID);
-    printf("-u <str>    Username\n");
-    printf("-w <str>    Password\n");
-    printf("-r          Set Retain flag on firmware publish message\n");
+    PRINTF("-u <str>    Username");
+    PRINTF("-w <str>    Password");
+    PRINTF("-r          Set Retain flag on firmware publish message");
+    PRINTF("-C <num>    Command Timeout, default %dms", DEFAULT_CMD_TIMEOUT_MS);
+    PRINTF("-T          Test mode");
 }
 
-
-/* Argument Parsing */
-#define MY_EX_USAGE 2 /* Exit reason code */
-
-static int myoptind = 0;
-static char* myoptarg = NULL;
-
-static int mygetopt(int argc, char** argv, const char* optstring)
-{
-    static char* next = NULL;
-
-    char  c;
-    char* cp;
-
-    if (myoptind == 0)
-        next = NULL;   /* we're starting new/over */
-
-    if (next == NULL || *next == '\0') {
-        if (myoptind == 0)
-            myoptind++;
-
-        if (myoptind >= argc || argv[myoptind][0] != '-' ||
-                                argv[myoptind][1] == '\0') {
-            myoptarg = NULL;
-            if (myoptind < argc)
-                myoptarg = argv[myoptind];
-
-            return -1;
-        }
-
-        if (XSTRCMP(argv[myoptind], "--") == 0) {
-            myoptind++;
-            myoptarg = NULL;
-
-            if (myoptind < argc)
-                myoptarg = argv[myoptind];
-
-            return -1;
-        }
-
-        next = argv[myoptind];
-        next++;                  /* skip - */
-        myoptind++;
-    }
-
-    c  = *next++;
-    /* The C++ strchr can return a different value */
-    cp = (char*)XSTRCHR(optstring, c);
-
-    if (cp == NULL || c == ':')
-        return '?';
-
-    cp++;
-
-    if (*cp == ':') {
-        if (*next != '\0') {
-            myoptarg = next;
-            next     = NULL;
-        }
-        else if (myoptind < argc) {
-            myoptarg = argv[myoptind];
-            myoptind++;
-        }
-        else
-            return '?';
-    }
-
-    return c;
-}
-
-static void err_sys(const char* msg)
-{
-    printf("wolfMQTT error: %s\n", msg);
-    if (msg) {
-        exit(EXIT_FAILURE);
-    }
-}
-
-#define MAX_PACKET_ID   ((1 << 16) - 1)
-static int mPacketIdLast;
 static word16 mqttclient_get_packetid(void)
 {
     mPacketIdLast = (mPacketIdLast >= MAX_PACKET_ID) ? 1 : mPacketIdLast + 1;
@@ -185,13 +100,13 @@ static int mqttclient_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store
 {
     char buffer[WOLFSSL_MAX_ERROR_SZ];
 
-    printf("MQTT TLS Verify Callback: PreVerify %d, Error %d (%s)\n", preverify, 
+    PRINTF("MQTT TLS Verify Callback: PreVerify %d, Error %d (%s)", preverify,
         store->error, wolfSSL_ERR_error_string(store->error, buffer));
-    printf("  Subject's domain name is %s\n", store->domain);
+    PRINTF("  Subject's domain name is %s", store->domain);
 
     /* Allowing to continue */
     /* Should check certificate and return 0 if not okay */
-    printf("  Allowing cert anyways\n");
+    PRINTF("  Allowing cert anyways");
 
     return 1;
 }
@@ -201,7 +116,7 @@ static int mqttclient_tls_cb(MqttClient* client)
 {
     int rc = SSL_FAILURE;
     (void)client; /* Supress un-used argument */
-    
+
     client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
     if (client->tls.ctx) {
         wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqttclient_tls_verify_cb);
@@ -219,7 +134,7 @@ static int mqttclient_tls_cb(MqttClient* client)
         }
     }
 
-    printf("MQTT TLS Setup (%d)\n", rc);
+    PRINTF("MQTT TLS Setup (%d)", rc);
 
     return rc;
 }
@@ -250,7 +165,7 @@ static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
     /* Open file */
     file = fopen(filePath, "rb");
     if (file == NULL) {
-        printf("File %s does not exist!\n", filePath);
+        PRINTF("File %s does not exist!", filePath);
         rc = EXIT_FAILURE;
         goto exit;
     }
@@ -259,12 +174,12 @@ static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
     fseek(file, 0, SEEK_END);
     *fileLen = (int) ftell(file);
     fseek(file, 0, SEEK_SET);
-    //printf("File %s is %d bytes\n", filePath, *fileLen);
+    //PRINTF("File %s is %d bytes", filePath, *fileLen);
 
     /* Allocate buffer for image */
     *fileBuf = (byte*)WOLFMQTT_MALLOC(*fileLen);
     if (*fileBuf == NULL) {
-        printf("File buffer malloc failed!\n");
+        PRINTF("File buffer malloc failed!");
         rc = EXIT_FAILURE;
         goto exit;
     }
@@ -272,7 +187,7 @@ static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
     /* Load file into buffer */
     rc = (int)fread(*fileBuf, 1, *fileLen, file);
     if (rc != *fileLen) {
-        printf("Error reading file! %d", rc);
+        PRINTF("Error reading file! %d", rc);
         rc = EXIT_FAILURE;
         goto exit;
     }
@@ -306,7 +221,7 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
     /* Verify file can be loaded */
     rc = fwfile_load(fwFile, &fwBuf, &fwLen);
     if (rc < 0 || fwLen == 0) {
-        printf("Firmware File %s Load Error!\n", fwFile);
+        PRINTF("Firmware File %s Load Error!", fwFile);
         Usage();
         goto exit;
     }
@@ -316,38 +231,38 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
     wc_ecc_init(&eccKey);
     rc = wc_ecc_make_key(&rng, 32, &eccKey);
     if (rc != 0) {
-        printf("Make ECC Key Failed! %d\n", rc);
+        PRINTF("Make ECC Key Failed! %d", rc);
         goto exit;
     }
     keyLen = ECC_BUFSIZE;
     keyBuf = (byte*)WOLFMQTT_MALLOC(keyLen);
     if (!keyBuf) {
-        printf("Key malloc failed! %d\n", keyLen);
+        PRINTF("Key malloc failed! %d", keyLen);
         rc = EXIT_FAILURE;
         goto exit;
     }
     rc = wc_ecc_export_x963(&eccKey, keyBuf, &keyLen);
     if (rc != 0) {
-        printf("ECC public key x963 export failed! %d\n", rc);
+        PRINTF("ECC public key x963 export failed! %d", rc);
         goto exit;
     }
 
     /* Sign Firmware */
     sigLen = wc_SignatureGetSize(FIRMWARE_SIG_TYPE, &eccKey, sizeof(eccKey));
     if (sigLen <= 0) {
-        printf("Signature type %d not supported!\n", FIRMWARE_SIG_TYPE);
+        PRINTF("Signature type %d not supported!", FIRMWARE_SIG_TYPE);
         rc = EXIT_FAILURE;
         goto exit;
     }
     sigBuf = (byte*)WOLFMQTT_MALLOC(sigLen);
     if (!sigBuf) {
-        printf("Signature malloc failed!\n");
+        PRINTF("Signature malloc failed!");
         rc = EXIT_FAILURE;
         goto exit;
     }
 
     /* Display lengths */
-    printf("Firmware Message: Sig %d bytes, Key %d bytes, File %d bytes\n",
+    PRINTF("Firmware Message: Sig %d bytes, Key %d bytes, File %d bytes",
         sigLen, keyLen, fwLen);
 
     /* Generate Signature */
@@ -358,7 +273,7 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
         &eccKey, sizeof(eccKey),
         &rng);
     if (rc != 0) {
-        printf("Signature Generate Failed! %d\n", rc);
+        PRINTF("Signature Generate Failed! %d", rc);
         rc = EXIT_FAILURE;
         goto exit;
     }
@@ -367,7 +282,7 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
     msgLen = sizeof(FirmwareHeader) + sigLen + keyLen + fwLen;
     msgBuf = (byte*)WOLFMQTT_MALLOC(msgLen);
     if (!msgBuf) {
-        printf("Message malloc failed! %d\n", msgLen);
+        PRINTF("Message malloc failed! %d", msgLen);
         rc = EXIT_FAILURE;
         goto exit;
     }
@@ -403,7 +318,7 @@ exit:
     return rc;
 }
 
-void* fwpush_test(void* args)
+int fwpush_test(void* args)
 {
     int rc;
     MqttClient client;
@@ -422,13 +337,15 @@ void* fwpush_test(void* args)
     byte *msgBuf = NULL;
     int msgLen = 0;
     const char* fwFile = NULL;
+    word32 cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
+    byte test_mode = 0;
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
 
     ((func_args*)args)->return_code = -1; /* error state */
 
-    while ((rc = mygetopt(argc, argv, "?f:h:p:tc:q:sk:i:u:w:r")) != -1) {
+    while ((rc = mygetopt(argc, argv, "?f:h:p:tc:q:sk:i:u:w:rC:T")) != -1) {
         switch ((char)rc) {
             case '?' :
                 Usage();
@@ -483,9 +400,17 @@ void* fwpush_test(void* args)
             case 'w':
                 password = myoptarg;
                 break;
-                
+
             case 'r':
                 retain = 1;
+                break;
+
+            case 'C':
+                cmd_timeout_ms = XATOI(myoptarg);
+                break;
+
+            case 'T':
+                test_mode = 1;
                 break;
 
             default:
@@ -497,36 +422,41 @@ void* fwpush_test(void* args)
     myoptind = 0; /* reset for test cases */
 
     /* Start example MQTT Client */
-    printf("MQTT Firmware Push Client: QoS %d\n", qos);
+    PRINTF("MQTT Firmware Push Client: QoS %d", qos);
 
     /* Load firmware, sign firmware and create message */
     rc = fw_message_build(fwFile, &msgBuf, &msgLen);
     if (rc != 0) {
-        printf("Firmware message build failed! %d\n", rc);
+        PRINTF("Firmware message build failed! %d", rc);
         exit(rc);
     }
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
-    printf("MQTT Net Init: %s (%d)\n",
+    PRINTF("MQTT Net Init: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
+    if (rc != MQTT_CODE_SUCCESS) {
+        goto exit;
+    }
 
     /* Initialize MqttClient structure */
     tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     rc = MqttClient_Init(&client, &net, mqttclient_message_cb,
         tx_buf, MAX_BUFFER_SIZE, rx_buf, MAX_BUFFER_SIZE,
-        DEFAULT_CMD_TIMEOUT_MS);
-    printf("MQTT Init: %s (%d)\n",
+        cmd_timeout_ms);
+    PRINTF("MQTT Init: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
+    if (rc != MQTT_CODE_SUCCESS) {
+        goto exit;
+    }
 
     /* Connect to broker */
     rc = MqttClient_NetConnect(&client, host, port, DEFAULT_CON_TIMEOUT_MS,
         use_tls, mqttclient_tls_cb);
-    printf("MQTT Socket Connect: %s (%d)\n",
+    PRINTF("MQTT Socket Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
-
-    if (rc == 0) {
+    if (rc == MQTT_CODE_SUCCESS) {
         /* Define connect parameters */
         MqttConnect connect;
         XMEMSET(&connect, 0, sizeof(MqttConnect));
@@ -540,13 +470,13 @@ void* fwpush_test(void* args)
 
         /* Send Connect and wait for Connect Ack */
         rc = MqttClient_Connect(&client, &connect);
-        printf("MQTT Connect: %s (%d)\n",
+        PRINTF("MQTT Connect: %s (%d)",
             MqttClient_ReturnCodeToString(rc), rc);
         if (rc == MQTT_CODE_SUCCESS) {
             MqttPublish publish;
 
             /* Validate Connect Ack info */
-            printf("MQTT Connect Ack: Return Code %u, Session Present %d\n",
+            PRINTF("MQTT Connect Ack: Return Code %u, Session Present %d",
                 connect.ack.return_code,
                 (connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ?
                     1 : 0
@@ -562,35 +492,45 @@ void* fwpush_test(void* args)
             publish.buffer = msgBuf;
             publish.total_len = msgLen;
             rc = MqttClient_Publish(&client, &publish);
-            printf("MQTT Publish: Topic %s, %s (%d)\n",
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+            PRINTF("MQTT Publish: Topic %s, %s (%d)",
                 publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
 
             /* Disconnect */
             rc = MqttClient_Disconnect(&client);
-            printf("MQTT Disconnect: %s (%d)\n",
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+            PRINTF("MQTT Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
         }
 
         rc = MqttClient_NetDisconnect(&client);
-        printf("MQTT Socket Disconnect: %s (%d)\n",
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto exit;
+        }
+        PRINTF("MQTT Socket Disconnect: %s (%d)",
             MqttClient_ReturnCodeToString(rc), rc);
     }
 
+exit:
     /* Free resources */
     if (tx_buf) WOLFMQTT_FREE(tx_buf);
     if (rx_buf) WOLFMQTT_FREE(rx_buf);
     if (msgBuf) WOLFMQTT_FREE(msgBuf);
 
     /* Cleanup network */
-    rc = MqttClientNet_DeInit(&net);
-    printf("MQTT Net DeInit: %s (%d)\n",
-        MqttClient_ReturnCodeToString(rc), rc);
+    MqttClientNet_DeInit(&net);
 
-    ((func_args*)args)->return_code = rc;
+    ((func_args*)args)->return_code = (rc == 0) ? 0 : EXIT_FAILURE;
 
     return 0;
 }
 
+#else
+    #include "mqttexample.h" /* For func_args */
 #endif /* ENABLE_FIRMWARE_EXAMPLE */
 
 
@@ -601,7 +541,7 @@ void* fwpush_test(void* args)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
                 mStopRead = 1;
-                printf("Received Ctrl+c\n");
+                PRINTF("Received Ctrl+c");
                 return TRUE;
             }
             return FALSE;
@@ -614,7 +554,7 @@ void* fwpush_test(void* args)
 #if defined(ENABLE_FIRMWARE_EXAMPLE)
                 mStopRead = 1;
 #endif
-                printf("Received SIGINT\n");
+                PRINTF("Received SIGINT");
             }
         }
     #endif
@@ -629,11 +569,11 @@ void* fwpush_test(void* args)
 
 #ifdef USE_WINDOWS_API
         if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
-            printf("Error setting Ctrl Handler! Error %d\n", GetLastError());
+            PRINTF("Error setting Ctrl Handler! Error %d", GetLastError());
         }
 #elif HAVE_SIGNAL
         if (signal(SIGINT, sig_handler) == SIG_ERR) {
-            printf("Can't catch SIGINT\n");
+            PRINTF("Can't catch SIGINT");
         }
 #endif
 

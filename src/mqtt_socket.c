@@ -28,6 +28,7 @@
 #include "wolfmqtt/mqtt_socket.h"
 
 /* Options */
+//#define WOLFMQTT_DEBUG_SOCKET
 #ifdef WOLFMQTT_NO_STDIO
     #undef WOLFMQTT_DEBUG_SOCKET
 #endif
@@ -251,8 +252,8 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
                 client->tls.ssl = wolfSSL_new(client->tls.ctx);
                 if (client->tls.ssl) {
-                    wolfSSL_SetIOReadCtx(client->tls.ssl, (void *)client) ;
-                    wolfSSL_SetIOWriteCtx(client->tls.ssl, (void *)client) ;
+                    wolfSSL_SetIOReadCtx(client->tls.ssl, (void *)client);
+                    wolfSSL_SetIOWriteCtx(client->tls.ssl, (void *)client);
 
                     rc = wolfSSL_connect(client->tls.ssl);
                     if (rc == SSL_SUCCESS) {

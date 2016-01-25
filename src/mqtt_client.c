@@ -27,6 +27,7 @@
 #include "wolfmqtt/mqtt_client.h"
 
 /* Options */
+//#define WOLFMQTT_DEBUG_CLIENT
 #ifdef WOLFMQTT_NO_STDIO
     #undef WOLFMQTT_DEBUG_CLIENT
 #endif
@@ -231,6 +232,10 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
                     break;
                 }
             }
+        }
+        else {
+            /* We got a message, so return now */
+            break;
         }
     }
 

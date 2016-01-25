@@ -13,9 +13,12 @@ include_HEADERS =
 nobase_include_HEADERS =
 check_PROGRAMS =
 EXTRA_HEADERS =
-BUILT_SOURCES=
-EXTRA_DIST=
-dist_doc_DATA=
+BUILT_SOURCES =
+EXTRA_DIST =
+noinst_SCRIPTS =
+check_SCRIPTS =
+dist_noinst_SCRIPTS =
+dist_doc_DATA =
 
 
 #includes additional rules from aminclude.am
@@ -31,6 +34,7 @@ ACLOCAL_AMFLAGS= -I m4
 include src/include.am
 include wolfmqtt/include.am
 include examples/include.am
+include scripts/include.am
 
 EXTRA_DIST+= README.md
 EXTRA_DIST+= LICENSE
@@ -39,7 +43,12 @@ EXTRA_DIST+= wolfmqtt.vcxproj
 EXTRA_DIST+= wolfmqtt.vcxproj.filters
 EXTRA_DIST+= autogen.sh
 
+TEST_EXTENSIONS=.test
 TESTS += $(check_PROGRAMS)
+
+check_SCRIPTS+= $(dist_noinst_SCRIPTS)
+TESTS += $(check_SCRIPTS)
+
 test: check
 
 DISTCLEANFILES+= wolfmqtt-config

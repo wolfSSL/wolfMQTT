@@ -27,11 +27,6 @@
 #include <wolfmqtt/mqtt_client.h>
 #include "mqttnet.h"
 
-/* Standard includes. */
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-
 /* FreeRTOS and LWIP */
 #ifdef FREERTOS
     /* Scheduler includes. */
@@ -87,11 +82,15 @@
     #define SELECT_FD(fd)   ((fd) + 1)
 #endif
 
+/* Include the example code */
+#include "mqttexample.h"
+
 /* Local context for Net callbacks */
 typedef struct _SocketContext {
     SOCKET_T fd;
 #ifdef ENABLE_STDIN_CAPTURE
-    int stdin_has_data;
+    byte stdin_cap_enable;
+    byte stdin_has_data;
 #endif
 } SocketContext;
 
@@ -114,14 +113,14 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
     unsigned long blocking = 1;
     int ret = ioctlsocket(*sockfd, FIONBIO, &blocking);
     if (ret == SOCKET_ERROR)
-        printf("ioctlsocket failed!\n");
+        PRINTF("ioctlsocket failed!");
 #else
     int flags = fcntl(*sockfd, F_GETFL, 0);
     if (flags < 0)
-        printf("fcntl get failed!\n");
+        PRINTF("fcntl get failed!");
     flags = fcntl(*sockfd, F_SETFL, flags | O_NONBLOCK);
     if (flags < 0)
-        printf("fcntl set failed!\n");
+        PRINTF("fcntl set failed!");
 #endif
 }
 
@@ -140,7 +139,7 @@ static int NetConnect(void *context, const char* host, word16 port,
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
-    
+
     XMEMSET(&address, 0, sizeof(address));
     address.sin_family = AF_INET;
 
@@ -208,7 +207,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 
     /* Show error */
     if (rc != 0) {
-        printf("MqttSocket_Connect: Rc=%d, SoErr=%d\n", rc, so_error);
+        PRINTF("MqttSocket_Connect: Rc=%d, SoErr=%d", rc, so_error);
     }
 
     return rc;
@@ -239,7 +238,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             rc = 0; /* Handle signal */
         }
         else {
-            printf("MqttSocket_NetWrite: Error %d\n", so_error);
+            PRINTF("MqttSocket_NetWrite: Error %d", so_error);
         }
     }
 
@@ -294,10 +293,13 @@ static int NetRead(void *context, byte* buf, int buf_len,
                 }
             }
 #ifdef ENABLE_STDIN_CAPTURE
-            if (FD_ISSET(STDIN, &recvfds)) {
+            else if (FD_ISSET(STDIN, &recvfds)) {
                 sock->stdin_has_data = 1;
-                rc = 0;
-                break;
+                /* Don't exit read until cap enabled */
+                if (sock->stdin_cap_enable) {
+                    rc = 0;
+                    break;
+                }
             }
 #endif
             if (FD_ISSET(sock->fd, &errfds)) {
@@ -318,7 +320,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
             rc = 0; /* Handle signal */
         }
         else {
-            printf("MqttSocket_NetRead: Error %d\n", so_error);
+            PRINTF("MqttSocket_NetRead: Error %d", so_error);
         }
     }
     else {
@@ -382,10 +384,11 @@ int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
     if (net && net->context) {
         SocketContext *sock = (SocketContext*)net->context;
 #ifdef ENABLE_STDIN_CAPTURE
+        sock->stdin_cap_enable = 1;
         stdin_has_data = sock->stdin_has_data;
 #endif
     }
-    
+
     if (stdin_has_data) {
 #ifdef ENABLE_STDIN_CAPTURE
         stdin_has_data = 0;

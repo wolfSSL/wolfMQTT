@@ -115,6 +115,29 @@ enum MqttPacketResponseCodes {
     #endif
 #endif
 
+/* use inlining if compiler allows */
+#ifndef INLINE
+#ifndef NO_INLINE
+    #ifdef _MSC_VER
+        #define INLINE __inline
+    #elif defined(__GNUC__)
+           #ifdef WOLFSSL_VXWORKS
+               #define INLINE __inline__
+           #else
+               #define INLINE inline
+           #endif
+    #elif defined(__IAR_SYSTEMS_ICC__)
+        #define INLINE inline
+    #elif defined(THREADX)
+        #define INLINE _Inline
+    #else
+        #define INLINE
+    #endif
+#else
+    #define INLINE
+#endif
+#endif
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif

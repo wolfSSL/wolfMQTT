@@ -23,6 +23,6 @@
 #define WOLFMQTT_FWCLIENT_H
 
 /* Exposed functions */
-void* fwclient_test(void* args);
+int fwclient_test(void* args);
 
 #endif /* WOLFMQTT_FWCLIENT_H */
