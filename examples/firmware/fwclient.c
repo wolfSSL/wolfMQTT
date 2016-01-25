@@ -53,9 +53,9 @@ typedef struct func_args {
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfmqtt/mqtt_client.h>
 
-#include "examples/mqttnet.h"
-#include "examples/firmware/fwclient.h"
-#include "examples/firmware/firmware.h"
+#include "mqttnet.h"
+#include "fwclient.h"
+#include "firmware.h"
 
 /* Configuration */
 #define DEFAULT_CMD_TIMEOUT_MS  30000

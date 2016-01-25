@@ -53,9 +53,9 @@ typedef struct func_args {
 #include <wolfssl/wolfcrypt/hash.h>
 #include <wolfmqtt/mqtt_client.h>
 
-#include "examples/mqttnet.h"
-#include "examples/firmware/fwpush.h"
-#include "examples/firmware/firmware.h"
+#include "mqttnet.h"
+#include "fwpush.h"
+#include "firmware.h"
 
 
 /* Configuration */

@@ -13,16 +13,19 @@ examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
                                               examples/mqttnet.c
 examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
+examples_mqttclient_mqttclient_CPPFLAGS     = -Iexamples
 
 examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
                                               examples/mqttnet.c
 examples_firmware_fwpush_LDADD              = src/libwolfmqtt.la
 examples_firmware_fwpush_DEPENDENCIES       = src/libwolfmqtt.la
+examples_firmware_fwpush_CPPFLAGS           = -Iexamples
 
 examples_firmware_fwclient_SOURCES          = examples/firmware/fwclient.c \
                                               examples/mqttnet.c
 examples_firmware_fwclient_LDADD            = src/libwolfmqtt.la
 examples_firmware_fwclient_DEPENDENCIES     = src/libwolfmqtt.la
+examples_firmware_fwclient_CPPFLAGS         = -Iexamples
 
 dist_example_DATA+= examples/mqttclient/mqttclient.c \
                     examples/firmware/fwpush.c \
