@@ -286,7 +286,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             int errnum = 0;
             if (client->tls.ssl) {
                 errnum = wolfSSL_get_error(client->tls.ssl, 0);
-                errstr = wc_GetErrorString(errnum);
+                errstr = wolfSSL_ERR_reason_error_string(errnum);
             }
 
             printf("MqttSocket_TlsConnect Error %d: Num %d, %s\n",
