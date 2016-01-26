@@ -227,23 +227,20 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         
         /* Issue callback to allow setup of the wolfSSL_CTX and cert 
            verification settings */
+        rc = SSL_SUCCESS;
         if (cb) {
             rc = cb(client);
         }
-
-        /* Create and initialize the WOLFSSL_CTX structure */
-        if (client->tls.ctx == NULL) {
-            /* Use defaults */
-            client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
-            if (client->tls.ctx) {
-                wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_NONE, 0);
+        if (rc == SSL_SUCCESS) {
+            /* Create and initialize the WOLFSSL_CTX structure */
+            if (client->tls.ctx == NULL) {
+                /* Use defaults */
+                client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+                if (client->tls.ctx) {
+                    wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_NONE, 0);
+                }
             }
-        }
-
-        if (client->tls.ctx) {
-            rc = SSL_SUCCESS;
-
-            if (rc == SSL_SUCCESS) {
+            if (client->tls.ctx) {
                 /* Seutp the async IO callbacks */
                 wolfSSL_SetIORecv(client->tls.ctx,
                     MqttSocket_TlsSocketReceive);
@@ -268,10 +265,16 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                     rc = -1;
                 }
             }
+            else {
+#ifndef WOLFMQTT_NO_STDIO
+                printf("MqttSocket_TlsConnect: wolfSSL_CTX_new error!\n");
+#endif
+                rc = -1;
+            }
         }
         else {
 #ifndef WOLFMQTT_NO_STDIO
-            printf("MqttSocket_TlsConnect: wolfSSL_CTX_new error!\n");
+            printf("MqttSocket_TlsConnect: TLS callback error!\n");
 #endif
             rc = -1;
         }
