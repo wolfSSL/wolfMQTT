@@ -66,6 +66,23 @@ Here are the steps for creating your own implementation.
 
 ## Release Notes
 
+### v0.5 (01/27/2016)
+* Fixed build error when using older wolfSSL in firmware examples.
+* Updated the get error string function in `mqtt_socket.c` from `wc_GetErrorString` to `wolfSSL_ERR_reason_error_string` so both wolfSSL and wolfCrypt error codes are resolved.
+* Added `-n <str>` option so a custom topic name can be used.
+* The mqttclient example now listens to stdin and will send a publish message with the data entered on the console when end-of-line (return) is detected (Linux only).
+* Added keep-alive ping to the mqttclient and fwclient examples.
+* Moved the TLS callback prior to the `client->tls.ctx` creation, allowing the callback function to implement its own client method cert verification.
+* Enhanced `MqttClient_WaitMessage` so it will return if we get a message, not just on timeout
+* Added make check/test scripts (scripts/client.test and scripts/firmware.test) to validate client TLS (with and without) plus QoS 0-2 levels and the firmware update example.
+* Adjusted the example include paths for more flexibility.
+* Added new `-T` option for using examples to test.
+* Added new `-C` option to allow custom command timeout.
+* Combined duplicate example code into new header `mqttexample.h`.
+* Added a PRINTF helper macro to the examples for easier porting.
+* Added better error trapping in examples so return code is populated for testing.
+* Changed the example test functions to return int.
+
 ### v0.4 (12/30/2015)
 * Fixed bug with subscribe not populating acknowledgment return code(s) properly.
 * Fixed build error if using wolfSSL 3.7.1 or older due to missing signature.c/.h wrappers. This fix disables the firmware examples if the wolfSSL version isn't greater than 3.7.1.
