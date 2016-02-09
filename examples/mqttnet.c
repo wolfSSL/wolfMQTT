@@ -24,7 +24,7 @@
     #include <config.h>
 #endif
 
-#include <wolfmqtt/mqtt_client.h>
+#include "wolfmqtt/mqtt_client.h"
 #include "mqttnet.h"
 
 /* FreeRTOS and LWIP */
@@ -50,6 +50,10 @@
     #define SOCKET_T        SOCKET
     #define SOERROR_T       char
     #define SELECT_FD(fd)   (fd)
+    #define SOCKET_INVALID  ((SOCKET_T)INVALID_SOCKET)
+    #define SOCK_CLOSE      closesocket
+    #define SOCK_SEND(s,b,l,f) send((s), (const char*)(b), (size_t)(l), (f))
+    #define SOCK_RECV(s,b,l,f) recv((s), (char*)(b), (size_t)(l), (f))
 
 /* Linux */
 #else
@@ -72,6 +76,7 @@
     #define STDIN   0
 #endif
 
+/* Setup defaults */
 #ifndef SOCKET_T
     #define SOCKET_T        int
 #endif
@@ -81,6 +86,22 @@
 #ifndef SELECT_FD
     #define SELECT_FD(fd)   ((fd) + 1)
 #endif
+#ifndef SOCKET_INVALID
+    #define SOCKET_INVALID  ((SOCKET_T)0)
+#endif
+#ifndef SOCK_CONNECT
+    #define SOCK_CONNECT    connect
+#endif
+#ifndef SOCK_SEND
+    #define SOCK_SEND(s,b,l,f) send((s), (b), (size_t)(l), (f))
+#endif
+#ifndef SOCK_RECV
+    #define SOCK_RECV(s,b,l,f) recv((s), (b), (size_t)(l), (f))
+#endif
+#ifndef SOCK_CLOSE
+    #define SOCK_CLOSE      close
+#endif
+
 
 /* Include the example code */
 #include "mqttexample.h"
@@ -123,7 +144,7 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
         PRINTF("fcntl set failed!");
 #endif
 }
-
+    
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
@@ -176,7 +197,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 
         /* Create socket */
         sock->fd = socket(address.sin_family, type, 0);
-        if (sock->fd != -1) {
+        if (sock->fd != SOCKET_INVALID) {
             fd_set fdset;
             struct timeval tv;
 
@@ -229,7 +250,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     setup_timeout(&tv, timeout_ms);
     setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
 
-    rc = (int)send(sock->fd, buf, (size_t)buf_len, 0);
+    rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
     if (rc == -1) {
         /* Get error */
         socklen_t len = sizeof(so_error);
@@ -280,9 +301,9 @@ static int NetRead(void *context, byte* buf, int buf_len,
             if (FD_ISSET(sock->fd, &recvfds)) {
                 /* Try and read number of buf_len provided,
                     minus what's already been read */
-                rc = (int)recv(sock->fd,
+                rc = (int)SOCK_RECV(sock->fd,
                                &buf[bytes],
-                               (size_t)(buf_len - bytes),
+                               buf_len - bytes,
                                0);
                 if (rc <= 0) {
                     rc = -1;
@@ -334,7 +355,7 @@ static int NetDisconnect(void *context)
 {
     SocketContext *sock = (SocketContext*)context;
     if (sock) {
-        if (sock->fd != -1) {
+        if (sock->fd != SOCKET_INVALID) {
 #ifdef USE_WINDOWS_API
             closesocket(sock->fd);
 #else
@@ -381,9 +402,13 @@ int MqttClientNet_DeInit(MqttNet* net)
 int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
 {
     int stdin_has_data = 0;
+
+    (void)buffer;
+    (void)length;
+
     if (net && net->context) {
-        SocketContext *sock = (SocketContext*)net->context;
 #ifdef ENABLE_STDIN_CAPTURE
+        SocketContext *sock = (SocketContext*)net->context;
         sock->stdin_cap_enable = 1;
         stdin_has_data = sock->stdin_has_data;
 #endif
