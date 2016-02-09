@@ -24,7 +24,7 @@
     #include <config.h>
 #endif
 
-#include <wolfmqtt/mqtt_client.h>
+#include "wolfmqtt/mqtt_client.h"
 #include <wolfssl/ssl.h>
 #include "mqttclient.h"
 #include "mqttnet.h"
@@ -459,7 +459,7 @@ exit:
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
     #ifdef USE_WINDOWS_API
-        BOOL CtrlHandler(DWORD fdwCtrlType)
+        static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
                 mStopRead = 1;
@@ -488,7 +488,7 @@ exit:
 
 #ifdef USE_WINDOWS_API
         if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
-            PRINTF("Error setting Ctrl Handler! Error %d", GetLastError());
+            PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
         }
 #elif HAVE_SIGNAL
         if (signal(SIGINT, sig_handler) == SIG_ERR) {

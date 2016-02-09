@@ -41,6 +41,11 @@
 
 #ifdef _WIN32
     #define USE_WINDOWS_API
+
+    /* Make sure a level of Win compatibility is defined */
+    #ifndef _WIN32_WINNT
+        #define _WIN32_WINNT 0x0501
+    #endif
 #endif
 
 #ifndef WOLFMQTT_NO_STDIO
@@ -118,16 +123,10 @@ enum MqttPacketResponseCodes {
 /* use inlining if compiler allows */
 #ifndef INLINE
 #ifndef NO_INLINE
-    #ifdef _MSC_VER
+    #if defined(__GNUC__) || defined(__MINGW32__) || defined(__IAR_SYSTEMS_ICC__)
+           #define INLINE inline
+    #elif defined(_MSC_VER)
         #define INLINE __inline
-    #elif defined(__GNUC__)
-           #ifdef WOLFSSL_VXWORKS
-               #define INLINE __inline__
-           #else
-               #define INLINE inline
-           #endif
-    #elif defined(__IAR_SYSTEMS_ICC__)
-        #define INLINE inline
     #elif defined(THREADX)
         #define INLINE _Inline
     #else
@@ -135,8 +134,8 @@ enum MqttPacketResponseCodes {
     #endif
 #else
     #define INLINE
-#endif
-#endif
+#endif /* !NO_INLINE */
+#endif /* !INLINE */
 
 #ifdef __cplusplus
     } /* extern "C" */

@@ -24,6 +24,7 @@
     #include <config.h>
 #endif
 
+#include "wolfmqtt/mqtt_client.h"
 #include <wolfssl/options.h>
 #include <wolfssl/version.h>
 
@@ -34,14 +35,12 @@
     #define ENABLE_FIRMWARE_EXAMPLE
 #endif
 
-
 #if defined(ENABLE_FIRMWARE_EXAMPLE)
 
 #include <wolfssl/ssl.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/signature.h>
 #include <wolfssl/wolfcrypt/hash.h>
-#include <wolfmqtt/mqtt_client.h>
 
 #include "mqttnet.h"
 #include "fwclient.h"
@@ -504,10 +503,12 @@ exit:
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
     #ifdef USE_WINDOWS_API
-        BOOL CtrlHandler(DWORD fdwCtrlType)
+        static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
+#if defined(ENABLE_FIRMWARE_EXAMPLE)
                 mStopRead = 1;
+#endif
                 PRINTF("Received Ctrl+c");
                 return TRUE;
             }
@@ -536,7 +537,7 @@ exit:
 
 #ifdef USE_WINDOWS_API
         if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
-            PRINTF("Error setting Ctrl Handler! Error %d", GetLastError());
+            PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
         }
 #elif HAVE_SIGNAL
         if (signal(SIGINT, sig_handler) == SIG_ERR) {
