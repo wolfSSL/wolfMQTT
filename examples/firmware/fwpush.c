@@ -248,12 +248,13 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
     }
 
     /* Sign Firmware */
-    sigLen = wc_SignatureGetSize(FIRMWARE_SIG_TYPE, &eccKey, sizeof(eccKey));
-    if (sigLen <= 0) {
+    rc = wc_SignatureGetSize(FIRMWARE_SIG_TYPE, &eccKey, sizeof(eccKey));
+    if (rc <= 0) {
         PRINTF("Signature type %d not supported!", FIRMWARE_SIG_TYPE);
         rc = EXIT_FAILURE;
         goto exit;
     }
+    sigLen = rc;
     sigBuf = (byte*)WOLFMQTT_MALLOC(sigLen);
     if (!sigBuf) {
         PRINTF("Signature malloc failed!");
