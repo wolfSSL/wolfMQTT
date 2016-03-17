@@ -37,6 +37,7 @@ DISTCLEANFILES+= examples/mqttclient/.libs/mqttclient \
                  examples/firmware/.libs/fwclient
 
 EXTRA_DIST+= examples/mqttnet.h \
+             examples/mqttuart.c \
              examples/mqttclient/mqttclient.h \
              examples/mqttclient/mqttclient.vcxproj \
              examples/mqttclient/mqttclient.vcxproj.filters
