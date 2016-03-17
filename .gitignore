@@ -61,3 +61,4 @@ examples/firmware/fwpush
 *.opensdf
 firmware.bin
 *.trs
+IDE/ARDUINO/wolfmqtt

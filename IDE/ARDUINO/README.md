@@ -8,15 +8,14 @@ in the name of the library. This script moves all source files to the root
 wolfMQTT directory and creates a stub header file called wolfMQTT.h.
 
 To configure wolfMQTT with Arduino, enter the following from within the 
-wolfssl/IDE/ARDUINO directory:
+IDE/ARDUINO directory:
 
     ./wolfmqtt-arduino.sh
     
 #####Including wolfMQTT in Arduino Libraries (for Arduino version 1.6.6)
-1. Copy the wolfMQTT directory into Arduino/libraries (or wherever Arduino 
-searches for libraries).
-2. In the Arduino IDE:
-    - Go to ```Sketch > Include Libraries > Manage Libraries```. This refreshes
-    your changes to the libraries.
-    - Next go to ```Sketch > Include Libraries > wolfMQTT```. This includes
-    wolfMQTT in your sketch.
+
+1. In the Arduino IDE:
+    - In `Sketch -> Import Library -> Add Library` and choose the wolfMQTT/IDE/ARDUNIO/wolfmqtt folder.
+    - In `Sketch -> Import Library` choose wolfMQTT.
+
+Note: If using wolfSSL TLS then you'll need to do this for wolfSSL as well.
