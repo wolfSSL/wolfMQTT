@@ -13,19 +13,19 @@ examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
                                               examples/mqttnet.c
 examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
-examples_mqttclient_mqttclient_CPPFLAGS     = -Iexamples
+examples_mqttclient_mqttclient_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
                                               examples/mqttnet.c
 examples_firmware_fwpush_LDADD              = src/libwolfmqtt.la
 examples_firmware_fwpush_DEPENDENCIES       = src/libwolfmqtt.la
-examples_firmware_fwpush_CPPFLAGS           = -Iexamples
+examples_firmware_fwpush_CPPFLAGS           = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 examples_firmware_fwclient_SOURCES          = examples/firmware/fwclient.c \
                                               examples/mqttnet.c
 examples_firmware_fwclient_LDADD            = src/libwolfmqtt.la
 examples_firmware_fwclient_DEPENDENCIES     = src/libwolfmqtt.la
-examples_firmware_fwclient_CPPFLAGS         = -Iexamples
+examples_firmware_fwclient_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 dist_example_DATA+= examples/mqttclient/mqttclient.c \
                     examples/firmware/fwpush.c \
@@ -38,6 +38,7 @@ DISTCLEANFILES+= examples/mqttclient/.libs/mqttclient \
 
 EXTRA_DIST+= examples/mqttnet.h \
              examples/mqttuart.c \
+             examples/mqttexample.h \
              examples/mqttclient/mqttclient.h \
              examples/mqttclient/mqttclient.vcxproj \
              examples/mqttclient/mqttclient.vcxproj.filters
