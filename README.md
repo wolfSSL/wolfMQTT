@@ -66,6 +66,14 @@ Here are the steps for creating your own implementation.
 
 ## Release Notes
 
+### v0.6 (03/18/2016)
+* Fixes to support MinGW compiler.
+* Fixed bug with include of the wolfSSL include of options.h.
+* Fix to properly handle negative return code from wc_SignatureGetSize.
+* Added Arduino IDE example in `IDE/ARDUINO`. See `IDE/ARDUINOREADME.md` for details.
+* Added example UART interface for wolfMQTT. See `examples/mqttuart.c`.
+* Added the ability to pass additional arguments to the scripts. Example: `./scripts/client.test "-h localhost"`
+
 ### v0.5 (01/27/2016)
 * Fixed build error when using older wolfSSL in firmware examples.
 * Updated the get error string function in `mqtt_socket.c` from `wc_GetErrorString` to `wolfSSL_ERR_reason_error_string` so both wolfSSL and wolfCrypt error codes are resolved.
