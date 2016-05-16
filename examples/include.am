@@ -1,13 +1,10 @@
 # vim:ft=automake
 # All paths should be given relative to the root
 
+if BUILD_EXAMPLES
 noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/firmware/fwpush \
                    examples/firmware/fwclient
-noinst_HEADERS += examples/mqttclient/mqttclient.h \
-                  examples/firmware/fwpush.h \
-                  examples/firmware/fwclient.h \
-                  examples/firmware/firmware.h
 
 examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
                                               examples/mqttnet.c
@@ -26,6 +23,12 @@ examples_firmware_fwclient_SOURCES          = examples/firmware/fwclient.c \
 examples_firmware_fwclient_LDADD            = src/libwolfmqtt.la
 examples_firmware_fwclient_DEPENDENCIES     = src/libwolfmqtt.la
 examples_firmware_fwclient_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+endif
+
+noinst_HEADERS += examples/mqttclient/mqttclient.h \
+                  examples/firmware/fwpush.h \
+                  examples/firmware/fwclient.h \
+                  examples/firmware/firmware.h
 
 dist_example_DATA+= examples/mqttclient/mqttclient.c \
                     examples/firmware/fwpush.c \
