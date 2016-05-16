@@ -97,6 +97,7 @@ static word16 mqttclient_get_packetid(void)
     return (word16)mPacketIdLast;
 }
 
+#ifdef ENABLE_MQTT_TLS
 static int mqttclient_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
     char buffer[WOLFSSL_MAX_ERROR_SZ];
@@ -139,6 +140,13 @@ static int mqttclient_tls_cb(MqttClient* client)
 
     return rc;
 }
+#else
+static int mqttclient_tls_cb(MqttClient* client)
+{
+    (void)client;
+    return 0;
+}
+#endif /* ENABLE_MQTT_TLS */
 
 static int fwfile_save(const char* filePath, byte* fileBuf, int fileLen)
 {

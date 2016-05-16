@@ -31,10 +31,6 @@
     extern "C" {
 #endif
 
-/* Options */
-/* Use without WolfSSL (on by default) */
-#define ENABLE_MQTT_TLS
-
 #include "wolfmqtt/mqtt_types.h"
 #ifdef ENABLE_MQTT_TLS
 #include <wolfssl/options.h>

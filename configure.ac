@@ -64,14 +64,6 @@ AC_CHECK_FUNCS([socket])
 AC_CHECK_FUNCS([signal])
 AC_CHECK_LIB(network,socket)
 
-# Requirements
-TAO_REQUIRE_LIBWOLFSSL
-#REQUIRE_CYASSL([scep])
-#REQUIRE_WOLFCRYPT([aes rsa dh])
-
-# since we have autoconf available, we can use cyassl options header
-AM_CPPFLAGS="$AM_CPPFLAGS -DHAVE_CYASSL_OPTIONS"
-
 # DEBUG
 DEBUG_CFLAGS="-g -O0"
 DEBUG_CPPFLAGS="-DDEBUG -DDEBUG_WOLFMQTT"
@@ -85,6 +77,7 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
 
 AX_PTHREAD([AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
 
+
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
    AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"
@@ -93,6 +86,36 @@ else
         AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG_LONG=8"
     fi
 fi
+
+
+# TLS Support with wolfSSL
+# Examples, used to disable examples
+AC_ARG_ENABLE([tls],
+    [  --enable-tls            Enable TLS support with wolfSSL  (default: enabled)],
+    [ ENABLED_TLS=$enableval ],
+    [ ENABLED_TLS=yes ]
+    )
+
+if test "x$ENABLED_TLS" = "xyes"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DENABLE_MQTT_TLS"
+
+    TAO_REQUIRE_LIBWOLFSSL
+    AM_CPPFLAGS="$AM_CPPFLAGS -DDHAVE_WOLFSSL_OPTIONS -DHAVE_CYASSL_OPTIONS"
+else
+    TAO_HAVE_LIBWOLFSSL
+fi
+
+
+# Examples
+AC_ARG_ENABLE([examples],
+    [  --enable-examples       Enable Examples  (default: enabled)],
+    [ ENABLED_EXAMPLES=$enableval ],
+    [ ENABLED_EXAMPLES=yes ]
+    )
+
+AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
+
 
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
