@@ -1,4 +1,4 @@
-# WolfMQTT
+# wolfMQTT
 
 This is an implementation of the MQTT Client written in C for embedded use, which supports SSL/TLS via the wolfSSL library. This library was built from the ground up to be multi-platform, space conscience and extensible. Integrates with wolfSSL to provide TLS support.
 
@@ -63,6 +63,14 @@ Here are the steps for creating your own implementation.
 5. Call `MqttClient_Connect` passing pointer to `MqttConnect` structure to send MQTT connect command and wait for Connect Ack.
 6. Call `MqttClient_Subscribe` passing pointer to `MqttSubscribe` structure to send MQTT Subscribe command and wait for Subscribe Ack (depending on QoS level).
 7. Call `MqttClient_WaitMessage` passing pointer to `MqttMessage` to wait for incoming MQTT Publish message.
+
+## Examples
+
+### Client Example
+The example MQTT client is located in /examples/mqttclient/. This example exercises all exposed API’s and prints any incoming publish messages for subscription topic “wolfMQTT/example/testTopic”.
+
+### Firmware Example
+The MQTT firmware update  is located in /examples/firmware/. This example has two parts. The first is called “fwpush”, which publishes a signed firmware image. The second is called “fwclient”, which receives the firmware image and verifies the signature. This example publishes message on the topic “wolfMQTT/example/firmware”.
 
 ## Release Notes
 
