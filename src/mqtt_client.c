@@ -55,7 +55,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
         msg_qos = MQTT_PACKET_FLAGS_GET_QOS(header->type_flags);
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
-        printf("Read Packet: Len %d, Type %d, Qos %d\n",
+        PRINTF("Read Packet: Len %d, Type %d, Qos %d",
             packet_len, msg_type, msg_qos);
 #endif
 
@@ -218,7 +218,7 @@ static int MqttClient_WaitType(MqttClient *client, int timeout_ms,
             default:
                 /* Other types are server side only, ignore */
 #ifdef WOLFMQTT_DEBUG_CLIENT
-                printf("MqttClient_WaitMessage: Invalid client packet type %u!\n",
+                PRINTF("MqttClient_WaitMessage: Invalid client packet type %u!",
                     msg_type);
 #endif
                 break;
@@ -501,6 +501,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Timeout)";
         case MQTT_CODE_ERROR_NETWORK:
             return "Error (Network)";
+        case MQTT_CODE_ERROR_MEMORY:
+            return "Error (Memory)";
     }
     return "Unknown";
 }

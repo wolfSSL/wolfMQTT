@@ -433,7 +433,7 @@ int fwpush_test(void* args)
     (void)test_mode;
 
     /* Start example MQTT Client */
-    PRINTF("MQTT Firmware Push Client: QoS %d", qos);
+    PRINTF("MQTT Firmware Push Client: QoS %d, Use TLS %d", qos, use_tls);
 
     /* Load firmware, sign firmware and create message */
     rc = fw_message_build(fwFile, &msgBuf, &msgLen);

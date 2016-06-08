@@ -77,6 +77,7 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_ERROR_TLS_CONNECT = -6,
     MQTT_CODE_ERROR_TIMEOUT = -7,
     MQTT_CODE_ERROR_NETWORK = -8,
+    MQTT_CODE_ERROR_MEMORY = -9,
 };
 
 
@@ -136,6 +137,27 @@ enum MqttPacketResponseCodes {
     #define INLINE
 #endif /* !NO_INLINE */
 #endif /* !INLINE */
+
+
+/* printf */
+#ifndef WOLFMQTT_CUSTOM_PRINTF
+    #ifndef LINE_END
+        #define LINE_END    "\n"
+    #endif
+    #ifndef PRINTF
+        #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
+    #endif
+
+    #ifndef WOLFMQTT_NO_STDIO
+        #include <stdlib.h>
+        #include <string.h>
+        #include <stdio.h>
+    #else
+        #undef PRINTF
+        #define PRINTF
+    #endif
+#endif
+
 
 #ifdef __cplusplus
     } /* extern "C" */

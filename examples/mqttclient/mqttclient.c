@@ -270,7 +270,7 @@ int mqttclient_test(void* args)
     myoptind = 0; /* reset for test cases */
 
     /* Start example MQTT Client */
-    PRINTF("MQTT Client: QoS %d", qos);
+    PRINTF("MQTT Client: QoS %d, Use TLS %d", qos, use_tls);
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
@@ -379,6 +379,7 @@ int mqttclient_test(void* args)
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
+            MqttClientNet_CheckForCommand_Enable(&net);
             while (mStopRead == 0) {
                 /* Try and read packet */
                 rc = MqttClient_WaitMessage(&client, cmd_timeout_ms);
