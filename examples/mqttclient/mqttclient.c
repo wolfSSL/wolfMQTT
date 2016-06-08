@@ -41,7 +41,7 @@ static int mPacketIdLast;
 
 /* Configuration */
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
-#define MAX_BUFFER_SIZE         1024
+#define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
 #define TEST_MESSAGE            "test"
 
 /* Usage */
@@ -103,17 +103,16 @@ static int mqttclient_tls_cb(MqttClient* client)
     if (client->tls.ctx) {
         wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqttclient_tls_verify_cb);
 
+        rc = SSL_SUCCESS;
         if (mTlsFile) {
     #if !defined(NO_FILESYSTEM) && !defined(NO_CERTS)
             /* Load CA certificate file */
-            rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, 0);
-    #else
-            rc = SSL_SUCCESS;
+            rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, NULL);
     #endif
         }
-        else {
-            rc = SSL_SUCCESS;
-        }
+
+        /* If using a client certificate it can be loaded using: */
+        //rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx, clientCertFile, SSL_FILETYPE_PEM);
     }
 
     PRINTF("MQTT TLS Setup (%d)", rc);
