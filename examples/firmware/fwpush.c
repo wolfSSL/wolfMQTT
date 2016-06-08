@@ -226,7 +226,7 @@ static int fw_message_build(const char* fwFile, byte **p_msgBuf, int *p_msgLen)
 
     /* Verify file can be loaded */
     rc = fwfile_load(fwFile, &fwBuf, &fwLen);
-    if (rc < 0 || fwLen == 0) {
+    if (rc < 0 || fwLen == 0 || fwBuf == NULL) {
         PRINTF("Firmware File %s Load Error!", fwFile);
         Usage();
         goto exit;
