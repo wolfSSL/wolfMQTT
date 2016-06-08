@@ -31,21 +31,6 @@
 	#undef exit
 	#define exit(rc) return rc
 #endif
-#ifndef LINE_END
-    #define LINE_END    "\n"
-#endif
-#ifndef PRINTF
-    #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
-#endif
-
-#ifndef WOLFMQTT_NO_STDIO
-    #include <stdlib.h>
-    #include <string.h>
-    #include <stdio.h>
-#else
-    #undef PRINTF
-    #define PRINTF
-#endif
 
 /* Default Configurations */
 #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"

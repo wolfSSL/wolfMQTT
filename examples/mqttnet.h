@@ -36,6 +36,7 @@ int MqttClientNet_Init(MqttNet* net);
 int MqttClientNet_DeInit(MqttNet* net);
 
 /* Standard In / Command handling */
+int MqttClientNet_CheckForCommand_Enable(MqttNet* net);
 int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length);
 
 #ifdef __cplusplus

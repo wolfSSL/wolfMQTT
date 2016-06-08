@@ -371,7 +371,7 @@ int fwclient_test(void* args)
     myoptind = 0; /* reset for test cases */
 
     /* Start example MQTT Client */
-    PRINTF("MQTT Firmware Client: QoS %d", qos);
+    PRINTF("MQTT Firmware Client: QoS %d, Use TLS %d", qos, use_tls);
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);

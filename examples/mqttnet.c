@@ -287,8 +287,9 @@ static int NetRead(void *context, byte* buf, int buf_len,
     FD_SET(sock->fd, &errfds);
 
 #ifdef ENABLE_STDIN_CAPTURE
-    FD_SET(STDIN, &recvfds); /* STDIN */
-    sock->stdin_has_data = 0;
+    if (sock->stdin_cap_enable) {
+        FD_SET(STDIN, &recvfds);
+    }
 #endif
 
     /* Loop until buf_len has been read, error or timeout */
@@ -318,8 +319,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
                 sock->stdin_has_data = 1;
                 /* Don't exit read until cap enabled */
                 if (sock->stdin_cap_enable) {
-                    rc = 0;
-                    break;
+                    return 0;
                 }
             }
 #endif
@@ -337,7 +337,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
         /* Get error */
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-        if (so_error == 0 && !FD_ISSET(sock->fd, &recvfds)) {
+        if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
         else {
@@ -383,6 +383,10 @@ int MqttClientNet_Init(MqttNet* net)
         net->write = NetWrite;
         net->disconnect = NetDisconnect;
         net->context = WOLFMQTT_MALLOC(sizeof(SocketContext));
+        if (net->context == NULL) {
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMSET(net->context, 0, sizeof(SocketContext));
     }
     return 0;
 }
@@ -398,29 +402,36 @@ int MqttClientNet_DeInit(MqttNet* net)
     return 0;
 }
 
-/* Return length of data */
-int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
+int MqttClientNet_CheckForCommand_Enable(MqttNet* net)
 {
-    int stdin_has_data = 0;
-
-    (void)buffer;
-    (void)length;
-
     if (net && net->context) {
 #ifdef ENABLE_STDIN_CAPTURE
         SocketContext *sock = (SocketContext*)net->context;
         sock->stdin_cap_enable = 1;
-        stdin_has_data = sock->stdin_has_data;
 #endif
     }
+    return 0;
+}
 
-    if (stdin_has_data) {
+/* Return length of data */
+int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
+{
+    int ret = 0;
+
+    if (net && net->context) {
 #ifdef ENABLE_STDIN_CAPTURE
-        stdin_has_data = 0;
-        if(fgets((char*)buffer, length, stdin) != NULL) {
-            stdin_has_data = (int)XSTRLEN((char*)buffer);
+        SocketContext *sock = (SocketContext*)net->context;
+        if (sock->stdin_has_data) {
+            if(fgets((char*)buffer, length, stdin) != NULL) {
+                ret = (int)XSTRLEN((char*)buffer);
+            }
+            sock->stdin_has_data = 0;
         }
 #endif
     }
-    return stdin_has_data;
+
+    (void)buffer;
+    (void)length;
+
+    return ret;
 }
