@@ -55,6 +55,14 @@
     #define SOCK_SEND(s,b,l,f) send((s), (const char*)(b), (size_t)(l), (f))
     #define SOCK_RECV(s,b,l,f) recv((s), (char*)(b), (size_t)(l), (f))
 
+/* Freescale MQX / RTCS */
+#elif defined(FREESCALE_MQX) || defined(FREESCALE_KSDK_MQX)
+    #if defined(FREESCALE_MQX)
+        #include <posix.h>
+    #endif
+    #include <rtcs.h>
+    /* Note: Use "RTCS_geterror(sock->fd);" to get error number */
+
 /* Linux */
 #else
     #include <sys/types.h>
