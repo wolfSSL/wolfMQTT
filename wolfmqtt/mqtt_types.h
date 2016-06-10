@@ -102,6 +102,9 @@ enum MqttPacketResponseCodes {
     #ifndef XATOI
         #define XATOI(s)            atoi((s))
     #endif
+    #ifndef XISALNUM
+        #define XISALNUM(c)         isalnum((c))
+    #endif
 #endif
 
 #ifndef WOLFMQTT_CUSTOM_MALLOC
