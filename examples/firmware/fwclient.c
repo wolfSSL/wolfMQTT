@@ -28,12 +28,15 @@
 #include <wolfssl/options.h>
 #include <wolfssl/version.h>
 
+#include "mqttexample.h"
+
 /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
 #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
 	    && defined(HAVE_ECC)
     #undef ENABLE_FIRMWARE_EXAMPLE
     #define ENABLE_FIRMWARE_EXAMPLE
 #endif
+
 
 #if defined(ENABLE_FIRMWARE_EXAMPLE)
 
@@ -45,7 +48,6 @@
 #include "mqttnet.h"
 #include "fwclient.h"
 #include "firmware.h"
-#include "mqttexample.h"
 
 /* Configuration */
 #undef DEFAULT_MQTT_QOS
@@ -502,9 +504,6 @@ exit:
 
     return 0;
 }
-
-#else
-    #include "mqttexample.h" /* For func_args */
 #endif /* ENABLE_FIRMWARE_EXAMPLE */
 
 
@@ -514,9 +513,9 @@ exit:
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
-#if defined(ENABLE_FIRMWARE_EXAMPLE)
+            #if defined(ENABLE_FIRMWARE_EXAMPLE)
                 mStopRead = 1;
-#endif
+            #endif
                 PRINTF("Received Ctrl+c");
                 return TRUE;
             }
@@ -527,9 +526,9 @@ exit:
         static void sig_handler(int signo)
         {
             if (signo == SIGINT) {
-#if defined(ENABLE_FIRMWARE_EXAMPLE)
+            #if defined(ENABLE_FIRMWARE_EXAMPLE)
                 mStopRead = 1;
-#endif
+            #endif
                 PRINTF("Received SIGINT");
             }
         }
@@ -553,9 +552,11 @@ exit:
         }
 #endif
 
-#if defined(ENABLE_FIRMWARE_EXAMPLE)
+    #if defined(ENABLE_FIRMWARE_EXAMPLE)
         fwclient_test(&args);
-#endif
+    #else
+        PRINTF("Example not compiled in!");
+    #endif
 
         return args.return_code;
     }

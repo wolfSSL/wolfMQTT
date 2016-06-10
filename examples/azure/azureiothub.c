@@ -25,12 +25,9 @@
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
-#include <wolfssl/ssl.h>
-#include <wolfssl/wolfcrypt/asn_public.h>
-#include <wolfssl/wolfcrypt/coding.h>
-#include <wolfssl/wolfcrypt/hmac.h>
-#include "azureiothub.h"
-#include "mqttnet.h"
+#include <wolfssl/options.h>
+#include <wolfssl/version.h>
+
 #include "mqttexample.h"
 
 /* This example only works with ENABLE_MQTT_TLS (wolfSSL library) */
@@ -43,8 +40,24 @@
  *  The "wc_GetTime" API was added in 3.9.1 and if not present you'll need to implement
  *  your own version of this to get current UTC seconds or update your wolfSSL library
 */
- 
-#ifdef ENABLE_MQTT_TLS
+
+/* This example requires features in wolfSSL 3.9.1 or later */
+#if defined(ENABLE_MQTT_TLS) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x03009001 && defined(WOLFSSL_BASE64_ENCODE)
+    #undef ENABLE_AZUREIOTHUB_EXAMPLE
+    #define ENABLE_AZUREIOTHUB_EXAMPLE
+#endif
+
+
+#ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+
+#include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/hmac.h>
+
+#include "azureiothub.h"
+#include "mqttnet.h"
 
 /* Globals */
 int myoptind = 0;
@@ -581,8 +594,7 @@ exit:
 
     return 0;
 }
-
-#endif /* ENABLE_MQTT_TLS */
+#endif /* ENABLE_AZUREIOTHUB_EXAMPLE */
 
 
 /* so overall tests can pull in test function */
@@ -591,7 +603,9 @@ exit:
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
+            #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
                 mStopRead = 1;
+            #endif
                 PRINTF("Received Ctrl+c");
                 return TRUE;
             }
@@ -602,7 +616,9 @@ exit:
         static void sig_handler(int signo)
         {
             if (signo == SIGINT) {
+            #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
                 mStopRead = 1;
+            #endif
                 PRINTF("Received SIGINT");
             }
         }
@@ -625,9 +641,12 @@ exit:
         }
 #endif
 
-#ifdef ENABLE_MQTT_TLS
+    #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
         azureiothub_test(&args);
-#endif
+    #else
+        /* This example requires wolfSSL 3.9.1 or later with base64encode enabled */
+        PRINTF("Example not compiled in!");
+    #endif
 
         return args.return_code;
     }
