@@ -646,6 +646,7 @@ exit:
     #else
         /* This example requires wolfSSL 3.9.1 or later with base64encode enabled */
         PRINTF("Example not compiled in!");
+        args.return_code = EXIT_FAILURE;
     #endif
 
         return args.return_code;

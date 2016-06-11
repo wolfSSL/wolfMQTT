@@ -591,7 +591,9 @@ exit:
     #if defined(ENABLE_FIRMWARE_EXAMPLE)
         fwpush_test(&args);
     #else
+        /* This example requires wolfSSL after 3.7.1 for signature wrapper */
         PRINTF("Example not compiled in!");
+        args.return_code = EXIT_FAILURE;
     #endif
 
         return args.return_code;
