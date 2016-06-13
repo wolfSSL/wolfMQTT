@@ -1,4 +1,4 @@
-/* mqttclient.c
+/* azureiothub.c
  *
  * Copyright (C) 2006-2016 wolfSSL Inc.
  *
@@ -26,10 +26,38 @@
 
 #include "wolfmqtt/mqtt_client.h"
 #include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-#include "mqttclient.h"
-#include "mqttnet.h"
+#include <wolfssl/version.h>
+
 #include "mqttexample.h"
+
+/* This example only works with ENABLE_MQTT_TLS (wolfSSL library) */
+/* Notes:
+ *  The wolfSSL library must be built with
+ *  #define WOLFSSL_BASE64_ENCODE
+ *  or
+ *  ./configure --enable-base64encode"
+ *
+ *  The "wc_GetTime" API was added in 3.9.1 and if not present you'll need to implement
+ *  your own version of this to get current UTC seconds or update your wolfSSL library
+*/
+
+/* This example requires features in wolfSSL 3.9.1 or later */
+#if defined(ENABLE_MQTT_TLS) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x03009001 && defined(WOLFSSL_BASE64_ENCODE)
+    #undef ENABLE_AZUREIOTHUB_EXAMPLE
+    #define ENABLE_AZUREIOTHUB_EXAMPLE
+#endif
+
+
+#ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+
+#include <wolfssl/ssl.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
+#include <wolfssl/wolfcrypt/coding.h>
+#include <wolfssl/wolfcrypt/hmac.h>
+
+#include "azureiothub.h"
+#include "mqttnet.h"
 
 /* Globals */
 int myoptind = 0;
@@ -41,35 +69,83 @@ static const char* mTlsFile = NULL;
 static int mPacketIdLast;
 
 /* Configuration */
-#define DEFAULT_CLIENT_ID       "WolfMQTTClient"
+/* Reference:
+ * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-mqtt-support
+ * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-devguide/#mqtt-support
+ * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-sas-tokens/#using-sas-tokens-as-a-device
+ */
 #define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
-#define TEST_MESSAGE            "test"
+#define AZURE_HOST              "wolfMQTT.azure-devices.net"
+#define AZURE_DEVICE_ID         "demoDevice"
+#define AZURE_KEY               "Vd8RHMAFPyRnAozkNCNFIPhVSffyZkB13r/YqiTWq5s=" /* Base64 Encoded */
+#define AZURE_QOS               MQTT_QOS_1 /* Azure IoT Hub does not yet support QoS level 2 */
+#define AZURE_KEEP_ALIVE_SEC    DEFAULT_KEEP_ALIVE_SEC
+#define AZURE_CMD_TIMEOUT_MS    DEFAULT_CMD_TIMEOUT_MS
+#define AZURE_TOKEN_EXPIRY_SEC  (60 * 60 * 1) /* 1 hour */
+
+#define AZURE_DEVICE_NAME       AZURE_HOST"/devices/"AZURE_DEVICE_ID
+#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID 
+#define AZURE_SIG_FMT           "%s\n%ld"
+    /* [device name (URL Encoded)]\n[Expiration sec UTC] */
+#define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%ld"
+    /* sr=[device name (URL Encoded)]
+       sig=[HMAC-SHA256 of AZURE_SIG_FMT using AZURE_KEY (URL Encoded)]
+       se=[Expiration sec UTC] */
+
+#define AZURE_MSGS_TOPIC_NAME   "devices/"AZURE_DEVICE_ID"/messages/devicebound/#" /* subscribe */
+#define AZURE_EVENT_TOPIC       "devices/"AZURE_DEVICE_ID"/messages/events/" /* publish */
+
 
 /* Usage */
 static void Usage(void)
 {
-    PRINTF("mqttclient:");
+    PRINTF("azureiothub:");
     PRINTF("-?          Help, print this usage");
     PRINTF("-h <host>   Host to connect to, default %s",
-        DEFAULT_MQTT_HOST);
+        AZURE_HOST);
     PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
         MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
-    PRINTF("-t          Enable TLS");
+    PRINTF("-t          Enable TLS, default: on");
     PRINTF("-c <file>   Use provided certificate file");
     PRINTF("-q <num>    Qos Level 0-2, default %d",
-        DEFAULT_MQTT_QOS);
+        AZURE_QOS);
     PRINTF("-s          Disable clean session connect flag");
     PRINTF("-k <num>    Keep alive seconds, default %d",
-        DEFAULT_KEEP_ALIVE_SEC);
+        AZURE_KEEP_ALIVE_SEC);
     PRINTF("-i <id>     Client Id, default %s",
-        DEFAULT_CLIENT_ID);
+        AZURE_DEVICE_ID);
     PRINTF("-l          Enable LWT (Last Will and Testament)");
-    PRINTF("-u <str>    Username");
-    PRINTF("-w <str>    Password");
-    PRINTF("-n <str>    Topic name, default %s", DEFAULT_TOPIC_NAME);
-    PRINTF("-C <num>    Command Timeout, default %dms", DEFAULT_CMD_TIMEOUT_MS);
+    PRINTF("-C <num>    Command Timeout, default %dms", AZURE_CMD_TIMEOUT_MS);
     PRINTF("-T          Test mode");
 }
+
+
+/* Encoding Support */
+static char mRfc3986[256] = {0};
+//static char mHtml5[256] = {0};
+static void url_encoder_init(void)
+{
+    int i;
+    for (i = 0; i < 256; i++){
+        mRfc3986[i] = XISALNUM( i) || i == '~' || i == '-' || i == '.' || i == '_' ? i : 0;
+        //mHtml5[i] = XISALNUM( i) || i == '*' || i == '-' || i == '.' || i == '_' ? i : (i == ' ') ? '+' : 0;
+    }
+}
+
+static char* url_encode(char* table, unsigned char *s, char *enc)
+{
+    for (; *s; s++){
+        if (table[*s]) {
+            sprintf(enc, "%c", table[*s]);
+        }
+        else {
+            sprintf(enc, "%%%02x", *s);
+        }
+        while (*++enc); /* locate end */
+    }
+    return enc;
+}
+
 
 static word16 mqttclient_get_packetid(void)
 {
@@ -78,7 +154,6 @@ static word16 mqttclient_get_packetid(void)
     return (word16)mPacketIdLast;
 }
 
-#ifdef ENABLE_MQTT_TLS
 static int mqttclient_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
     char buffer[WOLFSSL_MAX_ERROR_SZ];
@@ -111,22 +186,12 @@ static int mqttclient_tls_cb(MqttClient* client)
             rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsFile, NULL);
     #endif
         }
-
-        /* If using a client certificate it can be loaded using: */
-        //rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx, clientCertFile, SSL_FILETYPE_PEM);
     }
 
     PRINTF("MQTT TLS Setup (%d)", rc);
 
     return rc;
 }
-#else
-static int mqttclient_tls_cb(MqttClient* client)
-{
-    (void)client;
-    return 0;
-}
-#endif /* ENABLE_MQTT_TLS */
 
 static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
@@ -168,32 +233,104 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
-int mqttclient_test(void* args)
+static int SasTokenCreate(char* sasToken, int sasTokenLen)
+{
+    int rc;
+    const char* encodedKey = AZURE_KEY;
+    byte decodedKey[SHA256_DIGEST_SIZE+1];
+    word32 decodedKeyLen = (word32)sizeof(decodedKey);
+    char deviceName[150]; /* uri */
+    char sigData[200]; /* max uri + expiration */
+    byte sig[SHA256_DIGEST_SIZE];
+    byte base64Sig[SHA256_DIGEST_SIZE*2];
+    word32 base64SigLen = (word32)sizeof(base64Sig);
+    byte encodedSig[SHA256_DIGEST_SIZE*4];
+    long lTime;
+    Hmac hmac;
+
+    if (sasToken == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Decode Key */
+    rc = Base64_Decode((const byte*)encodedKey, (word32)XSTRLEN(encodedKey), decodedKey, &decodedKeyLen);
+    if (rc != 0) {
+        PRINTF("SasTokenCreate: Decode shared access key failed! %d", rc);
+        return rc;
+    }
+
+    /* Get time */
+    rc = wc_GetTime(&lTime, (word32)sizeof(lTime));
+    if (rc != 0) {
+        PRINTF("SasTokenCreate: Unable to get time! %d", rc);
+        return rc;
+    }
+    lTime += AZURE_TOKEN_EXPIRY_SEC;
+
+    /* URL encode uri (device name) */
+    url_encode(mRfc3986, (byte*)AZURE_DEVICE_NAME, deviceName);
+
+    /* Build signature sting "uri \n expiration" */
+    snprintf(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
+
+    /* HMAC-SHA256 Hash sigData using decoded key */
+    rc = wc_HmacSetKey(&hmac, SHA256, decodedKey, decodedKeyLen);
+    if (rc < 0) {
+        PRINTF("SasTokenCreate: Hmac setkey failed! %d", rc);
+        return rc;
+    }
+    rc = wc_HmacUpdate(&hmac, (byte*)sigData, (word32)XSTRLEN(sigData));
+    if (rc < 0) {
+        PRINTF("SasTokenCreate: Hmac update failed! %d", rc);
+        return rc;
+    }
+    rc = wc_HmacFinal(&hmac, sig);
+    if (rc < 0) {
+        PRINTF("SasTokenCreate: Hmac final failed! %d", rc);
+        return rc;
+    }
+
+    /* Base64 encode signature */
+    rc = Base64_Encode_NoNl(sig, sizeof(sig), base64Sig, &base64SigLen);
+    if (rc < 0) {
+        PRINTF("SasTokenCreate: Encoding sig failed! %d", rc);
+        return rc;
+    }
+
+    /* URL encode signature */
+    url_encode(mRfc3986, base64Sig, (char*)encodedSig);
+
+    /* Build sasToken */
+    snprintf(sasToken, sasTokenLen, AZURE_PASSWORD_FMT, deviceName, encodedSig, lTime);
+    PRINTF("%s", sasToken);
+
+    return 0;
+}
+
+int azureiothub_test(void* args)
 {
     int rc;
     MqttClient client;
     MqttNet net;
     word16 port = 0;
-    const char* host = DEFAULT_MQTT_HOST;
-    int use_tls = 0;
-    MqttQoS qos = DEFAULT_MQTT_QOS;
+    const char* host = AZURE_HOST;
+    int use_tls = 1;
+    MqttQoS qos = AZURE_QOS;
     byte clean_session = 1;
-    word16 keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
-    const char* client_id = DEFAULT_CLIENT_ID;
+    word16 keep_alive_sec = AZURE_KEEP_ALIVE_SEC;
+    const char* client_id = AZURE_DEVICE_ID;
     int enable_lwt = 0;
-    const char* username = NULL;
-    const char* password = NULL;
     byte *tx_buf = NULL, *rx_buf = NULL;
-    const char* topicName = DEFAULT_TOPIC_NAME;
-    word32 cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
+    word32 cmd_timeout_ms = AZURE_CMD_TIMEOUT_MS;
     byte test_mode = 0;
+    char sasToken[400];
 
     int     argc = ((func_args*)args)->argc;
     char**  argv = ((func_args*)args)->argv;
 
     ((func_args*)args)->return_code = -1; /* error state */
 
-    while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lu:w:n:C:T")) != -1) {
+    while ((rc = mygetopt(argc, argv, "?h:p:tc:q:sk:i:lC:T")) != -1) {
         switch ((char)rc) {
             case '?' :
                 Usage();
@@ -241,18 +378,6 @@ int mqttclient_test(void* args)
                 enable_lwt = 1;
                 break;
 
-            case 'u':
-                username = myoptarg;
-                break;
-
-            case 'w':
-                password = myoptarg;
-                break;
-
-            case 'n':
-                topicName = myoptarg;
-                break;
-
             case 'C':
                 cmd_timeout_ms = XATOI(myoptarg);
                 break;
@@ -268,9 +393,10 @@ int mqttclient_test(void* args)
     }
 
     myoptind = 0; /* reset for test cases */
+    url_encoder_init();
 
     /* Start example MQTT Client */
-    PRINTF("MQTT Client: QoS %d, Use TLS %d", qos, use_tls);
+    PRINTF("AzureIoTHub Client: QoS %d, Use TLS %d", qos, use_tls);
 
     /* Initialize Network */
     rc = MqttClientNet_Init(&net);
@@ -314,13 +440,18 @@ int mqttclient_test(void* args)
             /* Send client id in LWT payload */
             lwt_msg.qos = qos;
             lwt_msg.retain = 0;
-            lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
+            lwt_msg.topic_name = AZURE_EVENT_TOPIC;
             lwt_msg.buffer = (byte*)client_id;
             lwt_msg.total_len = (word16)XSTRLEN(client_id);
         }
-        /* Optional authentication */
-        connect.username = username;
-        connect.password = password;
+        /* Authentication */
+        /* build sas token for password */
+        rc = SasTokenCreate(sasToken, (int)sizeof(sasToken));
+        if (rc < 0) {
+            goto exit;
+        }
+        connect.username = AZURE_USERNAME;
+        connect.password = sasToken;
 
         /* Send Connect and wait for Connect Ack */
         rc = MqttClient_Connect(&client, &connect);
@@ -334,7 +465,7 @@ int mqttclient_test(void* args)
             int i;
 
             /* Build list of topics */
-            topics[0].topic_filter = topicName;
+            topics[0].topic_filter = AZURE_MSGS_TOPIC_NAME;
             topics[0].qos = qos;
 
             /* Validate Connect Ack info */
@@ -366,10 +497,10 @@ int mqttclient_test(void* args)
             publish.retain = 0;
             publish.qos = qos;
             publish.duplicate = 0;
-            publish.topic_name = topicName;
+            publish.topic_name = AZURE_EVENT_TOPIC;
             publish.packet_id = mqttclient_get_packetid();
-            publish.buffer = (byte*)TEST_MESSAGE;
-            publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+            publish.buffer = NULL;
+            publish.total_len = 0;
             rc = MqttClient_Publish(&client, &publish);
             PRINTF("MQTT Publish: Topic %s, %s (%d)",
                 publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
@@ -392,7 +523,7 @@ int mqttclient_test(void* args)
                         publish.retain = 0;
                         publish.qos = qos;
                         publish.duplicate = 0;
-                        publish.topic_name = topicName;
+                        publish.topic_name = AZURE_EVENT_TOPIC;
                         publish.packet_id = mqttclient_get_packetid();
                         publish.buffer = rx_buf;
                         publish.total_len = (word16)rc;
@@ -463,6 +594,7 @@ exit:
 
     return 0;
 }
+#endif /* ENABLE_AZUREIOTHUB_EXAMPLE */
 
 
 /* so overall tests can pull in test function */
@@ -471,7 +603,9 @@ exit:
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
+            #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
                 mStopRead = 1;
+            #endif
                 PRINTF("Received Ctrl+c");
                 return TRUE;
             }
@@ -482,7 +616,9 @@ exit:
         static void sig_handler(int signo)
         {
             if (signo == SIGINT) {
+            #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
                 mStopRead = 1;
+            #endif
                 PRINTF("Received SIGINT");
             }
         }
@@ -505,7 +641,13 @@ exit:
         }
 #endif
 
-        mqttclient_test(&args);
+    #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+        azureiothub_test(&args);
+    #else
+        /* This example requires wolfSSL 3.9.1 or later with base64encode enabled */
+        PRINTF("Example not compiled in!");
+        args.return_code = EXIT_FAILURE;
+    #endif
 
         return args.return_code;
     }

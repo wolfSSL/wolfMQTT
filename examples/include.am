@@ -4,7 +4,17 @@
 if BUILD_EXAMPLES
 noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/firmware/fwpush \
-                   examples/firmware/fwclient
+                   examples/firmware/fwclient \
+                   examples/azure/azureiothub
+
+noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
+                   examples/firmware/fwpush.h \
+                   examples/firmware/fwclient.h \
+                   examples/firmware/firmware.h \
+                   examples/azure/azureiothub.h \
+                   examples/mqttnet.h \
+                   examples/mqttexample.h
+
 
 examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
                                               examples/mqttnet.c
@@ -12,36 +22,43 @@ examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
+
 examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
                                               examples/mqttnet.c
 examples_firmware_fwpush_LDADD              = src/libwolfmqtt.la
 examples_firmware_fwpush_DEPENDENCIES       = src/libwolfmqtt.la
 examples_firmware_fwpush_CPPFLAGS           = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
+
 examples_firmware_fwclient_SOURCES          = examples/firmware/fwclient.c \
                                               examples/mqttnet.c
 examples_firmware_fwclient_LDADD            = src/libwolfmqtt.la
 examples_firmware_fwclient_DEPENDENCIES     = src/libwolfmqtt.la
 examples_firmware_fwclient_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+
+examples_azure_azureiothub_SOURCES          = examples/azure/azureiothub.c \
+                                              examples/mqttnet.c
+examples_azure_azureiothub_LDADD            = src/libwolfmqtt.la
+examples_azure_azureiothub_DEPENDENCIES     = src/libwolfmqtt.la
+examples_azure_azureiothub_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 endif
 
-noinst_HEADERS += examples/mqttclient/mqttclient.h \
-                  examples/firmware/fwpush.h \
-                  examples/firmware/fwclient.h \
-                  examples/firmware/firmware.h
-
-dist_example_DATA+= examples/mqttclient/mqttclient.c \
+dist_example_DATA+= examples/mqttnet.c \
+                    examples/mqttclient/mqttclient.c \
                     examples/firmware/fwpush.c \
                     examples/firmware/fwclient.c \
-                    examples/mqttnet.c
+                    examples/azure/azureiothub.c
 
-DISTCLEANFILES+= examples/mqttclient/.libs/mqttclient \
-                 examples/firmware/.libs/fwpush \
-                 examples/firmware/.libs/fwclient
+DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
+                   examples/firmware/.libs/fwpush \
+                   examples/firmware/.libs/fwclient \
+                   examples/azure/.libs/azureiothub
 
-EXTRA_DIST+= examples/mqttnet.h \
-             examples/mqttuart.c \
-             examples/mqttexample.h \
-             examples/mqttclient/mqttclient.h \
-             examples/mqttclient/mqttclient.vcxproj \
-             examples/mqttclient/mqttclient.vcxproj.filters
+EXTRA_DIST+=       examples/mqttuart.c \
+                   examples/mqttclient/mqttclient.vcxproj \
+                   examples/mqttclient/mqttclient.vcxproj.filters \
+                   examples/firmware/fwclient.vcxproj \
+                   examples/firmware/fwclient.vcxproj.filters \
+                   examples/firmware/fwpush.vcxproj \
+                   examples/firmware/fwpush.vcxproj.filters

@@ -72,6 +72,9 @@ The example MQTT client is located in /examples/mqttclient/. This example exerci
 ### Firmware Example
 The MQTT firmware update  is located in /examples/firmware/. This example has two parts. The first is called “fwpush”, which publishes a signed firmware image. The second is called “fwclient”, which receives the firmware image and verifies the signature. This example publishes message on the topic “wolfMQTT/example/firmware”.
 
+### Azure IoT Hub Example
+We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device called `demoDevice`, which you can connect and publish to. The example demonstrates creation of a SasToken, which is used as the password for the MQTT connect packet. It also shows the topic names for publishing events and listening to `devicebound` messages. This example only works with `ENABLE_MQTT_TLS` set and the wolfSSL library present because it requires Base64 Encode/Decode and HMAC-SHA256. Note: The wolfSSL library must be built with `./configure --enable-base64encode` or `#define WOLFSSL_BASE64_ENCODE`. The `wc_GetTime` API was added in 3.9.1 and if not present you'll need to implement your own version of this to get current UTC seconds or update your wolfSSL library.
+
 ## Release Notes
 
 ### v0.6 (03/18/2016)

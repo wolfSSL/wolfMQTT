@@ -62,3 +62,4 @@ examples/firmware/fwpush
 firmware.bin
 *.trs
 IDE/ARDUINO/wolfmqtt
+examples/azure/azureiothub
