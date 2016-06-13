@@ -77,6 +77,17 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 
 ## Release Notes
 
+### v0.8 (06/13/16)
+* Fixed stdin capture bug and improved signal (ctrl+c) handling.
+* Added Azure IoT hub MQTT client example.
+* Added support for MQX / RTCS.
+* Added "--disable-tls" and "--disable-examples" configure options.
+* Added comment about max packet size.
+* Added example for how to load a client certificate to mqttclient example.
+* Added return code for firmware and azure examples that are not compiled in due to older / incompatible version of wolfSSL.
+* Moved the support for custom printf/line endings into the mqtt_types.h for use throughout the project.
+* Updated README.md with information about the examples.
+
 ### v0.6 (03/18/2016)
 * Fixes to support MinGW compiler.
 * Fixed bug with include of the wolfSSL include of options.h.
