@@ -105,6 +105,9 @@ enum MqttPacketResponseCodes {
     #ifndef XISALNUM
         #define XISALNUM(c)         isalnum((c))
     #endif
+    #ifndef XSNPRINTF
+        #define XSNPRINTF           snprintf
+    #endif
 #endif
 
 #ifndef WOLFMQTT_CUSTOM_MALLOC

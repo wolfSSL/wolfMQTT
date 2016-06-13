@@ -14,6 +14,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fwclient", "examples\firmwa
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fwpush", "examples\firmware\fwpush.vcxproj", "{AC340EE9-6612-4B96-8B64-D1FF64301D32}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "azureiothub", "examples\azure\azureiothub.vcxproj", "{D6D64B80-7203-4E0D-B883-E126B823A96E}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -54,6 +56,14 @@ Global
 		{AC340EE9-6612-4B96-8B64-D1FF64301D32}.Release|x64.Build.0 = Release|x64
 		{AC340EE9-6612-4B96-8B64-D1FF64301D32}.Release|x86.ActiveCfg = Release|Win32
 		{AC340EE9-6612-4B96-8B64-D1FF64301D32}.Release|x86.Build.0 = Release|Win32
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Debug|x64.ActiveCfg = Debug|x64
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Debug|x64.Build.0 = Debug|x64
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Debug|x86.ActiveCfg = Debug|Win32
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Debug|x86.Build.0 = Debug|Win32
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Release|x64.ActiveCfg = Release|x64
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Release|x64.Build.0 = Release|x64
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Release|x86.ActiveCfg = Release|Win32
+		{D6D64B80-7203-4E0D-B883-E126B823A96E}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

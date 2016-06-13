@@ -61,4 +61,6 @@ EXTRA_DIST+=       examples/mqttuart.c \
                    examples/firmware/fwclient.vcxproj \
                    examples/firmware/fwclient.vcxproj.filters \
                    examples/firmware/fwpush.vcxproj \
-                   examples/firmware/fwpush.vcxproj.filters
+                   examples/firmware/fwpush.vcxproj.filters \
+                   examples/azure/azureiothub.vcxproj \
+                   examples/azure/azureiothub.vcxproj.filters

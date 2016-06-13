@@ -136,10 +136,10 @@ static char* url_encode(char* table, unsigned char *s, char *enc)
 {
     for (; *s; s++){
         if (table[*s]) {
-            sprintf(enc, "%c", table[*s]);
+            XSNPRINTF(enc, 2, "%c", table[*s]);
         }
         else {
-            sprintf(enc, "%%%02x", *s);
+            XSNPRINTF(enc, 4, "%%%02x", *s);
         }
         while (*++enc); /* locate end */
     }
@@ -271,7 +271,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     url_encode(mRfc3986, (byte*)AZURE_DEVICE_NAME, deviceName);
 
     /* Build signature sting "uri \n expiration" */
-    snprintf(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
+    XSNPRINTF(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
 
     /* HMAC-SHA256 Hash sigData using decoded key */
     rc = wc_HmacSetKey(&hmac, SHA256, decodedKey, decodedKeyLen);
@@ -301,7 +301,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     url_encode(mRfc3986, base64Sig, (char*)encodedSig);
 
     /* Build sasToken */
-    snprintf(sasToken, sasTokenLen, AZURE_PASSWORD_FMT, deviceName, encodedSig, lTime);
+    XSNPRINTF(sasToken, sasTokenLen, AZURE_PASSWORD_FMT, deviceName, encodedSig, lTime);
     PRINTF("%s", sasToken);
 
     return 0;
