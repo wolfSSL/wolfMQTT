@@ -499,7 +499,6 @@ exit:
 
     /* Cleanup network */
     MqttClientNet_DeInit(&net);
-
     ((func_args*)args)->return_code = (rc == 0) ? 0 : EXIT_FAILURE;
 
     return 0;
