@@ -22,7 +22,11 @@
 #ifndef WOLFMQTT_MQTTCLIENT_H
 #define WOLFMQTT_MQTTCLIENT_H
 
+#include "examples/mqttexample.h"
+
+
 /* Exposed functions */
-int mqttclient_test(void* args);
+int mqttclient_test(MQTTCtx *mqttCtx);
+
 
 #endif /* WOLFMQTT_MQTTCLIENT_H */

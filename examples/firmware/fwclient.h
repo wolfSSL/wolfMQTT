@@ -22,7 +22,14 @@
 #ifndef WOLFMQTT_FWCLIENT_H
 #define WOLFMQTT_FWCLIENT_H
 
+#include "examples/mqttexample.h"
+
+#define FIRMWARE_CLIIENT_ID     "WolfMQTTFWClient"
+#define FIRMWARE_DEF_SAVE_AS    "firmware.bin"
+
+
 /* Exposed functions */
-int fwclient_test(void* args);
+int fwclient_test(MQTTCtx *mqttCtx);
+
 
 #endif /* WOLFMQTT_FWCLIENT_H */

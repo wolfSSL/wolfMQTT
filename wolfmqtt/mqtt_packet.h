@@ -49,8 +49,18 @@ typedef enum _MqttQoS {
 
 
 /* Generic Message */
+typedef enum _MqttMsgStat {
+    MQTT_MSG_BEGIN,
+    MQTT_MSG_WAIT,
+    MQTT_MSG_WRITE,
+    MQTT_MSG_READ,
+    MQTT_MSG_READ_PAYLOAD,
+} MqttMsgStat;
+
 typedef struct _MqttMessage {
+    MqttMsgStat stat;
     word16      packet_id;
+    byte        type;
     MqttQoS     qos;
     byte        retain;
     byte        duplicate;
@@ -60,6 +70,7 @@ typedef struct _MqttMessage {
     byte       *buffer;       /* Payload buffer */
 
     /* Used internally for TX/RX */
+    byte        buffer_new;   /* flag to indicate new message */
     word32      buffer_len;   /* Buffer length */
     word32      buffer_pos;   /* Buffer position */
 } MqttMessage;

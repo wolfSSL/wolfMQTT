@@ -35,6 +35,7 @@ include src/include.am
 include wolfmqtt/include.am
 include examples/include.am
 include scripts/include.am
+include IDE/include.am
 
 EXTRA_DIST+= README.md
 EXTRA_DIST+= LICENSE

@@ -33,6 +33,17 @@
 
 #include "wolfmqtt/visibility.h"
 
+/* configuration for Harmony */
+#ifdef MICROCHIP_MPLAB_HARMONY
+    #define NO_EXIT
+
+    /* make sure we are using non-blocking for Harmony */
+    #ifndef WOLFMQTT_NONBLOCK
+        #define WOLFMQTT_NONBLOCK
+    #endif
+#endif
+
+
 /* Endianess check */
 #if defined(__BIG_ENDIAN__) || defined(BIG_ENDIAN_ORDER)
     #error Big Endian is not yet supported. Please contact us if \
@@ -53,7 +64,7 @@
 #endif
 
 /* Allow custom override of data types */
-#ifndef WOLFMQTT_CUSTOM_TYPES
+#if !defined(WOLFMQTT_CUSTOM_TYPES) && !defined(WOLF_CRYPT_TYPES_H)
     /* Basic Types */
     #ifndef byte
         typedef unsigned char  byte;
@@ -64,6 +75,7 @@
     #ifndef word32
         typedef unsigned int   word32;
     #endif
+    #define WOLFSSL_TYPES /* make sure wolfSSL knows we defined these types */
 #endif
 
 /* Response Codes */
@@ -78,6 +90,9 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_ERROR_TIMEOUT = -7,
     MQTT_CODE_ERROR_NETWORK = -8,
     MQTT_CODE_ERROR_MEMORY = -9,
+    MQTT_CODE_ERROR_STAT = -10,
+
+    MQTT_CODE_CONTINUE = -101,
 };
 
 
@@ -90,8 +105,8 @@ enum MqttPacketResponseCodes {
     #ifndef XSTRCHR
         #define XSTRCHR(s,c)        strchr((s),(c))
     #endif
-    #ifndef XSTRCMP
-        #define XSTRCMP(s1,s2)      strcmp((s1),(s2))
+    #ifndef XSTRNCMP
+        #define XSTRNCMP(s1,s2,n)   strncmp((s1),(s2),(n))
     #endif
     #ifndef XMEMCPY
         #define XMEMCPY(d,s,l)      memcpy((d),(s),(l))

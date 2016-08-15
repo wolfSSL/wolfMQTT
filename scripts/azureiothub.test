@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# AzureIoTHub Client test
+
+# Check for application
+[ ! -x ./examples/azure/azureiothub ] && echo -e "\n\nAzureIotHub MQTT Client doesn't exist" && exit 1
+
+def_args="-T -C 1000"
+
+# Run with TLS and QoS 0-1
+
+./examples/azure/azureiothub $def_args -t -q 0 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nAzureIotHub MQTT Client failed! TLS=On, QoS=0" && exit 1
+
+./examples/azure/azureiothub $def_args -t -q 1 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nAzureIotHub MQTT Client failed! TLS=On, QoS=1" && exit 1
+
+exit 0

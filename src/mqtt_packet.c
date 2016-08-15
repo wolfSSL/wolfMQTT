@@ -706,50 +706,86 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     int timeout_ms)
 {
-    int rc, len, header_len = 2, remain_len = 0;
+    int rc, len, remain_read = 0;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
-    /* Read fix header portion */
-    rc = MqttSocket_Read(client, &rx_buf[0], header_len, timeout_ms);
-    if (rc != header_len) {
-        return rc;
-    }
+    switch (client->packet.stat)
+    {
+        case MQTT_PK_BEGIN:
+        {
+            client->packet.header_len = 2;
+            client->packet.remain_len = 0;
 
-    do {
-        /* Try and decode remaining length */
-        rc = MqttDecode_RemainLen(header, header_len, &remain_len);
-        if (rc < 0) { /* Indicates error */
-            return rc;
+            /* Read fix header portion */
+            rc = MqttSocket_Read(client, rx_buf, client->packet.header_len, timeout_ms);
+            if (rc < 0) {
+                return rc;
+            }
+            else if (rc != client->packet.header_len) {
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+
+            /* fall-through */
         }
-        /* Indicates decode success and rc is len of header */
-        else if (rc > 0) {
-            header_len = rc;
+
+        case MQTT_PK_READ_HEAD:
+        {
+            client->packet.stat = MQTT_PK_READ_HEAD;
+
+            do {
+                /* Try and decode remaining length */
+                rc = MqttDecode_RemainLen(header, client->packet.header_len, &client->packet.remain_len);
+                if (rc < 0) { /* Indicates error */
+                    return rc;
+                }
+                /* Indicates decode success and rc is len of header */
+                else if (rc > 0) {
+                    client->packet.header_len = rc;
+                    break; /* exit while */
+                }
+
+                /* Read next byte and try decode again */
+                len = 1;
+                rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len], len, timeout_ms);
+                if (rc < 0) {
+                    return rc;
+                }
+                else if (rc != len) {
+                    return MQTT_CODE_ERROR_NETWORK;
+                }
+                client->packet.header_len += len;
+
+            } while (client->packet.header_len < MQTT_PACKET_MAX_SIZE);
+
+            /* fall-through */
+        }
+
+        case MQTT_PK_READ:
+        {
+            client->packet.stat = MQTT_PK_READ;
+
+            /* Make sure it does not overflow rx_buf */
+            if (client->packet.remain_len > (rx_buf_len - client->packet.header_len)) {
+                client->packet.remain_len = rx_buf_len - client->packet.header_len;
+            }
+
+            /* Read remaining */
+            if (client->packet.remain_len > 0) {
+                rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len],
+                    client->packet.remain_len, timeout_ms);
+                if (rc <= 0) {
+                    return rc;
+                }
+                remain_read = rc;
+            }
+
             break;
         }
+    } /* switch (client->packet.stat) */
 
-        /* Read next byte and try decode again */
-        len = 1;
-        rc = MqttSocket_Read(client, &rx_buf[header_len], len, timeout_ms);
-        if (rc != len) {
-            return rc;
-        }
-        header_len += len;
-    } while (header_len < MQTT_PACKET_MAX_SIZE);
+    /* reset state */
+    client->packet.stat = MQTT_PK_BEGIN;
 
-    /* Make sure it does not overflow rx_buf */
-    if (remain_len > (rx_buf_len - header_len)) {
-        remain_len = rx_buf_len - header_len;
-    }
-
-    /* Read remaining */
-    if (remain_len > 0) {
-        rc = MqttSocket_Read(client, &rx_buf[header_len], remain_len,
-            timeout_ms);
-        if (rc != remain_len) {
-            return rc;
-        }
-    }
-
-    /* Return read packet length */
-    return header_len + remain_len;
+    /* Return read length */
+    return client->packet.header_len + remain_read;
 }

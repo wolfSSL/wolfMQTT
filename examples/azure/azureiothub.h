@@ -22,7 +22,10 @@
 #ifndef WOLFMQTT_AZUREIOTHUB_H
 #define WOLFMQTT_AZUREIOTHUB_H
 
+#include "examples/mqttexample.h"
+
+
 /* Exposed functions */
-int azureiothub_test(void* args);
+int azureiothub_test(MQTTCtx *mqttCtx);
 
 #endif /* WOLFMQTT_AZUREIOTHUB_H */

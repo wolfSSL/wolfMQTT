@@ -33,99 +33,79 @@
 #endif
 
 /* Default Configurations */
-#define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
 #define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0
 #define DEFAULT_KEEP_ALIVE_SEC  60
+#define DEFAULT_CLIENT_ID       "WolfMQTTClient"
+#define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
 #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
 
 #define PRINT_BUFFER_SIZE       80
 #define MAX_PACKET_ID           ((1 << 16) - 1)
 
 
-/* Argument Parsing */
-typedef struct func_args {
-    int    argc;
-    char** argv;
-    int    return_code;
-} func_args;
+/* MQTT Client state */
+typedef enum MQTTCtxState {
+    WMQ_BEGIN = 0,
+    WMQ_NET_INIT,
+    WMQ_INIT,
+    WMQ_TCP_CONN,
+    WMQ_MQTT_CONN,
+    WMQ_SUB,
+    WMQ_PUB,
+    WMQ_WAIT_MSG,
+    WMQ_UNSUB,
+    WMQ_DISCONNECT,
+    WMQ_DONE,
+} MQTTCtxState;
 
-#define MY_EX_USAGE 2 /* Exit reason code */
+/* MQTT Client context */
+typedef struct MQTTCtx {
+    MqttClient client;
+    MqttNet net;
+    MQTTCtxState stat;
+    int return_code;
 
-extern int   myoptind;
-extern char* myoptarg;
+    /* configuration */
+    const char* app_name;
+    word16 port;
+    const char* host;
+    int use_tls;
+    MqttQoS qos;
+    byte clean_session;
+    word16 keep_alive_sec;
+    const char* client_id;
+    int enable_lwt;
+    const char* username;
+    const char* password;
+    byte *tx_buf, *rx_buf;
+    const char* topic_name;
+    word32 cmd_timeout_ms;
+    byte test_mode;
+    const char* pub_file;
+    int retain;
+#ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+    char sasToken[400];
+#endif
 
-static INLINE int mygetopt(int argc, char** argv, const char* optstring)
-{
-    static char* next = NULL;
+    /* temp mqtt containers */
+    MqttConnect connect;
+    MqttMessage lwt_msg;
+    MqttSubscribe subscribe;
+    MqttUnsubscribe unsubscribe;
+    MqttTopic topics[1], *topic;
+    MqttPublish publish;
+} MQTTCtx;
 
-    char  c;
-    char* cp;
 
-    if (myoptind == 0)
-        next = NULL;   /* we're starting new/over */
+void mqtt_show_usage(MQTTCtx* mqttCtx);
+void mqtt_init_ctx(MQTTCtx* mqttCtx);
+int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv);
+int err_sys(const char* msg);
 
-    if (next == NULL || *next == '\0') {
-        if (myoptind == 0)
-            myoptind++;
-
-        if (myoptind >= argc || argv[myoptind][0] != '-' ||
-                                argv[myoptind][1] == '\0') {
-            myoptarg = NULL;
-            if (myoptind < argc)
-                myoptarg = argv[myoptind];
-
-            return -1;
-        }
-
-        if (XSTRCMP(argv[myoptind], "--") == 0) {
-            myoptind++;
-            myoptarg = NULL;
-
-            if (myoptind < argc)
-                myoptarg = argv[myoptind];
-
-            return -1;
-        }
-
-        next = argv[myoptind];
-        next++;                  /* skip - */
-        myoptind++;
-    }
-
-    c  = *next++;
-    /* The C++ strchr can return a different value */
-    cp = (char*)XSTRCHR(optstring, c);
-
-    if (cp == NULL || c == ':')
-        return '?';
-
-    cp++;
-
-    if (*cp == ':') {
-        if (*next != '\0') {
-            myoptarg = next;
-            next     = NULL;
-        }
-        else if (myoptind < argc) {
-            myoptarg = argv[myoptind];
-            myoptind++;
-        }
-        else
-            return '?';
-    }
-
-    return c;
-}
-
-static INLINE int err_sys(const char* msg)
-{
-    if (msg) {
-        PRINTF("wolfMQTT error: %s", msg);
-    }
-	exit(EXIT_FAILURE);
-}
+int mqtt_tls_cb(MqttClient* client);
+word16 mqtt_get_packetid(void);
 
 #ifdef __cplusplus
     } /* extern "C" */

@@ -22,7 +22,13 @@
 #ifndef WOLFMQTT_FWPUSH_H
 #define WOLFMQTT_FWPUSH_H
 
+#include "examples/mqttexample.h"
+
+#define FIRMWARE_PUSH_CLIENT_ID "WolfMQTTFwPush"
+#define FIRMWARE_PUSH_DEF_FILE  "README.md"
+
+
 /* Exposed functions */
-int fwpush_test(void* args);
+int fwpush_test(MQTTCtx *mqttCtx);
 
 #endif /* WOLFMQTT_FWPUSH_H */

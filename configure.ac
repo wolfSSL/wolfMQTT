@@ -107,6 +107,19 @@ else
 fi
 
 
+# Non-Blocking support
+AC_ARG_ENABLE([nonblock],
+    [  --enable-nonblock        Enable non-blocking support  (default: disabled)],
+    [ ENABLED_NONBLOCK=$enableval ],
+    [ ENABLED_NONBLOCK=no ]
+    )
+
+if test "x$ENABLED_NONBLOCK" = "xyes"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NONBLOCK"
+fi
+
+
 # Examples
 AC_ARG_ENABLE([examples],
     [  --enable-examples       Enable Examples  (default: enabled)],
@@ -152,4 +165,8 @@ echo "   * C Flags:                   $CFLAGS"
 echo "   * CPP Flags:                 $CPPFLAGS"
 echo "   * Linker Flags:              $LDFLAGS"
 echo "   * LIB Flags:                 $LIB"
+
+echo "   * TLS:                       $ENABLED_TLS"
+echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
+echo "   * Examples:                  $ENABLED_EXAMPLES"
 
