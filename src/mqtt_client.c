@@ -249,11 +249,17 @@ wait_again:
     switch (msg->stat)
     {
         case MQTT_MSG_BEGIN:
+        {
+            /* reset the packet state */
+            client->packet.stat = MQTT_PK_BEGIN;
+
+            /* fall through */
+        }
         case MQTT_MSG_WAIT:
         {
             MqttPacket* header;
 
-            client->packet.stat = MQTT_PK_BEGIN;
+            msg->stat = MQTT_MSG_WAIT;
 
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms);
@@ -303,12 +309,15 @@ wait_again:
         }
 
         case MQTT_MSG_WRITE:
+        default:
+        {
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("MqttClient_WaitType: Invalid state %d!",
                 msg->stat);
         #endif
             rc = MQTT_CODE_ERROR_STAT;
             break;
+        }
     } /* switch (msg->stat) */
 
     /* reset state */
