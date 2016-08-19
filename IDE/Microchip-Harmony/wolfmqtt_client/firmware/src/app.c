@@ -141,7 +141,7 @@ void APP_Initialize(void)
     appData.state = APP_STATE_INIT;
     DBINIT();
 
-    printf("===  Initializing wolfMQTT  ===\n");
+    SYS_PRINT("===  Initializing wolfMQTT  ===\n");
     mqtt_init_ctx(&mqttCtx);
     mqttCtx.app_name = "mqttclient";
     mqttCtx.qos = MQTT_QOS_2;

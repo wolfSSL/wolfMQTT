@@ -41,6 +41,13 @@
     #ifndef WOLFMQTT_NONBLOCK
         #define WOLFMQTT_NONBLOCK
     #endif
+
+    /* use SYS_PRINT for printf */
+    #define WOLFMQTT_CUSTOM_PRINTF
+    #define PRINTF(_f_, ...)  SYS_PRINT( (_f_ "\n"), ##__VA_ARGS__)
+
+    #include "system_config.h"
+    #include "system_definitions.h"
 #endif
 
 

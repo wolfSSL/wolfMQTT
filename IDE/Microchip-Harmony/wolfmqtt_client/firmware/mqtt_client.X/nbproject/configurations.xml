@@ -31,6 +31,13 @@
           <itemPath>../../../../../bsp/pic32mx_eth_sk2/bsp_config.h</itemPath>
         </logicalFolder>
       </logicalFolder>
+      <logicalFolder name="f4" displayName="examples" projectFiles="true">
+        <logicalFolder name="f1" displayName="mqttclient" projectFiles="true">
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttclient/mqttclient.h</itemPath>
+        </logicalFolder>
+        <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttnet.h</itemPath>
+        <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttexample.h</itemPath>
+      </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
           <logicalFolder name="f1" displayName="src" projectFiles="true">
@@ -90,7 +97,7 @@
             <itemPath>../../../../../framework/driver/ethphy/drv_ethphy.h</itemPath>
             <itemPath>../../../../../framework/driver/ethphy/src/drv_ethphy_local.h</itemPath>
             <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_regs.h</itemPath>
-            <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_dp83848.h</itemPath>
+            <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_smsc8740.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f3" displayName="tmr" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
@@ -296,16 +303,8 @@
           <itemPath>../../../../../framework/usb/usb_device_cdc.h</itemPath>
         </logicalFolder>
       </logicalFolder>
-      <logicalFolder name="f4" displayName="third_party" projectFiles="true">
+      <logicalFolder name="f5" displayName="third_party" projectFiles="true">
         <logicalFolder name="f2" displayName="tcpip" projectFiles="true">
-          <logicalFolder name="f2" displayName="wolfmqtt" projectFiles="true">
-            <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_types.h</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_socket.h</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_packet.h</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_client.h</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/version.h</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/visibility.h</itemPath>
-          </logicalFolder>
           <logicalFolder name="f1" displayName="wolfssl" projectFiles="true">
             <logicalFolder name="f1" displayName="cyassl" projectFiles="true">
               <logicalFolder name="f1" displayName="ctaocrypt" projectFiles="true">
@@ -503,6 +502,14 @@
             </logicalFolder>
           </logicalFolder>
         </logicalFolder>
+        <logicalFolder name="f3" displayName="wolfmqtt" projectFiles="true">
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_types.h</itemPath>
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_socket.h</itemPath>
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_packet.h</itemPath>
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_client.h</itemPath>
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/version.h</itemPath>
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/visibility.h</itemPath>
+        </logicalFolder>
         <logicalFolder name="f1" displayName="wolfssl" projectFiles="true">
           <logicalFolder name="f1" displayName="wolfcrypt" projectFiles="true">
             <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/asn_public.h</itemPath>
@@ -587,8 +594,8 @@
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="f4" displayName="examples" projectFiles="true">
-        <logicalFolder name="f1" displayName="firmware" projectFiles="true">
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/firmware/fwclient.c</itemPath>
+        <logicalFolder name="f1" displayName="mqttclient" projectFiles="true">
+          <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttclient/mqttclient.c</itemPath>
         </logicalFolder>
         <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttnet.c</itemPath>
         <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttexample.c</itemPath>
@@ -629,7 +636,7 @@
           </logicalFolder>
           <logicalFolder name="f2" displayName="ethphy" projectFiles="true">
             <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_ethphy.c</itemPath>
-            <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_dp83848.c</itemPath>
+            <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_smsc8740.c</itemPath>
           </logicalFolder>
           <logicalFolder name="f3" displayName="tmr" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
@@ -814,7 +821,7 @@
         <targetDevice>PIC32MX795F512L</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
-        <platformTool>SKDEPIC32PlatformTool</platformTool>
+        <platformTool>PKOBSKDEPlatformTool</platformTool>
         <languageToolchain>XC32</languageToolchain>
         <languageToolchainVersion>1.42</languageToolchainVersion>
         <platform>4</platform>
@@ -845,6 +852,7 @@
       </makeCustomizationType>
       <C32>
         <property key="additional-warnings" value="false"/>
+        <property key="addresss-attribute-use" value="false"/>
         <property key="enable-app-io" value="false"/>
         <property key="enable-omit-frame-pointer" value="false"/>
         <property key="enable-symbols" value="true"/>
@@ -863,6 +871,7 @@
         <property key="preprocessor-macros" value="HAVE_CONFIG_H"/>
         <property key="strict-ansi" value="false"/>
         <property key="support-ansi" value="false"/>
+        <property key="toplevel-reordering" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
         <property key="use-indirect-calls" value="false"/>
@@ -892,6 +901,9 @@
       </C32-AS>
       <C32-LD>
         <property key="additional-options-use-response-files" value="false"/>
+        <property key="allocate-dinit" value="false"/>
+        <property key="code-dinit" value="false"/>
+        <property key="ebase-addr" value=""/>
         <property key="enable-check-sections" value="false"/>
         <property key="exclude-floating-point-library" value="false"/>
         <property key="exclude-standard-libraries" value="false"/>
@@ -906,8 +918,10 @@
         <property key="generate-16-bit-code" value="false"/>
         <property key="generate-cross-reference-file" value="false"/>
         <property key="generate-micro-compressed-code" value="false"/>
-        <property key="heap-size" value="100000"/>
+        <property key="heap-size" value="100352"/>
         <property key="input-libraries" value=""/>
+        <property key="kseg-length" value=""/>
+        <property key="kseg-origin" value=""/>
         <property key="linker-symbols" value=""/>
         <property key="map-file" value="${DISTDIR}/${PROJECTNAME}.${IMAGE_TYPE}.map"/>
         <property key="no-startup-files" value="false"/>
@@ -916,6 +930,8 @@
         <property key="preprocessor-macros" value=""/>
         <property key="remove-unused-sections" value="true"/>
         <property key="report-memory-usage" value="false"/>
+        <property key="serial-length" value=""/>
+        <property key="serial-origin" value=""/>
         <property key="stack-size" value=""/>
         <property key="symbol-stripping" value=""/>
         <property key="trace-symbols" value=""/>
@@ -923,6 +939,7 @@
       </C32-LD>
       <C32CPP>
         <property key="additional-warnings" value="false"/>
+        <property key="addresss-attribute-use" value="false"/>
         <property key="check-new" value="false"/>
         <property key="eh-specs" value="true"/>
         <property key="enable-app-io" value="false"/>
@@ -943,6 +960,7 @@
         <property key="preprocessor-macros" value=""/>
         <property key="rtti" value="true"/>
         <property key="strict-ansi" value="false"/>
+        <property key="toplevel-reordering" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
         <property key="use-indirect-calls" value="false"/>
@@ -1016,6 +1034,30 @@
         <property key="programoptions.uselvpprogramming" value="false"/>
         <property key="voltagevalue" value="3.25"/>
       </PICkit3PlatformTool>
+      <PKOBSKDEPlatformTool>
+        <property key="AutoSelectMemRanges" value="auto"/>
+        <property key="SecureSegment.SegmentProgramming" value="FullChipProgramming"/>
+        <property key="ToolFirmwareFilePath"
+                  value="Press to browse for a specific firmware version"/>
+        <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="memories.configurationmemory" value="true"/>
+        <property key="memories.dataflash" value="true"/>
+        <property key="memories.eeprom" value="true"/>
+        <property key="memories.id" value="true"/>
+        <property key="memories.programmemory" value="true"/>
+        <property key="memories.programmemory.end" value="0x1d07ffff"/>
+        <property key="memories.programmemory.start" value="0x1d000000"/>
+        <property key="memories.userotp" value="true"/>
+        <property key="programoptions.donoteraseauxmem" value="false"/>
+        <property key="programoptions.eraseb4program" value="true"/>
+        <property key="programoptions.preservedataflash" value="false"/>
+        <property key="programoptions.preserveeeprom" value="false"/>
+        <property key="programoptions.preserveprogramrange" value="false"/>
+        <property key="programoptions.preserveprogramrange.end" value="0x1d0001ff"/>
+        <property key="programoptions.preserveprogramrange.start" value="0x1d000000"/>
+        <property key="programoptions.usehighvoltageonmclr" value="false"/>
+        <property key="programoptions.uselvpprogramming" value="true"/>
+      </PKOBSKDEPlatformTool>
       <SKDEPIC32PlatformTool>
         <property key="whatToProgram" value="all"/>
       </SKDEPIC32PlatformTool>

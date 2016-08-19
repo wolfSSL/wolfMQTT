@@ -62,8 +62,6 @@ typedef enum MQTTCtxState {
 
 /* MQTT Client context */
 typedef struct MQTTCtx {
-    MqttClient client;
-    MqttNet net;
     MQTTCtxState stat;
     int return_code;
 
@@ -88,6 +86,10 @@ typedef struct MQTTCtx {
 #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
     char sasToken[400];
 #endif
+
+    /* client and net containers */    
+    MqttClient client;
+    MqttNet net;
 
     /* temp mqtt containers */
     MqttConnect connect;
