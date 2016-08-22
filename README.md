@@ -77,6 +77,15 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 
 ## Release Notes
 
+### v0.9 (08/22/16)
+* Added Microchip Harmony support (see new readme in `IDE/Microchip-Harmony/README.md`).
+* Added non-blocking mode `--enable-nonblock` or `WOLFMQTT_NONBLOCK`, which uses new `MQTT_CODE_CONTINUE` response code.
+* Added `scripts/azureiothub.test`.
+* Added `./commit-tests.sh` for testing all configurations.
+* Added git pre-commit hook to run `commit-tests.sh`.
+* Combined duplicate code in the examples into `examples/mqttexample.c`.
+* Examples now use `MQTTCtx` structure as argument for tracking info/state.
+
 ### v0.8 (06/13/16)
 * Fixed stdin capture bug and improved signal (ctrl+c) handling.
 * Added Azure IoT hub MQTT client example.
