@@ -119,10 +119,10 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
             buf_len, rc, error);
     #endif
         if (error == SSL_ERROR_WANT_WRITE) {
-        #ifndef WOLFMQTT_NONBLOCK
-            rc = 0; /* Timeout */
-        #else
+        #ifdef WOLFMQTT_NONBLOCK
             return MQTT_CODE_CONTINUE;
+        #else
+            rc = 0; /* Timeout */
         #endif
         }
     }

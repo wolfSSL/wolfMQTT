@@ -343,6 +343,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         case WMQ_UNSUB:
         {
             mqttCtx->stat = WMQ_UNSUB;
+            PRINTF("MQTT Exiting...");
 
             /* Unsubscribe Topics */
             rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
@@ -359,7 +360,21 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
         case WMQ_DISCONNECT:
         {
-            mqttCtx->stat = WMQ_DISCONNECT;
+            /* Disconnect */
+            rc = MqttClient_Disconnect(&mqttCtx->client);
+            if (rc == MQTT_CODE_CONTINUE) {
+                return rc;
+            }
+            PRINTF("MQTT Disconnect: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto disconn;
+            }
+        }
+
+        case WMQ_NET_DISCONNECT:
+        {
+            mqttCtx->stat = WMQ_NET_DISCONNECT;
 
             rc = MqttClient_NetDisconnect(&mqttCtx->client);
             if (rc == MQTT_CODE_CONTINUE) {
@@ -382,7 +397,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     } /* switch */
 
 disconn:
-    mqttCtx->stat = WMQ_DISCONNECT;
+    mqttCtx->stat = WMQ_NET_DISCONNECT;
     mqttCtx->return_code = rc;
     return MQTT_CODE_CONTINUE;
 

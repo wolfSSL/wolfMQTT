@@ -493,34 +493,27 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
-
-            /* Unsubscribe Topics */
-            XMEMSET(&mqttCtx->unsubscribe, 0, sizeof(MqttUnsubscribe));
-            mqttCtx->unsubscribe.packet_id = mqtt_get_packetid();
-            mqttCtx->unsubscribe.topic_count =
-                sizeof(mqttCtx->topics) / sizeof(MqttTopic);
-            mqttCtx->unsubscribe.topics = mqttCtx->topics;
         }
 
-        case WMQ_UNSUB:
+        case WMQ_DISCONNECT:
         {
-            mqttCtx->stat = WMQ_UNSUB;
+            PRINTF("MQTT Exiting...");
 
-            /* Unsubscribe Topics */
-            rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
+            /* Disconnect */
+            rc = MqttClient_Disconnect(&mqttCtx->client);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
-            PRINTF("MQTT Unsubscribe: %s (%d)",
+            PRINTF("MQTT Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
         }
 
-        case WMQ_DISCONNECT:
+        case WMQ_NET_DISCONNECT:
         {
-            mqttCtx->stat = WMQ_DISCONNECT;
+            mqttCtx->stat = WMQ_NET_DISCONNECT;
 
             rc = MqttClient_NetDisconnect(&mqttCtx->client);
             if (rc == MQTT_CODE_CONTINUE) {
@@ -537,13 +530,14 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             goto exit;
         }
 
+        case WMQ_UNSUB: /* not used */
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;
     } /* switch */
 
 disconn:
-    mqttCtx->stat = WMQ_DISCONNECT;
+    mqttCtx->stat = WMQ_NET_DISCONNECT;
     mqttCtx->return_code = rc;
     return MQTT_CODE_CONTINUE;
 
