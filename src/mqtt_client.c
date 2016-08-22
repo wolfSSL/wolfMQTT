@@ -412,7 +412,6 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
             }
 
             client->write.len = rc;
-            rc = MQTT_CODE_SUCCESS;
 
             /* fall-through */
         }
