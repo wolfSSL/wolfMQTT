@@ -186,6 +186,11 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    /* check for buffer position overflow */
+    if (client->read.pos > buf_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
 #ifdef WOLFMQTT_NONBLOCK
     rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
         buf_len - client->read.pos, timeout_ms);

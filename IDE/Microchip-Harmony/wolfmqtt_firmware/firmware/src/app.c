@@ -144,6 +144,9 @@ void APP_Initialize ( void )
     mqttCtx.app_name = "fwclient";
     mqttCtx.qos = MQTT_QOS_2;
     mqttCtx.use_tls = 1;
+
+    /* TODO: Add any additional custom args here.
+        See MQTTCtx struct in mqttexample.h */
 }
 
 
@@ -175,7 +178,11 @@ void APP_Tasks ( void )
 
         case APP_STATE_SERVICE_TASKS:
         {
-            fwclient_test(&mqttCtx);
+            int rc = fwclient_test(&mqttCtx);
+            if (rc != MQTT_CODE_CONTINUE) {
+                /* reset mqttCtx.stat and reconnect/try again */
+                mqttCtx.stat = WMQ_BEGIN;
+            }
             break;
         }
 

@@ -1,25 +1,25 @@
-# Microchip Harmony wolfMQTT
+# Microchip Harmony wolfMQTT client library and examples
 
 This example IDE project is meant to be used from inside the Microchip Harmony directory. The configuration.xml files uses relative paths based on the following:
 
 * Library located in `third_party/tcpip/wolfmqtt`
-* Application examples located in `apps/tcpip/mqtt_client` and `apps/tcpip/mqtt_firmware`
+* Application examples located in `apps/tcpip/wolfmqtt_client` and `apps/tcpip/wolfmqtt_firmware`
 
 ## Using Examples
 
-* Open the example project in your microchip harmony folder under `apps/tcpip/mqtt_client` or `apps/tcpip/mqtt_firmware`.
+* Open the example project in your microchip harmony folder under `apps/tcpip/wolfmqtt_client/firmware` or `apps/tcpip/wolfmqtt_firmware/firmware`.
 * Set project as main project (Right-click on project and choose "Set as Main Project"
 * Goto Tools -> Embedded -> MPLab Harmony Configurator
 * Open the default system config.
-* Configure your BSP.
-* Click "Generate Code" button.
+* Configure your BSP and Ethernet MAC driver.
+* Click "Save" button and then "Generate Code" button.
 
 ## Setting up Harmony
 ### To add this library to Harmony
 
 * Copy the entire libraries `wolfmqtt` directory into `third_party/tcpip`.
 * Copy `wolfmqtt.hconfig` into `third_party/tcpip/config`.
-* Add the `wolfmqtt.hconfig` into `tcpip.hconfig`
+* Add the `wolfmqtt.hconfig` include into `tcpip.hconfig`
 * Add the following lines into `wolfssl.h.ftl`:
 
 ```
@@ -33,4 +33,4 @@ This example IDE project is meant to be used from inside the Microchip Harmony d
 ```
 
 ### Adding example apps to Harmony
-* Copy the `mqtt_client` and `mqtt_firmware` directories to `apps/tcpip`
+* Copy the `wolfmqtt_client` and `wolfmqtt_firmware` directories to `apps/tcpip`

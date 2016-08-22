@@ -334,8 +334,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
-            PRINTF("MQTT Subscribe: %s (%d, len = %d)",
-                MqttClient_ReturnCodeToString(rc), rc, mqttCtx->client.rx_buf_len);
+            PRINTF("MQTT Subscribe: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
 
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
