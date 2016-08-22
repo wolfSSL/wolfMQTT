@@ -1,0 +1,24 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= IDE/Microchip-Harmony/README.md
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt.hconfig
+
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.hconfig
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/Makefile
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/nbproject/configurations.xml
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/nbproject/project.xml
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/src/app.c
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/src/app.h
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/src/main.c
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/src/system_config/default/default.mhc
+
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/mqtt_firmware.hconfig
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/mqtt_firmware.X/Makefile
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/mqtt_firmware.X/nbproject/configurations.xml
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/mqtt_firmware.X/nbproject/project.xml
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/src/app.c
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/src/app.h
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/src/main.c
+EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_firmware/firmware/src/system_config/default/default.mhc

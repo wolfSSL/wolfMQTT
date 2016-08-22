@@ -27,11 +27,15 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "mqttnet.h"
 
+
 /* TODO: Add includes for UART HW */
 
 /* Include the example code */
 #include "mqttexample.h"
 
+
+/* this code is a template for using UART for communication */
+#if 0
 
 /* Local context for callbacks */
 typedef struct _UartContext {
@@ -112,3 +116,5 @@ int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
 
     return 0;
 }
+
+#endif

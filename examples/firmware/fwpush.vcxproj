@@ -128,6 +128,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\mqttexample.c" />
     <ClCompile Include="..\mqttnet.c" />
     <ClCompile Include="fwpush.c" />
   </ItemGroup>

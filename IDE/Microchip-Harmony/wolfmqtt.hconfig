@@ -1,0 +1,55 @@
+menu "wolfMQTT"
+    ---help---
+<p><strong>Use wolfMQTT?</strong></p>
+<div>
+	&nbsp;</div>
+<p>Refer to the <A HREF="https://wolfmqtt.com/wolfMQTT/Docs-wolfmqtt-manual.html">online documentation.</A></p>
+    ---endhelp---
+    
+config USE_3RDPARTY_WOLFMQTT_NEEDED
+    bool
+    
+config USE_3RDPARTY_WOLFMQTT
+    bool "Use wolfMQTT"
+    default n if !USE_3RDPARTY_WOLFMQTT_NEEDED
+    default y if USE_3RDPARTY_WOLFMQTT_NEEDED
+    ---help---
+<p><strong>Use wolfMQTT?</strong></p>
+<div>
+	&nbsp;</div>
+<p>Refer to the <A HREF="https://wolfmqtt.com/wolfMQTT/Docs-wolfmqtt-manual.html">online documentation.</A></p>
+    ---endhelp---
+    
+
+config WOLFMQTT_USE_TLS
+    bool "Use TLS?"
+    depends on USE_3RDPARTY_WOLFMQTT
+    depends on USE_3RDPARTY_WOLFSSL
+    select TCPIP_USE_SNTP_CLIENT_NEEDED
+    select USE_CRYPTO_LIB_NEEDED
+    select USE_CRYPTO_RSA_NEEDED
+    default y
+    ---help---
+    <p><strong>TLS Support</strong></p>
+    Turns on TLS.
+    ---endhelp---
+
+ 
+ifblock USE_3RDPARTY_WOLFMQTT
+compiler WOLFMQTT_COMPILER_1 C define "HAVE_CONFIG_H"
+compiler WOLFMQTT_COMPILER_2 C includepath  "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt"
+file WOLFMQTT_HEADER_01 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_types.h"      to "$PROJECT_HEADER_FILES/third_party/tcpip/wolfmqtt/mqtt_types.h"
+file WOLFMQTT_HEADER_02 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_socket.h"     to "$PROJECT_HEADER_FILES/third_party/tcpip/wolfmqtt/mqtt_socket.h" 
+file WOLFMQTT_HEADER_03 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_packet.h"     to "$PROJECT_HEADER_FILES/third_party/tcpip/wolfmqtt/mqtt_packet.h"
+file WOLFMQTT_HEADER_04 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_client.h"     to "$PROJECT_HEADER_FILES/third_party/tcpip/wolfmqtt/mqtt_client.h"
+file WOLFMQTT_HEADER_05 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/wolfmqtt/version.h"         to "$PROJECT_HEADER_FILES/third_party/tcpip/wolfmqtt/version.h"
+file WOLFMQTT_HEADER_06 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/wolfmqtt/visibility.h"      to "$PROJECT_HEADER_FILES/third_party/tcpip/wolfmqtt/visibility.h"
+
+file WOLFMQTT_SOURCE_01 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/src/mqtt_client.c"          to "$PROJECT_SOURCE_FILES/third_party/tcpip/wolfmqtt/mqtt_client.c"
+file WOLFMQTT_SOURCE_02 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/src/mqtt_packet.c"          to "$PROJECT_SOURCE_FILES/third_party/tcpip/wolfmqtt/mqtt_packet.c"
+file WOLFMQTT_SOURCE_03 "$HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/src/mqtt_socket.c"          to "$PROJECT_SOURCE_FILES/third_party/tcpip/wolfmqtt/mqtt_socket.c"
+
+template WOLFMQTT_CONFIG_H_TEMPLATE "$HARMONY_VERSION_PATH/third_party/tcpip/config/wolfssl.h.ftl" to "$PROJECT_HEADER_FILES/app/system_config/$CONFIGURATION/config.h"
+endif
+
+endmenu
