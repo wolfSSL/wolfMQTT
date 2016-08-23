@@ -50,13 +50,6 @@
     #include "system_definitions.h"
 #endif
 
-
-/* Endianess check */
-#if defined(__BIG_ENDIAN__) || defined(BIG_ENDIAN_ORDER)
-    #error Big Endian is not yet supported. Please contact us if \
-        you are interested in this feature.
-#endif
-
 #ifdef _WIN32
     #define USE_WINDOWS_API
 
