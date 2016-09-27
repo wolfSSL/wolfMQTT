@@ -21,6 +21,9 @@
     <ClCompile Include="..\mqttnet.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\mqttexample.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="azureiothub.h">

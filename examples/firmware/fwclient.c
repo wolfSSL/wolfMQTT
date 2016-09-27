@@ -29,18 +29,13 @@
 #if defined(ENABLE_MQTT_TLS)
     #include <wolfssl/options.h>
     #include <wolfssl/version.h>
- 
+
     /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
     #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
     	    && defined(HAVE_ECC)
         #undef ENABLE_FIRMWARE_EXAMPLE
         #define ENABLE_FIRMWARE_EXAMPLE
     #endif
-#endif
-
-/* for ctrl handler */
-#ifdef USE_WINDOWS_API
-    #include <windows.h>
 #endif
 
 
@@ -238,7 +233,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
         case WMQ_INIT:
         {
             mqttCtx->stat = WMQ_INIT;
-            
+
             /* Initialize MqttClient structure */
             rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net,
                 mqtt_message_cb,
@@ -273,7 +268,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
         }
-        
+
         case WMQ_MQTT_CONN:
         {
             mqttCtx->stat = WMQ_MQTT_CONN;
@@ -343,21 +338,21 @@ int fwclient_test(MQTTCtx *mqttCtx)
             for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
                 mqttCtx->topic = &mqttCtx->subscribe.topics[i];
                 PRINTF("  Topic %s, Qos %u, Return Code %u",
-                    mqttCtx->topic->topic_filter, 
-                    mqttCtx->topic->qos, 
+                    mqttCtx->topic->topic_filter,
+                    mqttCtx->topic->qos,
                     mqttCtx->topic->return_code);
             }
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
         }
-            
+
         case WMQ_WAIT_MSG:
         {
             mqttCtx->stat = WMQ_WAIT_MSG;
 
             do {
                 /* Try and read packet */
-                rc = MqttClient_WaitMessage(&mqttCtx->client, 
+                rc = MqttClient_WaitMessage(&mqttCtx->client,
                                                   mqttCtx->cmd_timeout_ms);
 
                 /* check for test mode */
@@ -465,6 +460,8 @@ exit:
 /* so overall tests can pull in test function */
 #if !defined(NO_MAIN_DRIVER) && !defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef USE_WINDOWS_API
+        #include <windows.h> /* for ctrl handler */
+
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
