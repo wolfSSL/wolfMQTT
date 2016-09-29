@@ -29,18 +29,13 @@
 #if defined(ENABLE_MQTT_TLS)
     #include <wolfssl/options.h>
     #include <wolfssl/version.h>
- 
+
     /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
     #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
     	    && defined(HAVE_ECC)
         #undef ENABLE_FIRMWARE_EXAMPLE
         #define ENABLE_FIRMWARE_EXAMPLE
     #endif
-#endif
-
-/* for ctrl handler */
-#ifdef USE_WINDOWS_API
-    #include <windows.h>
 #endif
 
 
@@ -477,6 +472,8 @@ exit:
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
     #ifdef USE_WINDOWS_API
+        #include <windows.h> /* for ctrl handler */
+
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {

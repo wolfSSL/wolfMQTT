@@ -121,7 +121,11 @@ enum MqttPacketResponseCodes {
         #define XISALNUM(c)         isalnum((c))
     #endif
     #ifndef XSNPRINTF
-        #define XSNPRINTF           snprintf
+        #ifndef USE_WINDOWS_API
+            #define XSNPRINTF        snprintf
+        #else
+            #define XSNPRINTF        _snprintf
+        #endif
     #endif
 #endif
 

@@ -36,7 +36,7 @@
 
 /* Locals */
 static int mStopRead = 0;
- 
+
 /* Configuration */
 #define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
 #define TEST_MESSAGE            "test"
@@ -417,6 +417,8 @@ exit:
 /* so overall tests can pull in test function */
 #if !defined(NO_MAIN_DRIVER) && !defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef USE_WINDOWS_API
+        #include <windows.h> /* for ctrl handler */
+
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {

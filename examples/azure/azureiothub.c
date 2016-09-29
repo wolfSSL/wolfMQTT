@@ -50,11 +50,6 @@
     #endif
 #endif
 
-/* for ctrl handler */
-#ifdef USE_WINDOWS_API
-    #include <windows.h>
-#endif
-
 
 #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
 
@@ -86,7 +81,7 @@ static int mStopRead = 0;
 #define AZURE_TOKEN_EXPIRY_SEC  (60 * 60 * 1) /* 1 hour */
 
 #define AZURE_DEVICE_NAME       AZURE_HOST"/devices/"AZURE_DEVICE_ID
-#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID 
+#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID
 #define AZURE_SIG_FMT           "%s\n%ld"
     /* [device name (URL Encoded)]\n[Expiration sec UTC] */
 #define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%ld"
@@ -288,7 +283,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
         case WMQ_INIT:
         {
             mqttCtx->stat = WMQ_INIT;
-            
+
             /* Initialize MqttClient structure */
             rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net, mqtt_message_cb,
                 mqttCtx->tx_buf, MAX_BUFFER_SIZE, mqttCtx->rx_buf, MAX_BUFFER_SIZE,
@@ -558,6 +553,8 @@ exit:
 /* so overall tests can pull in test function */
 #ifndef NO_MAIN_DRIVER
     #ifdef USE_WINDOWS_API
+        #include <windows.h> /* for ctrl handler */
+
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
