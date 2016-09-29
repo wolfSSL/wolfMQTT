@@ -77,6 +77,10 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 
 ## Release Notes
 
+### v0.10 (09/26/16)
+* Enabled big endian support.
+* Fixes for building with Visual Studio.
+
 ### v0.9 (08/22/16)
 * Added Microchip Harmony support (see new readme in `IDE/Microchip-Harmony/README.md`).
 * Added non-blocking mode `--enable-nonblock` or `WOLFMQTT_NONBLOCK`, which uses new `MQTT_CODE_CONTINUE` response code.
