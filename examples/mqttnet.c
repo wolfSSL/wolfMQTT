@@ -62,7 +62,7 @@
     #endif
     #include <rtcs.h>
     /* Note: Use "RTCS_geterror(sock->fd);" to get error number */
-    
+
 /* Microchip MPLABX Harmony, TCP/IP */
 #elif defined(MICROCHIP_MPLAB_HARMONY)
     #include "app.h"
@@ -183,7 +183,7 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
         PRINTF("fcntl set failed!");
 #endif
 }
-    
+
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
@@ -209,7 +209,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             XMEMSET(&sock->addr, 0, sizeof(sock->addr));
             sock->addr.sin_family = AF_INET;
 
-            
+
         #if defined(MICROCHIP_MPLAB_HARMONY)
             hostInfo = gethostbyname((char *)host);
             if (hostInfo != NULL) {
@@ -366,9 +366,9 @@ static int NetRead(void *context, byte* buf, int buf_len,
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    
+
     sock->bytes = 0;
-    
+
 #ifndef WOLFMQTT_NONBLOCK
     /* Setup timeout and FD's */
     setup_timeout(&tv, timeout_ms);
@@ -508,7 +508,7 @@ int MqttClientNet_Init(MqttNet* net)
     for (i = 0; i < nNets; i++) {
         netH = TCPIP_STACK_IndexToNet(i);
         ipAddr.Val = TCPIP_STACK_NetAddress(netH);
-        if (ipAddr.v[0] != 192) {
+        if (ipAddr.v[0] == 0) {
             return MQTT_CODE_CONTINUE;
         }
         if (dwLastIP[i].Val != ipAddr.Val) {
@@ -531,7 +531,7 @@ int MqttClientNet_Init(MqttNet* net)
             return MQTT_CODE_ERROR_MEMORY;
         }
         XMEMSET(net->context, 0, sizeof(SocketContext));
-        
+
         ((SocketContext*)(net->context))->stat = SOCK_BEGIN;
     }
 
