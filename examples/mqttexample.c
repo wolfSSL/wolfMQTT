@@ -28,9 +28,6 @@
 #include "examples/mqttexample.h"
 #include "examples/mqttnet.h"
 
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-#include <wolfssl/wolfcrypt/types.h>
 
 /* locals */
 static int mPacketIdLast;
@@ -156,8 +153,8 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
 
 int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 {
-	int rc;    
-    
+	int rc;
+
 	#ifdef ENABLE_MQTT_TLS
 		#define MQTT_TLS_ARGS "c:"
 	#else
@@ -318,7 +315,7 @@ int mqtt_tls_cb(MqttClient* client)
 	        /* Load CA certificate file */
 	        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsCaFile, NULL);
 	    }
-        
+
         /* If using a client certificate it can be loaded using: */
         /* rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx, clientCertFile, SSL_FILETYPE_PEM);*/
     #else
@@ -341,7 +338,7 @@ int mqtt_tls_cb(MqttClient* client)
 	        rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx, caCertBuf, caCertSize, SSL_FILETYPE_PEM);
 	    #endif
 	    }
-        
+
         /* If using a client certificate it can be loaded using: */
         /* rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx, clientCertBuf, clientCertSize, SSL_FILETYPE_PEM);*/
     #endif /* !NO_FILESYSTEM */
