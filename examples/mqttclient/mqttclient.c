@@ -26,10 +26,6 @@
 
 #include "wolfmqtt/mqtt_client.h"
 
-#include <wolfssl/options.h>
-#include <wolfssl/ssl.h>
-#include <wolfssl/wolfcrypt/types.h>
-
 #include "mqttclient.h"
 #include "examples/mqttexample.h"
 #include "examples/mqttnet.h"

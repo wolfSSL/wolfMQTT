@@ -35,6 +35,7 @@
 #ifdef ENABLE_MQTT_TLS
     #include <wolfssl/options.h>
     #include <wolfssl/ssl.h>
+    #include <wolfssl/wolfcrypt/types.h>
 #endif
 
 /* Default Port Numbers */
