@@ -77,6 +77,10 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 
 ## Release Notes
 
+### v0.11 (11/28/16)
+* Fix for building MQTT client example without the wolfSSL headers present.
+* Fix for Microchip Harmony IP check so it works with non 192 subnets.
+
 ### v0.10 (09/26/16)
 * Enabled big endian support.
 * Fixes for building with Visual Studio.
@@ -136,7 +140,7 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 * Fixed Windows issue with SetConsoleCtrlHandler incorrectly reporting error.
 * Fixed issue with Visual Studio 2015 wolfssl.lib reference.
 * Fixed build errors with G++ (./configure CC=g++).
-* Fixed "FirmwareHeader" to use WOLFMQTT_PACK macro. 
+* Fixed "FirmwareHeader" to use WOLFMQTT_PACK macro.
 * Added helper macro's and comments for topic names/filters.
 * Added TLS certification verification reference implementation to examples.
 * Updated the topic names in examples to use "wolfMQTT/example/".
