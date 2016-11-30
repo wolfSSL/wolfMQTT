@@ -63,3 +63,4 @@ firmware.bin
 *.trs
 IDE/ARDUINO/wolfmqtt
 examples/azure/azureiothub
+examples/aws/awsiot

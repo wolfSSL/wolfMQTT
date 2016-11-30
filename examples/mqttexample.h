@@ -84,11 +84,16 @@ typedef struct MQTTCtx {
     byte test_mode;
     const char* pub_file;
     int retain;
-#ifdef ENABLE_AZUREIOTHUB_EXAMPLE
-    char sasToken[400];
-#endif
+    union {
+    #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+        char sasToken[400];
+    #endif
+    #ifdef ENABLE_AWSIOT_EXAMPLE
+        char pubMsg[400];
+    #endif
+    } buffer;
 
-    /* client and net containers */    
+    /* client and net containers */
     MqttClient client;
     MqttNet net;
 
