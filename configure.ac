@@ -1,5 +1,5 @@
 # wolfmqtt
-# Copyright (C) 2015 wolfSSL Inc.
+# Copyright (C) 2016 wolfSSL Inc.
 # All right reserved.
 
 AC_INIT([wolfmqtt], [0.11], [http://wolfssl.com], [wolfmqtt])
@@ -102,9 +102,8 @@ then
 
     TAO_REQUIRE_LIBWOLFSSL
     AM_CPPFLAGS="$AM_CPPFLAGS -DDHAVE_WOLFSSL_OPTIONS -DHAVE_CYASSL_OPTIONS"
-else
-    TAO_HAVE_LIBWOLFSSL
 fi
+AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 
 
 # Non-Blocking support
