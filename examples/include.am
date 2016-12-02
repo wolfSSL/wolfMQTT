@@ -5,13 +5,15 @@ if BUILD_EXAMPLES
 noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/firmware/fwpush \
                    examples/firmware/fwclient \
-                   examples/azure/azureiothub
+                   examples/azure/azureiothub \
+                   examples/aws/awsiot
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/firmware/fwpush.h \
                    examples/firmware/fwclient.h \
                    examples/firmware/firmware.h \
                    examples/azure/azureiothub.h \
+                   examples/aws/awsiot.h \
                    examples/mqttnet.h \
                    examples/mqttexample.h
 
@@ -46,6 +48,15 @@ examples_azure_azureiothub_SOURCES          = examples/azure/azureiothub.c \
 examples_azure_azureiothub_LDADD            = src/libwolfmqtt.la
 examples_azure_azureiothub_DEPENDENCIES     = src/libwolfmqtt.la
 examples_azure_azureiothub_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+
+examples_aws_awsiot_SOURCES                 = examples/aws/awsiot.c \
+                                              examples/mqttnet.c \
+                                              examples/mqttexample.c
+examples_aws_awsiot_LDADD                   = src/libwolfmqtt.la
+examples_aws_awsiot_DEPENDENCIES            = src/libwolfmqtt.la
+examples_aws_awsiot_CPPFLAGS                = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
 endif
 
 dist_example_DATA+= examples/mqttnet.c \
@@ -53,12 +64,14 @@ dist_example_DATA+= examples/mqttnet.c \
                     examples/mqttclient/mqttclient.c \
                     examples/firmware/fwpush.c \
                     examples/firmware/fwclient.c \
-                    examples/azure/azureiothub.c
+                    examples/azure/azureiothub.c \
+                    examples/aws/awsiot.c
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/firmware/.libs/fwpush \
                    examples/firmware/.libs/fwclient \
-                   examples/azure/.libs/azureiothub
+                   examples/azure/.libs/azureiothub \
+                   examples/aws/.libs/awsiot
 
 EXTRA_DIST+=       examples/mqttuart.c \
                    examples/mqttclient/mqttclient.vcxproj \

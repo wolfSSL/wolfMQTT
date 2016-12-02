@@ -37,7 +37,7 @@ static int myoptind = 0;
 static char* myoptarg = NULL;
 
 #ifdef ENABLE_MQTT_TLS
-	static const char *mTlsCaFile;
+	static const char* mTlsCaFile;
 #endif
 
 #define MY_EX_USAGE 2 /* Exit reason code */
@@ -287,12 +287,15 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
     char buffer[WOLFSSL_MAX_ERROR_SZ];
 
     PRINTF("MQTT TLS Verify Callback: PreVerify %d, Error %d (%s)", preverify,
-        store->error, wolfSSL_ERR_error_string(store->error, buffer));
+        store->error, store->error != 0 ?
+            wolfSSL_ERR_error_string(store->error, buffer) : "none");
     PRINTF("  Subject's domain name is %s", store->domain);
 
-    /* Allowing to continue */
-    /* Should check certificate and return 0 if not okay */
-    PRINTF("  Allowing cert anyways");
+    if (store->error != 0) {
+        /* Allowing to continue */
+        /* Should check certificate and return 0 if not okay */
+        PRINTF("  Allowing cert anyways");
+    }
 
     return 1;
 }
