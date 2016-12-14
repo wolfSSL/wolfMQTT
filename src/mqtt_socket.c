@@ -159,9 +159,11 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int tim
         PRINTF("MqttSocket_Read: Len=%d, Rc=%d, Error=%d",
             buf_len, rc, error);
     #endif
+    #ifdef WOLFMQTT_NONBLOCK
         if (error == SSL_ERROR_WANT_READ) {
             rc = MQTT_CODE_CONTINUE;
         }
+    #endif
     }
     else
 #endif /* ENABLE_MQTT_TLS */
