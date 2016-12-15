@@ -48,7 +48,7 @@ static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     (void)ssl; /* Not used */
     rc = client->net->read(client->net->context, (byte*)buf, sz,
         client->cmd_timeout_ms);
-    if (rc == 0) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT) {
         rc = WOLFSSL_CBIO_ERR_WANT_READ;
     }
     else if (rc < 0) {
@@ -65,7 +65,7 @@ static int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     (void)ssl; /* Not used */
     rc = client->net->write(client->net->context, (byte*)buf, sz,
         client->cmd_timeout_ms);
-    if (rc == 0) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT) {
         rc = WOLFSSL_CBIO_ERR_WANT_WRITE;
     }
     else if (rc < 0) {
@@ -137,11 +137,6 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     #endif
     }
 
-    /* Check for error */
-    if (rc < 0) {
-        rc = MQTT_CODE_ERROR_NETWORK;
-    }
-
     return rc;
 }
 
@@ -160,7 +155,14 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int tim
             buf_len, rc, error);
     #endif
         if (error == SSL_ERROR_WANT_READ) {
+        #ifdef WOLFMQTT_NONBLOCK
             rc = MQTT_CODE_CONTINUE;
+        #else
+            rc = MQTT_CODE_ERROR_TIMEOUT;
+        #endif
+        }
+        else if (rc < 0) {
+            rc = MQTT_CODE_ERROR_NETWORK;
         }
     }
     else
@@ -216,16 +218,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 #endif /* WOLFMQTT_NONBLOCK */
         
     /* handle return code */
-    if (rc == 0) {
-        rc = MQTT_CODE_ERROR_TIMEOUT;
-    }
-    else if (rc == MQTT_CODE_CONTINUE) {
-        return rc;
-    }
-    else if (rc < 0) {
-        rc = MQTT_CODE_ERROR_NETWORK;
-    }
-    else {
+    if (rc > 0) {
         /* return length read and reset position */
         rc = client->read.pos;
         client->read.pos = 0;

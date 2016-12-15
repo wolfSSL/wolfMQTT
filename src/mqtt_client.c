@@ -264,6 +264,9 @@ wait_again:
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms);
             if (rc <= 0) {
+                if (rc != MQTT_CODE_CONTINUE) {
+                    msg->stat = MQTT_MSG_BEGIN;
+                }
                 return rc;
             }
             client->packet.buf_len = rc;

@@ -351,6 +351,9 @@ int awsiot_test(MQTTCtx *mqttCtx)
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
                 mqttCtx->lwt_msg.total_len = (word16)XSTRLEN(mqttCtx->client_id);
             }
+            /* Optional authentication */
+            mqttCtx->connect.username = mqttCtx->username;
+            mqttCtx->connect.password = mqttCtx->password;
 
             /* Send Connect and wait for Connect Ack */
             rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);

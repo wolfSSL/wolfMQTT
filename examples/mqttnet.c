@@ -313,7 +313,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 exit:
     /* Show error */
     if (rc != 0) {
-        PRINTF("MqttSocket_Connect: Rc=%d, SoErr=%d", rc, so_error);
+        PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error);
     }
 
     return rc;
@@ -344,7 +344,8 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             rc = 0; /* Handle signal */
         }
         else {
-            PRINTF("MqttSocket_NetWrite: Error %d", so_error);
+            rc = MQTT_CODE_ERROR_NETWORK;
+            PRINTF("NetWrite: Error %d", so_error);
         }
     }
 
@@ -355,7 +356,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
     SocketContext *sock = (SocketContext*)context;
-    int rc = -1;
+    int rc = -1, timeout = 0;
     SOERROR_T so_error = 0;
 #ifndef WOLFMQTT_NONBLOCK
     fd_set recvfds;
@@ -419,7 +420,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
                 sock->stdin_has_data = 1;
                 /* Don't exit read until cap enabled */
                 if (sock->stdin_cap_enable) {
-                    return 0;
+                    return MQTT_CODE_ERROR_TIMEOUT;
                 }
             }
         #endif
@@ -429,6 +430,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
             }
         }
         else {
+            timeout = 1;
             break; /* timeout or signal */
         }
     #else
@@ -439,20 +441,25 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
 exit:
 
-    if (rc < 0) {
+    if (rc == 0 && timeout) {
+        rc = MQTT_CODE_ERROR_TIMEOUT;
+    }
+    else if (rc < 0) {
         /* Get error */
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+
         if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
         else {
         #ifdef WOLFMQTT_NONBLOCK
             if (so_error == EWOULDBLOCK) {
-                return 0;
+                return MQTT_CODE_CONTINUE;
             }
         #endif
-            PRINTF("MqttSocket_NetRead: Error %d", so_error);
+            rc = MQTT_CODE_ERROR_NETWORK;
+            PRINTF("NetRead: Error %d", so_error);
         }
     }
     else {
