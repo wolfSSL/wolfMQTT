@@ -200,15 +200,17 @@ static int mqtt_aws_tls_cb(MqttClient* client)
 
         /* Load CA certificate buffer */
         rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx,
-            (const byte*)root_ca, XSTRLEN(root_ca), SSL_FILETYPE_PEM);
+            (const byte*)root_ca, (long)XSTRLEN(root_ca), SSL_FILETYPE_PEM);
 
         /* Load Client Cert */
-        rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
-            (const byte*)device_cert, XSTRLEN(device_cert), SSL_FILETYPE_PEM);
+        if (rc == SSL_SUCCESS)
+            rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
+                (const byte*)device_cert, (long)XSTRLEN(device_cert), SSL_FILETYPE_PEM);
 
         /* Load Private Key */
-        rc = wolfSSL_CTX_use_PrivateKey_buffer(client->tls.ctx,
-            (const byte*)device_priv_key, XSTRLEN(device_priv_key), SSL_FILETYPE_PEM);
+        if (rc == SSL_SUCCESS)
+            rc = wolfSSL_CTX_use_PrivateKey_buffer(client->tls.ctx,
+                (const byte*)device_priv_key, (long)XSTRLEN(device_priv_key), SSL_FILETYPE_PEM);
     }
 
     PRINTF("MQTT TLS Setup (%d)", rc);
