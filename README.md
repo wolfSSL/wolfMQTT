@@ -80,6 +80,12 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 
 ## Release Notes
 
+### v0.12 (12/20/16)
+* Fixes issue with read timeout in non-blocking mode with TLS enabled being teated as socket error. 
+* Fixed issue with “msg->stat” not getting reset on failure or timeout.
+* Fix to not link libwolfssl with ./configure --disable-tls.
+* Added AWS IoT Example and test script.
+
 ### v0.11 (11/28/16)
 * Fix for building MQTT client example without the wolfSSL headers present.
 * Fix for Microchip Harmony IP check so it works with non 192 subnets.
