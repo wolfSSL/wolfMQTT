@@ -153,6 +153,7 @@ typedef struct _SocketContext {
 } SocketContext;
 
 /* Private functions */
+#ifndef WOLFMQTT_NO_TIMEOUT
 static void setup_timeout(struct timeval* tv, int timeout_ms)
 {
     tv->tv_sec = timeout_ms / 1000;
@@ -183,6 +184,7 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
         PRINTF("fcntl set failed!");
 #endif
 }
+#endif /* !WOLFMQTT_NO_TIMEOUT */
 
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
@@ -208,7 +210,6 @@ static int NetConnect(void *context, const char* host, word16 port,
 
             XMEMSET(&sock->addr, 0, sizeof(sock->addr));
             sock->addr.sin_family = AF_INET;
-
 
         #if defined(MICROCHIP_MPLAB_HARMONY)
             hostInfo = gethostbyname((char *)host);
@@ -254,11 +255,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             rc = -1;
 
             /* Create socket */
-        #if defined(MICROCHIP_MPLAB_HARMONY)
-            sock->fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        #else
             sock->fd = socket(sock->addr.sin_family, type, 0);
-        #endif
             if (sock->fd == SOCKET_INVALID)
                 goto exit;
 
@@ -268,6 +265,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 
         case SOCK_CONN:
         {
+        #ifndef WOLFMQTT_NO_TIMEOUT
             fd_set fdset;
             struct timeval tv;
 
@@ -275,20 +273,25 @@ static int NetConnect(void *context, const char* host, word16 port,
             setup_timeout(&tv, timeout_ms);
             FD_ZERO(&fdset);
             FD_SET(sock->fd, &fdset);
+        #endif /* !WOLFMQTT_NO_TIMEOUT */
 
+        #if !defined(WOLFMQTT_NO_TIMEOUT) || defined(WOLFMQTT_NONBLOCK)
             /* Set socket as non-blocking */
             tcp_set_nonblocking(&sock->fd);
+        #endif
 
             /* Start connect */
-        #if defined(MICROCHIP_MPLAB_HARMONY)
             rc = connect(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
+    #if defined(MICROCHIP_MPLAB_HARMONY)
             if (rc)
-        #else
-            connect(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
-
+    #else
+        #ifndef WOLFMQTT_NO_TIMEOUT
             /* Wait for connect */
-            if (select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0)
-        #endif
+            if (rc < 0 || select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0)
+        #else
+            if (rc < 0)
+        #endif /* !WOLFMQTT_NO_TIMEOUT */
+    #endif /* MICROCHIP_MPLAB_HARMONY */
             {
                 socklen_t len = sizeof(so_error);
             #if defined(MICROCHIP_MPLAB_HARMONY)
@@ -310,6 +313,8 @@ static int NetConnect(void *context, const char* host, word16 port,
             rc = -1;
     } /* switch */
 
+    (void)timeout_ms;
+
 exit:
     /* Show error */
     if (rc != 0) {
@@ -325,15 +330,19 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     SocketContext *sock = (SocketContext*)context;
     int rc;
     SOERROR_T so_error = 0;
+#ifndef WOLFMQTT_NO_TIMEOUT
     struct timeval tv;
+#endif
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+#ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
     setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+#endif
 
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
     if (rc == -1) {
@@ -349,6 +358,8 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
         }
     }
 
+    (void)timeout_ms;
+
     return rc;
 }
 
@@ -358,7 +369,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     SocketContext *sock = (SocketContext*)context;
     int rc = -1, timeout = 0;
     SOERROR_T so_error = 0;
-#ifndef WOLFMQTT_NONBLOCK
+#ifndef WOLFMQTT_NO_TIMEOUT
     fd_set recvfds;
     fd_set errfds;
     struct timeval tv;
@@ -370,7 +381,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
     sock->bytes = 0;
 
-#ifndef WOLFMQTT_NONBLOCK
+#if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
     /* Setup timeout and FD's */
     setup_timeout(&tv, timeout_ms);
     FD_ZERO(&recvfds);
@@ -385,19 +396,19 @@ static int NetRead(void *context, byte* buf, int buf_len,
 #endif
 #else
     (void)timeout_ms;
-#endif /* !WOLFMQTT_NONBLOCK */
+#endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
 
     /* Loop until buf_len has been read, error or timeout */
     while (sock->bytes < buf_len) {
 
-    #ifndef WOLFMQTT_NONBLOCK
+    #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
         /* Wait for rx data to be available */
         rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
         if (rc > 0)
         {
             /* Check if rx or error */
             if (FD_ISSET(sock->fd, &recvfds)) {
-    #endif /* !WOLFMQTT_NONBLOCK */
+    #endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
 
                 /* Try and read number of buf_len provided,
                     minus what's already been read */
@@ -413,7 +424,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
                     sock->bytes += rc; /* Data */
                 }
 
-    #ifndef WOLFMQTT_NONBLOCK
+    #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
             }
         #ifdef ENABLE_STDIN_CAPTURE
             else if (FD_ISSET(STDIN, &recvfds)) {
@@ -436,7 +447,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     #else
         /* non-blocking should always exit loop */
         break;
-    #endif /* !WOLFMQTT_NONBLOCK */
+    #endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
     } /* while */
 
 exit:

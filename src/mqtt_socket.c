@@ -181,7 +181,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int tim
 int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 {
     int rc;
-    
+
     /* Validate arguments */
     if (client == NULL || client->net == NULL || client->net->read == NULL ||
         buf == NULL || buf_len <= 0) {
@@ -216,7 +216,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         client->read.pos += rc;
     } while (client->read.pos < buf_len);
 #endif /* WOLFMQTT_NONBLOCK */
-        
+
     /* handle return code */
     if (rc > 0) {
         /* return length read and reset position */
@@ -237,7 +237,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         client->net->connect == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    
+
     if ((client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) == 0) {
         /* Validate port */
         if (port == 0) {
@@ -255,10 +255,14 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 #ifdef ENABLE_MQTT_TLS
     if (use_tls) {
         if (client->tls.ctx == NULL) {
+        #ifdef DEBUG_WOLFSSL
+            wolfSSL_Debugging_ON();
+        #endif
+
             /* Setup the WolfSSL library */
             wolfSSL_Init();
-            
-            /* Issue callback to allow setup of the wolfSSL_CTX and cert 
+
+            /* Issue callback to allow setup of the wolfSSL_CTX and cert
                verification settings */
             rc = SSL_SUCCESS;
             if (cb) {
