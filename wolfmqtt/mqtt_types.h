@@ -93,6 +93,7 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_ERROR_STAT = -10,
 
     MQTT_CODE_CONTINUE = -101,
+    MQTT_CODE_STDIN_WAKE = -102,
 };
 
 

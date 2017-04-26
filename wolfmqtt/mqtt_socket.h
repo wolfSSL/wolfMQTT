@@ -71,6 +71,7 @@ typedef struct _MqttNet {
     MqttNetReadCb       read;
     MqttNetWriteCb      write;
     MqttNetDisconnectCb disconnect;
+    int                 sockRc;
 } MqttNet;
 
 

@@ -440,7 +440,6 @@ int awsiot_test(MQTTCtx *mqttCtx)
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
-            MqttClientNet_CheckForCommand_Enable(&mqttCtx->net);
         }
 
         case WMQ_WAIT_MSG:
@@ -461,11 +460,11 @@ int awsiot_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
-                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
-                    /* Check to see if command data (stdin) is available */
-                    rc = MqttClientNet_CheckForCommand(&mqttCtx->net,
-                        mqttCtx->rx_buf, MAX_BUFFER_SIZE);
-                    if (rc > 0) {
+                else if (rc == MQTT_CODE_STDIN_WAKE) {
+                    /* Get data from STDIO */
+                    if (fgets((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE, stdin) != NULL) {
+                        rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
+
                         /* Publish Topic */
                         XSNPRINTF(mqttCtx->buffer.pubMsg, sizeof(mqttCtx->buffer.pubMsg),
                             "{\"state\":{\"reported\":{\"msg\":\"%s\"}}}",
@@ -484,17 +483,17 @@ int awsiot_test(MQTTCtx *mqttCtx)
                             mqttCtx->publish.topic_name,
                             MqttClient_ReturnCodeToString(rc), rc);
                     }
+                }
+                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Keep Alive */
-                    else {
-                        rc = MqttClient_Ping(&mqttCtx->client);
-                        if (rc == MQTT_CODE_CONTINUE) {
-                            return rc;
-                        }
-                        else if (rc != MQTT_CODE_SUCCESS) {
-                            PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
-                                MqttClient_ReturnCodeToString(rc), rc);
-                            break;
-                        }
+                    rc = MqttClient_Ping(&mqttCtx->client);
+                    if (rc == MQTT_CODE_CONTINUE) {
+                        return rc;
+                    }
+                    else if (rc != MQTT_CODE_SUCCESS) {
+                        PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
+                            MqttClient_ReturnCodeToString(rc), rc);
+                        break;
                     }
                 }
                 else if (rc != MQTT_CODE_SUCCESS) {

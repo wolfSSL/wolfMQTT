@@ -58,7 +58,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 {
     UartContext *uartCtx = (UartContext*)context;
     (void)uartCtx;
-    
+
     /* TODO: Implement write call to your UART HW */
 
     return 0;
@@ -105,15 +105,6 @@ int MqttClientNet_DeInit(MqttNet* net)
         }
         XMEMSET(net, 0, sizeof(MqttNet));
     }
-    return 0;
-}
-
-int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
-{
-    (void)net;
-    (void)buffer;
-    (void)length;
-
     return 0;
 }
 
