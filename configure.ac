@@ -119,6 +119,18 @@ then
 fi
 
 
+# Timeout support
+AC_ARG_ENABLE([timeout],
+    [  --enable-timeout         Enable timeout support  (default: enabled)],
+    [ ENABLED_TIMEOUT=$enableval ],
+    [ ENABLED_TIMEOUT=yes ]
+    )
+
+if test "x$ENABLED_TIMEOUT" = "xno"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NO_TIMEOUT"
+fi
+
 # Examples
 AC_ARG_ENABLE([examples],
     [  --enable-examples       Enable Examples  (default: enabled)],
