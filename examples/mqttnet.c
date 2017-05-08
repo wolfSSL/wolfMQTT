@@ -99,10 +99,6 @@
     #include <errno.h>
     #include <fcntl.h>
     #include <signal.h>
-
-    /* Wake on stdin activity */
-    #define ENABLE_STDIN_CAPTURE
-    #define STDIN   0
 #endif
 
 /* Setup defaults */

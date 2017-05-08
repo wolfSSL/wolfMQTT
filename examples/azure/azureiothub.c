@@ -443,9 +443,10 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
+            #ifdef ENABLE_STDIN_CAPTURE
                 else if (rc == MQTT_CODE_STDIN_WAKE) {
                     /* Get data from STDIO */
-                    if (fgets((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE, stdin) != NULL) {
+                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE, stdin) != NULL) {
                         rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
 
                         /* Publish Topic */
@@ -464,6 +465,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                             MqttClient_ReturnCodeToString(rc), rc);
                     }
                 }
+            #endif
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Keep Alive */
                     rc = MqttClient_Ping(&mqttCtx->client);
