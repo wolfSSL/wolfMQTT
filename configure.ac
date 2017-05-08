@@ -141,6 +141,22 @@ AC_ARG_ENABLE([examples],
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 
 
+# STDIN / FGETS for examples
+AC_ARG_ENABLE([stdincap],
+    [  --enable-stdincap       Enable examplesSTDIN capture  (default: enabled)],
+    [ ENABLED_STDINCAP=$enableval ],
+    [ ENABLED_STDINCAP=yes ]
+    )
+
+if test "x$ENABLED_STDINCAP" = "xno"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DNO_STDIN_CAPTURE"
+fi
+
+AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
+
+
+
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
 
@@ -180,4 +196,5 @@ echo "   * LIB Flags:                 $LIB"
 echo "   * TLS:                       $ENABLED_TLS"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * Examples:                  $ENABLED_EXAMPLES"
+echo "   * STDIN Capture:             $ENABLED_STDINCAP"
 

@@ -30,14 +30,24 @@
 /* Default MQTT host broker to use, when none is specified in the examples */
 #define DEFAULT_MQTT_HOST       "iot.eclipse.org" /* broker.hivemq.com */
 
+/* For Linux */
+#if !defined(FREERTOS) && !defined(USE_WINDOWS_API) && \
+    !defined(FREESCALE_MQX) && !defined(FREESCALE_KSDK_MQX) && \
+    !defined(MICROCHIP_MPLAB_HARMONY)
+    /* Linux */
+
+    #if !defined(NO_STDIN_CAPTURE) && !defined(ENABLE_STDIN_CAPTURE)
+        /* Wake on stdin activity */
+        #define ENABLE_STDIN_CAPTURE
+        #define STDIN   0
+    #endif
+#endif
+
 
 /* Functions used to handle the MqttNet structure creation / destruction */
 int MqttClientNet_Init(MqttNet* net);
 int MqttClientNet_DeInit(MqttNet* net);
 
-/* Standard In / Command handling */
-int MqttClientNet_CheckForCommand_Enable(MqttNet* net);
-int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length);
 
 #ifdef __cplusplus
     } /* extern "C" */

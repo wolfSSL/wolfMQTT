@@ -99,10 +99,6 @@
     #include <errno.h>
     #include <fcntl.h>
     #include <signal.h>
-
-    /* Wake on stdin activity */
-    #define ENABLE_STDIN_CAPTURE
-    #define STDIN   0
 #endif
 
 /* Setup defaults */
@@ -146,10 +142,6 @@ typedef struct _SocketContext {
     NB_Stat stat;
     int bytes;
     struct sockaddr_in addr;
-#ifdef ENABLE_STDIN_CAPTURE
-    byte stdin_cap_enable;
-    byte stdin_has_data;
-#endif
 } SocketContext;
 
 /* Private functions */
@@ -389,11 +381,10 @@ static int NetRead(void *context, byte* buf, int buf_len,
     FD_ZERO(&errfds);
     FD_SET(sock->fd, &errfds);
 
-#ifdef ENABLE_STDIN_CAPTURE
-    if (sock->stdin_cap_enable) {
+    #ifdef ENABLE_STDIN_CAPTURE
         FD_SET(STDIN, &recvfds);
-    }
-#endif
+    #endif
+
 #else
     (void)timeout_ms;
 #endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
@@ -428,11 +419,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
             }
         #ifdef ENABLE_STDIN_CAPTURE
             else if (FD_ISSET(STDIN, &recvfds)) {
-                sock->stdin_has_data = 1;
-                /* Don't exit read until cap enabled */
-                if (sock->stdin_cap_enable) {
-                    return MQTT_CODE_ERROR_TIMEOUT;
-                }
+                return MQTT_CODE_STDIN_WAKE;
             }
         #endif
             if (FD_ISSET(sock->fd, &errfds)) {
@@ -565,38 +552,4 @@ int MqttClientNet_DeInit(MqttNet* net)
         XMEMSET(net, 0, sizeof(MqttNet));
     }
     return 0;
-}
-
-int MqttClientNet_CheckForCommand_Enable(MqttNet* net)
-{
-    if (net && net->context) {
-    #ifdef ENABLE_STDIN_CAPTURE
-        SocketContext *sock = (SocketContext*)net->context;
-        sock->stdin_cap_enable = 1;
-    #endif
-    }
-    return 0;
-}
-
-/* Return length of data */
-int MqttClientNet_CheckForCommand(MqttNet* net, byte* buffer, word32 length)
-{
-    int ret = 0;
-
-    if (net && net->context) {
-    #ifdef ENABLE_STDIN_CAPTURE
-        SocketContext *sock = (SocketContext*)net->context;
-        if (sock->stdin_has_data) {
-            if (fgets((char*)buffer, length, stdin) != NULL) {
-                ret = (int)XSTRLEN((char*)buffer);
-            }
-            sock->stdin_has_data = 0;
-        }
-    #endif
-    }
-
-    (void)buffer;
-    (void)length;
-
-    return ret;
 }

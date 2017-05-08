@@ -83,7 +83,7 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
                     }
                     msg->buffer_new = 0;
                 }
-                
+
                 /* Read payload */
                 if (!msg_done) {
                     int msg_len;
@@ -259,16 +259,13 @@ wait_again:
         {
             MqttPacket* header;
 
-            msg->stat = MQTT_MSG_WAIT;
-
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms);
             if (rc <= 0) {
-                if (rc != MQTT_CODE_CONTINUE) {
-                    msg->stat = MQTT_MSG_BEGIN;
-                }
                 return rc;
             }
+
+            msg->stat = MQTT_MSG_WAIT;
             client->packet.buf_len = rc;
 
             /* Determine packet type */
@@ -370,7 +367,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
     if (client == NULL || connect == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    
+
     if (client->msg.stat == MQTT_MSG_BEGIN) {
 
         /* Encode the connect packet */
@@ -506,7 +503,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     if (client == NULL || subscribe == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    
+
     if (client->msg.stat == MQTT_MSG_BEGIN) {
         /* Encode the subscribe packet */
         rc = MqttEncode_Subscribe(client->tx_buf, client->tx_buf_len, subscribe);
@@ -644,6 +641,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Success";
         case MQTT_CODE_CONTINUE:
             return "Continue"; /* would block */
+        case MQTT_CODE_STDIN_WAKE:
+            return "STDIN Wake";
         case MQTT_CODE_ERROR_BAD_ARG:
             return "Error (Bad argument)";
         case MQTT_CODE_ERROR_OUT_OF_BUFFER:

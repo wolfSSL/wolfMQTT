@@ -32,6 +32,13 @@
 	#define exit(rc) return rc
 #endif
 
+#ifdef ENABLE_STDIN_CAPTURE
+    #ifndef XFGETS
+        #define XFGETS     fgets
+    #endif
+#endif
+
+
 /* Default Configurations */
 #define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
