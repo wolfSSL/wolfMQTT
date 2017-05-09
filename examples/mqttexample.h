@@ -32,11 +32,28 @@
 	#define exit(rc) return rc
 #endif
 
-#ifdef ENABLE_STDIN_CAPTURE
-    #ifndef XFGETS
-        #define XFGETS     fgets
+/* STDIN / FGETS for examples */
+#ifndef WOLFMQTT_NO_STDIO
+    /* For Linux/Mac */
+    #if !defined(FREERTOS) && !defined(USE_WINDOWS_API) && \
+        !defined(FREESCALE_MQX) && !defined(FREESCALE_KSDK_MQX) && \
+        !defined(MICROCHIP_MPLAB_HARMONY)
+        /* Make sure its not explicitly disabled and not already defined */
+        #if !defined(WOLFMQTT_NO_STDIN_CAP) && !defined(WOLFMQTT_ENABLE_STDIN_CAP)
+            /* Wake on stdin activity */
+            #define WOLFMQTT_ENABLE_STDIN_CAP
+        #endif
     #endif
-#endif
+
+    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+        #ifndef XFGETS
+            #define XFGETS     fgets
+        #endif
+        #ifndef STDIN
+            #define STDIN 0
+        #endif
+    #endif
+#endif /* !WOLFMQTT_NO_STDIO */
 
 
 /* Default Configurations */

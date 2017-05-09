@@ -426,9 +426,7 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
                 if (rc < 0) {
                     return rc;
                 }
-                else if (rc != client->write.len) {
-                    return MQTT_CODE_ERROR_NETWORK;
-                }
+
                 publish->buffer_pos += publish->buffer_len;
                 publish->buffer_len = 0;
 

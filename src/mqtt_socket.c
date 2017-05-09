@@ -52,7 +52,7 @@ static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     /* save network read response */
     client->net->sockRc = rc;
 
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_STDIN_WAKE) {
         rc = WOLFSSL_CBIO_ERR_WANT_READ;
     }
     else if (rc < 0) {
@@ -169,7 +169,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int tim
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-        PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
+    PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
 #endif
 
     return rc;
@@ -295,7 +295,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
             wolfSSL_SetIOReadCtx(client->tls.ssl, (void *)client);
             wolfSSL_SetIOWriteCtx(client->tls.ssl, (void *)client);
-        #ifdef WOLFMQTT_NONBLOCK
+        #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
             wolfSSL_set_using_nonblock(client->tls.ssl, 1);
         #endif
         }

@@ -281,9 +281,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
-            #ifdef ENABLE_STDIN_CAPTURE
+            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
                 else if (rc == MQTT_CODE_STDIN_WAKE) {
-                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE, stdin) != NULL) {
+                    XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
+                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
                         rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
 
                         /* Publish Topic */
@@ -334,13 +335,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->unsubscribe.topic_count =
                 sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->unsubscribe.topics = mqttCtx->topics;
+
+            mqttCtx->stat = WMQ_UNSUB;
+            PRINTF("MQTT Exiting...");
         }
 
         case WMQ_UNSUB:
         {
-            mqttCtx->stat = WMQ_UNSUB;
-            PRINTF("MQTT Exiting...");
-
             /* Unsubscribe Topics */
             rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
             if (rc == MQTT_CODE_CONTINUE) {

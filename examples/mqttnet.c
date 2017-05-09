@@ -25,7 +25,8 @@
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
-#include "mqttnet.h"
+#include "examples/mqttnet.h"
+#include "examples/mqttexample.h"
 
 /* FreeRTOS and LWIP */
 #ifdef FREERTOS
@@ -129,7 +130,7 @@
 
 
 /* Include the example code */
-#include "mqttexample.h"
+#include "examples/mqttexample.h"
 
 /* Local context for Net callbacks */
 typedef enum {
@@ -157,7 +158,9 @@ static void setup_timeout(struct timeval* tv, int timeout_ms)
         tv->tv_usec = 100;
     }
 }
+#endif /* !WOLFMQTT_NO_TIMEOUT */
 
+#if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
 static void tcp_set_nonblocking(SOCKET_T* sockfd)
 {
 #ifdef USE_WINDOWS_API
@@ -176,7 +179,7 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
         PRINTF("fcntl set failed!");
 #endif
 }
-#endif /* !WOLFMQTT_NO_TIMEOUT */
+#endif /* !WOLFMQTT_NO_TIMEOUT && WOLFMQTT_NONBLOCK */
 
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
@@ -267,7 +270,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             FD_SET(sock->fd, &fdset);
         #endif /* !WOLFMQTT_NO_TIMEOUT */
 
-        #if !defined(WOLFMQTT_NO_TIMEOUT) || defined(WOLFMQTT_NONBLOCK)
+        #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
             /* Set socket as non-blocking */
             tcp_set_nonblocking(&sock->fd);
         #endif
@@ -381,7 +384,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     FD_ZERO(&errfds);
     FD_SET(sock->fd, &errfds);
 
-    #ifdef ENABLE_STDIN_CAPTURE
+    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
         FD_SET(STDIN, &recvfds);
     #endif
 
@@ -417,7 +420,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
     #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
             }
-        #ifdef ENABLE_STDIN_CAPTURE
+        #ifdef WOLFMQTT_ENABLE_STDIN_CAP
             else if (FD_ISSET(STDIN, &recvfds)) {
                 return MQTT_CODE_STDIN_WAKE;
             }
