@@ -80,8 +80,17 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 
 ## Release Notes
 
+### v0.13 (05/10/17)
+* Fixed issue with `msg->stat` in non-blocking.
+* Fixed Arduino library build.
+* Fixed examples with non-blocking (--enable-nonblock).
+* Enhancement to pass network callback return codes through context when using TLS.
+* Added option to disable the blocking timeouts for `select()` using `--disable-timeout` (or `WOLFMQTT_NO_TIMEOUT`).
+* Added option to disable STDIN/fgets capture for examples using `--disable-stdincap` (or `WOLFMQTT_NO_STDIN_CAP`)
+* Refactor to use new `MQTT_CODE_STDIN_WAKE` return code for examples using STDIN to send publish messages (normal blocking mode only).
+
 ### v0.12 (12/20/16)
-* Fixes issue with read timeout in non-blocking mode with TLS enabled being teated as socket error. 
+* Fixes issue with read timeout in non-blocking mode with TLS enabled being teated as socket error.
 * Fixed issue with “msg->stat” not getting reset on failure or timeout.
 * Fix to not link libwolfssl with ./configure --disable-tls.
 * Added AWS IoT Example and test script.
