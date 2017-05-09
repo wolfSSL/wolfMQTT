@@ -139,7 +139,15 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    PRINTF("MqttSocket_Write: Len=%d, Rc=%d", buf_len, rc);
+    if (rc != 0) { /* hide in non-blocking case */
+        PRINTF("MqttSocket_Write: Len=%d, Rc=%d", buf_len, rc);
+    }
+#endif
+
+#ifdef WOLFMQTT_NONBLOCK
+    if (rc == 0) {
+        rc = MQTT_CODE_CONTINUE;
+    }
 #endif
 
     return rc;
@@ -155,7 +163,9 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int tim
         if (rc < 0) {
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
-            PRINTF("MqttSocket_Read: SSL Error=%d", error);
+            if (error != SSL_ERROR_WANT_READ) {
+                PRINTF("MqttSocket_Read: SSL Error=%d", error);
+            }
         #endif
 
             /* return code from net callback */
@@ -169,7 +179,9 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int tim
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
+    if (rc != 0) { /* hide in non-blocking case */
+        PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
+    }
 #endif
 
     return rc;
