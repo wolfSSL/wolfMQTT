@@ -1,9 +1,12 @@
 #include <wolfMQTT.h>
 #include <Ethernet.h>
-#include <wolfssl.h>
-#include <wolfssl/ssl.h>
 #include <wolfmqtt/mqtt_client.h>
 #include <examples/mqttnet.h>
+
+#ifdef ENABLE_MQTT_TLS
+#include <wolfssl.h>
+#include <wolfssl/ssl.h>
+#endif
 
 /* Configuration */
 #define DEFAULT_CMD_TIMEOUT_MS  30000
@@ -19,13 +22,15 @@
 #define TEST_TOPIC_COUNT        2
 
 /* Local Variables */
+#ifdef ENABLE_MQTT_TLS
 static WOLFSSL_METHOD* mMethod = 0;
 static WOLFSSL_CTX* mCtx       = 0;
 static WOLFSSL* mSsl           = 0;
+static const char* mTlsFile    = NULL;
+#endif
 static word16 mPort            = 0;
 static const char* mHost       = "iot.eclipse.org";
 static int mStopRead    = 0;
-static const char* mTlsFile    = NULL;
 
 EthernetClient ethClient;
 
@@ -67,6 +72,7 @@ static int EthernetDisconnect(void *context)
   return 0;
 }
 
+#ifdef ENABLE_MQTT_TLS
 static int mqttclient_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
   char buffer[WOLFSSL_MAX_ERROR_SZ];
@@ -101,6 +107,7 @@ static int mqttclient_tls_cb(MqttClient* cli)
 
   return rc;
 }
+#endif /* ENABLE_MQTT_TLS */
 
 #define MAX_PACKET_ID   ((1 << 16) - 1)
 static int mPacketIdLast;
@@ -168,7 +175,11 @@ void loop() {
   MqttClient client;
   EthernetClient ethClient;
   MqttNet net;
+#ifdef ENABLE_MQTT_TLS
+  int use_tls = 1;
+#else
   int use_tls = 0;
+#endif
   MqttQoS qos = DEFAULT_MQTT_QOS;
   byte clean_session = 1;
   word16 keep_alive_sec = 60;
@@ -200,7 +211,13 @@ void loop() {
 
   /* Connect to broker server socket */
   rc = MqttClient_NetConnect(&client, mHost, mPort,
-                             DEFAULT_CON_TIMEOUT_MS, use_tls, mqttclient_tls_cb);
+                             DEFAULT_CON_TIMEOUT_MS, use_tls,
+#ifdef ENABLE_MQTT_TLS
+                             mqttclient_tls_cb
+#else
+                             NULL
+#endif
+                             );
   Serial.print("MQTT Socket Connect: ");
   Serial.print(MqttClient_ReturnCodeToString(rc));
   Serial.print(" ");

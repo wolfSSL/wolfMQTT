@@ -22,3 +22,7 @@ IDE/ARDUINO directory:
 
 Note: If using wolfSSL TLS then you'll need to do this for wolfSSL as well.
 See `<wolfss-root>/IDE/ARDUINO/README.md` for instructions.
+
+
+An example wolfMQTT client INO sketch exists here:
+`wolfmqtt_client/wolfmqtt_client.ino` to demonstrate using the wolfMQTT library.
