@@ -4,4 +4,4 @@
 
 EXTRA_DIST+= IDE/ARDUINO/README.md
 EXTRA_DIST+= IDE/ARDUINO/wolfmqtt-arduino.sh
-EXTRA_DIST+= IDE/ARDUINO/wolfmqtt_client.ino
+EXTRA_DIST+= IDE/ARDUINO/wolfmqtt_client/wolfmqtt_client.ino

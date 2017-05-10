@@ -255,6 +255,13 @@ int fwpush_test(MQTTCtx *mqttCtx)
 {
     int rc;
 
+    /* check for stop */
+    if (mStopRead) {
+        rc = MQTT_CODE_SUCCESS;
+        PRINTF("MQTT Exiting...");
+        goto disconn;
+    }
+
     switch(mqttCtx->stat)
     {
         case WMQ_BEGIN:
@@ -408,8 +415,6 @@ int fwpush_test(MQTTCtx *mqttCtx)
 
         case WMQ_DISCONNECT:
         {
-            PRINTF("MQTT Exiting...");
-
             /* Disconnect */
             rc = MqttClient_Disconnect(&mqttCtx->client);
             if (rc == MQTT_CODE_CONTINUE) {
@@ -452,17 +457,19 @@ int fwpush_test(MQTTCtx *mqttCtx)
 disconn:
     mqttCtx->stat = WMQ_NET_DISCONNECT;
     mqttCtx->return_code = rc;
-    return MQTT_CODE_CONTINUE;
+    rc = MQTT_CODE_CONTINUE;
 
 exit:
 
-    /* Free resources */
-    if (mqttCtx->publish.buffer) WOLFMQTT_FREE(mqttCtx->publish.buffer);
-    if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
-    if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
+    if (rc != MQTT_CODE_CONTINUE) {
+        /* Free resources */
+        if (mqttCtx->publish.buffer) WOLFMQTT_FREE(mqttCtx->publish.buffer);
+        if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
+        if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
 
-    /* Cleanup network */
-    MqttClientNet_DeInit(&mqttCtx->net);
+        /* Cleanup network */
+        MqttClientNet_DeInit(&mqttCtx->net);
+    }
 
     return rc;
 }

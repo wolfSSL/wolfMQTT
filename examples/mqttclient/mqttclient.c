@@ -274,6 +274,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 /* check for test mode */
                 if (mStopRead) {
                     rc = MQTT_CODE_SUCCESS;
+                    PRINTF("MQTT Exiting...");
                     break;
                 }
 
@@ -281,9 +282,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
-            #ifdef ENABLE_STDIN_CAPTURE
+            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
                 else if (rc == MQTT_CODE_STDIN_WAKE) {
-                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE, stdin) != NULL) {
+                    XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
+                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
                         rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
 
                         /* Publish Topic */
@@ -334,17 +336,25 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->unsubscribe.topic_count =
                 sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->unsubscribe.topics = mqttCtx->topics;
+
+            mqttCtx->stat = WMQ_UNSUB;
         }
 
         case WMQ_UNSUB:
         {
-            mqttCtx->stat = WMQ_UNSUB;
-            PRINTF("MQTT Exiting...");
-
             /* Unsubscribe Topics */
             rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
             if (rc == MQTT_CODE_CONTINUE) {
-                return rc;
+            #ifdef WOLFMQTT_NONBLOCK
+                /* workaround for non-block sometimes not getting un-subscribe resp */
+                #define MAX_CONTINUE_TRIES 2000
+                static int maxContinueUnsub = 0;
+                if (++maxContinueUnsub > MAX_CONTINUE_TRIES)
+                    rc = MQTT_CODE_ERROR_NETWORK;
+                else
+            #endif
+                    return rc;
+
             }
             PRINTF("MQTT Unsubscribe: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
@@ -395,16 +405,18 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 disconn:
     mqttCtx->stat = WMQ_NET_DISCONNECT;
     mqttCtx->return_code = rc;
-    return MQTT_CODE_CONTINUE;
+    rc = MQTT_CODE_CONTINUE;
 
 exit:
 
-    /* Free resources */
-    if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
-    if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
+    if (rc != MQTT_CODE_CONTINUE) {
+        /* Free resources */
+        if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
+        if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
 
-    /* Cleanup network */
-    MqttClientNet_DeInit(&mqttCtx->net);
+        /* Cleanup network */
+        MqttClientNet_DeInit(&mqttCtx->net);
+    }
 
     return rc;
 }

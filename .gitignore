@@ -61,6 +61,6 @@ examples/firmware/fwpush
 *.opensdf
 firmware.bin
 *.trs
-IDE/ARDUINO/wolfmqtt
+IDE/ARDUINO/wolfMQTT
 examples/azure/azureiothub
 examples/aws/awsiot

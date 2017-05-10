@@ -25,13 +25,13 @@
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
-#include "mqttnet.h"
+#include "examples/mqttnet.h"
 
 
 /* TODO: Add includes for UART HW */
 
 /* Include the example code */
-#include "mqttexample.h"
+#include "examples/mqttexample.h"
 
 
 /* this code is a template for using UART for communication */

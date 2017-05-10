@@ -307,7 +307,11 @@ int mqtt_tls_cb(MqttClient* client)
 
     client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
     if (client->tls.ctx) {
+    #if 1
+        wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_NONE, mqtt_tls_verify_cb);
+    #else
         wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqtt_tls_verify_cb);
+    #endif
 
 		/* default to success */
         rc = SSL_SUCCESS;
