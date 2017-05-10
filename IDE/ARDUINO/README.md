@@ -21,7 +21,7 @@ IDE/ARDUINO directory:
     - In `Sketch -> Include Library` choose wolfMQTT.
 
 Note: If using wolfSSL TLS then you'll need to do this for wolfSSL as well.
-See `<wolfss-root>/IDE/ARDUINO/README.md` for instructions.
+See `<wolfssl-root>/IDE/ARDUINO/README.md` for instructions.
 
 
 An example wolfMQTT client INO sketch exists here:

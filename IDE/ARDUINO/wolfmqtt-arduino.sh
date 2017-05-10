@@ -11,17 +11,12 @@ if [ "$DIR" == "ARDUINO" ]; then
 
     mkdir wolfMQTT
     cp ../../src/*.c ./wolfMQTT
-    cp ../../examples/*.c ./wolfMQTT
-    cp ../../examples/mqttclient/*.c ./wolfMQTT
-    cp ../../examples/mqttclient/*.h ./wolfMQTT
 
     mkdir wolfMQTT/wolfmqtt
     cp ../../wolfmqtt/*.h ./wolfMQTT/wolfmqtt
 
-    mkdir wolfMQTT/examples
-    cp ../../examples/*.h ./wolfMQTT/examples
-
-    echo "/* stub header file for Arduino compatibility */" >> ./wolfMQTT/wolfMQTT.h
+    echo "/* Generated wolfMQTT header file for Arduino */" >> ./wolfMQTT/wolfMQTT.h
+    echo "#include <wolfmqtt/mqtt_client.h>" >> ./wolfMQTT/wolfMQTT.h
 else
     echo "ERROR: You must be in the IDE/ARDUINO directory to run this script"
 fi

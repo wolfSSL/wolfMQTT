@@ -1,14 +1,19 @@
-#include <wolfMQTT.h>
-#include <Ethernet.h>
-#include <wolfmqtt/mqtt_client.h>
-#include <examples/mqttnet.h>
+/* Uncomment this to enable TLS support */
+/* Make sure and include the wolfSSL library */
+//#define ENABLE_MQTT_TLS
 
 #ifdef ENABLE_MQTT_TLS
+#include <config.h>
 #include <wolfssl.h>
 #include <wolfssl/ssl.h>
 #endif
 
+#include <wolfMQTT.h>
+#include <Ethernet.h>
+
+
 /* Configuration */
+#define DEFAULT_MQTT_HOST       "iot.eclipse.org" /* broker.hivemq.com */
 #define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0
