@@ -2,7 +2,8 @@
 # Copyright (C) 2016 wolfSSL Inc.
 # All right reserved.
 
-AC_INIT([wolfmqtt], [0.12], [http://wolfssl.com], [wolfmqtt])
+AC_INIT([wolfmqtt],[0.13.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
+
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
@@ -17,7 +18,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=1:0:0
+WOLFMQTT_LIBRARY_VERSION=1:1:0
 #                      | | |
 #               +------+ | +---+
 #               |        |     |
