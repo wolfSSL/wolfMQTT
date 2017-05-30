@@ -36,6 +36,10 @@
     #include <wolfssl/options.h>
     #include <wolfssl/ssl.h>
     #include <wolfssl/wolfcrypt/types.h>
+
+    #ifndef WOLF_TLS_DHKEY_BITS_MIN
+        #define WOLF_TLS_DHKEY_BITS_MIN 2048
+    #endif
 #endif
 
 /* Default Port Numbers */
