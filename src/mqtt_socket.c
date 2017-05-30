@@ -297,7 +297,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         wolfSSL_CTX_SetMinDhKey_Sz(client->tls.ctx, WOLF_TLS_DHKEY_BITS_MIN);
     #endif
 
-        /* Seutp the async IO callbacks */
+        /* Setup the async IO callbacks */
         wolfSSL_SetIORecv(client->tls.ctx, MqttSocket_TlsSocketReceive);
         wolfSSL_SetIOSend(client->tls.ctx, MqttSocket_TlsSocketSend);
 
