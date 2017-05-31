@@ -278,6 +278,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     break;
                 }
 
+            #ifdef WOLFMQTT_NONBLOCK
+                /* Track elapsed time with no activity and trigger timeout */
+                rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
+                    mqttCtx->cmd_timeout_ms/1000);
+            #endif
+
                 /* check return code */
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
@@ -307,6 +313,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             #endif
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Keep Alive */
+                    PRINTF("Keep-alive timeout, sending ping");
+
                     rc = MqttClient_Ping(&mqttCtx->client);
                     if (rc == MQTT_CODE_CONTINUE) {
                         return rc;
