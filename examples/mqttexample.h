@@ -108,6 +108,9 @@ typedef struct MQTTCtx {
     byte test_mode;
     const char* pub_file;
     int retain;
+#if defined(WOLFMQTT_NONBLOCK)
+    word32 start_sec; /* used for keep-alive */
+#endif
 #if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || defined(ENABLE_AWSIOT_EXAMPLE)
     union {
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
@@ -140,6 +143,10 @@ int err_sys(const char* msg);
 
 int mqtt_tls_cb(MqttClient* client);
 word16 mqtt_get_packetid(void);
+
+#ifdef WOLFMQTT_NONBLOCK
+int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec);
+#endif
 
 #ifdef __cplusplus
     } /* extern "C" */

@@ -280,6 +280,51 @@ word16 mqtt_get_packetid(void)
     return (word16)mPacketIdLast;
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+#if defined(MICROCHIP_MPLAB_HARMONY)
+    #include <system/tmr/sys_tmr.h>
+#else
+    #include <time.h>
+#endif
+
+static word32 mqtt_get_timer_seconds(void)
+{
+    word32 timer_sec = 0;
+
+#if defined(MICROCHIP_MPLAB_HARMONY)
+    timer_sec = (word32)(SYS_TMR_TickCountGet() /
+                         SYS_TMR_TickCounterFrequencyGet());
+#else
+    /* Posix style time */
+    timer_sec = (word32)time(0);
+#endif
+
+    return timer_sec;
+}
+
+int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
+{
+    word32 elapsed_sec;
+
+    /* if start seconds not set or is not continue */
+    if (*start_sec == 0 || rc != MQTT_CODE_CONTINUE) {
+        *start_sec = mqtt_get_timer_seconds();
+        return rc;
+    }
+
+    elapsed_sec = mqtt_get_timer_seconds();
+    if (*start_sec < elapsed_sec) {
+        elapsed_sec -= *start_sec;
+        if (elapsed_sec >= timeout_sec) {
+            *start_sec = mqtt_get_timer_seconds();
+            return MQTT_CODE_ERROR_TIMEOUT;
+        }
+    }
+
+    return rc;
+}
+#endif /* WOLFMQTT_NONBLOCK */
+
 
 #ifdef ENABLE_MQTT_TLS
 static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
