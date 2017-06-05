@@ -466,7 +466,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
                     /* Get data from STDIO */
                     XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
                     if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
-                        rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
+                        /* rc = (int)XSTRLEN((char*)mqttCtx->rx_buf); */
 
                         /* Publish Topic */
                         XSNPRINTF(mqttCtx->buffer.pubMsg, sizeof(mqttCtx->buffer.pubMsg),
