@@ -37,8 +37,12 @@
     #include <wolfssl/ssl.h>
     #include <wolfssl/wolfcrypt/types.h>
 
-    #ifndef WOLF_TLS_DHKEY_BITS_MIN
-        #define WOLF_TLS_DHKEY_BITS_MIN 2048
+    #ifndef WOLF_TLS_DHKEY_BITS_MIN /* allow define to be overridden */
+        #ifdef WOLFSSL_MAX_STRENGTH
+            #define WOLF_TLS_DHKEY_BITS_MIN 2048
+        #else
+            #define WOLF_TLS_DHKEY_BITS_MIN 1024
+        #endif
     #endif
 #endif
 
