@@ -278,6 +278,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 rc = cb(client);
             }
             if (rc != SSL_SUCCESS) {
+                rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
             }
         }
