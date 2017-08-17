@@ -486,7 +486,7 @@ static int NetDisconnect(void *context)
     SocketContext *sock = (SocketContext*)context;
     if (sock) {
         if (sock->fd != SOCKET_INVALID) {
-        #ifdef USE_WINDOWS_API
+        #if defined(USE_WINDOWS_API) || defined(MICROCHIP_MPLAB_HARMONY)
             closesocket(sock->fd);
         #else
             close(sock->fd);
