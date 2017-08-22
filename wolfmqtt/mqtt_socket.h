@@ -33,7 +33,11 @@
 
 #include "wolfmqtt/mqtt_types.h"
 #ifdef ENABLE_MQTT_TLS
-    #include <wolfssl/options.h>
+    #ifdef WOLFSSL_USER_SETTINGS
+        #include <wolfssl/wolfcrypt/settings.h>
+    #else
+        #include <wolfssl/options.h>
+    #endif
     #include <wolfssl/ssl.h>
     #include <wolfssl/wolfcrypt/types.h>
 
