@@ -301,7 +301,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     return header_len + remain_len;
 }
 
-int MqttDecode_ConenctAck(byte *rx_buf, int rx_buf_len,
+int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack)
 {
     int header_len, remain_len;
