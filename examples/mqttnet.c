@@ -455,7 +455,7 @@ exit:
         }
         else {
         #ifdef WOLFMQTT_NONBLOCK
-            if (so_error == EWOULDBLOCK) {
+            if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
                 return MQTT_CODE_CONTINUE;
             }
         #endif
