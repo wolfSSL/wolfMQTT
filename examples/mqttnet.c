@@ -348,6 +348,11 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             rc = 0; /* Handle signal */
         }
         else {
+        #ifdef WOLFMQTT_NONBLOCK
+            if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
+                return MQTT_CODE_CONTINUE;
+            }
+        #endif
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetWrite: Error %d", so_error);
         }

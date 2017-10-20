@@ -107,16 +107,10 @@ int MqttSocket_Init(MqttClient *client, MqttNet *net)
     return rc;
 }
 
-int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
+static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
     int timeout_ms)
 {
     int rc;
-
-    /* Validate arguments */
-    if (client == NULL || client->net == NULL ||
-        client->net->write == NULL || buf == NULL || buf_len <= 0) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
 
 #ifdef ENABLE_MQTT_TLS
     if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
@@ -144,16 +138,61 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     }
 #endif
 
+    return rc;
+}
+
+int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    int rc;
+
+    /* Validate arguments */
+    if (client == NULL || client->net == NULL || client->net->write == NULL ||
+        buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* check for buffer position overflow */
+    if (client->write.pos > buf_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
 #ifdef WOLFMQTT_NONBLOCK
-    if (rc == 0) {
+    rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
+        buf_len - client->write.pos, timeout_ms);
+    if (rc >= 0) {
+        client->write.pos += rc;
+        if (client->write.pos < buf_len) {
+            rc = MQTT_CODE_CONTINUE;
+        }
+    }
+    else if (rc == EWOULDBLOCK || rc == EAGAIN) {
         rc = MQTT_CODE_CONTINUE;
     }
-#endif
+
+#else
+    do {
+        rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
+            buf_len - client->write.pos, timeout_ms);
+        if (rc <= 0) {
+            break;
+        }
+        client->write.pos += rc;
+    } while (client->write.pos < buf_len);
+#endif /* WOLFMQTT_NONBLOCK */
+
+    /* handle return code */
+    if (rc > 0) {
+        /* return length write and reset position */
+        rc = client->write.pos;
+        client->write.pos = 0;
+    }
 
     return rc;
 }
 
-static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
+static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
+    int timeout_ms)
 {
     int rc;
 
