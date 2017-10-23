@@ -153,7 +153,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     }
 
     /* check for buffer position overflow */
-    if (client->write.pos > buf_len) {
+    if (client->write.pos >= buf_len) {
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
@@ -237,7 +237,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     }
 
     /* check for buffer position overflow */
-    if (client->read.pos > buf_len) {
+    if (client->read.pos >= buf_len) {
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
