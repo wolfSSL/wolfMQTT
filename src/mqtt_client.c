@@ -47,7 +47,7 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
             if (p_decode) {
                 p_connect_ack = (MqttConnectAck*)p_decode;
             }
-            rc = MqttDecode_ConenctAck(client->rx_buf, client->packet.buf_len,
+            rc = MqttDecode_ConnectAck(client->rx_buf, client->packet.buf_len,
                                                                 p_connect_ack);
             break;
         }
