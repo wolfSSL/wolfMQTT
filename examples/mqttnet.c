@@ -288,18 +288,23 @@ static int NetConnect(void *context, const char* host, word16 port,
         #endif /* !WOLFMQTT_NO_TIMEOUT */
     #endif /* MICROCHIP_MPLAB_HARMONY */
             {
-                socklen_t len = sizeof(so_error);
-            #if defined(MICROCHIP_MPLAB_HARMONY)
-                if (errno == EINPROGRESS) {
-                    return MQTT_CODE_CONTINUE;
-                }
-            #else
                 /* Check for error */
+        #if defined(MICROCHIP_MPLAB_HARMONY)
+                if (errno == EINPROGRESS) {
+                    rc = MQTT_CODE_CONTINUE;
+                }
+        #else
+                socklen_t len = sizeof(so_error);
                 getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
                 if (so_error == 0) {
                     rc = 0; /* Success */
                 }
+            #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
+                else if (so_error == EINPROGRESS) {
+                    rc = MQTT_CODE_CONTINUE;
+                }
             #endif
+        #endif /* MICROCHIP_MPLAB_HARMONY */
             }
             break;
         }
@@ -348,6 +353,11 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             rc = 0; /* Handle signal */
         }
         else {
+        #ifdef WOLFMQTT_NONBLOCK
+            if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
+                return MQTT_CODE_CONTINUE;
+            }
+        #endif
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetWrite: Error %d", so_error);
         }
@@ -455,7 +465,7 @@ exit:
         }
         else {
         #ifdef WOLFMQTT_NONBLOCK
-            if (so_error == EWOULDBLOCK) {
+            if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
                 return MQTT_CODE_CONTINUE;
             }
         #endif
