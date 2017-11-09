@@ -370,6 +370,7 @@ exit:
     if (rc) {
     #ifndef WOLFMQTT_NO_STDIO
     	const char* errstr = NULL;
+    #endif
         int errnum = 0;
         if (client->tls.ssl) {
             errnum = wolfSSL_get_error(client->tls.ssl, 0);
@@ -377,9 +378,12 @@ exit:
                 (errnum == SSL_ERROR_WANT_WRITE)) {
                 return MQTT_CODE_CONTINUE;
             }
+        #ifndef WOLFMQTT_NO_STDIO
             errstr = wolfSSL_ERR_reason_error_string(errnum);
+        #endif
         }
 
+    #ifndef WOLFMQTT_NO_STDIO
         PRINTF("MqttSocket_TlsConnect Error %d: Num %d, %s",
             rc, errnum, errstr);
     #endif /* WOLFMQTT_NO_STDIO */
