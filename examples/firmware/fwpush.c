@@ -271,6 +271,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
         case WMQ_BEGIN:
         {
             PRINTF("MQTT Firmware Push Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_INIT:
@@ -307,6 +309,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 PRINTF("Firmware message build failed! %d", rc);
                 exit(rc);
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_INIT:
@@ -328,6 +332,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
+
+            FALL_THROUGH;
         }
 
         case WMQ_TCP_CONN:
@@ -345,6 +351,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto exit;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_MQTT_CONN:
@@ -399,6 +407,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.topics = mqttCtx->topics;
             mqttCtx->topics[0].topic_filter = FIRMWARE_TOPIC_NAME;
             mqttCtx->topics[0].qos = mqttCtx->qos;
+
+            FALL_THROUGH;
         }
 
         case WMQ_PUB:
@@ -415,6 +425,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_DISCONNECT:
@@ -429,6 +441,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_DISCONNECT:
@@ -441,6 +455,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+
+            FALL_THROUGH;
         }
 
         case WMQ_DONE:

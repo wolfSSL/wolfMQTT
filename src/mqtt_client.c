@@ -253,7 +253,7 @@ wait_again:
             /* reset the packet state */
             client->packet.stat = MQTT_PK_BEGIN;
 
-            /* fall through */
+            FALL_THROUGH;
         }
         case MQTT_MSG_WAIT:
         {
@@ -280,7 +280,8 @@ wait_again:
         #endif
 
             msg->stat = MQTT_MSG_READ;
-            /* fall through */
+
+            FALL_THROUGH;
         }
 
         case MQTT_MSG_READ:
@@ -413,7 +414,7 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
 
             client->write.len = rc;
 
-            /* fall-through */
+            FALL_THROUGH;
         }
 
         case MQTT_MSG_WRITE:
@@ -457,7 +458,7 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
                 break;
             }
 
-            /* fall-through */
+            FALL_THROUGH;
         }
 
         case MQTT_MSG_WAIT:

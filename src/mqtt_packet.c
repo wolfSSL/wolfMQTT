@@ -725,7 +725,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 return MQTT_CODE_ERROR_NETWORK;
             }
 
-            /* fall-through */
+            FALL_THROUGH;
         }
 
         case MQTT_PK_READ_HEAD:
@@ -757,7 +757,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
             } while (client->packet.header_len < MQTT_PACKET_MAX_SIZE);
 
-            /* fall-through */
+            FALL_THROUGH;
         }
 
         case MQTT_PK_READ:

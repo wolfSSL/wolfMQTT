@@ -212,6 +212,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
         {
             PRINTF("MQTT Firmware Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
 
+            FALL_THROUGH;
         }
 
         case WMQ_NET_INIT:
@@ -232,6 +233,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
+
+            FALL_THROUGH;
         }
 
         case WMQ_INIT:
@@ -253,6 +256,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
+
+            FALL_THROUGH;
         }
 
         case WMQ_TCP_CONN:
@@ -271,6 +276,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto exit;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_MQTT_CONN:
@@ -323,6 +330,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.topics = mqttCtx->topics;
             mqttCtx->topics[0].topic_filter = FIRMWARE_TOPIC_NAME;
             mqttCtx->topics[0].qos = mqttCtx->qos;
+
+            FALL_THROUGH;
         }
 
         case WMQ_SUB:
@@ -348,6 +357,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             }
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
+
+            FALL_THROUGH;
         }
 
         case WMQ_WAIT_MSG:
@@ -407,6 +418,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_DISCONNECT:
@@ -421,6 +434,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_DISCONNECT:
@@ -433,6 +448,8 @@ int fwclient_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+
+            FALL_THROUGH;
         }
 
         case WMQ_DONE:
