@@ -253,6 +253,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (!mqttCtx->use_tls) {
                 return MQTT_CODE_ERROR_BAD_ARG;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_INIT:
@@ -283,6 +285,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc < 0) {
                 goto exit;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_INIT:
@@ -302,6 +306,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
+
+            FALL_THROUGH;
         }
 
         case WMQ_TCP_CONN:
@@ -319,6 +325,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto exit;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_MQTT_CONN:
@@ -376,6 +384,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
+
+            FALL_THROUGH;
         }
 
         case WMQ_SUB:
@@ -409,6 +419,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer = NULL;
             mqttCtx->publish.total_len = 0;
+
+            FALL_THROUGH;
         }
 
         case WMQ_PUB:
@@ -427,6 +439,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
+
+            FALL_THROUGH;
         }
 
         case WMQ_WAIT_MSG:
@@ -504,6 +518,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_DISCONNECT:
@@ -518,6 +534,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_DISCONNECT:
@@ -530,6 +548,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+
+            FALL_THROUGH;
         }
 
         case WMQ_DONE:

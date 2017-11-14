@@ -95,6 +95,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         case WMQ_BEGIN:
         {
             PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_INIT:
@@ -115,6 +117,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
+
+            FALL_THROUGH;
         }
 
         case WMQ_INIT:
@@ -136,6 +140,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
+
+            FALL_THROUGH;
         }
 
         case WMQ_TCP_CONN:
@@ -153,6 +159,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto exit;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_MQTT_CONN:
@@ -209,6 +217,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
+
+            FALL_THROUGH;
         }
 
         case WMQ_SUB:
@@ -242,6 +252,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
             mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+
+            FALL_THROUGH;
         }
 
         case WMQ_PUB:
@@ -260,6 +272,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
+
+            FALL_THROUGH;
         }
 
         case WMQ_WAIT_MSG:
@@ -346,6 +360,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->unsubscribe.topics = mqttCtx->topics;
 
             mqttCtx->stat = WMQ_UNSUB;
+
+            FALL_THROUGH;
         }
 
         case WMQ_UNSUB:
@@ -370,6 +386,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
             mqttCtx->return_code = rc;
+
+            FALL_THROUGH;
         }
 
         case WMQ_DISCONNECT:
@@ -384,6 +402,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_DISCONNECT:
@@ -396,6 +416,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+
+            FALL_THROUGH;
         }
 
         case WMQ_DONE:

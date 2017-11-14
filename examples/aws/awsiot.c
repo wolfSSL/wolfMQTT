@@ -277,6 +277,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (!mqttCtx->use_tls) {
                 return MQTT_CODE_ERROR_BAD_ARG;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_INIT:
@@ -297,6 +299,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
+
+            FALL_THROUGH;
         }
 
         case WMQ_INIT:
@@ -316,6 +320,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
+
+            FALL_THROUGH;
         }
 
         case WMQ_TCP_CONN:
@@ -333,6 +339,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto exit;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_MQTT_CONN:
@@ -389,6 +397,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
+
+            FALL_THROUGH;
         }
 
         case WMQ_SUB:
@@ -426,6 +436,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer = (byte*)mqttCtx->buffer.pubMsg;
             mqttCtx->publish.total_len = (word32)XSTRLEN(mqttCtx->buffer.pubMsg);
+
+            FALL_THROUGH;
         }
 
         case WMQ_PUB:
@@ -444,6 +456,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
+
+            FALL_THROUGH;
         }
 
         case WMQ_WAIT_MSG:
@@ -524,6 +538,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_DISCONNECT:
@@ -538,6 +554,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
+            FALL_THROUGH;
         }
 
         case WMQ_NET_DISCONNECT:
@@ -550,6 +568,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+
+            FALL_THROUGH;
         }
 
         case WMQ_DONE:
