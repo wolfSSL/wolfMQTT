@@ -202,7 +202,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         if (rc < 0) {
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
-            if (error != SSL_ERROR_WANT_READ) {
+            if (error != WOLFSSL_ERROR_WANT_READ) {
                 PRINTF("MqttSocket_Read: SSL Error=%d", error);
             }
         #endif
@@ -312,11 +312,11 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
             /* Issue callback to allow setup of the wolfSSL_CTX and cert
                verification settings */
-            rc = SSL_SUCCESS;
+            rc = WOLFSSL_SUCCESS;
             if (cb) {
                 rc = cb(client);
             }
-            if (rc != SSL_SUCCESS) {
+            if (rc != WOLFSSL_SUCCESS) {
                 rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
             }
@@ -330,7 +330,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 rc = -1;
                 goto exit;
             }
-            wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_NONE, 0);
+            wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_NONE, 0);
         }
 
     #ifndef NO_DH
@@ -357,7 +357,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         }
 
         rc = wolfSSL_connect(client->tls.ssl);
-        if (rc != SSL_SUCCESS) {
+        if (rc != WOLFSSL_SUCCESS) {
             goto exit;
         }
 
@@ -374,8 +374,8 @@ exit:
         int errnum = 0;
         if (client->tls.ssl) {
             errnum = wolfSSL_get_error(client->tls.ssl, 0);
-            if ((errnum == SSL_ERROR_WANT_READ) ||
-                (errnum == SSL_ERROR_WANT_WRITE)) {
+            if ((errnum == WOLFSSL_ERROR_WANT_READ) ||
+                (errnum == WOLFSSL_ERROR_WANT_WRITE)) {
                 return MQTT_CODE_CONTINUE;
             }
         #ifndef WOLFMQTT_NO_STDIO

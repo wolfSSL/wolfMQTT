@@ -168,14 +168,14 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
 {
     int rc;
     const char* encodedKey = AZURE_KEY;
-    byte decodedKey[SHA256_DIGEST_SIZE+1];
+    byte decodedKey[WC_SHA256_DIGEST_SIZE+1];
     word32 decodedKeyLen = (word32)sizeof(decodedKey);
     char deviceName[150]; /* uri */
     char sigData[200]; /* max uri + expiration */
-    byte sig[SHA256_DIGEST_SIZE];
-    byte base64Sig[SHA256_DIGEST_SIZE*2];
+    byte sig[WC_SHA256_DIGEST_SIZE];
+    byte base64Sig[WC_SHA256_DIGEST_SIZE*2];
     word32 base64SigLen = (word32)sizeof(base64Sig);
-    byte encodedSig[SHA256_DIGEST_SIZE*4];
+    byte encodedSig[WC_SHA256_DIGEST_SIZE*4];
     long lTime;
     Hmac hmac;
 
@@ -205,7 +205,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     XSNPRINTF(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
 
     /* HMAC-SHA256 Hash sigData using decoded key */
-    rc = wc_HmacSetKey(&hmac, SHA256, decodedKey, decodedKeyLen);
+    rc = wc_HmacSetKey(&hmac, WC_SHA256, decodedKey, decodedKeyLen);
     if (rc < 0) {
         PRINTF("SasTokenCreate: Hmac setkey failed! %d", rc);
         return rc;

@@ -348,14 +348,15 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 /* Use this callback to setup TLS certificates and verify callbacks */
 int mqtt_tls_cb(MqttClient* client)
 {
-    int rc = SSL_FAILURE;
+    int rc = WOLFSSL_FAILURE;
 
     client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
     if (client->tls.ctx) {
-        wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqtt_tls_verify_cb);
+        wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
+                               mqtt_tls_verify_cb);
 
 		/* default to success */
-        rc = SSL_SUCCESS;
+        rc = WOLFSSL_SUCCESS;
 
 	#if !defined(NO_CERT)
     #if !defined(NO_FILESYSTEM)
@@ -365,7 +366,8 @@ int mqtt_tls_cb(MqttClient* client)
 	    }
 
         /* If using a client certificate it can be loaded using: */
-        /* rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx, clientCertFile, SSL_FILETYPE_PEM);*/
+        /* rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
+         *                              clientCertFile, WOLFSSL_FILETYPE_PEM);*/
     #else
 	    if (mTlsCaFile) {
 	    #if 0
@@ -383,12 +385,14 @@ int mqtt_tls_cb(MqttClient* client)
 	        fclose(file);
 
 	    	/* Load CA certificate buffer */
-	        rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx, caCertBuf, caCertSize, SSL_FILETYPE_PEM);
+	        rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx, caCertBuf,
+                                              caCertSize, WOLFSSL_FILETYPE_PEM);
 	    #endif
 	    }
 
         /* If using a client certificate it can be loaded using: */
-        /* rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx, clientCertBuf, clientCertSize, SSL_FILETYPE_PEM);*/
+        /* rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
+         *               clientCertBuf, clientCertSize, WOLFSSL_FILETYPE_PEM);*/
     #endif /* !NO_FILESYSTEM */
     #endif /* !NO_CERT */
     }
