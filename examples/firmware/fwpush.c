@@ -149,7 +149,7 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     word32 keyLen = 0, sigLen = 0;
     FirmwareHeader *header;
     ecc_key eccKey;
-    RNG rng;
+    WC_RNG rng;
 
     wc_InitRng(&rng);
 

@@ -196,25 +196,28 @@ static int mqtt_aws_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 /* Use this callback to setup TLS certificates and verify callbacks */
 static int mqtt_aws_tls_cb(MqttClient* client)
 {
-    int rc = SSL_FAILURE;
+    int rc = WOLFSSL_FAILURE;
 
     client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
     if (client->tls.ctx) {
-        wolfSSL_CTX_set_verify(client->tls.ctx, SSL_VERIFY_PEER, mqtt_aws_tls_verify_cb);
+        wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
+                               mqtt_aws_tls_verify_cb);
 
         /* Load CA certificate buffer */
         rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx,
-            (const byte*)root_ca, (long)XSTRLEN(root_ca), SSL_FILETYPE_PEM);
+            (const byte*)root_ca, (long)XSTRLEN(root_ca), WOLFSSL_FILETYPE_PEM);
 
         /* Load Client Cert */
-        if (rc == SSL_SUCCESS)
+        if (rc == WOLFSSL_SUCCESS)
             rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
-                (const byte*)device_cert, (long)XSTRLEN(device_cert), SSL_FILETYPE_PEM);
+                (const byte*)device_cert, (long)XSTRLEN(device_cert),
+                WOLFSSL_FILETYPE_PEM);
 
         /* Load Private Key */
-        if (rc == SSL_SUCCESS)
+        if (rc == WOLFSSL_SUCCESS)
             rc = wolfSSL_CTX_use_PrivateKey_buffer(client->tls.ctx,
-                (const byte*)device_priv_key, (long)XSTRLEN(device_priv_key), SSL_FILETYPE_PEM);
+                (const byte*)device_priv_key, (long)XSTRLEN(device_priv_key),
+                WOLFSSL_FILETYPE_PEM);
     }
 
     PRINTF("MQTT TLS Setup (%d)", rc);
