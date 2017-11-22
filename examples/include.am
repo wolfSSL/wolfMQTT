@@ -8,7 +8,7 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/azure/azureiothub \
                    examples/aws/awsiot
 
-noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
+EXTRA_DIST +=  examples/mqttclient/mqttclient.h \
                    examples/firmware/fwpush.h \
                    examples/firmware/fwclient.h \
                    examples/firmware/firmware.h \
