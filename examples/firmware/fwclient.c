@@ -27,11 +27,10 @@
 #include "wolfmqtt/mqtt_client.h"
 
 #if defined(ENABLE_MQTT_TLS)
-    #ifdef WOLFSSL_USER_SETTINGS
-        #include <wolfssl/wolfcrypt/settings.h>
-    #else
+    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
         #include <wolfssl/options.h>
     #endif
+    #include <wolfssl/wolfcrypt/settings.h>
     #include <wolfssl/version.h>
 
     /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
