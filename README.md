@@ -80,6 +80,21 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 
 ## Release Notes
 
+### v0.14 (11/22/17)
+* Fixed non-blocking connect to check for `EINPROGRESS` for all platforms (not just Harmony).
+* Fixed buffer overflow position check on read/write.
+* Fixed typo on internal packet function `MqttDecode_ConnectAck`.
+* Fixed the socket close for Harmony to use `closesocket`.
+* Fixed non-blocking connect where `WOLFMQTT_NO_STDIO` is defined.
+* Fixed GCC 7's new fall-through check.
+* Added check for EAGAIN in non-blocking mode (was only EWOULDBLOCK).
+* Added non-blocking support for write operations when `WOLFMQTT_NONBLOCK` is defined.
+* Added support for DH and setting the default minimum key bits.
+* Added support for keep-alive ping when using non-blocking mode.
+* Improvements to example TLS callback handling of return code failures.
+* Improvements and fixes to Visual Studio projects.
+* Enhancement to adjust wolfSSL options.h include based on `WOLFSSL_USER_SETTINGS`.
+
 ### v0.13 (05/10/17)
 * Fixed issue with `msg->stat` in non-blocking.
 * Fixed Arduino library build.

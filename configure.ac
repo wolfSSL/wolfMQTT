@@ -2,7 +2,7 @@
 # Copyright (C) 2016 wolfSSL Inc.
 # All right reserved.
 
-AC_INIT([wolfmqtt],[0.13.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
+AC_INIT([wolfmqtt],[0.14.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
 
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -18,18 +18,18 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=1:1:0
-#                      | | |
-#               +------+ | +---+
-#               |        |     |
-#              current:revision:age
-#               |        |     |
-#               |        |     +- increment if interfaces have been added
-#               |        |        set to zero if interfaces have been removed
-#               |        |        or changed
-#               |        +- increment if source code has changed
-#               |           set to zero if current is incremented
-#               +- increment if interfaces have been added, removed or changed
+WOLFMQTT_LIBRARY_VERSION=1:2:0
+#                        | | |
+#                 +------+ | +---+
+#                 |        |     |
+#                current:revision:age
+#                 |        |     |
+#                 |        |     +- increment if interfaces have been added
+#                 |        |        set to zero if interfaces have been removed
+#                 |        |        or changed
+#                 |        +- increment if source code has changed
+#                 |           set to zero if current is incremented
+#                 +- increment if interfaces have been added, removed or changed
 AC_SUBST([WOLFMQTT_LIBRARY_VERSION])
 
 LT_PREREQ([2.2])
