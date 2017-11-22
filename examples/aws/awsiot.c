@@ -36,11 +36,10 @@
 
 /* This example requires features in wolfSSL 3.9.1 or later */
 #if defined(ENABLE_MQTT_TLS)
-    #ifdef WOLFSSL_USER_SETTINGS
-        #include <wolfssl/wolfcrypt/settings.h>
-    #else
+    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
         #include <wolfssl/options.h>
     #endif
+    #include <wolfssl/wolfcrypt/settings.h>
     #include <wolfssl/version.h>
 
     #if defined(LIBWOLFSSL_VERSION_HEX) && \
