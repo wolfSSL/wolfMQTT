@@ -111,12 +111,12 @@ typedef struct MQTTCtx {
 #if defined(WOLFMQTT_NONBLOCK)
     word32 start_sec; /* used for keep-alive */
 #endif
-#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || defined(ENABLE_AWSIOT_EXAMPLE)
+#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || defined(ENABLE_AWSIOT_EXAMPLE) || defined(WOLFMQTT_CHIBIOS)
     union {
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
         char sasToken[400];
     #endif
-    #ifdef ENABLE_AWSIOT_EXAMPLE
+    #if defined(ENABLE_AWSIOT_EXAMPLE) || defined(WOLFMQTT_CHIBIOS)
         char pubMsg[400];
     #endif
     } buffer;
