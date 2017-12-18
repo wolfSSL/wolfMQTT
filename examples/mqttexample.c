@@ -269,8 +269,7 @@ int err_sys(const char* msg)
     if (msg) {
         PRINTF("wolfMQTT error: %s", msg);
     }
-	//exit(EXIT_FAILURE);
-    return -1;
+	exit(EXIT_FAILURE);
 }
 
 
