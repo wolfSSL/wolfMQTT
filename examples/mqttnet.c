@@ -84,6 +84,7 @@
     #define SOERROR_T uint8_t
     #undef  FD_ISSET
     #define FD_ISSET(f1, f2) (1==1)
+    #define SOCK_CLOSE      closesocket
 
 /* Linux */
 #else
@@ -487,11 +488,7 @@ static int NetDisconnect(void *context)
     SocketContext *sock = (SocketContext*)context;
     if (sock) {
         if (sock->fd != SOCKET_INVALID) {
-        #if defined(USE_WINDOWS_API) || defined(MICROCHIP_MPLAB_HARMONY)
-            closesocket(sock->fd);
-        #else
-            close(sock->fd);
-        #endif
+            SOCK_CLOSE(sock->fd);
             sock->fd = -1;
         }
 
