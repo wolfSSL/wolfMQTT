@@ -72,6 +72,8 @@ typedef int (*MqttNetDisconnectCb)(void *context);
 typedef struct _MqttTls {
     WOLFSSL_CTX         *ctx;
     WOLFSSL             *ssl;
+    int                 sockRc;
+    int                 timeout_ms;
 } MqttTls;
 #endif
 
@@ -82,7 +84,6 @@ typedef struct _MqttNet {
     MqttNetReadCb       read;
     MqttNetWriteCb      write;
     MqttNetDisconnectCb disconnect;
-    int                 sockRc;
 } MqttNet;
 
 
