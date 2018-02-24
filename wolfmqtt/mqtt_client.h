@@ -256,13 +256,17 @@ WOLFMQTT_API int MqttClient_NetConnect(
 WOLFMQTT_API int MqttClient_NetDisconnect(
     MqttClient *client);
 
+#ifndef WOLFMQTT_NO_ERROR_STRINGS
 /*! \brief      Performs lookup of the WOLFMQTT_API return values
  *  \param      return_code The return value from a WOLFMQTT_API function
  *  \return     String representation of the return code
  */
 WOLFMQTT_API const char* MqttClient_ReturnCodeToString(
     int return_code);
-
+#else
+    #define MqttClient_ReturnCodeToString(x) \
+                                        "no support for error strings built in"
+#endif /* WOLFMQTT_NO_ERROR_STRINGS */
 
 #ifdef __cplusplus
     } /* extern "C" */

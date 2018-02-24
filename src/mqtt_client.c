@@ -633,6 +633,7 @@ int MqttClient_NetDisconnect(MqttClient *client)
     return MqttSocket_Disconnect(client);
 }
 
+#ifndef WOLFMQTT_NO_ERROR_STRINGS
 const char* MqttClient_ReturnCodeToString(int return_code)
 {
     switch(return_code) {
@@ -665,4 +666,5 @@ const char* MqttClient_ReturnCodeToString(int return_code)
     }
     return "Unknown";
 }
+#endif /* !WOLFMQTT_NO_ERROR_STRINGS */
 
