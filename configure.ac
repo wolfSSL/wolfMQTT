@@ -142,6 +142,19 @@ AC_ARG_ENABLE([examples],
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 
 
+# Error strings 
+AC_ARG_ENABLE([errorstrings],
+    [  --enable-errorstrings       Enable Error Strings  (default: enabled)],
+    [ ENABLED_ERROR_STRINGS=$enableval ],
+    [ ENABLED_ERROR_STRINGS=yes ]
+    )
+
+if test "x$ENABLED_ERROR_STRINGS" = "xno"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NO_ERROR_STRINGS"
+fi
+
+
 # STDIN / FGETS for examples
 AC_ARG_ENABLE([stdincap],
     [  --enable-stdincap       Enable examplesSTDIN capture  (default: enabled)],
@@ -198,4 +211,5 @@ echo "   * TLS:                       $ENABLED_TLS"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"
+echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
 

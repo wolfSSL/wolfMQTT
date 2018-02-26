@@ -370,7 +370,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 exit:
     /* Handle error case */
     if (rc) {
-    #ifndef WOLFMQTT_NO_STDIO
+    #ifdef WOLFMQTT_DEBUG_SOCKET
     	const char* errstr = NULL;
     #endif
         int errnum = 0;
@@ -380,15 +380,15 @@ exit:
                 (errnum == WOLFSSL_ERROR_WANT_WRITE)) {
                 return MQTT_CODE_CONTINUE;
             }
-        #ifndef WOLFMQTT_NO_STDIO
+        #ifdef WOLFMQTT_DEBUG_SOCKET
             errstr = wolfSSL_ERR_reason_error_string(errnum);
         #endif
         }
 
-    #ifndef WOLFMQTT_NO_STDIO
+    #ifdef WOLFMQTT_DEBUG_SOCKET
         PRINTF("MqttSocket_TlsConnect Error %d: Num %d, %s",
             rc, errnum, errstr);
-    #endif /* WOLFMQTT_NO_STDIO */
+    #endif /* WOLFMQTT_DEBUG_SOCKET */
 
         /* Make sure we cleanup on error */
         MqttSocket_Disconnect(client);
