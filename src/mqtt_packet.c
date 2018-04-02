@@ -194,7 +194,7 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len)
 int MqttEncode_String(byte *buf, const char *str)
 {
     int str_len = (int)XSTRLEN(str);
-    int len = MqttEncode_Num(buf, str_len);
+    int len = (int)MqttEncode_Num(buf, (word16)str_len);
     buf += len;
     XMEMCPY(buf, str, str_len);
     return len + str_len;
@@ -203,7 +203,7 @@ int MqttEncode_String(byte *buf, const char *str)
 /* Returns number of buffer bytes encoded */
 int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
 {
-    int len = MqttEncode_Num(buf, data_len);
+    int len = (int)MqttEncode_Num(buf, data_len);
     buf += len;
     XMEMCPY(buf, data, data_len);
     return len + data_len;
@@ -287,7 +287,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
         tx_payload += MqttEncode_String(tx_payload,
             connect->lwt_msg->topic_name);
         tx_payload += MqttEncode_Data(tx_payload,
-            connect->lwt_msg->buffer, connect->lwt_msg->total_len);
+            connect->lwt_msg->buffer, (word16)connect->lwt_msg->total_len);
     }
     if (connect->username) {
         tx_payload += MqttEncode_String(tx_payload, connect->username);
