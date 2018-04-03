@@ -2,7 +2,7 @@
 # Copyright (C) 2016 wolfSSL Inc.
 # All right reserved.
 
-AC_INIT([wolfmqtt],[0.14.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
+AC_INIT([wolfmqtt],[1.0.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
 
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -18,7 +18,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=1:2:0
+WOLFMQTT_LIBRARY_VERSION=2:0:0
 #                        | | |
 #                 +------+ | +---+
 #                 |        |     |
@@ -69,11 +69,14 @@ AC_CHECK_LIB(network,socket)
 DEBUG_CFLAGS="-g -O0"
 DEBUG_CPPFLAGS="-DDEBUG -DDEBUG_WOLFMQTT"
 
+# Optimizations
+OPTIMIZE_CFLAGS="-O2"
+
 AX_DEBUG
 AS_IF([test "x$ax_enable_debug" = "xyes"],
       [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"
        AM_CPPFLAGS="$DEBUG_CPPFLAGS $AM_CPPFLAGS"],
-      [AM_CFLAGS="$AM_CFLAGS -O2"
+      [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS"
        AM_CPPFLAGS="-DNDEBUG $AM_CFLAGS"])
 
 AX_PTHREAD([AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
@@ -92,7 +95,7 @@ fi
 # TLS Support with wolfSSL
 # Examples, used to disable examples
 AC_ARG_ENABLE([tls],
-    [  --enable-tls            Enable TLS support with wolfSSL  (default: enabled)],
+    [AS_HELP_STRING([--enable-tls],[Enable TLS support with wolfSSL  (default: enabled)])],
     [ ENABLED_TLS=$enableval ],
     [ ENABLED_TLS=yes ]
     )
@@ -102,14 +105,13 @@ then
     AM_CPPFLAGS="$AM_CPPFLAGS -DENABLE_MQTT_TLS"
 
     TAO_REQUIRE_LIBWOLFSSL
-    AM_CPPFLAGS="$AM_CPPFLAGS -DDHAVE_WOLFSSL_OPTIONS -DHAVE_CYASSL_OPTIONS"
 fi
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 
 
 # Non-Blocking support
 AC_ARG_ENABLE([nonblock],
-    [  --enable-nonblock        Enable non-blocking support  (default: disabled)],
+    [AS_HELP_STRING([--enable-nonblock],[Enable non-blocking support  (default: disabled)])],
     [ ENABLED_NONBLOCK=$enableval ],
     [ ENABLED_NONBLOCK=no ]
     )
@@ -122,7 +124,7 @@ fi
 
 # Timeout support
 AC_ARG_ENABLE([timeout],
-    [  --enable-timeout         Enable timeout support  (default: enabled)],
+    [AS_HELP_STRING([--enable-timeout],[Enable timeout support  (default: enabled)])],
     [ ENABLED_TIMEOUT=$enableval ],
     [ ENABLED_TIMEOUT=yes ]
     )
@@ -134,7 +136,7 @@ fi
 
 # Examples
 AC_ARG_ENABLE([examples],
-    [  --enable-examples       Enable Examples  (default: enabled)],
+    [AS_HELP_STRING([--enable-examples],[Enable examples (default: enabled)])],
     [ ENABLED_EXAMPLES=$enableval ],
     [ ENABLED_EXAMPLES=yes ]
     )
@@ -144,7 +146,7 @@ AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 
 # Error strings 
 AC_ARG_ENABLE([errorstrings],
-    [  --enable-errorstrings       Enable Error Strings  (default: enabled)],
+    [AS_HELP_STRING([--enable-errorstrings],[Enable error strings  (default: enabled)])],
     [ ENABLED_ERROR_STRINGS=$enableval ],
     [ ENABLED_ERROR_STRINGS=yes ]
     )
@@ -157,7 +159,7 @@ fi
 
 # STDIN / FGETS for examples
 AC_ARG_ENABLE([stdincap],
-    [  --enable-stdincap       Enable examplesSTDIN capture  (default: enabled)],
+    [AS_HELP_STRING([--enable-stdincap],[Enable examples STDIN capture  (default: enabled)])],
     [ ENABLED_STDINCAP=$enableval ],
     [ ENABLED_STDINCAP=yes ]
     )

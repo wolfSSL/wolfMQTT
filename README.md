@@ -80,6 +80,14 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 
 ## Release Notes
 
+### v1.0 (04/03/18)
+* Fixed `MqttClient_WaitMessage` to use provided `timeout_ms` arg. With TLS enabled it was using the `MqttClient_Init` `cmd_timeout_ms` arg. Thanks PeterL for that report.
+* Fixed cast warnings when building with Visual Studio.
+* Cleanup socket code to use existing `SOCK_CLOSE` for `NetDisconnect`.
+* Cleanup to move the `sockRc` into the `MqttTls` struct, since it only applies when TLS is enabled.
+* Added configure option to disable error strings for reduced code size (`./configure disable-errorstrings` or `#define WOLFMQTT_NO_ERROR_STRINGS`).
+* Added support for ChibiOS.
+
 ### v0.14 (11/22/17)
 * Fixed non-blocking connect to check for `EINPROGRESS` for all platforms (not just Harmony).
 * Fixed buffer overflow position check on read/write.
