@@ -288,6 +288,14 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+#ifndef ENABLE_MQTT_TLS
+    /* cannot use TLS unless ENABLE_MQTT_TLS is defined */
+    if (use_tls) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+#endif
+
+
     if ((client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) == 0) {
         /* Validate port */
         if (port == 0) {
