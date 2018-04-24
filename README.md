@@ -26,7 +26,8 @@ For building wolfMQTT with TLS support in Visual Studio:
    * For `DLL Release` with `x64` the files are in: `x64/DLL Release`.
 6. Open the `<wolfmqtt-root>/wolfmqtt.sln` solution.
 7. Make sure you have the same architecture (`x86` or `x64` selected) as used in wolfSSL above.
-8. Build the wolfMQTT solution.
+8. By default the include path for the wolfssl headers is `./../wolfssl/`. If your wolfssl root location is different you can go into the project settings and adjust this in `C/C++` -> `General` -> `Additional Include Directories`.
+9. Build the wolfMQTT solution.
 
 ### Arduino
 
