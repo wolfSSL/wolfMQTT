@@ -73,6 +73,8 @@ typedef struct _MqttMessage {
     byte        buffer_new;   /* flag to indicate new message */
     word32      buffer_len;   /* Buffer length */
     word32      buffer_pos;   /* Buffer position */
+
+    void*       ctx;          /* user supplied context for publish callbacks */
 } MqttMessage;
 
 
@@ -238,6 +240,7 @@ typedef struct _MqttConnectAck {
 
 /* Connect */
 typedef struct _MqttConnect {
+    MqttMsgStat stat;
     word16      keep_alive_sec;
     byte        clean_session;
     const char *client_id;
@@ -278,6 +281,7 @@ typedef struct _MqttPublishResp {
 /* SUBSCRIBE PACKET */
 /* Packet Id followed by contiguous list of topics w/Qos to subscribe to. */
 typedef struct _MqttSubscribe {
+    MqttMsgStat stat;
     word16      packet_id;
     int         topic_count;
     MqttTopic  *topics;

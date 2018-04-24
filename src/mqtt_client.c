@@ -76,6 +76,10 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
                             msg->topic_name = NULL;
                             msg->topic_name_len = 0;
                         }
+                        /* if using the temp publish message buffer,
+                           then populate message context with client context */
+                        if (&client->msg == msg)
+                            msg->ctx = client->ctx;
                         rc = client->msg_cb(client, msg, msg->buffer_new, msg_done);
                         if (rc != MQTT_CODE_SUCCESS) {
                             return rc;
@@ -369,7 +373,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (client->msg.stat == MQTT_MSG_BEGIN) {
+    if (connect->stat == MQTT_MSG_BEGIN) {
 
         /* Encode the connect packet */
         rc = MqttEncode_Connect(client->tx_buf, client->tx_buf_len, connect);
@@ -383,7 +387,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
         if (rc != len) {
             return rc;
         }
-        client->msg.stat = MQTT_MSG_WAIT;
+        connect->stat = MQTT_MSG_WAIT;
     }
 
     /* Wait for connect ack packet */
@@ -503,7 +507,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (client->msg.stat == MQTT_MSG_BEGIN) {
+    if (subscribe->stat == MQTT_MSG_BEGIN) {
         /* Encode the subscribe packet */
         rc = MqttEncode_Subscribe(client->tx_buf, client->tx_buf_len, subscribe);
         if (rc <= 0) { return rc; }
@@ -513,7 +517,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         rc = MqttPacket_Write(client, client->tx_buf, len);
         if (rc != len) { return rc; }
 
-        client->msg.stat = MQTT_MSG_WAIT;
+        subscribe->stat = MQTT_MSG_WAIT;
     }
 
     /* Wait for subscribe ack packet */
@@ -541,7 +545,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (client->msg.stat == MQTT_MSG_BEGIN) {
+    if (unsubscribe->stat == MQTT_MSG_BEGIN) {
         /* Encode the subscribe packet */
         rc = MqttEncode_Unsubscribe(client->tx_buf, client->tx_buf_len,
             unsubscribe);
@@ -552,7 +556,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
         rc = MqttPacket_Write(client, client->tx_buf, len);
         if (rc != len) { return rc; }
 
-        client->msg.stat = MQTT_MSG_WAIT;
+        unsubscribe->stat = MQTT_MSG_WAIT;
     }
 
     /* Wait for unsubscribe ack packet */

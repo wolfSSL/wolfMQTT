@@ -104,12 +104,12 @@ typedef struct _MqttClient {
     MqttPkRead   packet;
     MqttSk       read;
     MqttSk       write;
-    word16       packet_id;
 
     MqttMsgCb    msg_cb;
-    MqttMessage  msg;   /* temp incomming message */
+    MqttMessage  msg;   /* temp incomming message
+                         * Used for MqttClient_Ping and MqttClient_WaitType */
 
-    void*        ctx;
+    void*        ctx;   /* user supplied context for publish callbacks */
 } MqttClient;
 
 
