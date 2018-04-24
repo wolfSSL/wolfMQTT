@@ -2,6 +2,37 @@
 
 This is an implementation of the MQTT Client written in C for embedded use, which supports SSL/TLS via the wolfSSL library. This library was built from the ground up to be multi-platform, space conscience and extensible. Integrates with wolfSSL to provide TLS support.
 
+
+## Building
+
+### Mac/Linux/Unix/MinGW
+
+1. `./autogen.sh` (if cloned from GitHub)
+2. `./configure` (to see a list of build options use `./configure --help`)
+3. `make`
+
+### Windows Visual Studio
+
+For building wolfMQTT with TLS support in Visual Studio:
+
+1. Open the `wolfssl-root>/wolfssl64.sln`.
+2. Re-target for your Visual Studio version (right-click on solution and choose `Retarget solution`).
+3. Make sure the `Debug DLL` or `Release DLL` configuration is selected. Make note if you are building 32-bit `x86` or 64-bit `x64`.
+4. Build the wolfSSL solution.
+5. Copy the `wolfssl.lib` and `wolfssl.dll` files into `<wolfmqtt-root>`.
+   * For `DLL Debug` with `x86` the files are in: `DLL Debug`.
+   * For `DLL Release` with `x86` the files are in: `DLL Release`.
+   * For `DLL Debug` with `x64` the files are in: `x64/DLL Debug`.
+   * For `DLL Release` with `x64` the files are in: `x64/DLL Release`.
+6. Open the `<wolfmqtt-root>/wolfmqtt.sln` solution.
+7. Make sure you have the same architecture (`x86` or `x64` selected) as used in wolfSSL above.
+8. Build the wolfMQTT solution.
+
+### Arduino
+
+See `README.md` at [IDE/ARDUINO.README.md](IDE/ARDUINO.README.md)
+
+
 ## Architecture
 
 The library has three components.
@@ -52,6 +83,7 @@ This is where the transport socket optionally wraps TLS and uses the `MqttNet` c
 
 The header contains the MQTT Network structure `MqttNet` for network callback and context.
 
+
 ## Implementation
 
 Here are the steps for creating your own implementation.
@@ -63,6 +95,7 @@ Here are the steps for creating your own implementation.
 5. Call `MqttClient_Connect` passing pointer to `MqttConnect` structure to send MQTT connect command and wait for Connect Ack.
 6. Call `MqttClient_Subscribe` passing pointer to `MqttSubscribe` structure to send MQTT Subscribe command and wait for Subscribe Ack (depending on QoS level).
 7. Call `MqttClient_WaitMessage` passing pointer to `MqttMessage` to wait for incoming MQTT Publish message.
+
 
 ## Examples
 
@@ -77,6 +110,7 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 
 ### AWS IoT Example
 We setup an AWS IoT endpoint and testing device certificate for testing. The AWS server uses TLS client certificate for authentication. The example is located in /examples/aws/. The example subscribes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta` and publishes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update`.
+
 
 ## Release Notes
 
