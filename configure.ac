@@ -92,6 +92,19 @@ else
 fi
 
 
+# Verbose Logging
+AC_ARG_ENABLE([verbose],
+    [AS_HELP_STRING([--enable-verbose],[Enable verbose logging  (default: disabled)])],
+    [ ENABLED_VERBOSE=$enableval ],
+    [ ENABLED_VERBOSE=no ]
+    )
+
+if test "x$ENABLED_VERBOSE" = "xyes"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_DEBUG_CLIENT -DWOLFMQTT_DEBUG_SOCKET"
+fi
+
+
 # TLS Support with wolfSSL
 # Examples, used to disable examples
 AC_ARG_ENABLE([tls],

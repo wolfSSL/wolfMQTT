@@ -160,13 +160,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
 
-            FALL_THROUGH;
-        }
-
-        case WMQ_MQTT_CONN:
-        {
-            mqttCtx->stat = WMQ_MQTT_CONN;
-
+            /* Build connect packet */
             XMEMSET(&mqttCtx->connect, 0, sizeof(MqttConnect));
             mqttCtx->connect.keep_alive_sec = mqttCtx->keep_alive_sec;
             mqttCtx->connect.clean_session = mqttCtx->clean_session;
@@ -188,6 +182,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
+
+            FALL_THROUGH;
+        }
+
+        case WMQ_MQTT_CONN:
+        {
+            mqttCtx->stat = WMQ_MQTT_CONN;
 
             /* Send Connect and wait for Connect Ack */
             rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
@@ -360,6 +361,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->unsubscribe.topics = mqttCtx->topics;
 
             mqttCtx->stat = WMQ_UNSUB;
+        #ifdef WOLFMQTT_NONBLOCK
+            mqttCtx->start_sec = 0;
+        #endif
 
             FALL_THROUGH;
         }
@@ -368,18 +372,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         {
             /* Unsubscribe Topics */
             rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
+        #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
-            #ifdef WOLFMQTT_NONBLOCK
-                /* workaround for non-block sometimes not getting un-subscribe resp */
-                #define MAX_CONTINUE_TRIES 2000
-                static int maxContinueUnsub = 0;
-                if (++maxContinueUnsub > MAX_CONTINUE_TRIES)
-                    rc = MQTT_CODE_ERROR_NETWORK;
-                else
-            #endif
-                    return rc;
-
+                /* Track elapsed time with no activity and trigger timeout */
+                return mqtt_check_timeout(rc, &mqttCtx->start_sec,
+                    mqttCtx->cmd_timeout_ms/1000);
             }
+        #endif
             PRINTF("MQTT Unsubscribe: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {

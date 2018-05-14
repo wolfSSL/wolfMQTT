@@ -276,13 +276,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
 
-            FALL_THROUGH;
-        }
-
-        case WMQ_MQTT_CONN:
-        {
-            mqttCtx->stat = WMQ_MQTT_CONN;
-
+            /* Build connect packet */
             XMEMSET(&mqttCtx->connect, 0, sizeof(MqttConnect));
             mqttCtx->connect.keep_alive_sec = mqttCtx->keep_alive_sec;
             mqttCtx->connect.clean_session = mqttCtx->clean_session;
@@ -299,6 +293,13 @@ int fwclient_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
+
+            FALL_THROUGH;
+        }
+
+        case WMQ_MQTT_CONN:
+        {
+            mqttCtx->stat = WMQ_MQTT_CONN;
 
             /* Send Connect and wait for Connect Ack */
             rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
