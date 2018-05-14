@@ -1,6 +1,6 @@
 /* mqtt_packet.h
  *
- * Copyright (C) 2006-2016 wolfSSL Inc.
+ * Copyright (C) 2006-2018 wolfSSL Inc.
  *
  * This file is part of wolfMQTT.
  *
@@ -20,7 +20,7 @@
  */
 
 /* Implementation by: David Garske
- * Based on specification for MQTT v3.1.1
+ * Based on specification for MQTT v3.1.1 and v5.0
  * See http://mqtt.org/documentation for additional MQTT documentation.
  */
 
