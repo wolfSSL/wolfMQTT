@@ -1,5 +1,5 @@
 # wolfmqtt
-# Copyright (C) 2016 wolfSSL Inc.
+# Copyright (C) 2018 wolfSSL Inc.
 # All right reserved.
 
 AC_INIT([wolfmqtt],[1.0.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
