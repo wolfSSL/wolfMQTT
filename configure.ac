@@ -92,6 +92,13 @@ else
 fi
 
 
+# Verbose Logging
+if test "x$ax_enable_debug" = "xverbose"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_DEBUG_CLIENT -DWOLFMQTT_DEBUG_SOCKET"
+fi
+
+
 # TLS Support with wolfSSL
 # Examples, used to disable examples
 AC_ARG_ENABLE([tls],
