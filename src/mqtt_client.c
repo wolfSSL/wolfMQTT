@@ -305,7 +305,7 @@ wait_again:
             rc = MQTT_CODE_SUCCESS;
 
             /* Check for type and packet id */
-            if (wait_type < MQTT_PACKET_TYPE_MAX) {
+            if (wait_type < MQTT_PACKET_TYPE_ANY) {
                 if (wait_type == msg->type) {
                     if (wait_packet_id == 0 || wait_packet_id == packet_id) {
                         /* We found the packet type and id */
@@ -643,7 +643,7 @@ int MqttClient_Disconnect(MqttClient *client)
 int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
 {
     return MqttClient_WaitType(client, &client->msg, timeout_ms,
-        MQTT_PACKET_TYPE_MAX, 0, NULL);
+        MQTT_PACKET_TYPE_ANY, 0, NULL);
 }
 
 int MqttClient_NetConnect(MqttClient *client, const char* host,

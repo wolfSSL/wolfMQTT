@@ -27,6 +27,90 @@
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_client.h"
 
+#ifdef WOLFMQTT_V5
+struct MqttPropMatrix {
+    MqttPropertyType prop;
+    MqttDataType data;
+    word16 packet_type_mask; /* allowed packets */
+};
+static const struct MqttPropMatrix gPropMatrix[] = {
+    { MQTT_PROP_PLAYLOAD_FORMAT_IND,        MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_CONTENT_TYPE,               MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_RESP_TOPIC,                 MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_CORRELATION_DATA,           MQTT_DATA_TYPE_BINARY,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_SUBSCRIPTION_ID,            MQTT_DATA_TYPE_VAR_INT,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) |
+        (1 << MQTT_PACKET_TYPE_SUBSCRIBE) },
+    { MQTT_PROP_SESSION_EXPIRY_INTERVAL,    MQTT_DATA_TYPE_INT,
+        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
+        (1 << MQTT_PACKET_TYPE_DISCONNECT) },
+    { MQTT_PROP_ASSIGNED_CLIENT_ID,         MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_SERVER_KEEP_ALIVE,          MQTT_DATA_TYPE_SHORT,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_AUTH_METHOD,                MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
+        (1 << MQTT_PACKET_TYPE_AUTH) },
+    { MQTT_PROP_AUTH_DATA,                  MQTT_DATA_TYPE_BINARY,
+        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
+        (1 << MQTT_PACKET_TYPE_AUTH) },
+    { MQTT_PROP_REQ_PROB_INFO,              MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT) },
+    { MQTT_PROP_WILL_DELAY_INTERVAL,        MQTT_DATA_TYPE_INT,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_REQ_RESP_INFO,              MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT) },
+    { MQTT_PROP_RESP_INFO,                  MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_SERVER_REF,                 MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
+        (1 << MQTT_PACKET_TYPE_DISCONNECT) },
+    { MQTT_PROP_REASON_STR,                 MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
+        (1 << MQTT_PACKET_TYPE_PUBLISH_ACK) |
+        (1 << MQTT_PACKET_TYPE_PUBLISH_REC) |
+        (1 << MQTT_PACKET_TYPE_PUBLISH_REL) |
+        (1 << MQTT_PACKET_TYPE_PUBLISH_COMP) |
+        (1 << MQTT_PACKET_TYPE_SUBSCRIBE_ACK) |
+        (1 << MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK) |
+        (1 << MQTT_PACKET_TYPE_DISCONNECT) |
+        (1 << MQTT_PACKET_TYPE_AUTH) },
+    { MQTT_PROP_RECEIVE_MAX,                MQTT_DATA_TYPE_SHORT,
+        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_TOPIC_ALIAS_MAX,            MQTT_DATA_TYPE_SHORT,
+        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_TOPIC_ALIAS,                MQTT_DATA_TYPE_SHORT,
+        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { MQTT_PROP_MAX_QOS,                    MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_RETAIN_AVAIL,               MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_USER_PROP,                  MQTT_DATA_TYPE_STRING_PAIR,
+        0xFFFF /* ALL */ },
+    { MQTT_PROP_MAX_PACKET_SZ,              MQTT_DATA_TYPE_INT,
+        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_WILDCARD_SUB_AVAIL,         MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_SUBSCRIPTION_ID_AVAIL,      MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL, MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { MQTT_PROP_TYPE_MAX, 0, 0 }
+};
+#endif /* WOLFMQTT_V5 */
+
 /* Positive return value is header length, zero or negative indicates error */
 static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     byte type, byte retain, byte qos, byte duplicate)
@@ -209,6 +293,43 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
     return len + data_len;
 }
 
+#ifdef WOLFMQTT_V5
+int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
+{
+    /* Validate property type is allowed for packet type */
+
+    /* Example: MQTT_PACKET_TYPE_CONNECT: Allowed properties: MQTT_PROP_SESSION_EXPIRY_INTERVAL,
+    MQTT_PROP_RECEIVE_MAX, MQTT_PROP_MAX_PACKET_SZ,
+    MQTT_PROP_TOPIC_ALIAS_MAX, MQTT_PROP_REQ_RESP_INFO,
+    MQTT_PROP_REQ_PROB_INFO, MQTT_PROP_USER_PROP,
+    MQTT_PROP_AUTH_METHOD, MQTT_PROP_AUTH_DATA */
+
+#if 0
+    typedef struct MqttProp {
+        struct MqttProp* next;
+        void* data;
+        int dataSz;
+        MqttPropertyType type;
+    } MqttProp;
+
+    struct MqttPropMatrix {
+        MqttPropertyType prop;
+        MqttDataType data;
+        word16 packet_type_mask; /* allowed packets */
+    };
+
+    gPropMatrix up to MQTT_PROP_TYPE_MAX
+#endif
+    (void)gPropMatrix;
+
+    /* TODO: Encode props */
+    (void)packet;
+    (void)props;
+    (void)buf;
+
+    return 0;
+}
+#endif
 
 /* Packet Type Encoders/Decoders */
 int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
@@ -223,8 +344,11 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     }
 
     /* Determine packet length */
-    /* MQTT Version 4 header is 10 bytes */
+    /* MQTT Version 4/5 header is 10 bytes */
     remain_len = sizeof(MqttConnectPacket);
+#ifdef WOLFMQTT_V5
+    remain_len += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props, NULL);
+#endif
     remain_len += (int)XSTRLEN(connect->client_id) + MQTT_DATA_LEN_SIZE;
     if (connect->enable_lwt) {
         /* Verify all required fields are present */
@@ -257,6 +381,11 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
+    /* Protocol version */
+    if (connect->protocol_level != 0) {
+        packet.protocol_level = connect->protocol_level;
+    }
+
     /* Set connection flags */
     if (connect->clean_session) {
         packet.flags |= MQTT_CONNECT_FLAG_CLEAN_SESSION;
@@ -280,6 +409,11 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     MqttEncode_Num((byte*)&packet.keep_alive, connect->keep_alive_sec);
     XMEMCPY(tx_payload, &packet, sizeof(MqttConnectPacket));
     tx_payload += sizeof(MqttConnectPacket);
+
+#ifdef WOLFMQTT_V5
+    /* Encode properties */
+    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props, tx_payload);
+#endif
 
     /* Encode payload */
     tx_payload += MqttEncode_String(tx_payload, connect->client_id);

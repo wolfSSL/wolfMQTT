@@ -181,6 +181,21 @@ fi
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 
 
+# MQTT v5.0
+AC_ARG_ENABLE([mqtt5],
+    [  --enable-mqtt5       Enable MQTT v5.0 support (default: disabled)],
+    [ ENABLED_MQTTV50=$enableval ],
+    [ ENABLED_MQTTV50=no ]
+    )
+
+if test "x$ENABLED_MQTTV50" = "xyes"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_V5"
+fi
+
+AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_STDINCAP" = "xyes"])
+
+
 # Disconnect callback
 AC_ARG_ENABLE([discb],
     [AS_HELP_STRING([--enable-discb],[Enable disconnect callback (default: enabled)])],
@@ -306,6 +321,7 @@ echo "   * LIB Flags:                 $LIB"
 
 echo "   * Disconnect Callback        $ENABLED_DISCB"
 echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
+echo "   * Enable MQTT v5.0:          $ENABLED_MQTTV50"
 echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"

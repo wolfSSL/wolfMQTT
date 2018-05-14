@@ -39,6 +39,115 @@
 #define MQTT_DATA_LEN_SIZE   2
 
 
+
+#ifdef WOLFMQTT_V5
+/* DATA TYPES */
+typedef enum MqttDataType {
+    MQTT_DATA_TYPE_BYTE,
+    MQTT_DATA_TYPE_SHORT,
+    MQTT_DATA_TYPE_INT,
+    MQTT_DATA_TYPE_STRING,
+    MQTT_DATA_TYPE_VAR_INT,
+    MQTT_DATA_TYPE_BINARY,
+    MQTT_DATA_TYPE_STRING_PAIR,
+} MqttDataType;
+
+/* PROPERTIES */
+typedef enum MqttPropertyType {
+    MQTT_PROP_PLAYLOAD_FORMAT_IND = 1,
+    MQTT_PROP_MSG_EXPIRY_INTERVAL = 2,
+    MQTT_PROP_CONTENT_TYPE = 3,
+    MQTT_PROP_RESP_TOPIC = 8,
+    MQTT_PROP_CORRELATION_DATA = 9,
+    MQTT_PROP_SUBSCRIPTION_ID = 11,
+    MQTT_PROP_SESSION_EXPIRY_INTERVAL = 17,
+    MQTT_PROP_ASSIGNED_CLIENT_ID = 18,
+    MQTT_PROP_SERVER_KEEP_ALIVE = 19,
+    MQTT_PROP_AUTH_METHOD = 21,
+    MQTT_PROP_AUTH_DATA = 22,
+    MQTT_PROP_REQ_PROB_INFO = 23,
+    MQTT_PROP_WILL_DELAY_INTERVAL = 24,
+    MQTT_PROP_REQ_RESP_INFO = 25,
+    MQTT_PROP_RESP_INFO = 26,
+    MQTT_PROP_SERVER_REF = 28,
+    MQTT_PROP_REASON_STR = 31,
+    MQTT_PROP_RECEIVE_MAX = 33,
+    MQTT_PROP_TOPIC_ALIAS_MAX = 34,
+    MQTT_PROP_TOPIC_ALIAS = 35,
+    MQTT_PROP_MAX_QOS = 36,
+    MQTT_PROP_RETAIN_AVAIL = 37,
+    MQTT_PROP_USER_PROP = 38,
+    MQTT_PROP_MAX_PACKET_SZ = 39,
+    MQTT_PROP_WILDCARD_SUB_AVAIL = 40,
+    MQTT_PROP_SUBSCRIPTION_ID_AVAIL = 41,
+    MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL = 42,
+    MQTT_PROP_TYPE_MAX = 0xFF
+} MqttPropertyType;
+
+/* Property list */
+struct MqttProp;
+typedef struct MqttProp {
+    struct MqttProp* next;
+    void* data;
+    int dataSz;
+    MqttPropertyType type;
+} MqttProp;
+
+
+/* REASON CODES */
+enum MqttReasonCodes {
+    MQTT_REASON_SUCCESS = 0x00,
+    MQTT_REASON_NORMAL_DISCONNECTION = 0x00,
+    MQTT_REASON_GRANTED_QOS_0 = 0x00,
+    MQTT_REASON_GRANTED_QOS_1 = 0x01,
+    MQTT_REASON_GRANTED_QOS_2 = 0x02,
+    MQTT_REASON_DISCONNECT_W_WILL_MSG = 0x04,
+    MQTT_REASON_NO_MATCH_SUB = 0x10,
+    MQTT_REASON_NO_SUB_EXIST = 0x11,
+    MQTT_REASON_CONT_AUTH = 0x18,
+    MQTT_REASON_REAUTH = 0x19,
+
+    /* begin error codes */
+    MQTT_REASON_UNSPECIFIED_ERR = 0x80,
+    MQTT_REASON_MALFORMED_PACKET = 0x81,
+    MQTT_REASON_PROTOCOL_ERR = 0x82,
+    MQTT_REASON_IMPL_SPECIFIC_ERR = 0x83,
+    MQTT_REASON_UNSUP_PROTO_VER = 0x84,
+    MQTT_REASON_CLIENT_ID_NOT_VALID = 0x85,
+    MQTT_REASON_BAD_USER_OR_PASS = 0x86,
+    MQTT_REASON_NOT_AUTHORIZED = 0x87,
+    MQTT_REASON_SERVER_UNAVAILABLE = 0x88,
+    MQTT_REASON_SERVER_BUSY = 0x89,
+    MQTT_REASON_BANNED = 0x8A,
+    MQTT_REASON_SERVER_SHUTTING_DOWN = 0x8B,
+    MQTT_REASON_BAD_AUTH_METHOD = 0x8C,
+    MQTT_REASON_KEEP_ALIVE_TIMEOUT = 0x8D,
+    MQTT_REASON_SESSION_TAKEN_OVER = 0x8E,
+    MQTT_REASON_TOPIC_FILTER_INVALID = 0x8F,
+    MQTT_REASON_TOPIC_NAME_INVALID = 0x90,
+    MQTT_REASON_PACKET_ID_IN_USE = 0x91,
+    MQTT_REASON_PACKET_ID_NOT_FOUND = 0x92,
+    MQTT_REASON_RX_MAX_EXCEEDED = 0x93,
+    MQTT_REASON_TOPIC_ALIAS_INVALID = 0x94,
+    MQTT_REASON_PACKET_TOO_LARGE = 0x95,
+    MQTT_REASON_MSG_RATE_TOO_HIGH = 0x96,
+    MQTT_REASON_QUOTA_EXCEEDED = 0x97,
+    MQTT_REASON_ADMIN_ACTION = 0x98,
+    MQTT_REASON_PAYLOAD_FORMAT_INVALID = 0x99,
+    MQTT_REASON_RETAIN_NOT_SUPPORTED = 0x9A,
+    MQTT_REASON_QOS_NOT_SUPPORTED = 0x9B,
+    MQTT_REASON_USE_ANOTHER_SERVER = 0x9C,
+    MQTT_REASON_SERVER_MOVED = 0x9D,
+    MQTT_REASON_SS_NOT_SUPPORTED = 0x9E,
+    MQTT_REASON_CON_RATE_EXCEED = 0x9F,
+    MQTT_REASON_MAX_CON_TIME = 0xA0,
+    MQTT_REASON_SUB_ID_NOT_SUP = 0xA1,
+    MQTT_REASON_WILDCARD_SUB_NOT_SUP = 0xA2,
+};
+#endif /* WOLFMQTT_V5 */
+
+
+
 /* QoS */
 typedef enum _MqttQoS {
     MQTT_QOS_0 = 0, /* At most once delivery */
@@ -75,6 +184,10 @@ typedef struct _MqttMessage {
     word32      buffer_pos;   /* Buffer position */
 
     void*       ctx;          /* user supplied context for publish callbacks */
+
+#ifdef WOLFMQTT_V5
+    MqttProp* props;
+#endif
 } MqttMessage;
 
 
@@ -126,7 +239,8 @@ typedef enum _MqttPacketType {
     MQTT_PACKET_TYPE_PING_REQ = 12,         /* Request */
     MQTT_PACKET_TYPE_PING_RESP = 13,        /* Response */
     MQTT_PACKET_TYPE_DISCONNECT = 14,
-    MQTT_PACKET_TYPE_MAX = 15,
+    MQTT_PACKET_TYPE_AUTH = 15,             /* Authentication (MQTT 5) */
+    MQTT_PACKET_TYPE_ANY = 16,
 } MqttPacketType;
 
 /* Packet flag bit-mask: Located in first byte of packet in bits 0-3 */
@@ -163,6 +277,7 @@ typedef struct _MqttPacket {
 } WOLFMQTT_PACK MqttPacket;
 #define MQTT_PACKET_MAX_SIZE        (int)sizeof(MqttPacket)
 
+
 /* CONNECT PACKET */
 /* Connect flag bit-mask: Located in byte 8 of the MqttConnect packet */
 #define MQTT_CONNECT_FLAG_GET_QOS(flags) \
@@ -173,7 +288,8 @@ typedef struct _MqttPacket {
         MQTT_CONNECT_FLAG_WILL_QOS_MASK)
 enum MqttConnectFlags {
     MQTT_CONNECT_FLAG_RESERVED = 0x01,
-    MQTT_CONNECT_FLAG_CLEAN_SESSION = 0x02,
+    MQTT_CONNECT_FLAG_CLEAN_SESSION = 0x02, /* Old v3.1.1 name */
+    MQTT_CONNECT_FLAG_CLEAN_START   = 0x02,
     MQTT_CONNECT_FLAG_WILL_FLAG = 0x04,
     MQTT_CONNECT_FLAG_WILL_QOS_SHIFT = 3,
     MQTT_CONNECT_FLAG_WILL_QOS_MASK = 0x18,
@@ -186,7 +302,9 @@ enum MqttConnectFlags {
 /* Constant values for the protocol name and level */
 #define MQTT_CONNECT_PROTOCOL_NAME_LEN  4
 #define MQTT_CONNECT_PROTOCOL_NAME      "MQTT"
-#define MQTT_CONNECT_PROTOCOL_LEVEL     4
+#define MQTT_CONNECT_PROTOCOL_LEVEL_4   4 /* v3.1.1 */
+#define MQTT_CONNECT_PROTOCOL_LEVEL_5   5 /* v5.0 */
+#define MQTT_CONNECT_PROTOCOL_LEVEL     MQTT_CONNECT_PROTOCOL_LEVEL_4
 
 /* Initializer */
 #define MQTT_CONNECT_INIT               \
@@ -245,6 +363,9 @@ typedef struct _MqttConnect {
     byte        clean_session;
     const char *client_id;
 
+    /* Protocol version: 4=v3.1.1 (default), 5=v5.0 */
+    byte protocol_level;
+
     /* Optional Last will and testament */
     byte        enable_lwt;
     MqttMessage *lwt_msg;
@@ -255,6 +376,10 @@ typedef struct _MqttConnect {
 
     /* Ack data */
     MqttConnectAck ack;
+
+#ifdef WOLFMQTT_V5
+    MqttProp* props;
+#endif
 } MqttConnect;
 
 
@@ -272,7 +397,7 @@ typedef MqttMessage MqttPublish; /* Publish is message */
     MQTT_PACKET_TYPE_PUBLISH_REC */
 /* Packet Id required if QoS is 1 or 2 */
 /* If Qos = 2: Send MQTT_PACKET_TYPE_PUBLISH_REL with PacketId to complete
-    QoS2 protcol exchange */
+    QoS2 protocol exchange */
 /* Expect response packet with type = MQTT_PACKET_TYPE_PUBLISH_COMP */
 typedef struct _MqttPublishResp {
     word16      packet_id;
@@ -285,10 +410,14 @@ typedef struct _MqttSubscribe {
     word16      packet_id;
     int         topic_count;
     MqttTopic  *topics;
+
+#ifdef WOLFMQTT_V5
+    MqttProp* props;
+#endif
 } MqttSubscribe;
 
 /* SUBSCRIBE ACK PACKET */
-/* Packet Id followed by list of return codes coorisponding to subscription
+/* Packet Id followed by list of return codes corresponding to subscription
     topic list sent. */
 enum MqttSubscribeAckReturnCodes {
     MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS0 = 0,
@@ -360,6 +489,10 @@ WOLFMQTT_LOCAL int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 WOLFMQTT_LOCAL int MqttEncode_Ping(byte *tx_buf, int tx_buf_len);
 WOLFMQTT_LOCAL int MqttDecode_Ping(byte *rx_buf, int rx_buf_len);
 WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);
+
+#ifdef WOLFMQTT_V5
+int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf);
+#endif
 
 
 #ifdef __cplusplus
