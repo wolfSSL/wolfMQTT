@@ -6,7 +6,7 @@
 
 DIR=${PWD##*/}
 
-if [ "$DIR" == "ARDUINO" ]; then
+if [ "$DIR" = "ARDUINO" ]; then
     rm -rf wolfMQTT
 
     mkdir wolfMQTT
