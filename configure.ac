@@ -181,6 +181,19 @@ fi
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 
 
+# Disconnect callback
+AC_ARG_ENABLE([discb],
+    [AS_HELP_STRING([--enable-discb],[Enable disconnect callback (default: enabled)])],
+    [ ENABLED_DISCB=$enableval ],
+    [ ENABLED_DISCB=yes ]
+    )
+
+if test "x$ENABLED_DISCB" = "xyes"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_DISCONNECT_CB"
+fi
+
+
 
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
@@ -296,4 +309,5 @@ echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"
 echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
+echo "   * Disconnect Callback        $ENABLED_DISCB"
 

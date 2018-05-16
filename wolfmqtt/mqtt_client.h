@@ -86,6 +86,10 @@ typedef struct _MqttSk {
     int len;
 } MqttSk;
 
+#ifdef WOLFMQTT_DISCONNECT_CB
+    typedef int (*MqttDisconnectCb)(struct _MqttClient* client, int error_code, void* ctx);
+#endif
+
 /* Client structure */
 typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
@@ -110,10 +114,16 @@ typedef struct _MqttClient {
                          * Used for MqttClient_Ping and MqttClient_WaitType */
 
     void*        ctx;   /* user supplied context for publish callbacks */
+
+#ifdef WOLFMQTT_DISCONNECT_CB
+    MqttDisconnectCb disconnect_cb;
+    void            *disconnect_ctx;
+#endif
 } MqttClient;
 
 
 /* Application Interfaces */
+
 /*! \brief      Initializes the MqttClient structure
  *  \param      client      Pointer to MqttClient structure
                             (uninitialized is okay)
@@ -137,9 +147,24 @@ WOLFMQTT_API int MqttClient_Init(
     byte *rx_buf, int rx_buf_len,
     int cmd_timeout_ms);
 
+#ifdef WOLFMQTT_DISCONNECT_CB
+/*! \brief      Sets a disconnect callback with custom context
+ *  \param      client      Pointer to MqttClient structure
+                            (uninitialized is okay)
+ *  \param      disCb       Pointer to disconnect callback function
+ *  \param      ctx         Pointer to your own context
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_SetDisconnectCallback(
+    MqttClient *client,
+    MqttDisconnectCb cb,
+    void* ctx);
+#endif
+
 
 /*! \brief      Encodes and sends the MQTT Connect packet and waits for the
-                Connect Acknowledgement packet
+                Connect Acknowledgment packet
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      connect     Pointer to MqttConnect structure initialized
@@ -169,7 +194,7 @@ WOLFMQTT_API int MqttClient_Publish(
     MqttPublish *publish);
 
 /*! \brief      Encodes and sends the MQTT Subscribe packet and waits for the
-                Subscribe Acknowledgement packet
+                Subscribe Acknowledgment packet
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      subscribe   Pointer to MqttSubscribe structure initialized with
@@ -182,7 +207,7 @@ WOLFMQTT_API int MqttClient_Subscribe(
     MqttSubscribe *subscribe);
 
 /*! \brief      Encodes and sends the MQTT Unsubscribe packet and waits for the
-                Unsubscribe Acknowledgement packet
+                Unsubscribe Acknowledgment packet
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      unsubscribe Pointer to MqttUnsubscribe structure initialized
@@ -215,7 +240,7 @@ WOLFMQTT_API int MqttClient_Disconnect(
     MqttClient *client);
 
 
-/*! \brief      Waits for packets to arrive. Incomming publish messages
+/*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure

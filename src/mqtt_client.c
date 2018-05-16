@@ -370,6 +370,20 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     return rc;
 }
 
+#ifdef WOLFMQTT_DISCONNECT_CB
+int MqttClient_SetDisconnectCallback(MqttClient *client, MqttDisconnectCb cb,
+    void* ctx)
+{
+    if (client == NULL)
+        return MQTT_CODE_ERROR_BAD_ARG;
+
+    client->disconnect_cb = cb;
+    client->disconnect_ctx = ctx;
+
+    return MQTT_CODE_SUCCESS;
+}
+#endif
+
 int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
 {
     int rc, len;
