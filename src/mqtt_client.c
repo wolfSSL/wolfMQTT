@@ -266,7 +266,7 @@ wait_again:
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len, timeout_ms);
         #ifdef WOLFMQTT_NONBLOCK
-            if (rc == MQTT_CODE_CONTINUE) {
+            if (rc == MQTT_CODE_CONTINUE && client->read.pos > 0) {
                 /* advance state, so we don't reset packet state */
                 msg->stat = MQTT_MSG_WAIT;
             }
