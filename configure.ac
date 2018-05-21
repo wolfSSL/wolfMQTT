@@ -2,12 +2,14 @@
 # Copyright (C) 2018 wolfSSL Inc.
 # All right reserved.
 
+AC_COPYRIGHT([Copyright (C) 2014-2018 wolfSSL Inc.])
 AC_INIT([wolfmqtt],[1.0.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
 
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
 : ${CFLAGS=""}
+: ${AR_FLAGS="cr"}
 
 AC_CANONICAL_HOST
 AC_CANONICAL_BUILD
@@ -52,8 +54,8 @@ AC_PROG_INSTALL
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_SIZEOF([long long], 8)
-AC_CHECK_SIZEOF([long], 4)
+AC_CHECK_SIZEOF(long long, 8)
+AC_CHECK_SIZEOF(long, 4)
 
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname])
@@ -79,7 +81,12 @@ AS_IF([test "x$ax_enable_debug" = "xyes"],
       [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS"
        AM_CPPFLAGS="-DNDEBUG $AM_CFLAGS"])
 
-AX_PTHREAD([AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
+AX_PTHREAD([
+    # If AX_PTHREAD is adding -Qunused-arguments, need to prepend with
+    # -Xcompiler libtool will use it. Newer versions of clang don't need
+    # the -Q flag when using pthreads.
+    AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
+    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
 
 
 # Checks for typedefs, structures, and compiler characteristics.
