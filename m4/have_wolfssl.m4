@@ -12,6 +12,10 @@ AC_DEFUN([_TAO_SEARCH_LIBWOLFSSL],[
 
   AC_LIB_HAVE_LINKFLAGS(wolfssl,,
   [
+    /* logic pulled from wolfmqtt/mqtt_socket.h for enabling use of generated wolfssl options.h file */
+    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
+        #include <wolfssl/options.h>
+    #endif
     #include <wolfssl/wolfcrypt/wc_port.h>
   ],[
     wolfCrypt_Init();
