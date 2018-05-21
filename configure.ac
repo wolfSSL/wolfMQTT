@@ -75,7 +75,7 @@ DEBUG_CPPFLAGS="-DDEBUG -DDEBUG_WOLFMQTT"
 OPTIMIZE_CFLAGS="-O2"
 
 AX_DEBUG
-AS_IF([test "x$ax_enable_debug" = "xyes"],
+AS_IF([test "x$ax_enable_debug" = "xyes" || test "x$ax_enable_debug" = "xverbose"],
       [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"
        AM_CPPFLAGS="$DEBUG_CPPFLAGS $AM_CPPFLAGS"],
       [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS"
@@ -102,7 +102,7 @@ fi
 # Verbose Logging
 if test "x$ax_enable_debug" = "xverbose"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_DEBUG_CLIENT -DWOLFMQTT_DEBUG_SOCKET"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_DEBUG_CLIENT -DWOLFMQTT_DEBUG_SOCKET"
 fi
 
 

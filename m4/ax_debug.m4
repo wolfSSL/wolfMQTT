@@ -53,7 +53,7 @@ AC_DEFUN([AX_DEBUG],
       [ax_enable_debug=$enableval],
       [ax_enable_debug=no])
 
-	AS_IF([test "x$ax_enable_debug" = xyes],
+  AS_IF([test "x$ax_enable_debug" = xyes || test "x$ax_enable_debug" = xverbose],
 		[AC_DEFINE([DEBUG],[1],[Define to 1 to enable debugging code.])],
 		[AC_SUBST([MCHECK])
          AC_DEFINE([DEBUG],[0],[Define to 1 to enable debugging code.])])
