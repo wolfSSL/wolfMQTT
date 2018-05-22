@@ -8,7 +8,11 @@ AC_INIT([wolfmqtt],[1.0.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqt
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
+# The following sets CFLAGS and CXXFLAGS to empty if unset on command line.
+# We do not want the default "-g -O2" that AC_PROG_CC AC_PROG_CXX sets
+# automatically.
 : ${CFLAGS=""}
+: ${CXXFLAGS=""}
 : ${AR_FLAGS="cr"}
 
 AC_CANONICAL_HOST
@@ -33,6 +37,11 @@ WOLFMQTT_LIBRARY_VERSION=2:0:0
 #                 |           set to zero if current is incremented
 #                 +- increment if interfaces have been added, removed or changed
 AC_SUBST([WOLFMQTT_LIBRARY_VERSION])
+
+# capture user C_EXTRA_FLAGS from ./configure line, CFLAGS may hold -g -O2 even
+# if user doesn't override, no way to tell
+USER_C_EXTRA_FLAGS="$C_EXTRA_FLAGS"
+USER_CFLAGS="$CFLAGS"
 
 LT_PREREQ([2.2])
 LT_INIT([disable-static], [win32-dll])
@@ -68,33 +77,23 @@ AC_CHECK_FUNCS([signal])
 AC_CHECK_LIB(network,socket)
 
 # DEBUG
-DEBUG_CFLAGS="-g -O0"
-DEBUG_CPPFLAGS="-DDEBUG -DDEBUG_WOLFMQTT"
+DEBUG_CFLAGS="-g -O0 -DDEBUG -DDEBUG_WOLFMQTT"
 
 # Optimizations
 OPTIMIZE_CFLAGS="-O2"
 
 AX_DEBUG
 AS_IF([test "x$ax_enable_debug" = "xyes" || test "x$ax_enable_debug" = "xverbose"],
-      [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"
-       AM_CPPFLAGS="$DEBUG_CPPFLAGS $AM_CPPFLAGS"],
-      [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS"
-       AM_CPPFLAGS="-DNDEBUG $AM_CFLAGS"])
-
-AX_PTHREAD([
-    # If AX_PTHREAD is adding -Qunused-arguments, need to prepend with
-    # -Xcompiler libtool will use it. Newer versions of clang don't need
-    # the -Q flag when using pthreads.
-    AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
-    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
+      [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"],
+      [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS -DNDEBUG"])
 
 
 # Checks for typedefs, structures, and compiler characteristics.
 if test "$ac_cv_sizeof_long" = "8"; then
-   AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG=8"
+   AM_CFLAGS="$AM_CFLAGS -DSIZEOF_LONG=8"
 else
     if test "$ac_cv_sizeof_long_long" = "8"; then
-        AM_CPPFLAGS="$AM_CPPFLAGS -DSIZEOF_LONG_LONG=8"
+        AM_CFLAGS="$AM_CFLAGS -DSIZEOF_LONG_LONG=8"
     fi
 fi
 
@@ -116,7 +115,7 @@ AC_ARG_ENABLE([tls],
 
 if test "x$ENABLED_TLS" = "xyes"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DENABLE_MQTT_TLS"
+    AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_TLS"
 
     TAO_REQUIRE_LIBWOLFSSL
 fi
@@ -132,7 +131,7 @@ AC_ARG_ENABLE([nonblock],
 
 if test "x$ENABLED_NONBLOCK" = "xyes"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NONBLOCK"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_NONBLOCK"
 fi
 
 
@@ -145,7 +144,7 @@ AC_ARG_ENABLE([timeout],
 
 if test "x$ENABLED_TIMEOUT" = "xno"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NO_TIMEOUT"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_NO_TIMEOUT"
 fi
 
 # Examples
@@ -167,7 +166,7 @@ AC_ARG_ENABLE([errorstrings],
 
 if test "x$ENABLED_ERROR_STRINGS" = "xno"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NO_ERROR_STRINGS"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_NO_ERROR_STRINGS"
 fi
 
 
@@ -180,7 +179,7 @@ AC_ARG_ENABLE([stdincap],
 
 if test "x$ENABLED_STDINCAP" = "xno"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_NO_STDIN_CAP"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_NO_STDIN_CAP"
 fi
 
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
@@ -190,6 +189,11 @@ AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
 
+# add user C_EXTRA_FLAGS back
+CFLAGS="$CFLAGS $USER_CFLAGS $USER_C_EXTRA_FLAGS"
+OPTION_FLAGS="$CFLAGS $CPPFLAGS $AM_CFLAGS"
+
+
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])
 AC_SUBST([AM_CFLAGS])
@@ -198,6 +202,7 @@ AC_SUBST([AM_LDFLAGS])
 # FINAL
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([wolfmqtt/version.h])
+AC_CONFIG_FILES([wolfmqtt/options.h])
 
 AX_CREATE_GENERIC_CONFIG
 AX_AM_JOBSERVER([yes])
@@ -208,6 +213,76 @@ AC_OUTPUT
 echo "---"
 echo "Running make clean..."
 make clean >/dev/null 2>&1
+echo
+
+# generate user options header
+echo "---"
+echo "Generating user options header..."
+
+OPTION_FILE="wolfmqtt/options.h"
+rm -f $OPTION_FILE
+
+echo "/* wolfmqtt options.h" > $OPTION_FILE
+echo " * generated from configure options" >> $OPTION_FILE
+echo " *" >> $OPTION_FILE
+echo " * Copyright (C) 2006-2018 wolfSSL Inc." >> $OPTION_FILE
+echo " *" >> $OPTION_FILE
+echo " * * This file is part of wolfMQTT." >> $OPTION_FILE
+echo " *" >> $OPTION_FILE
+echo " */" >> $OPTION_FILE
+
+echo "" >> $OPTION_FILE
+echo "#ifndef WOLFMQTT_OPTIONS_H" >> $OPTION_FILE
+echo "#define WOLFMQTT_OPTIONS_H" >> $OPTION_FILE
+echo "" >> $OPTION_FILE
+echo "" >> $OPTION_FILE
+echo "#ifdef __cplusplus" >> $OPTION_FILE
+echo "extern \"C\" {" >> $OPTION_FILE
+echo "#endif" >> $OPTION_FILE
+echo "" >> $OPTION_FILE
+
+for option in $OPTION_FLAGS; do
+    defonly=`echo $option | sed 's/-D//'`
+    if test "$defonly" != "$option"
+    then
+        noequalsign=`echo $defonly | sed 's/=/ /'`
+        if test "$noequalsign" = "NDEBUG" || test "$noequalsign" = "DEBUG"
+        then
+            echo "not outputting (N)DEBUG to $OPTION_FILE"
+            continue
+        fi
+
+        # allow user to igonore system options
+        ignoresys=no
+        if [[[ $noequalsign == _* ]]] ;
+        then
+            ignoresys=yes
+            echo "#ifndef WOLFSSL_OPTIONS_IGNORE_SYS" >> $OPTION_FILE
+        fi
+
+        noarg=`echo $defonly | sed 's/=.*//'`
+        echo "#undef  $noarg" >> $OPTION_FILE
+        echo "#define $noequalsign" >> $OPTION_FILE
+
+        if test "$ignoresys" = "yes"
+        then
+            echo "#endif" >> $OPTION_FILE
+        fi
+
+        echo "" >> $OPTION_FILE
+    else
+        echo "option w/o begin -D is $option, not saving to $OPTION_FILE"
+    fi
+done
+
+echo "" >> $OPTION_FILE
+echo "#ifdef __cplusplus" >> $OPTION_FILE
+echo "}" >> $OPTION_FILE
+echo "#endif" >> $OPTION_FILE
+echo "" >> $OPTION_FILE
+echo "" >> $OPTION_FILE
+echo "#endif /* WOLFMQTT_OPTIONS_H */" >> $OPTION_FILE
+echo "" >> $OPTION_FILE
 echo
 
 # output config summary
