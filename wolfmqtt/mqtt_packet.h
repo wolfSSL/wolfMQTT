@@ -321,45 +321,45 @@ typedef struct _MqttUnsubscribeAck {
 /* MQTT PACKET APPLICATION INTERFACE */
 struct _MqttClient;
 /* Packet Read/Write */
-int MqttPacket_Write(struct _MqttClient *client, byte* tx_buf, int tx_buf_len);
-int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len,
+WOLFMQTT_LOCAL int MqttPacket_Write(struct _MqttClient *client, byte* tx_buf, int tx_buf_len);
+WOLFMQTT_LOCAL int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf, int rx_buf_len,
     int timeout_ms);
 
 /* Packet Element Encoders/Decoders */
-int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);
-int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len);
+WOLFMQTT_LOCAL int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len);
+WOLFMQTT_LOCAL int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len);
 
-int MqttDecode_Num(byte* buf, word16 *len);
-int MqttEncode_Num(byte *buf, word16 len);
+WOLFMQTT_LOCAL int MqttDecode_Num(byte* buf, word16 *len);
+WOLFMQTT_LOCAL int MqttEncode_Num(byte *buf, word16 len);
 
-int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len);
-int MqttEncode_String(byte *buf, const char *str);
+WOLFMQTT_LOCAL int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len);
+WOLFMQTT_LOCAL int MqttEncode_String(byte *buf, const char *str);
 
-int MqttEncode_Data(byte *buf, const byte *data, word16 data_len);
+WOLFMQTT_LOCAL int MqttEncode_Data(byte *buf, const byte *data, word16 data_len);
 
 /* Packet Encoders/Decoders */
-int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,
+WOLFMQTT_LOCAL int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,
     MqttConnect *connect);
-int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
+WOLFMQTT_LOCAL int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack);
-int MqttEncode_Publish(byte *tx_buf, int tx_buf_len,
+WOLFMQTT_LOCAL int MqttEncode_Publish(byte *tx_buf, int tx_buf_len,
     MqttPublish *publish);
-int MqttDecode_Publish(byte *rx_buf, int rx_buf_len,
+WOLFMQTT_LOCAL int MqttDecode_Publish(byte *rx_buf, int rx_buf_len,
     MqttPublish *publish);
-int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
+WOLFMQTT_LOCAL int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
     MqttPublishResp *publish_resp);
-int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
+WOLFMQTT_LOCAL int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
     MqttPublishResp *publish_resp);
-int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len, MqttSubscribe *subscribe);
-int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
+WOLFMQTT_LOCAL int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len, MqttSubscribe *subscribe);
+WOLFMQTT_LOCAL int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     MqttSubscribeAck *subscribe_ack);
-int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
+WOLFMQTT_LOCAL int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     MqttUnsubscribe *unsubscribe);
-int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
+WOLFMQTT_LOCAL int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
     MqttUnsubscribeAck *unsubscribe_ack);
-int MqttEncode_Ping(byte *tx_buf, int tx_buf_len);
-int MqttDecode_Ping(byte *rx_buf, int rx_buf_len);
-int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);
+WOLFMQTT_LOCAL int MqttEncode_Ping(byte *tx_buf, int tx_buf_len);
+WOLFMQTT_LOCAL int MqttDecode_Ping(byte *rx_buf, int rx_buf_len);
+WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);
 
 
 #ifdef __cplusplus
