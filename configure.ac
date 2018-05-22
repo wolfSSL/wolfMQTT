@@ -11,7 +11,10 @@ AC_CONFIG_AUX_DIR([build-aux])
 # The following sets CFLAGS and CXXFLAGS to empty if unset on command line.
 : ${CFLAGS=""}
 : ${CXXFLAGS=""}
-: ${AR_FLAGS="cr"}
+
+# Test ar for the "U" option. Should be checked before the libtool macros.
+xxx_ar_flags=$((ar --help) 2>&1)
+AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
 AC_CANONICAL_BUILD
@@ -36,9 +39,6 @@ WOLFMQTT_LIBRARY_VERSION=2:0:0
 #                 +- increment if interfaces have been added, removed or changed
 AC_SUBST([WOLFMQTT_LIBRARY_VERSION])
 
-# capture user C_EXTRA_FLAGS from ./configure line
-USER_C_EXTRA_FLAGS="$C_EXTRA_FLAGS"
-USER_CFLAGS="$CFLAGS"
 
 LT_PREREQ([2.2])
 LT_INIT([disable-static], [win32-dll])
@@ -186,10 +186,7 @@ AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
 
-# add user C_EXTRA_FLAGS back
-CFLAGS="$CFLAGS $USER_CFLAGS $USER_C_EXTRA_FLAGS"
 OPTION_FLAGS="$CFLAGS $CPPFLAGS $AM_CFLAGS"
-
 
 CREATE_HEX_VERSION
 AC_SUBST([AM_CPPFLAGS])
