@@ -9,8 +9,6 @@ AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
 # The following sets CFLAGS and CXXFLAGS to empty if unset on command line.
-# We do not want the default "-g -O2" that AC_PROG_CC AC_PROG_CXX sets
-# automatically.
 : ${CFLAGS=""}
 : ${CXXFLAGS=""}
 : ${AR_FLAGS="cr"}
@@ -38,8 +36,7 @@ WOLFMQTT_LIBRARY_VERSION=2:0:0
 #                 +- increment if interfaces have been added, removed or changed
 AC_SUBST([WOLFMQTT_LIBRARY_VERSION])
 
-# capture user C_EXTRA_FLAGS from ./configure line, CFLAGS may hold -g -O2 even
-# if user doesn't override, no way to tell
+# capture user C_EXTRA_FLAGS from ./configure line
 USER_C_EXTRA_FLAGS="$C_EXTRA_FLAGS"
 USER_CFLAGS="$CFLAGS"
 
