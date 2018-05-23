@@ -88,15 +88,15 @@ typedef struct _MqttNet {
 
 
 /* MQTT SOCKET APPLICATION INTERFACE */
-int MqttSocket_Init(struct _MqttClient *client, MqttNet* net);
-int MqttSocket_Write(struct _MqttClient *client, const byte* buf, int buf_len,
+WOLFMQTT_LOCAL int MqttSocket_Init(struct _MqttClient *client, MqttNet* net);
+WOLFMQTT_LOCAL int MqttSocket_Write(struct _MqttClient *client, const byte* buf, int buf_len,
     int timeout_ms);
-int MqttSocket_Read(struct _MqttClient *client, byte* buf, int buf_len,
+WOLFMQTT_LOCAL int MqttSocket_Read(struct _MqttClient *client, byte* buf, int buf_len,
     int timeout_ms);
 
-int MqttSocket_Connect(struct _MqttClient *client, const char* host,
+WOLFMQTT_LOCAL int MqttSocket_Connect(struct _MqttClient *client, const char* host,
     word16 port, int timeout_ms, int use_tls, MqttTlsCb cb);
-int MqttSocket_Disconnect(struct _MqttClient *client);
+WOLFMQTT_LOCAL int MqttSocket_Disconnect(struct _MqttClient *client);
 
 
 #ifdef __cplusplus
