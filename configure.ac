@@ -53,7 +53,6 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 # Checks for programs.
 AC_PROG_CC
 AM_PROG_CC_C_O
-AC_PROG_CC_C_O
 AC_PROG_INSTALL
 
 # Checks for header files.
@@ -62,25 +61,27 @@ AC_CHECK_SIZEOF([long long], 8)
 AC_CHECK_SIZEOF([long], 4)
 
 # Check headers/libs
-AC_CHECK_FUNCS([gethostbyname])
-AC_CHECK_FUNCS([getaddrinfo])
-AC_CHECK_FUNCS([gettimeofday])
-AC_CHECK_FUNCS([inet_ntoa])
-AC_CHECK_FUNCS([memset])
-AC_CHECK_FUNCS([socket])
-AC_CHECK_FUNCS([signal])
-AC_CHECK_LIB(network,socket)
+AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket signal])
+AC_CHECK_LIB([network],[socket])
 
 # DEBUG
-DEBUG_CFLAGS="-g -O0 -DDEBUG -DDEBUG_WOLFMQTT"
+DEBUG_CFLAGS="-g -O0 -DDEBUG_WOLFMQTT"
 
 # Optimizations
 OPTIMIZE_CFLAGS="-O2"
 
 AX_DEBUG
 AS_IF([test "x$ax_enable_debug" = "xyes" || test "x$ax_enable_debug" = "xverbose"],
-      [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS"],
+      [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS -DDEBUG"],
       [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS -DNDEBUG"])
+
+
+AX_PTHREAD([
+    # If AX_PTHREAD is adding -Qunused-arguments, need to prepend with
+    # -Xcompiler libtool will use it. Newer versions of clang don't need
+    # the -Q flag when using pthreads.
+    AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
+    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
 
 
 # Checks for typedefs, structures, and compiler characteristics.
