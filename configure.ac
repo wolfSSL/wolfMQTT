@@ -8,16 +8,14 @@ AC_INIT([wolfmqtt],[1.0.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqt
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
-# The following sets CFLAGS and CXXFLAGS to empty if unset on command line.
+# The following sets CFLAGS to empty if unset on command line.
 : ${CFLAGS=""}
-: ${CXXFLAGS=""}
 
 # Test ar for the "U" option. Should be checked before the libtool macros.
 xxx_ar_flags=$((ar --help) 2>&1)
 AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
-AC_CANONICAL_BUILD
 
 AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
@@ -60,8 +58,8 @@ AC_PROG_INSTALL
 
 # Checks for header files.
 AC_HEADER_STDC
-AC_CHECK_SIZEOF(long long, 8)
-AC_CHECK_SIZEOF(long, 4)
+AC_CHECK_SIZEOF([long long], 8)
+AC_CHECK_SIZEOF([long], 4)
 
 # Check headers/libs
 AC_CHECK_FUNCS([gethostbyname])
