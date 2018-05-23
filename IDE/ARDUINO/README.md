@@ -4,7 +4,7 @@
 wolfmqtt-arduino.sh is a shell script that will re-organize the wolfMQTT
 library to be compatible with Arduino projects. The Arduino IDE requires a
 library's source files to be in the library's root directory with a header file
-in the name of the library. This script moves all source files to the
+in the name of the library. This script copies all source files to the
 `IDE/ARDUINO/wolfMQTT` directory and creates a stub header file called
 `wolfMQTT.h`.
 
