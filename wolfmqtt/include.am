@@ -8,4 +8,5 @@ nobase_include_HEADERS+= \
 						 wolfmqtt/mqtt_client.h \
                          wolfmqtt/mqtt_packet.h \
                          wolfmqtt/mqtt_socket.h \
-                         wolfmqtt/visibility.h
+                         wolfmqtt/visibility.h \
+                         wolfmqtt/options.h

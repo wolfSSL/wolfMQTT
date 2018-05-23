@@ -12,9 +12,13 @@ AC_DEFUN([_TAO_SEARCH_LIBWOLFSSL],[
 
   AC_LIB_HAVE_LINKFLAGS(wolfssl,,
   [
-    #include <wolfssl/ssl.h>
+    /* logic pulled from wolfmqtt/mqtt_socket.h for enabling use of generated wolfssl options.h file */
+    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
+        #include <wolfssl/options.h>
+    #endif
+    #include <wolfssl/wolfcrypt/wc_port.h>
   ],[
-    wolfSSL_Init();
+    wolfCrypt_Init();
   ])
 
   AM_CONDITIONAL(HAVE_LIBWOLFSSL, [test "x${ac_cv_libwolfssl}" = "xyes"])
