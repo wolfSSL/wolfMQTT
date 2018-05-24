@@ -153,7 +153,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
         #ifdef WOLFMQTT_DISCONNECT_CB
             /* setup disconnect callback */
-            MqttClient_SetDisconnectCallback(&mqttCtx->client, mqtt_disconnect_cb, NULL);
+            rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,
+                mqtt_disconnect_cb, NULL);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
         #endif
 
             FALL_THROUGH;

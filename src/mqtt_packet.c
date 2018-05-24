@@ -703,7 +703,8 @@ static int MqttPacket_HandleNetError(MqttClient *client, int rc)
         rc != MQTT_CODE_STDIN_WAKE)
     {
         /* don't use return code for now - future use */
-        client->disconnect_cb(client, rc, client->disconnect_ctx);
+        if (client->disconnect_cb)
+            client->disconnect_cb(client, rc, client->disconnect_ctx);
     }
 #endif
     return rc;
