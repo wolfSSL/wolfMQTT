@@ -694,12 +694,28 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len)
     return header_len;
 }
 
+static int MqttPacket_HandleNetError(MqttClient *client, int rc)
+{
+    (void)client;
+#ifdef WOLFMQTT_DISCONNECT_CB
+    if (rc < 0 &&
+        rc != MQTT_CODE_CONTINUE &&
+        rc != MQTT_CODE_STDIN_WAKE)
+    {
+        /* don't use return code for now - future use */
+        if (client->disconnect_cb)
+            client->disconnect_cb(client, rc, client->disconnect_ctx);
+    }
+#endif
+    return rc;
+}
 
 int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 {
     int rc;
     rc = MqttSocket_Write(client, tx_buf, tx_buf_len, client->cmd_timeout_ms);
-    return rc;
+
+    return MqttPacket_HandleNetError(client, rc);
 }
 
 /* Read return code is length when > 0 */
@@ -719,10 +735,10 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
             /* Read fix header portion */
             rc = MqttSocket_Read(client, rx_buf, client->packet.header_len, timeout_ms);
             if (rc < 0) {
-                return rc;
+                return MqttPacket_HandleNetError(client, rc);
             }
             else if (rc != client->packet.header_len) {
-                return MQTT_CODE_ERROR_NETWORK;
+                return MqttPacket_HandleNetError(client, MQTT_CODE_ERROR_NETWORK);
             }
 
             FALL_THROUGH;
@@ -736,7 +752,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 /* Try and decode remaining length */
                 rc = MqttDecode_RemainLen(header, client->packet.header_len, &client->packet.remain_len);
                 if (rc < 0) { /* Indicates error */
-                    return rc;
+                    return MqttPacket_HandleNetError(client, rc);
                 }
                 /* Indicates decode success and rc is len of header */
                 else if (rc > 0) {
@@ -748,10 +764,10 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 len = 1;
                 rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len], len, timeout_ms);
                 if (rc < 0) {
-                    return rc;
+                    return MqttPacket_HandleNetError(client, rc);
                 }
                 else if (rc != len) {
-                    return MQTT_CODE_ERROR_NETWORK;
+                    return MqttPacket_HandleNetError(client, MQTT_CODE_ERROR_NETWORK);
                 }
                 client->packet.header_len += len;
 
@@ -774,7 +790,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len],
                     client->packet.remain_len, timeout_ms);
                 if (rc <= 0) {
-                    return rc;
+                    return MqttPacket_HandleNetError(client, rc);
                 }
                 remain_read = rc;
             }

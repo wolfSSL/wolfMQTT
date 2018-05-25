@@ -38,6 +38,16 @@ static int mStopRead = 0;
 #define TEST_MESSAGE            "test"
 
 
+#ifdef WOLFMQTT_DISCONNECT_CB
+static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
+{
+    (void)client;
+    (void)ctx;
+    PRINTF("Disconnect (error %d)", error_code);
+    return 0;
+}
+#endif
+
 static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
@@ -140,6 +150,15 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
+
+        #ifdef WOLFMQTT_DISCONNECT_CB
+            /* setup disconnect callback */
+            rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,
+                mqtt_disconnect_cb, NULL);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+        #endif
 
             FALL_THROUGH;
         }
