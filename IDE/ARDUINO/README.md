@@ -20,6 +20,8 @@ IDE/ARDUINO directory:
         `IDE/ARDUNIO/wolfMQTT` folder.
     - In `Sketch -> Include Library` choose wolfMQTT.
 
+To enable TLS support, uncomment `#define ENABLE_MQTT_TLS` in
+    `IDE/ARDUNIO/wolfMQTT/wolfmqtt/mqtt_types.h`.
 Note: If using wolfSSL TLS then you'll need to do this for wolfSSL as well.
 See `<wolfssl-root>/IDE/ARDUINO/README.md` for instructions.
 

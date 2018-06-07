@@ -27,8 +27,10 @@
 #ifndef WOLFMQTT_TYPES_H
 #define WOLFMQTT_TYPES_H
 
+/* Uncomment this to enable TLS support */
+/* Make sure and include the wolfSSL library */
 #ifdef ARDUINO
-    #define ENABLE_MQTT_TLS
+    //#define ENABLE_MQTT_TLS
 #endif
 
 #ifdef __cplusplus

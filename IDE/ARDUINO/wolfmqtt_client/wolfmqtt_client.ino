@@ -1,15 +1,5 @@
-/* Uncomment this to enable TLS support */
-/* Make sure and include the wolfSSL library */
-//#define ENABLE_MQTT_TLS
-
-#ifdef ENABLE_MQTT_TLS
-#ifdef HAVE_CONFIG
-  #include <config.h>
-#endif
 #include <wolfssl.h>
 #include <wolfssl/ssl.h>
-#endif
-
 #include <wolfMQTT.h>
 #include <Ethernet.h>
 
@@ -232,6 +222,7 @@ void loop() {
   rc = MqttClient_NetConnect(&client, mHost, mPort,
                              DEFAULT_CON_TIMEOUT_MS, use_tls,
 #ifdef ENABLE_MQTT_TLS
+
                              mqttclient_tls_cb
 #else
                              NULL
