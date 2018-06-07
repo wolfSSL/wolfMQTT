@@ -1,5 +1,3 @@
-#include <wolfssl.h>
-#include <wolfssl/ssl.h>
 #include <wolfMQTT.h>
 #include <Ethernet.h>
 
@@ -222,7 +220,6 @@ void loop() {
   rc = MqttClient_NetConnect(&client, mHost, mPort,
                              DEFAULT_CON_TIMEOUT_MS, use_tls,
 #ifdef ENABLE_MQTT_TLS
-
                              mqttclient_tls_cb
 #else
                              NULL
