@@ -27,6 +27,10 @@
 #ifndef WOLFMQTT_TYPES_H
 #define WOLFMQTT_TYPES_H
 
+#ifdef ARDUINO
+    #define ENABLE_MQTT_TLS
+#endif
+
 #ifdef __cplusplus
     extern "C" {
 #endif
