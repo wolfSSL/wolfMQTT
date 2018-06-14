@@ -1,4 +1,4 @@
-/* mqttclient.h
+/* wiot.h
  *
  * Copyright (C) 2006-2018 wolfSSL Inc.
  *
@@ -19,14 +19,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#ifndef WOLFMQTT_MQTTCLIENT_H
-#define WOLFMQTT_MQTTCLIENT_H
+#ifndef WOLFMQTT_WIOT_H
+#define WOLFMQTT_WIOT_H
 
 #include "examples/mqttexample.h"
 
 
 /* Exposed functions */
-int mqttclient_test(MQTTCtx *mqttCtx);
+int wiot_test(MQTTCtx *mqttCtx);
 
 
-#endif /* WOLFMQTT_MQTTCLIENT_H */
+#endif /* WOLFMQTT_WIOT_H */

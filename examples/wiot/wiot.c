@@ -19,6 +19,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+/* This example enables the wolfMQTT client to connect to the IBM Watson
+ * Internet of Things (WIOT) Platform. The WIOT Platform has a limited test
+ * server called "Quickstart" that allows non-secure connections to connect and
+ * exercise the component. I
+ */
+
 /* Include the autoconf generated config.h */
 #ifdef HAVE_CONFIG_H
     #include <config.h>
@@ -34,18 +40,27 @@
 static int mStopRead = 0;
 
 /* Configuration */
-#define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
-#define TEST_MESSAGE            "{\"sensor\":1}"
+#define MAX_BUFFER_SIZE 1024 /* Maximum size for network read/write callbacks */
+#define TEST_MESSAGE    "{\"sensor\":1}"
 
-#define WIOT_ORG_ID             "quickstart" /* Replace with your Watson IoT Platform Organization ID. quickstart does not support authentication */
-#define WIOT_MQTT_HOST          WIOT_ORG_ID ".messaging.internetofthings.ibmcloud.com"
+/* Disable if using an IBM WIOT Platform account that you created. */
+#define WIOT_USE_QUICKSTART
 
-#define WIOT_DEV_TYPE           "wolfMQTT"
-#define WIOT_DEV_ID             "wolftestid"
-#define WIOT_CLIENT_ID          "a:" WIOT_ORG_ID ":" WIOT_DEV_ID //"d:" WIOT_ORG_ID ":" WIOT_DEV_TYPE ":" WIOT_DEV_ID
+#define WIOT_DEV_TYPE   "wolfMQTT"
+#define WIOT_DEV_ID     "wolftestid"
+#define WIOT_TOPIC_NAME "iot-2/type/" WIOT_DEV_TYPE "/id/" WIOT_DEV_ID "/evt/sensor/fmt/json"
 
-#define WIOT_USER_NAME          "use-token-auth"
-#define WIOT_TOPIC_NAME         "iot-2/type/" WIOT_DEV_TYPE "/id/" WIOT_DEV_ID "/evt/sensor/fmt/json"
+#ifdef  WIOT_USE_QUICKSTART
+#define WIOT_ORG_ID     "quickstart" /* quickstart does not support authentication */
+#define WIOT_CLIENT_ID  "a:" WIOT_ORG_ID ":" WIOT_DEV_ID
+#else
+#define WIOT_ORG_ID     "your org id" /* Replace with your WIOT Organization ID. */
+#define WIOT_USER_NAME  "use-token-auth"
+#define WIOT_PASSWORD   "your device token" /* Replace with your device token */
+#define WIOT_CLIENT_ID  "d:" WIOT_ORG_ID ":" WIOT_DEV_TYPE ":" WIOT_DEV_ID
+#endif
+
+#define WIOT_MQTT_HOST  WIOT_ORG_ID ".messaging.internetofthings.ibmcloud.com"
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
@@ -106,7 +121,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
-int mqttclient_test(MQTTCtx *mqttCtx)
+int wiot_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
 
@@ -246,9 +261,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
-
+#ifdef WIOT_USE_QUICKSTART
             /* Print web site URL to monitor client activity */
+            PRINTF("\r\nTo view the published sample data visit:");
             PRINTF("https://" WIOT_ORG_ID ".internetofthings.ibmcloud.com/#/device/" WIOT_DEV_ID "/sensor/");
+            PRINTF("\r\n");
+#endif
             FALL_THROUGH;
         }
 
@@ -517,7 +535,10 @@ exit:
         mqttCtx.host = WIOT_MQTT_HOST;
         mqttCtx.client_id = WIOT_CLIENT_ID;
         mqttCtx.topic_name = WIOT_TOPIC_NAME;
-
+#ifndef WIOT_USE_QUICKSTART
+        mqttCtx.username = WIOT_USER_NAME;
+        mqttCtx.password = WIOT_PASSWORD;
+#endif
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);
         if (rc != 0) {
@@ -535,7 +556,7 @@ exit:
     #endif
 
         do {
-            rc = mqttclient_test(&mqttCtx);
+            rc = wiot_test(&mqttCtx);
         } while (rc == MQTT_CODE_CONTINUE);
 
         return (rc == 0) ? 0 : EXIT_FAILURE;
