@@ -35,7 +35,7 @@ static int mStopRead = 0;
 
 /* Configuration */
 #define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
-#define TEST_MESSAGE            "test"
+#define TEST_MESSAGE            "{\"sensor\":1}"
 
 #define WIOT_ORG_ID             "quickstart" /* Replace with your Watson IoT Platform Organization ID. quickstart does not support authentication */
 #define WIOT_MQTT_HOST          WIOT_ORG_ID ".messaging.internetofthings.ibmcloud.com"
@@ -45,7 +45,7 @@ static int mStopRead = 0;
 #define WIOT_CLIENT_ID          "a:" WIOT_ORG_ID ":" WIOT_DEV_ID //"d:" WIOT_ORG_ID ":" WIOT_DEV_TYPE ":" WIOT_DEV_ID
 
 #define WIOT_USER_NAME          "use-token-auth"
-#define WIOT_TOPIC_NAME         "iot-2/type/mosquitto/id/wolftest/evt/helloworld/fmt/json"
+#define WIOT_TOPIC_NAME         "iot-2/type/" WIOT_DEV_TYPE "/id/" WIOT_DEV_ID "/evt/sensor/fmt/json"
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
@@ -247,6 +247,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
 
+            /* Print web site URL to monitor client activity */
+            PRINTF("https://" WIOT_ORG_ID ".internetofthings.ibmcloud.com/#/device/" WIOT_DEV_ID "/sensor/");
             FALL_THROUGH;
         }
 
