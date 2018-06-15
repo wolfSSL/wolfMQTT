@@ -21,8 +21,8 @@
 
 /* This example enables the wolfMQTT client to connect to the IBM Watson
  * Internet of Things (WIOT) Platform. The WIOT Platform has a limited test
- * server called "Quickstart" that allows non-secure connections to connect and
- * exercise the component. I
+ * server called "Quickstart" that allows non-secure connections to
+ * exercise the component.
  */
 
 /* Include the autoconf generated config.h */
@@ -43,7 +43,7 @@ static int mStopRead = 0;
 #define MAX_BUFFER_SIZE 1024 /* Maximum size for network read/write callbacks */
 #define TEST_MESSAGE    "{\"sensor\":1}"
 
-/* Disable if using an IBM WIOT Platform account that you created. */
+/* Undefine if using an IBM WIOT Platform account that you created. */
 #define WIOT_USE_QUICKSTART
 
 #define WIOT_DEV_TYPE   "wolfMQTT"
@@ -536,6 +536,7 @@ exit:
         mqttCtx.client_id = WIOT_CLIENT_ID;
         mqttCtx.topic_name = WIOT_TOPIC_NAME;
 #ifndef WIOT_USE_QUICKSTART
+        mqttCtx.use_tls = 1;
         mqttCtx.username = WIOT_USER_NAME;
         mqttCtx.password = WIOT_PASSWORD;
 #endif
