@@ -31,6 +31,9 @@
     extern "C" {
 #endif
 
+#if !defined(WOLFMQTT_USER_SETTINGS) && !defined(USE_WINDOWS_API)
+    #include <wolfmqtt/options.h>
+#endif
 #include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"
