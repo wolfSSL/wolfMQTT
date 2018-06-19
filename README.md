@@ -112,6 +112,9 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 ### AWS IoT Example
 We setup an AWS IoT endpoint and testing device certificate for testing. The AWS server uses TLS client certificate for authentication. The example is located in /examples/aws/. The example subscribes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta` and publishes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update`.
 
+### Watson IoT Example
+This example enables the wolfMQTT client to connect to the IBM Watson Internet of Things (WIOT) Platform. The WIOT Platform has a limited test broker called "Quickstart" that allows non-secure connections to exercise the component. The example is located in /examples/wiot/.
+
 
 ## Release Notes
 

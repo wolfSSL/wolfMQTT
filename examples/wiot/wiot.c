@@ -21,7 +21,7 @@
 
 /* This example enables the wolfMQTT client to connect to the IBM Watson
  * Internet of Things (WIOT) Platform. The WIOT Platform has a limited test
- * server called "Quickstart" that allows non-secure connections to
+ * broker called "Quickstart" that allows non-secure connections to
  * exercise the component.
  */
 
@@ -41,17 +41,17 @@ static int mStopRead = 0;
 
 /* Configuration */
 #define MAX_BUFFER_SIZE 1024 /* Maximum size for network read/write callbacks */
-#define TEST_MESSAGE    "{\"sensor\":1}"
 
 /* Undefine if using an IBM WIOT Platform account that you created. */
 #define WIOT_USE_QUICKSTART
 
 #define WIOT_DEV_TYPE   "wolfMQTT"
 #define WIOT_DEV_ID     "wolftestid"
-#define WIOT_TOPIC_NAME "iot-2/type/" WIOT_DEV_TYPE "/id/" WIOT_DEV_ID "/evt/sensor/fmt/json"
+#define WIOT_EVT        "sensor"
+#define WIOT_TOPIC_NAME "iot-2/type/" WIOT_DEV_TYPE "/id/" WIOT_DEV_ID "/evt/" WIOT_EVT "/fmt/json"
 
 #ifdef  WIOT_USE_QUICKSTART
-#define WIOT_ORG_ID     "quickstart" /* quickstart does not support authentication */
+#define WIOT_ORG_ID     "quickstart" /* The Quickstart broker does not support authentication */
 #define WIOT_CLIENT_ID  "a:" WIOT_ORG_ID ":" WIOT_DEV_ID
 #else
 #define WIOT_ORG_ID     "your org id" /* Replace with your WIOT Organization ID. */
@@ -61,6 +61,7 @@ static int mStopRead = 0;
 #endif
 
 #define WIOT_MQTT_HOST  WIOT_ORG_ID ".messaging.internetofthings.ibmcloud.com"
+#define TEST_MESSAGE    "{\"" WIOT_EVT "\":1}"
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
@@ -264,7 +265,7 @@ int wiot_test(MQTTCtx *mqttCtx)
 #ifdef WIOT_USE_QUICKSTART
             /* Print web site URL to monitor client activity */
             PRINTF("\r\nTo view the published sample data visit:");
-            PRINTF("https://" WIOT_ORG_ID ".internetofthings.ibmcloud.com/#/device/" WIOT_DEV_ID "/sensor/");
+            PRINTF("https://" WIOT_ORG_ID ".internetofthings.ibmcloud.com/#/device/" WIOT_DEV_ID "/" WIOT_EVT "/");
             PRINTF("\r\n");
 #endif
             FALL_THROUGH;
