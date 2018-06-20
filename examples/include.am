@@ -91,4 +91,4 @@ EXTRA_DIST+=       examples/mqttuart.c \
                    examples/firmware/fwpush.vcxproj \
                    examples/azure/azureiothub.vcxproj \
                    examples/aws/awsiot.vcxproj \
-                   examples/aws/wiot.vcxproj
+                   examples/wiot/wiot.vcxproj
