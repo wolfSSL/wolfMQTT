@@ -19,7 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectGuid>{508BA82F-0DEC-44AA-BB74-096BF753AC78}</ProjectGuid>
+    <ProjectGuid>{CDC51BE2-B7AB-4E17-9B5D-68820411E6CD}</ProjectGuid>
     <RootNamespace>WatsonIoT</RootNamespace>
     <WindowsTargetPlatformVersion>8.1</WindowsTargetPlatformVersion>
   </PropertyGroup>
