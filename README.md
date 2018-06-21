@@ -118,6 +118,23 @@ This example enables the wolfMQTT client to connect to the IBM Watson Internet o
 
 ## Release Notes
 
+### v1.1 (06/21/18)
+* Fixed case when `use_tls` was requested but TLS feature not compiled in. (PR #57)
+* Fixed non-blocking issue that caused out of buffer error if not all of packet were received. (PR #65)
+* Fixed non-blocking mode issue that was sending multiple connect requests for examples. (PR #65)
+* Fixed non-blocking issue with ping keep alive in examples. (PR #68)
+* Fixed the Arduino example with `ENABLE_MQTT_TLS` defined (PR #78)
+* Added support for FreeRTOS TCP in wolfMQTT. (PR #58)
+* Added `README.md` section for building wolfMQTT. (PR #63)
+* Added new option to enable verbose logging `./configure --enable-debug=verbose`. (PR #65)
+* Added support for disconnect callback using `WOLFMQTT_DISCONNECT_CB` or `./configure --enable-discb`. (PR #69)
+* Added `WOLFMQTT_LOCAL` to internal API's for hidden visibility. (PR #73)
+* Added include for `wolfmqtt/options.h`. (PR #79)
+* Added IBM Watson IoT example (see `./examples/wiot/wiot`). (PR #80)
+* Updated the autoconf M4 files and added generation of `./configure` options to `wolfmqtt/options.h`. (PR #71)
+* Improved the message callback to support a custom context per message. (PR #62)
+* Improved the non-blocking unsubscribe handling in mqttclient example for timeout. (PR #65)
+
 ### v1.0 (04/03/18)
 * Fixed `MqttClient_WaitMessage` to use provided `timeout_ms` arg. With TLS enabled it was using the `MqttClient_Init` `cmd_timeout_ms` arg. Thanks PeterL for that report.
 * Fixed cast warnings when building with Visual Studio.
