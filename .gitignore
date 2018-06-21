@@ -64,4 +64,5 @@ firmware.bin
 IDE/ARDUINO/wolfMQTT
 examples/azure/azureiothub
 examples/aws/awsiot
+examples/wiot/wiot
 wolfmqtt/options.h
