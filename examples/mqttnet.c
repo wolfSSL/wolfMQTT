@@ -541,11 +541,19 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
     if (rc == -1) {
         /* Get error */
+        #if !defined(MICROCHIP_MPLAB_HARMONY)
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
         if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
+        #else
+        so_error = errno;
+        if (so_error == EOPNOTSUPP)
+        {
+            rc = MQTT_CODE_ERROR_NETWORK;
+        }
+        #endif
         else {
         #ifdef WOLFMQTT_NONBLOCK
             if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
@@ -651,12 +659,20 @@ exit:
     }
     else if (rc < 0) {
         /* Get error */
+        #if !defined(MICROCHIP_MPLAB_HARMONY)
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
 
         if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
+        #else
+        so_error = errno;
+        if (so_error == EOPNOTSUPP)
+        {
+            rc = MQTT_CODE_ERROR_NETWORK;
+        }
+        #endif
         else {
         #ifdef WOLFMQTT_NONBLOCK
             if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
