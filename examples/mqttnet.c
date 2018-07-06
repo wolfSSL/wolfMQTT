@@ -156,7 +156,7 @@ typedef struct _SocketContext {
 /* Private functions */
 
 /* -------------------------------------------------------------------------- */
-/* FREERTOS TCP NETWORK CALLBACK EXAMPLE
+/* FREERTOS TCP NETWORK CALLBACK EXAMPLE */
 /* -------------------------------------------------------------------------- */
 #ifdef FREERTOS_TCP
 
@@ -329,7 +329,7 @@ static int NetDisconnect(void *context)
 
 
 /* -------------------------------------------------------------------------- */
-/* MICROCHIP HARMONY TCP NETWORK CALLBACK EXAMPLE
+/* MICROCHIP HARMONY TCP NETWORK CALLBACK EXAMPLE */
 /* -------------------------------------------------------------------------- */
 #elif defined(MICROCHIP_MPLAB_HARMONY)
 
@@ -492,7 +492,7 @@ static int NetDisconnect(void *context)
 }
 
 /* -------------------------------------------------------------------------- */
-/* GENERIC BSD SOCKET TCP NETWORK CALLBACK EXAMPLE
+/* GENERIC BSD SOCKET TCP NETWORK CALLBACK EXAMPLE */
 /* -------------------------------------------------------------------------- */
 #else
 
