@@ -699,7 +699,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     SocketContext *sock = (SocketContext*)context;
     int rc = -1, timeout = 0;
     SOERROR_T so_error = 0;
-    word32 bytes = 0;
+    int bytes = 0;
 #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
     fd_set recvfds;
     fd_set errfds;
