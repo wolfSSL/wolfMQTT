@@ -4,7 +4,6 @@
 
 EXTRA_DIST+= IDE/Microchip-Harmony/README.md
 EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt.hconfig
-EXTRA_DIST+= IDE/Microchip-Harmony/mqttnet_harmony.c
 
 EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.hconfig
 EXTRA_DIST+= IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/Makefile
