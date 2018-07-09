@@ -394,7 +394,7 @@ exit:
 
     /* check for error */
     if (rc != 0) {
-        if (errno == EINPROGRESS) {
+        if (errno == EINPROGRESS || errno = EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
 
@@ -418,7 +418,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     rc = (int)send(sock->fd, buf, (size_t)buf_len, 0);
     if (rc <= 0) {
         /* Check for in progress */
-        if (errno == EINPROGRESS) {
+        if (errno == EINPROGRESS || errno = EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
 
@@ -461,7 +461,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 exit:
 
     if (rc < 0) {
-        if (errno == EINPROGRESS) {
+        if (errno == EINPROGRESS || errno = EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
 

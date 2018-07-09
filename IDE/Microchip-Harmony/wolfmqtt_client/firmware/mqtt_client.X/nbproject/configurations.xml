@@ -174,14 +174,6 @@
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/drv_tmr_compatibility.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/tmr_definitions_pic32m.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f6" displayName="usart" projectFiles="true">
-            <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usart/src/drv_usart_variant_mapping.h</itemPath>
-              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usart/src/drv_usart_local.h</itemPath>
-            </logicalFolder>
-            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usart/drv_usart.h</itemPath>
-            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usart/drv_usart_definitions.h</itemPath>
-          </logicalFolder>
           <logicalFolder name="f4" displayName="usb" projectFiles="true">
             <logicalFolder name="f2" displayName="usbfs" projectFiles="true">
               <logicalFolder name="f1" displayName="src" projectFiles="true">
@@ -238,28 +230,28 @@
           <itemPath>../../../../../framework/peripheral/peripheral_common_32bit.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f7" displayName="system" projectFiles="true">
-          <logicalFolder name="f4" displayName="clk" projectFiles="true">
+          <logicalFolder name="f2" displayName="clk" projectFiles="true">
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/clk/sys_clk.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/clk/sys_clk_compatibility.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/clk/sys_clk_mapping.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f7" displayName="command" projectFiles="true">
+          <logicalFolder name="f4" displayName="command" projectFiles="true">
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/command/sys_command.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f3" displayName="common" projectFiles="true">
+          <logicalFolder name="f1" displayName="common" projectFiles="true">
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_common.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_module.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_buffer.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_queue.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f8" displayName="console" projectFiles="true">
+          <logicalFolder name="f5" displayName="console" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/src/sys_console_local.h</itemPath>
               <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/src/sys_console_usb_cdc_local.h</itemPath>
             </logicalFolder>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/sys_console.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f9" displayName="debug" projectFiles="true">
+          <logicalFolder name="f7" displayName="debug" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/debug/src/sys_debug_local.h</itemPath>
             </logicalFolder>
@@ -271,25 +263,21 @@
             </logicalFolder>
             <itemPath>../../../../../framework/system/devcon/sys_devcon.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f1" displayName="dma" projectFiles="true">
-            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/dma/sys_dma.h</itemPath>
-            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/dma/sys_dma_definitions.h</itemPath>
-          </logicalFolder>
-          <logicalFolder name="f13" displayName="fs" projectFiles="true">
+          <logicalFolder name="f12" displayName="fs" projectFiles="true">
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/fs/sys_fs.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f2" displayName="int" projectFiles="true">
+          <logicalFolder name="f8" displayName="int" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/src/sys_int_private.h</itemPath>
             </logicalFolder>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/sys_int.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/sys_int_mapping.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f5" displayName="ports" projectFiles="true">
+          <logicalFolder name="f3" displayName="ports" projectFiles="true">
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/ports/sys_ports.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/ports/sys_ports_definitions.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f11" displayName="random" projectFiles="true">
+          <logicalFolder name="f9" displayName="random" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/random/src/sys_random_local.h</itemPath>
             </logicalFolder>
@@ -303,7 +291,7 @@
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/reset/sys_reset.h</itemPath>
             <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/reset/sys_reset_definitions_pic32m.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f12" displayName="tmr" projectFiles="true">
+          <logicalFolder name="f11" displayName="tmr" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/tmr/src/sys_tmr_local.h</itemPath>
             </logicalFolder>
@@ -910,15 +898,7 @@
               </logicalFolder>
             </logicalFolder>
           </logicalFolder>
-          <logicalFolder name="f5" displayName="usart" projectFiles="true">
-            <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
-                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usart/src/dynamic/drv_usart.c</itemPath>
-                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usart/src/dynamic/drv_usart_byte_model.c</itemPath>
-              </logicalFolder>
-            </logicalFolder>
-          </logicalFolder>
-          <logicalFolder name="f6" displayName="usb" projectFiles="true">
+          <logicalFolder name="f5" displayName="usb" projectFiles="true">
             <logicalFolder name="f1" displayName="usbhs" projectFiles="true">
               <logicalFolder name="f1" displayName="src" projectFiles="true">
                 <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
