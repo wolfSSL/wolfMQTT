@@ -329,6 +329,42 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
 
     return 0;
 }
+
+int MqttDecode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
+{
+    /* Validate property type is allowed for packet type */
+
+    /* Example: MQTT_PACKET_TYPE_CONNECT: Allowed properties: MQTT_PROP_SESSION_EXPIRY_INTERVAL,
+    MQTT_PROP_RECEIVE_MAX, MQTT_PROP_MAX_PACKET_SZ,
+    MQTT_PROP_TOPIC_ALIAS_MAX, MQTT_PROP_REQ_RESP_INFO,
+    MQTT_PROP_REQ_PROB_INFO, MQTT_PROP_USER_PROP,
+    MQTT_PROP_AUTH_METHOD, MQTT_PROP_AUTH_DATA */
+
+#if 0
+    typedef struct MqttProp {
+        struct MqttProp* next;
+        void* data;
+        int dataSz;
+        MqttPropertyType type;
+    } MqttProp;
+
+    struct MqttPropMatrix {
+        MqttPropertyType prop;
+        MqttDataType data;
+        word16 packet_type_mask; /* allowed packets */
+    };
+
+    gPropMatrix up to MQTT_PROP_TYPE_MAX
+#endif
+    (void)gPropMatrix;
+
+    /* TODO: Encode props */
+    (void)packet;
+    (void)props;
+    (void)buf;
+
+    return 0;
+}
 #endif
 
 /* Packet Type Encoders/Decoders */
@@ -827,6 +863,105 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len)
     /* Return total length of packet */
     return header_len;
 }
+
+#ifdef WOLFMQTT_V5
+int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
+{
+    int header_len, remain_len = 0;
+    byte* tx_payload;
+
+    /* Validate required arguments */
+    if ((tx_buf == NULL) || (tx_buf_len <= 0) || (auth == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Encode fixed header */
+    header_len = MqttEncode_FixedHeader(tx_buf, tx_buf_len, remain_len,
+                  MQTT_PACKET_TYPE_AUTH, 0, 0, 0);
+    if (header_len < 0) {
+        return header_len;
+    }
+
+    tx_payload = &tx_buf[header_len];
+
+    /* Encode variable header */
+    if ((auth->reason_code == MQTT_REASON_CONT_AUTH) ||
+        (auth->reason_code == MQTT_REASON_REAUTH)) {
+
+        *tx_payload++ = auth->reason_code;
+        if (auth->prop_len > 0) {
+            int rc;
+            rc = MqttEncode_Props(MQTT_PACKET_TYPE_AUTH, auth->props, tx_payload);
+            if (rc != 0) {return rc;}
+        }
+        else {
+            return MQTT_CODE_ERROR_MALFORMED_DATA;
+        }
+    }
+    else {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+
+
+    /* Return total length of packet */
+    return header_len + remain_len;
+
+}
+
+int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
+{
+    int header_len, remain_len;
+    byte *rx_payload;
+
+    /* Validate required arguments */
+    if ((rx_buf == NULL) || (rx_buf_len <= 0) || (auth == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Decode fixed header */
+    header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len, &remain_len,
+                  MQTT_PACKET_TYPE_AUTH, NULL, NULL, NULL);
+    if (header_len < 0) {
+        return header_len;
+    }
+    rx_payload = &rx_buf[header_len];
+
+    /* Decode variable header */
+    auth->reason_code = *rx_payload++;
+    if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
+        (auth->reason_code == MQTT_REASON_CONT_AUTH)) {
+
+        rx_payload += MqttDecode_Num(rx_payload, &auth->prop_len);
+        if (auth->prop_len > 0) {
+            int rc;
+            /* Parse the AUTH Properties */
+            rc = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH, auth->props, rx_payload);
+            if (rc == 0) {
+                /* Must have Authentication Method */
+
+                /* Must have Authentication Data */
+
+                /* May have zero or more User Property pairs */
+            }
+            else {
+                return MQTT_CODE_ERROR_MALFORMED_DATA;
+            }
+        }
+        else if (auth->reason_code != MQTT_REASON_SUCCESS) {
+            /* The Reason Code and Property Length can be omitted if the
+               Reason Code is 0x00 (Success) and there are no Properties.
+               In this case the AUTH has a Remaining Length of 0. */
+            return MQTT_CODE_ERROR_MALFORMED_DATA;
+        }
+    }
+    else {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+
+    /* Return total length of packet */
+    return header_len + remain_len;
+}
+#endif /* WOLFMQTT_V5 */
 
 static int MqttPacket_HandleNetError(MqttClient *client, int rc)
 {

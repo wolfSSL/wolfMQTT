@@ -234,10 +234,24 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
 WOLFMQTT_API int MqttClient_Ping(
     MqttClient *client);
 
+#ifdef WOLFMQTT_V5
+/*! \brief      Encodes and sends the MQTT Authentication Request packet and
+                waits for the Ping Response packet
+ *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \param      client      Pointer to MqttClient structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_Auth(
+    MqttClient *client,
+	MqttAuth *auth);
+#endif
+
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
  *  \discussion This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
+ *  \param      auth        Pointer to MqttAuth structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

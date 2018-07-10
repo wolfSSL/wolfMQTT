@@ -639,6 +639,36 @@ int MqttClient_Disconnect(MqttClient *client)
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef WOLFMQTT_V5
+int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
+{
+    int rc, len;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (client->msg.stat == MQTT_MSG_BEGIN) {
+        /* Encode the authentication packet */
+        rc = MqttEncode_Auth(client->tx_buf, client->tx_buf_len, auth);
+        if (rc <= 0) { return rc; }
+        len = rc;
+
+        /* Send authentication packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc != len) { return rc; }
+
+        client->msg.stat = MQTT_MSG_WAIT;
+    }
+
+    /* Wait for auth packet */
+    rc = MqttClient_WaitType(client, &client->msg, client->cmd_timeout_ms,
+        MQTT_PACKET_TYPE_AUTH, 0, NULL);
+
+    return rc;
+}
+#endif /* WOLFMQTT_V5 */
 
 int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
 {

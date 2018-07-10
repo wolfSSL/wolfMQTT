@@ -303,9 +303,12 @@ enum MqttConnectFlags {
 #define MQTT_CONNECT_PROTOCOL_NAME_LEN  4
 #define MQTT_CONNECT_PROTOCOL_NAME      "MQTT"
 #define MQTT_CONNECT_PROTOCOL_LEVEL_4   4 /* v3.1.1 */
+#ifdef WOLFMQTT_V5
 #define MQTT_CONNECT_PROTOCOL_LEVEL_5   5 /* v5.0 */
+#define MQTT_CONNECT_PROTOCOL_LEVEL     MQTT_CONNECT_PROTOCOL_LEVEL_5
+#else
 #define MQTT_CONNECT_PROTOCOL_LEVEL     MQTT_CONNECT_PROTOCOL_LEVEL_4
-
+#endif
 /* Initializer */
 #define MQTT_CONNECT_INIT               \
     {{0, MQTT_CONNECT_PROTOCOL_NAME_LEN}, {'M', 'Q', 'T', 'T'}, \
@@ -446,6 +449,15 @@ typedef struct _MqttUnsubscribeAck {
 /* PING / PING RESPONSE PACKETS */
 /* Fixed header "MqttPacket" only. No variable header or payload */
 
+#ifdef WOLFMQTT_V5
+/* AUTH PACKET */
+typedef struct _MqttAuth
+{
+    byte        reason_code;
+    word16      prop_len;
+    MqttProp*   props;
+} MqttAuth;
+#endif
 
 /* MQTT PACKET APPLICATION INTERFACE */
 struct _MqttClient;
@@ -491,7 +503,10 @@ WOLFMQTT_LOCAL int MqttDecode_Ping(byte *rx_buf, int rx_buf_len);
 WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);
 
 #ifdef WOLFMQTT_V5
+WOLFMQTT_LOCAL int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth);
+WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth);
 int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf);
+int MqttDecode_Props(MqttPacketType packet, MqttProp* props, byte* buf);
 #endif
 
 
