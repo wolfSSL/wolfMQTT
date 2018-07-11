@@ -150,6 +150,9 @@ typedef struct _SocketContext {
     SOCKET_T fd;
     NB_Stat stat;
     SOCK_ADDR_IN addr;
+#ifdef MICROCHIP_MPLAB_HARMONY
+    word32 bytes;
+#endif
 } SocketContext;
 
 
@@ -399,7 +402,7 @@ exit:
         }
 
         /* Show error */
-        PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, errno);
+        PRINTF("NetConnect: Rc=%d, ErrNo=%d", rc, errno);
     }
 
     return rc;
@@ -418,12 +421,12 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     rc = (int)send(sock->fd, buf, (size_t)buf_len, 0);
     if (rc <= 0) {
         /* Check for in progress */
-        if (errno == EINPROGRESS || errno = EWOULDBLOCK) {
+        if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
 
+        PRINTF("NetWrite Error: Rc %d, BufLen %d, ErrNo %d", rc, buf_len, errno);
         rc = MQTT_CODE_ERROR_NETWORK;
-        PRINTF("NetWrite: Error %d", errno);
     }
 
     (void)timeout_ms;
@@ -436,40 +439,31 @@ static int NetRead(void *context, byte* buf, int buf_len,
 {
     SocketContext *sock = (SocketContext*)context;
     int rc = MQTT_CODE_ERROR_NETWORK;
-    int bytes = 0;
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* Loop until buf_len has been read, error or timeout */
-    while (bytes < buf_len) {
-        /* Try and read number of buf_len provided,
-            minus what's already been read */
-        rc = (int)recv(sock->fd,
-                       &buf[bytes],
-                       (size_t)(buf_len - bytes),
-                       0);
-        if (rc <= 0) {
-            goto exit; /* Error */
-        }
-        else {
-            bytes += rc; /* Data */
-        }
-    } /* while */
-
-exit:
-
+    rc = (int)recv(sock->fd,
+                   &buf[sock->bytes],
+                   (size_t)(buf_len - sock->bytes),
+                   0);
     if (rc < 0) {
-        if (errno == EINPROGRESS || errno = EWOULDBLOCK) {
+        if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
 
+        PRINTF("NetRead Error: Rc %d, BufLen %d, ErrNo %d", rc, buf_len, errno);
         rc = MQTT_CODE_ERROR_NETWORK;
-        PRINTF("NetRead: Error %d", errno);
     }
     else {
-        rc = bytes;
+        /* Try and build entire recv buffer before returning success */
+        sock->bytes += rc;
+        if (sock->bytes < buf_len) {
+            return MQTT_CODE_CONTINUE;
+        }
+        rc = sock->bytes;
+        sock->bytes = 0;
     }
 
     (void)timeout_ms;
