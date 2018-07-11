@@ -52,7 +52,8 @@ static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     /* save network read response */
     client->tls.sockRc = rc;
 
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_STDIN_WAKE) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_STDIN_WAKE
+                                                 || rc == MQTT_CODE_CONTINUE) {
         rc = WOLFSSL_CBIO_ERR_WANT_READ;
     }
     else if (rc < 0) {
@@ -74,7 +75,7 @@ static int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     /* save network write response */
     client->tls.sockRc = rc;
 
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_CONTINUE) {
         rc = WOLFSSL_CBIO_ERR_WANT_WRITE;
     }
     else if (rc < 0) {
