@@ -201,7 +201,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
-
+#ifdef WOLFMQTT_V5
+            /* Enhanced authentication */
+            /* Add property: Authentication Method */
+#endif
             FALL_THROUGH;
         }
 
@@ -219,6 +222,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+
 
             /* Validate Connect Ack info */
             PRINTF("MQTT Connect Ack: Return Code %u, Session Present %d",

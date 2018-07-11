@@ -454,7 +454,7 @@ typedef struct _MqttUnsubscribeAck {
 typedef struct _MqttAuth
 {
     byte        reason_code;
-    word16      prop_len;
+    word32      prop_len;
     MqttProp*   props;
 } MqttAuth;
 #endif
@@ -477,6 +477,9 @@ WOLFMQTT_LOCAL int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_
 WOLFMQTT_LOCAL int MqttEncode_String(byte *buf, const char *str);
 
 WOLFMQTT_LOCAL int MqttEncode_Data(byte *buf, const byte *data, word16 data_len);
+
+WOLFMQTT_LOCAL int MqttDecode_Vbi(byte *buf, word32 *value);
+WOLFMQTT_LOCAL int MqttEncode_Vbi(byte *buf, word32 x);
 
 /* Packet Encoders/Decoders */
 WOLFMQTT_LOCAL int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,

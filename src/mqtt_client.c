@@ -228,6 +228,16 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
             rc = MqttDecode_Ping(client->rx_buf, client->packet.buf_len);
             break;
         }
+#ifdef WOLFMQTT_V5
+        case MQTT_PACKET_TYPE_AUTH:
+        {
+            MqttAuth auth;
+
+            /* Decode authorization */
+            rc = MqttDecode_Auth(client->rx_buf, client->packet.buf_len, &auth);
+            break;
+        }
+#endif
         default:
         {
             /* Other types are server side only, ignore */
@@ -409,7 +419,10 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
         }
         connect->stat = MQTT_MSG_WAIT;
     }
+#ifdef WOLFMQTT_V5
+    /* Enhanced authentication */
 
+#endif
     /* Wait for connect ack packet */
     rc = MqttClient_WaitType(client, &client->msg, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_CONNECT_ACK, 0, &connect->ack);

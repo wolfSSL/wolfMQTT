@@ -191,7 +191,7 @@ int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len)
     do {
         /* Check decoded length byte count */
         if ((decode_bytes + 1) >= buf_len) {
-            return 0; /* Zero incidates we need another byte */
+            return 0; /* Zero indicates we need another byte */
         }
         if (decode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
             return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -219,7 +219,7 @@ int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len)
     do {
         /* Check decoded length byte count */
         if ((encode_bytes + 1) >= buf_len) {
-            return 0; /* Zero incidates we need another byte */
+            return 0; /* Zero indicates we need another byte */
         }
         if (encode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
             return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -258,7 +258,7 @@ int MqttEncode_Num(byte *buf, word16 len)
 }
 
 /* Returns number of buffer bytes decoded */
-/* Returns pointer to string (which is not guarenteed to be null terminated) */
+/* Returns pointer to string (which is not guaranteed to be null terminated) */
 int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len)
 {
     int len;
@@ -291,6 +291,50 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
     buf += len;
     XMEMCPY(buf, data, data_len);
     return len + data_len;
+}
+
+/* Returns positive number of buffer bytes decoded or negative error. "value"
+   is the decoded variable byte integer */
+// TODO: Update other functions to use these generic routines
+int MqttDecode_Vbi(byte *buf, word32 *value)
+{
+    int rc = 0;
+    int multiplier = 1;
+    byte encodedByte;
+
+    *value = 0;
+    do {
+       encodedByte = *(buf++);
+       *value += (encodedByte & 127) * multiplier;
+       if (multiplier > 128*128*128) {
+          return MQTT_CODE_ERROR_MALFORMED_DATA;
+       }
+       multiplier *= 128;
+       rc++;
+    } while ((encodedByte & 128) != 0);
+
+    return rc;
+}
+
+/* Encodes to buf a non-negative integer "x" in a Variable Byte Integer scheme.
+   Returns the number of bytes encoded. */
+int MqttEncode_Vbi(byte *buf, word32 x)
+{
+    int rc = 0;
+    byte encodedByte;
+
+    do {
+       encodedByte = x % 128;
+       x /= 128;
+       // if there are more data to encode, set the top bit of this byte
+       if (x > 0) {
+          encodedByte |= 128;
+       }
+       *(buf++) = encodedByte;
+       rc++;
+    } while (x > 0);
+
+    return rc;
 }
 
 #ifdef WOLFMQTT_V5
@@ -891,6 +935,10 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
         *tx_payload++ = auth->reason_code;
         if (auth->prop_len > 0) {
             int rc;
+
+            /* Encode the length of Properties */
+            *tx_payload += MqttEncode_Vbi(tx_payload, auth->prop_len);
+
             rc = MqttEncode_Props(MQTT_PACKET_TYPE_AUTH, auth->props, tx_payload);
             if (rc != 0) {return rc;}
         }
@@ -931,7 +979,7 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
         (auth->reason_code == MQTT_REASON_CONT_AUTH)) {
 
-        rx_payload += MqttDecode_Num(rx_payload, &auth->prop_len);
+        rx_payload += MqttDecode_Vbi(rx_payload, &auth->prop_len);
         if (auth->prop_len > 0) {
             int rc;
             /* Parse the AUTH Properties */
