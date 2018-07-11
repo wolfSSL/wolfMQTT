@@ -135,7 +135,7 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    if (rc != 0) { /* hide in non-blocking case */
+    if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
         PRINTF("MqttSocket_Write: Len=%d, Rc=%d", buf_len, rc);
     }
 #endif
@@ -221,7 +221,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    if (rc != 0) { /* hide in non-blocking case */
+    if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
         PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
     }
 #endif
