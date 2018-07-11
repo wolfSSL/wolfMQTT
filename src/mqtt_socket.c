@@ -52,7 +52,8 @@ static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     /* save network read response */
     client->tls.sockRc = rc;
 
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_STDIN_WAKE) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_STDIN_WAKE
+                                                 || rc == MQTT_CODE_CONTINUE) {
         rc = WOLFSSL_CBIO_ERR_WANT_READ;
     }
     else if (rc < 0) {
@@ -74,7 +75,7 @@ static int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     /* save network write response */
     client->tls.sockRc = rc;
 
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT) {
+    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_CONTINUE) {
         rc = WOLFSSL_CBIO_ERR_WANT_WRITE;
     }
     else if (rc < 0) {
@@ -134,7 +135,7 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    if (rc != 0) { /* hide in non-blocking case */
+    if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
         PRINTF("MqttSocket_Write: Len=%d, Rc=%d", buf_len, rc);
     }
 #endif
@@ -220,7 +221,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    if (rc != 0) { /* hide in non-blocking case */
+    if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
         PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
     }
 #endif

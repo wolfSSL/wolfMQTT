@@ -7,6 +7,9 @@
       <logicalFolder name="f3" displayName="app" projectFiles="true">
         <logicalFolder name="f1" displayName="system_config" projectFiles="true">
           <logicalFolder name="f1" displayName="default" projectFiles="true">
+            <logicalFolder name="f2" displayName="bsp" projectFiles="true">
+              <itemPath>../src/system_config/default/bsp/bsp.h</itemPath>
+            </logicalFolder>
             <logicalFolder name="f1" displayName="framework" projectFiles="true">
               <logicalFolder name="f1" displayName="net" projectFiles="true">
                 <logicalFolder name="f1" displayName="pres" projectFiles="true">
@@ -16,6 +19,12 @@
               <logicalFolder name="f2" displayName="system" projectFiles="true">
                 <logicalFolder name="f1" displayName="clk" projectFiles="true">
                   <itemPath>../src/system_config/default/framework/system/clk/sys_clk_static.h</itemPath>
+                </logicalFolder>
+                <logicalFolder name="f2" displayName="devcon" projectFiles="true">
+                  <logicalFolder name="f1" displayName="src" projectFiles="true">
+                    <itemPath>../src/system_config/default/framework/system/devcon/src/sys_devcon_local.h</itemPath>
+                  </logicalFolder>
+                  <itemPath>../src/system_config/default/framework/system/devcon/sys_devcon.h</itemPath>
                 </logicalFolder>
               </logicalFolder>
             </logicalFolder>
@@ -41,72 +50,129 @@
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
           <logicalFolder name="f1" displayName="src" projectFiles="true">
-            <itemPath>../../../../../framework/crypto/src/ecc.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/arc4.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/pwdbased.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/tfm.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/asn.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/des3.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/rsa.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/aes.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/md5.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/sha.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/sha256.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/sha512.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/hmac.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/hash.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/compress.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/random.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/coding.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/error-crypt.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/integer.h</itemPath>
             <itemPath>../../../../../framework/crypto/src/internal.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/logging.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/memory.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/misc.h</itemPath>
             <itemPath>../../../../../framework/crypto/src/port.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/settings.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/types.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/version.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/visibility.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/asn_public.h</itemPath>
             <itemPath>../../../../../framework/crypto/src/camellia.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/certs_test.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/dh.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/dsa.h</itemPath>
             <itemPath>../../../../../framework/crypto/src/ec.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/hc128.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/md2.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/md4.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/mpi_class.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/mpi_superclass.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/rabbit.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/ripemd.h</itemPath>
-            <itemPath>../../../../../framework/crypto/src/ssl.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/ecc.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/arc4.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/pwdbased.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/tfm.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/asn.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/des3.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/rsa.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/aes.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/md5.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/sha.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/sha256.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/sha512.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/hmac.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/hash.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/compress.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/random.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/coding.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/error-crypt.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/integer.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/certs_test.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/logging.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/memory.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/misc.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/misc.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/wc_port.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/wolfmath.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/settings.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/types.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/version.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/visibility.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/asn_public.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/chacha.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/chacha20_poly1305.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/cmac.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/curve25519.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/ed25519.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/fe_operations.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/fips_test.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/ge_operations.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/idea.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/mem_track.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/pkcs12.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/pkcs7.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/poly1305.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/signature.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/srp.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/wc_encrypt.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/wolfevent.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/dh.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/dsa.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/hc128.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/md2.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/md4.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/mpi_class.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/mpi_superclass.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/rabbit.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/ripemd.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/ssl.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/asm.c</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../framework/crypto/crypto.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/crypto.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f2" displayName="driver" projectFiles="true">
           <logicalFolder name="f1" displayName="ethmac" projectFiles="true">
-            <itemPath>../../../../../framework/driver/ethmac/drv_ethmac.h</itemPath>
+            <logicalFolder name="f1" displayName="src" projectFiles="true">
+              <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethmac/src/dynamic/_eth_dcpt_lists.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethmac/src/dynamic/drv_ethmac_lib.h</itemPath>
+              </logicalFolder>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethmac/src/drv_ethmac_local.h</itemPath>
+            </logicalFolder>
             <itemPath>../../../../../framework/driver/ethmac/src/drv_ethmac_local.h</itemPath>
             <itemPath>../../../../../framework/driver/ethmac/src/dynamic/_eth_dcpt_lists.h</itemPath>
             <itemPath>../../../../../framework/driver/ethmac/src/dynamic/drv_ethmac_lib.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethmac/drv_ethmac.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f2" displayName="ethphy" projectFiles="true">
-            <itemPath>../../../../../framework/driver/ethphy/drv_ethphy.h</itemPath>
+            <logicalFolder name="f1" displayName="src" projectFiles="true">
+              <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_regs.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_dp83640.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_dp83848.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_ip101gr.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_smsc8700.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_smsc8720.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_smsc8740.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_smsc9303.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_ksz8061.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_ksz8041.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_ksz8863.h</itemPath>
+              </logicalFolder>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/drv_ethphy_local.h</itemPath>
+            </logicalFolder>
             <itemPath>../../../../../framework/driver/ethphy/src/drv_ethphy_local.h</itemPath>
             <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_regs.h</itemPath>
             <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_smsc8740.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/drv_ethphy.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f3" displayName="tmr" projectFiles="true">
-            <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/driver/tmr/src/drv_tmr_variant_mapping.h</itemPath>
-              <itemPath>../../../../../framework/driver/tmr/src/drv_tmr_local.h</itemPath>
+          <logicalFolder name="f3" displayName="miim" projectFiles="true">
+            <logicalFolder name="f1" displayName="config" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/miim/config/drv_miim_config.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/driver/tmr/drv_tmr.h</itemPath>
-            <itemPath>../../../../../framework/driver/tmr/drv_tmr_mapping.h</itemPath>
-            <itemPath>../../../../../framework/driver/tmr/drv_tmr_compatibility.h</itemPath>
+            <logicalFolder name="f2" displayName="src" projectFiles="true">
+              <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/miim/src/dynamic/drv_miim_mapping.h</itemPath>
+              </logicalFolder>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/miim/src/drv_miim_local.h</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/miim/drv_miim.h</itemPath>
+          </logicalFolder>
+          <logicalFolder name="f5" displayName="tmr" projectFiles="true">
+            <logicalFolder name="f1" displayName="src" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/src/drv_tmr_variant_mapping.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/src/drv_tmr_local.h</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/drv_tmr.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/drv_tmr_mapping.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/drv_tmr_compatibility.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/tmr_definitions_pic32m.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f4" displayName="usb" projectFiles="true">
             <logicalFolder name="f2" displayName="usbfs" projectFiles="true">
@@ -119,12 +185,16 @@
               <itemPath>../../../../../framework/driver/usb/usbfs/drv_usbfs_static.h</itemPath>
             </logicalFolder>
             <logicalFolder name="f1" displayName="usbhs" projectFiles="true">
-              <itemPath>../../../../../framework/driver/usb/usbhs/drv_usbhs.h</itemPath>
+              <logicalFolder name="f1" displayName="src" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usb/usbhs/src/drv_usbhs_local.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usb/usbhs/src/drv_usbhs_variant_mapping.h</itemPath>
+              </logicalFolder>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usb/usbhs/drv_usbhs.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/driver/usb/drv_usb.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usb/drv_usb.h</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../framework/driver/driver.h</itemPath>
-          <itemPath>../../../../../framework/driver/driver_common.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/driver.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/driver_common.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f3" displayName="gfx" projectFiles="true">
           <itemPath>../../../../../framework/gfx/gfx_palette.h</itemPath>
@@ -134,12 +204,15 @@
             <logicalFolder name="f1" displayName="priv" projectFiles="true">
               <itemPath>../../../../../framework/net/pres/src/net_pres_local.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/net/pres/net_pres.h</itemPath>
-            <itemPath>../../../../../framework/net/pres/net_pres_certstore.h</itemPath>
-            <itemPath>../../../../../framework/net/pres/net_pres_encryptionproviderapi.h</itemPath>
-            <itemPath>../../../../../framework/net/pres/net_pres_socketapi.h</itemPath>
-            <itemPath>../../../../../framework/net/pres/net_pres_transportapi.h</itemPath>
-            <itemPath>../../../../../framework/net/pres/net_pres_socketapiconversion.h</itemPath>
+            <logicalFolder name="f2" displayName="src" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/src/net_pres_local.h</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/net_pres.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/net_pres_certstore.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/net_pres_encryptionproviderapi.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/net_pres_socketapi.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/net_pres_transportapi.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/net_pres_socketapiconversion.h</itemPath>
           </logicalFolder>
         </logicalFolder>
         <logicalFolder name="f5" displayName="osal" projectFiles="true">
@@ -147,8 +220,9 @@
             <itemPath>../../../../../framework/osal/src/osal_impl_basic.h</itemPath>
             <itemPath>../../../../../framework/osal/src/osal_impl_none.h</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../framework/osal/osal.h</itemPath>
-          <itemPath>../../../../../framework/osal/osal_definitions.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/osal/osal.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/osal/osal_definitions.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/osal/osal_impl_basic.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f6" displayName="peripheral" projectFiles="true">
           <itemPath>../../../../../framework/peripheral/peripheral.h</itemPath>
@@ -156,31 +230,32 @@
           <itemPath>../../../../../framework/peripheral/peripheral_common_32bit.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f7" displayName="system" projectFiles="true">
-          <logicalFolder name="f1" displayName="clk" projectFiles="true">
-            <itemPath>../../../../../framework/system/clk/sys_clk.h</itemPath>
-            <itemPath>../../../../../framework/system/clk/sys_clk_mapping.h</itemPath>
+          <logicalFolder name="f2" displayName="clk" projectFiles="true">
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/clk/sys_clk.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/clk/sys_clk_compatibility.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/clk/sys_clk_mapping.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f2" displayName="command" projectFiles="true">
-            <itemPath>../../../../../framework/system/command/sys_command.h</itemPath>
+          <logicalFolder name="f4" displayName="command" projectFiles="true">
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/command/sys_command.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f3" displayName="common" projectFiles="true">
-            <itemPath>../../../../../framework/system/common/sys_common.h</itemPath>
-            <itemPath>../../../../../framework/system/common/sys_module.h</itemPath>
-            <itemPath>../../../../../framework/system/common/sys_buffer.h</itemPath>
-            <itemPath>../../../../../framework/system/common/sys_queue.h</itemPath>
+          <logicalFolder name="f1" displayName="common" projectFiles="true">
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_common.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_module.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_buffer.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/common/sys_queue.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f4" displayName="console" projectFiles="true">
+          <logicalFolder name="f5" displayName="console" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/console/src/sys_console_local.h</itemPath>
-              <itemPath>../../../../../framework/system/console/src/sys_console_usb_cdc_local.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/src/sys_console_local.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/src/sys_console_usb_cdc_local.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/system/console/sys_console.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/sys_console.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f5" displayName="debug" projectFiles="true">
+          <logicalFolder name="f7" displayName="debug" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/debug/src/sys_debug_local.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/debug/src/sys_debug_local.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/system/debug/sys_debug.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/debug/sys_debug.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f6" displayName="devcon" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
@@ -188,48 +263,127 @@
             </logicalFolder>
             <itemPath>../../../../../framework/system/devcon/sys_devcon.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f7" displayName="int" projectFiles="true">
-            <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/int/src/sys_int_private.h</itemPath>
-            </logicalFolder>
-            <itemPath>../../../../../framework/system/int/sys_int.h</itemPath>
-            <itemPath>../../../../../framework/system/int/sys_int_mapping.h</itemPath>
+          <logicalFolder name="f12" displayName="fs" projectFiles="true">
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/fs/sys_fs.h</itemPath>
           </logicalFolder>
-          <logicalFolder name="f8" displayName="ports" projectFiles="true">
-            <itemPath>../../../../../framework/system/ports/sys_ports.h</itemPath>
+          <logicalFolder name="f8" displayName="int" projectFiles="true">
+            <logicalFolder name="f1" displayName="src" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/src/sys_int_private.h</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/sys_int.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/sys_int_mapping.h</itemPath>
+          </logicalFolder>
+          <logicalFolder name="f3" displayName="ports" projectFiles="true">
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/ports/sys_ports.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/ports/sys_ports_definitions.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f9" displayName="random" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/random/src/sys_random_local.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/random/src/sys_random_local.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/system/random/sys_random.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/random/sys_random.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f10" displayName="reset" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <itemPath>../../../../../framework/system/reset/src/sys_reset_local.h</itemPath>
               <itemPath>../../../../../framework/system/reset/src/sys_reset_mapping.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/system/reset/sys_reset.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/reset/sys_reset.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/reset/sys_reset_definitions_pic32m.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f11" displayName="tmr" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/tmr/src/sys_tmr_local.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/tmr/src/sys_tmr_local.h</itemPath>
             </logicalFolder>
-            <itemPath>../../../../../framework/system/tmr/sys_tmr.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/tmr/sys_tmr.h</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../framework/system/system.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/system.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f8" displayName="tcpip" projectFiles="true">
           <logicalFolder name="f2" displayName="common" projectFiles="true">
             <itemPath>../../../../../framework/tcpip/src/common/helpers.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f3" displayName="src" projectFiles="true">
-            <itemPath>../../../../../framework/tcpip/src/berkeley_manager.h</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/dhcpv6_manager.h</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/dhcpv6_private.h</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/lldp_manager.h</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/lldp_private.h</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/lldp_tlv.h</itemPath>
+            <logicalFolder name="f2" displayName="common" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/common/helpers.h</itemPath>
+            </logicalFolder>
+            <logicalFolder name="f1" displayName="crypto" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes_cbc.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes_cfb.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes_ctr.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes_ecb.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes_ecb_pic32.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/crypto/aes_ofb.h</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ipv4_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ipv4_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ndp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ndp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ipv6_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ipv6_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/icmpv6_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/udp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/udp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_heap_alloc.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/arp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/arp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcps_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcps_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dns_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dns_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dnss_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dnss_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ddns_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ftp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ftp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/http_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/http_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/http_net_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/http_net_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/icmp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/nbns_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_reboot_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/smtp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/smtpc_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/smtpc_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/snmp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/snmp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/snmpv3_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/sntp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/telnet_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/zero_conf_helper.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/zero_conf_link_local_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/zero_conf_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_announce_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/iperf_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_commands_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tftpc_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tftpc_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/igmp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/igmp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tftps_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tftps_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/hash_fnv.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/link_list.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/oahash.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_helpers_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_manager_control.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_module_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_notify.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_packet.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_types.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/berkeley_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcpv6_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcpv6_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/lldp_manager.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/lldp_private.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/lldp_tlv.h</itemPath>
           </logicalFolder>
           <logicalFolder name="f1" displayName="stack" projectFiles="true">
             <itemPath>../../../../../framework/tcpip/src/tcp_private.h</itemPath>
@@ -263,252 +417,338 @@
             <itemPath>../../../../../framework/tcpip/src/ipv4_manager.h</itemPath>
             <itemPath>../../../../../framework/tcpip/src/ipv4_private.h</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../framework/tcpip/tcp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/udp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_heap.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/arp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/berkeley_api.h</itemPath>
           <itemPath>../../../../../framework/tcpip/tls.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/dhcp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/dns.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/icmp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/nbns.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/sntp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/zero_conf_link_local.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_commands.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_helpers.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_manager.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/dhcpv6.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/lldp.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_announce.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_reboot.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_common_ports.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/ipv4.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_mac.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_mac_object.h</itemPath>
-          <itemPath>../../../../../framework/tcpip/tcpip_ethernet.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/ipv4.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/ndp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/ipv6.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/icmpv6.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/udp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_heap.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/arp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/berkeley_api.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/dhcp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/dhcps.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/dns.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/dnss.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/ddns.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/ftp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/http.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/http_net.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/icmp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/nbns.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/smtp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/smtpc.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/snmp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/snmpv3.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/sntp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/telnet.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/zero_conf_link_local.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/zero_conf_multicast_dns.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/iperf.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_commands.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tftpc.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/igmp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tftps.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_helpers.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_manager.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/dhcpv6.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/lldp.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_announce.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_reboot.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_common_ports.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_mac.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_mac_object.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/tcpip_ethernet.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f9" displayName="usb" projectFiles="true">
           <logicalFolder name="f1" displayName="src" projectFiles="true">
-            <itemPath>../../../../../framework/usb/src/usb_device_local.h</itemPath>
-            <itemPath>../../../../../framework/usb/src/usb_device_mapping.h</itemPath>
-            <itemPath>../../../../../framework/usb/src/usb_device_cdc_local.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/usb_device_function_driver.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/usb_device_local.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/usb_device_mapping.h</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/usb_device_cdc_local.h</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../framework/usb/usb_device.h</itemPath>
-          <itemPath>../../../../../framework/usb/usb_billboard.h</itemPath>
-          <itemPath>../../../../../framework/usb/usb_chapter_9.h</itemPath>
-          <itemPath>../../../../../framework/usb/usb_common.h</itemPath>
-          <itemPath>../../../../../framework/usb/usb_cdc.h</itemPath>
-          <itemPath>../../../../../framework/usb/usb_device_cdc.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_common.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_chapter_9.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_hub.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_host_hub.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_host_client_driver.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_host.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_host_hub_interface.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_device.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_billboard.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_cdc.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/usb_device_cdc.h</itemPath>
         </logicalFolder>
       </logicalFolder>
       <logicalFolder name="f5" displayName="third_party" projectFiles="true">
         <logicalFolder name="f2" displayName="tcpip" projectFiles="true">
+          <logicalFolder name="f2" displayName="support" projectFiles="true">
+            <logicalFolder name="f1" displayName="wolfssl" projectFiles="true">
+              <logicalFolder name="f1" displayName="wolfcrypt" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/aes.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/des3.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/md5.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/sha.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/sha256.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/random.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support/wolfssl/wolfcrypt/wolfmath.h</itemPath>
+              </logicalFolder>
+            </logicalFolder>
+          </logicalFolder>
           <logicalFolder name="f1" displayName="wolfssl" projectFiles="true">
             <logicalFolder name="f1" displayName="cyassl" projectFiles="true">
               <logicalFolder name="f1" displayName="ctaocrypt" projectFiles="true">
+                <logicalFolder name="f1" displayName="port" projectFiles="true">
+                  <logicalFolder name="f1" displayName="pic32" projectFiles="true">
+                    <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/port/pic32/pic32mz-crypt.h</itemPath>
+                  </logicalFolder>
+                </logicalFolder>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/aes.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/arc4.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/asn.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/asn_public.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/blake2-impl.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/blake2-int.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/blake2.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/camellia.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/chacha.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/coding.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/compress.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/des3.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/dh.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/dsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/ecc.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/error-crypt.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/fips_test.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/hc128.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/hmac.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/integer.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/logging.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/md2.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/md4.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/md5.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/memory.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/misc.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/mpi_class.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/mpi_superclass.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/pkcs7.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/poly1305.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/pwdbased.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/rabbit.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/random.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/ripemd.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/rsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/settings.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/settings_comp.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/sha.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/sha256.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/sha512.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/tfm.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/types.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/visibility.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ctaocrypt/wc_port.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/arc4.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/asn.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/asn_public.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/blake2-impl.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/blake2-int.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/blake2.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/camellia.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/chacha.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/coding.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/compress.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/dh.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/dsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/ecc.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/error-crypt.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/fips_test.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/hc128.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/hmac.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/integer.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/logging.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/md2.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/md4.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/memory.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/misc.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/mpi_class.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/mpi_superclass.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/pkcs7.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/poly1305.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/pwdbased.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/rabbit.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/ripemd.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/rsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/settings.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/settings_comp.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/sha512.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/tfm.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/types.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/visibility.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ctaocrypt/wc_port.h</itemPath>
               </logicalFolder>
               <logicalFolder name="f2" displayName="openssl" projectFiles="true">
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/asn1.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/bio.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/bn.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/conf.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/crypto.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/des.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/dh.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/dsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ec.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ec25519.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ecdh.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ecdsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ed25519.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/engine.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/err.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/evp.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/hmac.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/lhash.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/md4.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/md5.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ocsp.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/opensslconf.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/opensslv.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ossl_typ.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/pem.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/pkcs12.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/rand.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ripemd.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/rsa.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/sha.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ssl.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/stack.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/ui.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/x509.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/openssl/x509v3.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/asn1.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/bio.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/bn.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/conf.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/crypto.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/des.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/dh.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/dsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ec.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ec25519.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ecdh.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ecdsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ed25519.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/engine.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/err.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/evp.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/hmac.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/lhash.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/md4.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ocsp.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/opensslconf.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/opensslv.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ossl_typ.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/pem.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/pkcs12.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/rand.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ripemd.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/rsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ssl.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/stack.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/ui.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/x509.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/openssl/x509v3.h</itemPath>
               </logicalFolder>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/callbacks.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/certs_test.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/crl.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/error-ssl.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/internal.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ocsp.h</itemPath>
               <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/options.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/sniffer.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/sniffer_error.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/ssl.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/test.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/cyassl/version.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/callbacks.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/certs_test.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/crl.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/error-ssl.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/internal.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ocsp.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/sniffer.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/sniffer_error.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/ssl.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/test.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/cyassl/version.h</itemPath>
             </logicalFolder>
-            <logicalFolder name="f2" displayName="examples" projectFiles="true">
+            <logicalFolder name="f3" displayName="examples" projectFiles="true">
               <logicalFolder name="f1" displayName="client" projectFiles="true">
-                <itemPath>../../../../../third_party/tcpip/wolfssl/examples/client/client.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/examples/client/client.h</itemPath>
               </logicalFolder>
               <logicalFolder name="f2" displayName="echoclient" projectFiles="true">
-                <itemPath>../../../../../third_party/tcpip/wolfssl/examples/echoclient/echoclient.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/examples/echoclient/echoclient.h</itemPath>
               </logicalFolder>
               <logicalFolder name="f3" displayName="echoserver" projectFiles="true">
-                <itemPath>../../../../../third_party/tcpip/wolfssl/examples/echoserver/echoserver.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/examples/echoserver/echoserver.h</itemPath>
               </logicalFolder>
               <logicalFolder name="f4" displayName="server" projectFiles="true">
-                <itemPath>../../../../../third_party/tcpip/wolfssl/examples/server/server.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/examples/server/server.h</itemPath>
               </logicalFolder>
             </logicalFolder>
-            <logicalFolder name="f3" displayName="tests" projectFiles="true">
-              <itemPath>../../../../../third_party/tcpip/wolfssl/tests/unit.h</itemPath>
+            <logicalFolder name="f5" displayName="tests" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/tests/unit.h</itemPath>
+            </logicalFolder>
+            <logicalFolder name="f2" displayName="wolfcrypt" projectFiles="true">
+              <logicalFolder name="f1" displayName="src" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/misc.c</itemPath>
+              </logicalFolder>
             </logicalFolder>
             <logicalFolder name="f4" displayName="wolfssl" projectFiles="true">
               <logicalFolder name="f1" displayName="openssl" projectFiles="true">
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/asn1.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/bio.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/bn.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/conf.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/crypto.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/des.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/dh.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/dsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ec.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ec25519.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ecdh.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ecdsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ed25519.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/engine.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/err.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/evp.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/hmac.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/lhash.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/md4.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/md5.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ocsp.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/opensslconf.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/opensslv.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ossl_typ.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/pem.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/pkcs12.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/rand.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ripemd.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/rsa.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/sha.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ssl.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/stack.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/ui.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/x509.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/openssl/x509v3.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/asn1.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/bio.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/bn.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/conf.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/crypto.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/des.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/dh.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/dsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ec.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ec25519.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ecdh.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ecdsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ed25519.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/engine.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/err.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/evp.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/hmac.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/lhash.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/md4.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ocsp.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/opensslconf.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/opensslv.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ossl_typ.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/pem.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/pkcs12.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/rand.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ripemd.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/rsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ssl.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/stack.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/ui.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/x509.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/openssl/x509v3.h</itemPath>
               </logicalFolder>
               <logicalFolder name="f2" displayName="wolfcrypt" projectFiles="true">
                 <logicalFolder name="f1" displayName="port" projectFiles="true">
-                  <logicalFolder name="f1" displayName="ti" projectFiles="true">
-                    <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/ti/ti-ccm.h</itemPath>
-                    <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/ti/ti-hash.h</itemPath>
+                  <logicalFolder name="f1" displayName="pic32" projectFiles="true">
+                    <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/pic32/pic32mz-crypt.h</itemPath>
                   </logicalFolder>
-                  <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/nrf51.h</itemPath>
+                  <logicalFolder name="f2" displayName="ti" projectFiles="true">
+                    <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/ti/ti-ccm.h</itemPath>
+                    <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/ti/ti-hash.h</itemPath>
+                  </logicalFolder>
+                  <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/port/nrf51.h</itemPath>
                 </logicalFolder>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/aes.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/arc4.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/asn.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/coding.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/compress.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/des3.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/ecc.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/hash.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/hmac.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/idea.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/integer.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/logging.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/md5.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/memory.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/misc.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/pwdbased.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/random.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/rsa.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/settings.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/sha.h</itemPath>
                 <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/sha256.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/sha512.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/signature.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/srp.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/tfm.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/types.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/visibility.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/wc_encrypt.h</itemPath>
-                <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/wolfcrypt/wc_port.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/asn_public.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/blake2-impl.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/blake2-int.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/blake2.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/camellia.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/chacha.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/chacha20_poly1305.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/curve25519.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/dh.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/dsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/ed25519.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/error-crypt.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/fe_operations.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/fips_test.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/ge_operations.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/hc128.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/md2.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/md4.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/mpi_class.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/mpi_superclass.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/pkcs7.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/poly1305.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/rabbit.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/ripemd.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/arc4.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/asn.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/coding.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/compress.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/ecc.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/hash.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/hmac.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/idea.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/integer.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/logging.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/memory.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/misc.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/pwdbased.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/rsa.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/settings.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/sha512.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/signature.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/srp.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/tfm.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/types.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/visibility.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/wc_encrypt.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/wc_port.h</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfcrypt/pkcs12.h</itemPath>
               </logicalFolder>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/internal.h</itemPath>
               <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/mem_track.h</itemPath>
-              <itemPath>../../../../../third_party/tcpip/wolfssl/wolfssl/version.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/callbacks.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/certs_test.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/crl.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/error-ssl.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/ocsp.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/sniffer.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/sniffer_error.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/ssl.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/test.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/wolfio.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/internal.h</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfssl/version.h</itemPath>
             </logicalFolder>
           </logicalFolder>
         </logicalFolder>
         <logicalFolder name="f3" displayName="wolfmqtt" projectFiles="true">
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_types.h</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_socket.h</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_packet.h</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_client.h</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/version.h</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/wolfmqtt/visibility.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_types.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_socket.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_packet.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/wolfmqtt/mqtt_client.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/wolfmqtt/version.h</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/wolfmqtt/visibility.h</itemPath>
         </logicalFolder>
         <logicalFolder name="f1" displayName="wolfssl" projectFiles="true">
           <logicalFolder name="f1" displayName="wolfcrypt" projectFiles="true">
@@ -560,21 +800,38 @@
       <logicalFolder name="f3" displayName="app" projectFiles="true">
         <logicalFolder name="f1" displayName="system_config" projectFiles="true">
           <logicalFolder name="f1" displayName="default" projectFiles="true">
+            <logicalFolder name="f2" displayName="bsp" projectFiles="true">
+              <itemPath>../src/system_config/default/bsp/bsp.c</itemPath>
+            </logicalFolder>
             <logicalFolder name="f1" displayName="framework" projectFiles="true">
               <logicalFolder name="f1" displayName="net" projectFiles="true">
                 <logicalFolder name="f1" displayName="pres" projectFiles="true">
                   <itemPath>../src/system_config/default/framework/net/pres/net_pres_enc_glue.c</itemPath>
+                  <itemPath>../src/system_config/default/framework/net/pres/net_pres_cert_store.c</itemPath>
                 </logicalFolder>
               </logicalFolder>
               <logicalFolder name="f2" displayName="system" projectFiles="true">
                 <logicalFolder name="f1" displayName="clk" projectFiles="true">
                   <logicalFolder name="f1" displayName="src" projectFiles="true">
-                    <itemPath>../src/system_config/default/framework/system/clk/src/sys_clk_static.c</itemPath>
+                    <itemPath>../src/system_config/default/framework/system/clk/src/sys_clk_pic32mz.c</itemPath>
                   </logicalFolder>
                 </logicalFolder>
-                <logicalFolder name="f2" displayName="ports" projectFiles="true">
+                <logicalFolder name="f2" displayName="devcon" projectFiles="true">
+                  <logicalFolder name="f1" displayName="src" projectFiles="true">
+                    <itemPath>../src/system_config/default/framework/system/devcon/src/sys_devcon.c</itemPath>
+                    <itemPath>../src/system_config/default/framework/system/devcon/src/sys_devcon_pic32mz.c</itemPath>
+                    <itemPath>../src/system_config/default/framework/system/devcon/src/sys_devcon_cache_pic32mz.S</itemPath>
+                    <itemPath>../src/system_config/default/framework/system/devcon/src/sys_devcon_cache.h</itemPath>
+                  </logicalFolder>
+                </logicalFolder>
+                <logicalFolder name="f3" displayName="ports" projectFiles="true">
                   <logicalFolder name="f1" displayName="src" projectFiles="true">
                     <itemPath>../src/system_config/default/framework/system/ports/src/sys_ports_static.c</itemPath>
+                  </logicalFolder>
+                </logicalFolder>
+                <logicalFolder name="f4" displayName="reset" projectFiles="true">
+                  <logicalFolder name="f1" displayName="src" projectFiles="true">
+                    <itemPath>../src/system_config/default/framework/system/reset/src/sys_reset.c</itemPath>
                   </logicalFolder>
                 </logicalFolder>
               </logicalFolder>
@@ -588,69 +845,65 @@
         <itemPath>../src/app.c</itemPath>
         <itemPath>../src/main.c</itemPath>
       </logicalFolder>
-      <logicalFolder name="f2" displayName="bsp" projectFiles="true">
-        <logicalFolder name="f1" displayName="pic32mx_eth_sk2" projectFiles="true">
-          <itemPath>../../../../../bsp/pic32mx_eth_sk2/bsp_sys_init.c</itemPath>
-        </logicalFolder>
-      </logicalFolder>
-      <logicalFolder name="f4" displayName="examples" projectFiles="true">
-        <logicalFolder name="f1" displayName="mqttclient" projectFiles="true">
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttclient/mqttclient.c</itemPath>
-        </logicalFolder>
-        <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttnet.c</itemPath>
-        <itemPath>../../../../../third_party/tcpip/wolfmqtt/examples/mqttexample.c</itemPath>
-      </logicalFolder>
       <logicalFolder name="f1" displayName="framework" projectFiles="true">
         <logicalFolder name="f1" displayName="crypto" projectFiles="true">
           <logicalFolder name="f1" displayName="src" projectFiles="true">
-            <itemPath>../../../../../framework/crypto/src/ecc.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/arc4.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/pwdbased.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/tfm.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/asn.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/des3.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/rsa.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/aes.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/md5.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/sha.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/sha256.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/sha512.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/hmac.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/hash.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/compress.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/random.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/crypto.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/coding.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/error.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/integer.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/logging.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/memory.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/misc.c</itemPath>
-            <itemPath>../../../../../framework/crypto/src/port.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/ecc.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/arc4.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/pwdbased.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/tfm.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/asm.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/asn.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/des3.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/rsa.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/aes.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/md5.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/sha.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/sha256.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/sha512.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/hmac.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/hash.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/compress.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/random.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/crypto.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/coding.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/error.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/integer.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/logging.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/memory.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/wc_port.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/crypto/src/wolfmath.c</itemPath>
           </logicalFolder>
         </logicalFolder>
         <logicalFolder name="f2" displayName="driver" projectFiles="true">
           <logicalFolder name="f1" displayName="ethmac" projectFiles="true">
-            <itemPath>../../../../../framework/driver/ethmac/src/dynamic/drv_ethmac.c</itemPath>
-            <itemPath>../../../../../framework/driver/ethmac/src/dynamic/drv_ethmac_lib.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethmac/src/dynamic/drv_ethmac.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethmac/src/dynamic/drv_ethmac_lib.c</itemPath>
           </logicalFolder>
           <logicalFolder name="f2" displayName="ethphy" projectFiles="true">
-            <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_ethphy.c</itemPath>
-            <itemPath>../../../../../framework/driver/ethphy/src/dynamic/drv_extphy_smsc8740.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_ethphy.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/ethphy/src/dynamic/drv_extphy_smsc8740.c</itemPath>
           </logicalFolder>
-          <logicalFolder name="f3" displayName="tmr" projectFiles="true">
+          <logicalFolder name="f3" displayName="miim" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
               <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
-                <itemPath>../../../../../framework/driver/tmr/src/dynamic/drv_tmr.c</itemPath>
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/miim/src/dynamic/drv_miim.c</itemPath>
               </logicalFolder>
             </logicalFolder>
           </logicalFolder>
-          <logicalFolder name="f4" displayName="usb" projectFiles="true">
-            <logicalFolder name="f1" displayName="usbfs" projectFiles="true">
+          <logicalFolder name="f4" displayName="tmr" projectFiles="true">
+            <logicalFolder name="f1" displayName="src" projectFiles="true">
+              <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
+                <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/tmr/src/dynamic/drv_tmr.c</itemPath>
+              </logicalFolder>
+            </logicalFolder>
+          </logicalFolder>
+          <logicalFolder name="f5" displayName="usb" projectFiles="true">
+            <logicalFolder name="f1" displayName="usbhs" projectFiles="true">
               <logicalFolder name="f1" displayName="src" projectFiles="true">
                 <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
-                  <itemPath>../../../../../framework/driver/usb/usbfs/src/dynamic/drv_usbfs.c</itemPath>
-                  <itemPath>../../../../../framework/driver/usb/usbfs/src/dynamic/drv_usbfs_device.c</itemPath>
+                  <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usb/usbhs/src/dynamic/drv_usbhs.c</itemPath>
+                  <itemPath>../../../../../../../microchip/harmony/v2_06/framework/driver/usb/usbhs/src/dynamic/drv_usbhs_device.c</itemPath>
                 </logicalFolder>
               </logicalFolder>
             </logicalFolder>
@@ -658,89 +911,80 @@
         </logicalFolder>
         <logicalFolder name="f3" displayName="net" projectFiles="true">
           <logicalFolder name="f1" displayName="pres" projectFiles="true">
-            <itemPath>../../../../../framework/net/pres/src/net_pres.c</itemPath>
+            <logicalFolder name="f1" displayName="src" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/net/pres/src/net_pres.c</itemPath>
+            </logicalFolder>
           </logicalFolder>
         </logicalFolder>
         <logicalFolder name="f4" displayName="system" projectFiles="true">
           <logicalFolder name="f1" displayName="command" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/command/src/sys_command.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/command/src/sys_command.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="f2" displayName="console" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/console/src/sys_console.c</itemPath>
-              <itemPath>../../../../../framework/system/console/src/sys_console_usb_cdc.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/src/sys_console.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/console/src/sys_console_usb_cdc.c</itemPath>
             </logicalFolder>
           </logicalFolder>
           <logicalFolder name="f3" displayName="debug" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/debug/src/sys_debug.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/debug/src/sys_debug.c</itemPath>
             </logicalFolder>
           </logicalFolder>
-          <logicalFolder name="f4" displayName="devcon" projectFiles="true">
+          <logicalFolder name="f4" displayName="int" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/devcon/src/sys_devcon.c</itemPath>
-              <itemPath>../../../../../framework/system/devcon/src/sys_devcon_pic32mx.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/int/src/sys_int_pic32.c</itemPath>
             </logicalFolder>
           </logicalFolder>
-          <logicalFolder name="f5" displayName="int" projectFiles="true">
+          <logicalFolder name="f5" displayName="random" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/int/src/sys_int_pic32.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/random/src/sys_random.c</itemPath>
             </logicalFolder>
           </logicalFolder>
-          <logicalFolder name="f6" displayName="random" projectFiles="true">
+          <logicalFolder name="f6" displayName="tmr" projectFiles="true">
             <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/random/src/sys_random.c</itemPath>
-            </logicalFolder>
-          </logicalFolder>
-          <logicalFolder name="f7" displayName="reset" projectFiles="true">
-            <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/reset/src/sys_reset.c</itemPath>
-            </logicalFolder>
-          </logicalFolder>
-          <logicalFolder name="f8" displayName="tmr" projectFiles="true">
-            <logicalFolder name="f1" displayName="src" projectFiles="true">
-              <itemPath>../../../../../framework/system/tmr/src/sys_tmr.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/system/tmr/src/sys_tmr.c</itemPath>
             </logicalFolder>
           </logicalFolder>
         </logicalFolder>
         <logicalFolder name="f5" displayName="tcpip" projectFiles="true">
-          <logicalFolder name="f2" displayName="common" projectFiles="true">
-            <itemPath>../../../../../framework/tcpip/src/common/helpers.c</itemPath>
-          </logicalFolder>
-          <logicalFolder name="f1" displayName="stack" projectFiles="true">
-            <itemPath>../../../../../framework/tcpip/src/tcp.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/udp.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_heap_alloc.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_heap_internal.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/arp.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/berkeley_api.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/dhcp.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/dns.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/icmp.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/nbns.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/sntp.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/zero_conf_helper.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/zero_conf_link_local.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_announce.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_commands.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/hash_fnv.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/oahash.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_helpers.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_helper_c32.S</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_manager.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_notify.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/tcpip_packet.c</itemPath>
-            <itemPath>../../../../../framework/tcpip/src/ipv4.c</itemPath>
+          <logicalFolder name="f1" displayName="src" projectFiles="true">
+            <logicalFolder name="f1" displayName="common" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/common/helpers.c</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/ipv4.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/udp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_heap_alloc.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_heap_internal.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/arp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/berkeley_api.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dhcp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/dns.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/icmp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/nbns.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/sntp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/zero_conf_helper.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/zero_conf_link_local.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_announce.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_commands.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/hash_fnv.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/oahash.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_helpers.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_helper_c32.S</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_manager.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_notify.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/framework/tcpip/src/tcpip_packet.c</itemPath>
           </logicalFolder>
         </logicalFolder>
         <logicalFolder name="f6" displayName="usb" projectFiles="true">
           <logicalFolder name="f1" displayName="src" projectFiles="true">
             <logicalFolder name="f1" displayName="dynamic" projectFiles="true">
-              <itemPath>../../../../../framework/usb/src/dynamic/usb_device.c</itemPath>
-              <itemPath>../../../../../framework/usb/src/dynamic/usb_device_cdc.c</itemPath>
-              <itemPath>../../../../../framework/usb/src/dynamic/usb_device_cdc_acm.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/dynamic/usb_device.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/dynamic/usb_device_cdc.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/framework/usb/src/dynamic/usb_device_cdc_acm.c</itemPath>
             </logicalFolder>
           </logicalFolder>
         </logicalFolder>
@@ -749,48 +993,46 @@
         <logicalFolder name="f3" displayName="tcpip" projectFiles="true">
           <logicalFolder name="f1" displayName="wolfmqtt" projectFiles="true">
           </logicalFolder>
-        </logicalFolder>
-        <logicalFolder name="f2" displayName="wolfmqtt" projectFiles="true">
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/src/mqtt_client.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/src/mqtt_packet.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfmqtt/src/mqtt_socket.c</itemPath>
-        </logicalFolder>
-        <logicalFolder name="f1" displayName="wolfssl" projectFiles="true">
-          <logicalFolder name="f1" displayName="wolfcrypt" projectFiles="true">
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/idea.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/signature.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/srp.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/wc_encrypt.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/asm.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/blake2b.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/camellia.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/chacha.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/chacha20_poly1305.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/curve25519.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/dh.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/dsa.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/ecc_fp.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/ed25519.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/fe_low_mem.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/fe_operations.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/ge_low_mem.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/ge_operations.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/hc128.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/md2.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/md4.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/pkcs7.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/poly1305.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/rabbit.c</itemPath>
-            <itemPath>../../../../../third_party/tcpip/wolfssl/wolfcrypt/src/ripemd.c</itemPath>
+          <logicalFolder name="f2" displayName="wolfssl" projectFiles="true">
+            <logicalFolder name="f1" displayName="wolfcrypt" projectFiles="true">
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/blake2b.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/camellia.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/chacha.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/chacha20_poly1305.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/curve25519.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/dh.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/dsa.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/ecc_fp.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/ed25519.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/fe_low_mem.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/fe_operations.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/ge_low_mem.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/ge_operations.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/hc128.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/md2.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/md4.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/pkcs7.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/poly1305.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/rabbit.c</itemPath>
+              <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/wolfcrypt/src/ripemd.c</itemPath>
+            </logicalFolder>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/crl.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/internal.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/wolfio.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/keys.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/ocsp.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/sniffer.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/ssl.c</itemPath>
+            <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl/src/tls.c</itemPath>
           </logicalFolder>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/crl.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/internal.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/io.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/keys.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/ocsp.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/sniffer.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/ssl.c</itemPath>
-          <itemPath>../../../../../third_party/tcpip/wolfssl/src/tls.c</itemPath>
+        </logicalFolder>
+        <logicalFolder name="f1" displayName="wolfmqtt" projectFiles="true">
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/examples/mqttclient/mqttclient.c</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/examples/mqttexample.c</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/examples/mqttnet.c</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/src/mqtt_client.c</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/src/mqtt_packet.c</itemPath>
+          <itemPath>../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt/src/mqtt_socket.c</itemPath>
         </logicalFolder>
       </logicalFolder>
     </logicalFolder>
@@ -812,25 +1054,25 @@
     <Elem>../../..</Elem>
     <Elem>../src/default</Elem>
     <Elem>../src/system_config/default</Elem>
+    <Elem>../../../../../microchip/harmony/v2_06</Elem>
   </sourceRootList>
   <projectmakefile>Makefile</projectmakefile>
   <confs>
     <conf name="default" type="2">
       <toolsSet>
         <developmentServer>localhost</developmentServer>
-        <targetDevice>PIC32MX795F512L</targetDevice>
+        <targetDevice>PIC32MZ2048EFM144</targetDevice>
         <targetHeader></targetHeader>
         <targetPluginBoard></targetPluginBoard>
         <platformTool>PKOBSKDEPlatformTool</platformTool>
         <languageToolchain>XC32</languageToolchain>
-        <languageToolchainVersion>1.42</languageToolchainVersion>
+        <languageToolchainVersion>1.44</languageToolchainVersion>
         <platform>4</platform>
       </toolsSet>
       <compileType>
         <linkerTool>
           <linkerLibItems>
-            <linkerLibFileItem>../../../../../bin/framework/peripheral/PIC32MX795F512L_peripherals.a</linkerLibFileItem>
-            <linkerLibFileItem>../../../../../framework/tcpip/src/crypto/aes_pic32mx.a</linkerLibFileItem>
+            <linkerLibFileItem>../../../../../../../microchip/harmony/v2_06/bin/framework/peripheral/PIC32MZ2048EFM144_peripherals.a</linkerLibFileItem>
           </linkerLibItems>
         </linkerTool>
         <archiverTool>
@@ -840,6 +1082,8 @@
           <parseOnProdLoad>false</parseOnProdLoad>
           <alternateLoadableFile></alternateLoadableFile>
         </loading>
+        <subordinates>
+        </subordinates>
       </compileType>
       <makeCustomizationType>
         <makeCustomizationPreStepEnabled>false</makeCustomizationPreStepEnabled>
@@ -859,7 +1103,7 @@
         <property key="enable-unroll-loops" value="false"/>
         <property key="exclude-floating-point" value="false"/>
         <property key="extra-include-directories"
-                  value="../src;../src/system_config/default;../src/default;../../../../../framework;../src/system_config/default/framework;../../../../../bsp/pic32mx_eth_sk2;../../../../../third_party/tcpip/wolfssl;../../../../../third_party/tcpip/wolfmqtt"/>
+                  value="../../../../../framework;../../../../../third_party/tcpip/wolfssl;../../../../../third_party/tcpip/wolfmqtt;../src;../src/system_config/default;../src/default;../../../../../../../microchip/harmony/v2_06/framework;../src/system_config/default/framework;../src/system_config/default/bsp;../../../../../../../microchip/harmony/v2_06/third_party/tcpip/support;../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfssl;../../../../../../../microchip/harmony/v2_06/third_party/tcpip/wolfmqtt"/>
         <property key="generate-16-bit-code" value="false"/>
         <property key="generate-micro-compressed-code" value="false"/>
         <property key="isolate-each-function" value="true"/>
@@ -872,6 +1116,7 @@
         <property key="strict-ansi" value="false"/>
         <property key="support-ansi" value="false"/>
         <property key="toplevel-reordering" value=""/>
+        <property key="unaligned-access" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
         <property key="use-indirect-calls" value="false"/>
@@ -901,6 +1146,7 @@
       </C32-AS>
       <C32-LD>
         <property key="additional-options-use-response-files" value="false"/>
+        <property key="additional-options-write-sla" value="false"/>
         <property key="allocate-dinit" value="false"/>
         <property key="code-dinit" value="false"/>
         <property key="ebase-addr" value=""/>
@@ -924,6 +1170,7 @@
         <property key="kseg-origin" value=""/>
         <property key="linker-symbols" value=""/>
         <property key="map-file" value="${DISTDIR}/${PROJECTNAME}.${IMAGE_TYPE}.map"/>
+        <property key="no-device-startup-code" value="false"/>
         <property key="no-startup-files" value="false"/>
         <property key="oXC32ld-extra-opts" value=""/>
         <property key="optimization-level" value=""/>
@@ -961,6 +1208,7 @@
         <property key="rtti" value="true"/>
         <property key="strict-ansi" value="false"/>
         <property key="toplevel-reordering" value=""/>
+        <property key="unaligned-access" value=""/>
         <property key="use-cci" value="false"/>
         <property key="use-iar" value="false"/>
         <property key="use-indirect-calls" value="false"/>
@@ -969,6 +1217,9 @@
         <property key="common-include-directories" value=""/>
         <property key="gp-relative-option" value=""/>
         <property key="legacy-libc" value="false"/>
+        <property key="mdtcm" value=""/>
+        <property key="mitcm" value=""/>
+        <property key="mstacktcm" value="false"/>
         <property key="relaxed-math" value="false"/>
         <property key="save-temps" value="false"/>
         <property key="wpo-lto" value="false"/>
@@ -1040,21 +1291,23 @@
         <property key="ToolFirmwareFilePath"
                   value="Press to browse for a specific firmware version"/>
         <property key="ToolFirmwareOption.UseLatestFirmware" value="true"/>
+        <property key="firmware.download.all" value="false"/>
         <property key="memories.configurationmemory" value="true"/>
         <property key="memories.dataflash" value="true"/>
         <property key="memories.eeprom" value="true"/>
         <property key="memories.id" value="true"/>
         <property key="memories.programmemory" value="true"/>
-        <property key="memories.programmemory.end" value="0x1d07ffff"/>
-        <property key="memories.programmemory.start" value="0x1d000000"/>
+        <property key="memories.programmemory.ranges" value="1d000000-1d07ffff"/>
         <property key="memories.userotp" value="true"/>
         <property key="programoptions.donoteraseauxmem" value="false"/>
         <property key="programoptions.eraseb4program" value="true"/>
         <property key="programoptions.preservedataflash" value="false"/>
+        <property key="programoptions.preservedataflash.ranges" value=""/>
         <property key="programoptions.preserveeeprom" value="false"/>
+        <property key="programoptions.preserveeeprom.ranges"
+                  value="${memories.eedata.default}"/>
+        <property key="programoptions.preserveprogram.ranges" value=""/>
         <property key="programoptions.preserveprogramrange" value="false"/>
-        <property key="programoptions.preserveprogramrange.end" value="0x1d0001ff"/>
-        <property key="programoptions.preserveprogramrange.start" value="0x1d000000"/>
         <property key="programoptions.usehighvoltageonmclr" value="false"/>
         <property key="programoptions.uselvpprogramming" value="true"/>
       </PKOBSKDEPlatformTool>

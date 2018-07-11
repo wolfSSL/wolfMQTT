@@ -66,3 +66,4 @@ examples/azure/azureiothub
 examples/aws/awsiot
 examples/wiot/wiot
 wolfmqtt/options.h
+/IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/dist/default/
