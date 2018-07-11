@@ -6,7 +6,7 @@
 #     Harmony version: 2.06
 #
 #
-# from /Users/davidgarske/GitHub/wolfMQTT/IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.hconfig
+# from $HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.hconfig
 #
 CONFIG_APP_INSTANCES=1
 #
@@ -16,7 +16,7 @@ CONFIG_APP_MENU_IDX0=y
 CONFIG_APP_NAME_0="app"
 CONFIG_APP_AUTO_GENERATE_CODE0=n
 #
-# from /Users/davidgarske/GitHub/wolfMQTT/IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.hconfig
+# from $HARMONY_VERSION_PATH/third_party/tcpip/wolfmqtt/IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.hconfig
 #
 CONFIG_USE_EXCEPTION_HANDLER=y
 CONFIG_EXCEPTION_USE_SYS_DEBUG=y
