@@ -37,7 +37,7 @@
 
 /* Size of a data length elements in protocol */
 #define MQTT_DATA_LEN_SIZE   2
-
+#define MQTT_DATA_INT_SIZE   4
 
 
 #ifdef WOLFMQTT_V5
@@ -473,6 +473,9 @@ WOLFMQTT_LOCAL int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int rem
 WOLFMQTT_LOCAL int MqttDecode_Num(byte* buf, word16 *len);
 WOLFMQTT_LOCAL int MqttEncode_Num(byte *buf, word16 len);
 
+int MqttDecode_Int(byte* buf, word32* len);
+int MqttEncode_Int(byte* buf, word32 len);
+
 WOLFMQTT_LOCAL int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len);
 WOLFMQTT_LOCAL int MqttEncode_String(byte *buf, const char *str);
 
@@ -508,8 +511,8 @@ WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);
 #ifdef WOLFMQTT_V5
 WOLFMQTT_LOCAL int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth);
 WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth);
-int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf);
-int MqttDecode_Props(MqttPacketType packet, MqttProp* props, byte* buf);
+int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word16* num_props);
+int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf);
 #endif
 
 
