@@ -202,6 +202,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
 #ifdef WOLFMQTT_V5
+            if (mqttCtx->enable_eauth)
             {
                 /* Enhanced authentication */
                 /* Add property: Authentication Method */

@@ -397,9 +397,6 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
 
 
 #ifdef WOLFMQTT_V5
-
-
-
 /* Returns the (positive) number of bytes encoded, or a (negative) error code.
    If buf is null, the number of bytes encoded is stored in prop_len. Else prop_len value is encoded.
    If pointer to buf is NULL, then only calculate the length of properties.
@@ -411,8 +408,9 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word32* 
     int num_props = 0;
 
     // TODO: Check against max size. Sometimes all properties are not expected to be added
-    /* TODO: Validate property type is allowed for packet type */
+    // TODO: Validate property type is allowed for packet type
 
+    /* Encode the property length */
     if (buf != NULL) {
         tmp = MqttEncode_Vbi(buf, *prop_len);
         rc += tmp;
@@ -420,12 +418,6 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word32* 
             buf += tmp;
         }
     }
-
-    /* Example: MQTT_PACKET_TYPE_CONNECT: Allowed properties: MQTT_PROP_SESSION_EXPIRY_INTERVAL,
-    MQTT_PROP_RECEIVE_MAX, MQTT_PROP_MAX_PACKET_SZ,
-    MQTT_PROP_TOPIC_ALIAS_MAX, MQTT_PROP_REQ_RESP_INFO,
-    MQTT_PROP_REQ_PROB_INFO, MQTT_PROP_USER_PROP,
-    MQTT_PROP_AUTH_METHOD, MQTT_PROP_AUTH_DATA */
 
     /* loop through the list properties */
     while (cur_prop != NULL)
@@ -506,7 +498,8 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word32* 
             }
             case MQTT_DATA_TYPE_STRING_PAIR:
             {
-                /* String is prefixed with a Two Byte Integer length field that gives the number of bytes */
+                /* String is prefixed with a Two Byte Integer length field that
+                   gives the number of bytes */
                 word16 len = *((word16*)cur_prop->data);
 
                 tmp = MqttEncode_String(buf, (const char*)cur_prop->data);
@@ -554,9 +547,9 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf)
     *props = NULL;
 
     /* The Property Length is encoded as a Variable Byte Integer.
-     * The Property Length does not include the bytes used to encode itself,
-     * but includes the length of the Properties. If there are no properties,
-     * this MUST be indicated by including a Property Length of zero.  */
+       The Property Length does not include the bytes used to encode itself,
+       but includes the length of the Properties. If there are no properties,
+       this MUST be indicated by including a Property Length of zero.  */
     tmp = MqttDecode_Vbi(buf, &prop_len);
     buf += tmp;
     rc += (int)tmp;

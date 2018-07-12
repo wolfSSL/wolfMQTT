@@ -122,6 +122,10 @@ typedef struct MQTTCtx {
     } buffer;
 #endif
 
+#ifdef WOLFMQTT_V5
+    int enable_eauth; /* Enhanced authentication */
+#endif
+
     /* client and net containers */
     MqttClient client;
     MqttNet net;
