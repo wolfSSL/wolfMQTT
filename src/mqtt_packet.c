@@ -34,19 +34,30 @@ struct MqttPropMatrix {
     word16 packet_type_mask; /* allowed packets */
 };
 static const struct MqttPropMatrix gPropMatrix[] = {
+    { 0, 0, 0 },
     { MQTT_PROP_PLAYLOAD_FORMAT_IND,        MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CONTENT_TYPE,               MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
     { MQTT_PROP_RESP_TOPIC,                 MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CORRELATION_DATA,           MQTT_DATA_TYPE_BINARY,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
+    { 0, 0, 0 },
     { MQTT_PROP_SUBSCRIPTION_ID,            MQTT_DATA_TYPE_VAR_INT,
         (1 << MQTT_PACKET_TYPE_PUBLISH) |
         (1 << MQTT_PACKET_TYPE_SUBSCRIBE) },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
     { MQTT_PROP_SESSION_EXPIRY_INTERVAL,    MQTT_DATA_TYPE_INT,
         (1 << MQTT_PACKET_TYPE_CONNECT) |
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
@@ -55,6 +66,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
     { MQTT_PROP_SERVER_KEEP_ALIVE,          MQTT_DATA_TYPE_SHORT,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { 0, 0, 0 },
     { MQTT_PROP_AUTH_METHOD,                MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT) |
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
@@ -71,9 +83,12 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_RESP_INFO,                  MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
+    { 0, 0, 0 },
     { MQTT_PROP_SERVER_REF,                 MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
         (1 << MQTT_PACKET_TYPE_DISCONNECT) },
+    { 0, 0, 0 },
+    { 0, 0, 0 },
     { MQTT_PROP_REASON_STR,                 MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
         (1 << MQTT_PACKET_TYPE_PUBLISH_ACK) |
@@ -84,6 +99,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK) |
         (1 << MQTT_PACKET_TYPE_DISCONNECT) |
         (1 << MQTT_PACKET_TYPE_AUTH) },
+    { 0, 0, 0 },
     { MQTT_PROP_RECEIVE_MAX,                MQTT_DATA_TYPE_SHORT,
         (1 << MQTT_PACKET_TYPE_CONNECT) |
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
@@ -206,6 +222,32 @@ int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len)
     return decode_bytes + 1; /* Add byte for header flags/type */
 }
 
+/* Returns positive number of buffer bytes decoded or negative error. "value"
+   is the decoded variable byte integer */
+// TODO: Update other functions to use these generic routines
+int MqttDecode_Vbi(byte *buf, word32 *value)
+{
+    int rc = 0;
+    int multiplier = 1;
+    byte encodedByte;
+
+    *value = 0;
+    do {
+       encodedByte = *(buf++);
+       *value += (encodedByte & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
+       if (multiplier > (MQTT_PACKET_LEN_ENCODE_MASK *
+                         MQTT_PACKET_LEN_ENCODE_MASK *
+                         MQTT_PACKET_LEN_ENCODE_MASK))
+       {
+          return MQTT_CODE_ERROR_MALFORMED_DATA;
+       }
+       multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
+       rc++;
+    } while ((encodedByte & MQTT_PACKET_LEN_ENCODE_MASK) != 0);
+
+    return rc;
+}
+
 /* Returns number of encoded bytes, errors are negative value */
 int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len)
 {
@@ -237,6 +279,30 @@ int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len)
     } while (remain_len > 0);
 
     return encode_bytes + 1; /* Add byte for header flags/type */
+}
+
+/* Encodes to buf a non-negative integer "x" in a Variable Byte Integer scheme.
+   Returns the number of bytes encoded.
+   If buf is NULL, return number of bytes that would be encoded. */
+int MqttEncode_Vbi(byte *buf, word32 x)
+{
+    int rc = 0;
+    byte encodedByte;
+
+    do {
+       encodedByte = x % MQTT_PACKET_LEN_ENCODE_MASK;
+       x /= MQTT_PACKET_LEN_ENCODE_MASK;
+       // if there are more data to encode, set the top bit of this byte
+       if (x > 0) {
+          encodedByte |= MQTT_PACKET_LEN_ENCODE_MASK;
+       }
+       if (buf != NULL) {
+           *(buf++) = encodedByte;
+       }
+       rc++;
+    } while (x > 0);
+
+    return rc;
 }
 
 /* Returns number of buffer bytes decoded */
@@ -329,69 +395,31 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
     return len + data_len;
 }
 
-/* Returns positive number of buffer bytes decoded or negative error. "value"
-   is the decoded variable byte integer */
-// TODO: Update other functions to use these generic routines
-int MqttDecode_Vbi(byte *buf, word32 *value)
-{
-    int rc = 0;
-    int multiplier = 1;
-    byte encodedByte;
-
-    *value = 0;
-    do {
-       encodedByte = *(buf++);
-       *value += (encodedByte & 127) * multiplier;
-       if (multiplier > 128*128*128) {
-          return MQTT_CODE_ERROR_MALFORMED_DATA;
-       }
-       multiplier *= 128;
-       rc++;
-    } while ((encodedByte & 128) != 0);
-
-    return rc;
-}
-
-/* Encodes to buf a non-negative integer "x" in a Variable Byte Integer scheme.
-   Returns the number of bytes encoded.
-   If buf is NULL, return number of bytes that would be encoded. */
-int MqttEncode_Vbi(byte *buf, word32 x)
-{
-    int rc = 0;
-    byte encodedByte;
-
-    do {
-       encodedByte = x % 128;
-       x /= 128;
-       // if there are more data to encode, set the top bit of this byte
-       if (x > 0) {
-          encodedByte |= 128;
-       }
-       if (buf != NULL) {
-           *(buf++) = encodedByte;
-       }
-       rc++;
-    } while (x > 0);
-
-    return rc;
-}
 
 #ifdef WOLFMQTT_V5
+
+
+
 /* Returns the (positive) number of bytes encoded, or a (negative) error code.
-   If non-null, the number of properties encoded is stored in num_props.
+   If buf is null, the number of bytes encoded is stored in prop_len. Else prop_len value is encoded.
    If pointer to buf is NULL, then only calculate the length of properties.
  */
-int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word16* num_props)
+int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word32* prop_len)
 {
     int rc = 0, tmp;
     MqttProp* cur_prop = props;
-
-    if (num_props != NULL) {
-        num_props = 0;
-    }
+    int num_props = 0;
 
     // TODO: Check against max size. Sometimes all properties are not expected to be added
     /* TODO: Validate property type is allowed for packet type */
+
+    if (buf != NULL) {
+        tmp = MqttEncode_Vbi(buf, *prop_len);
+        rc += tmp;
+        if (buf != NULL) {
+            buf += tmp;
+        }
+    }
 
     /* Example: MQTT_PACKET_TYPE_CONNECT: Allowed properties: MQTT_PROP_SESSION_EXPIRY_INTERVAL,
     MQTT_PROP_RECEIVE_MAX, MQTT_PROP_MAX_PACKET_SZ,
@@ -409,7 +437,7 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word16* 
         tmp = MqttEncode_Vbi(buf, (word32)cur_prop->type);
         rc += tmp;
         if (buf != NULL) {
-            buf += rc;
+            buf += tmp;
         }
 
         switch (gPropMatrix[cur_prop->type].data)
@@ -501,9 +529,13 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word16* 
             }
         }
 
-        if (num_props != NULL) {
-            num_props++;
-        }
+        num_props++;
+
+        cur_prop = cur_prop->next;
+    }
+
+    if (buf == NULL) {
+        *prop_len = rc;
     }
 
     return rc;
@@ -649,7 +681,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
 {
     int header_len, remain_len;
 #ifdef WOLFMQTT_V5
-    int props_len;
+    word32 props_len;
 #endif
     MqttConnectPacket packet = MQTT_CONNECT_INIT;
     byte *tx_payload;
@@ -663,7 +695,9 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     /* MQTT Version 4/5 header is 10 bytes */
     remain_len = sizeof(MqttConnectPacket);
 #ifdef WOLFMQTT_V5
-    remain_len += props_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props, NULL, NULL);
+    if (connect->props) {
+        remain_len += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props, NULL, &props_len);
+    }
 #endif
     remain_len += (int)XSTRLEN(connect->client_id) + MQTT_DATA_LEN_SIZE;
     if (connect->enable_lwt) {
@@ -728,7 +762,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
 
 #ifdef WOLFMQTT_V5
     /* Encode properties */
-    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props, tx_payload, NULL);
+    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props, tx_payload, &props_len);
 #endif
 
     /* Encode payload */

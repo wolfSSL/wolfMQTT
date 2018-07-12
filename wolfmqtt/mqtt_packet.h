@@ -89,7 +89,7 @@ struct MqttProp;
 typedef struct MqttProp {
     struct MqttProp* next;
     void* data;
-    int dataSz;
+    word32 dataSz;
     MqttPropertyType type;
 } MqttProp;
 
@@ -511,7 +511,7 @@ WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len);
 #ifdef WOLFMQTT_V5
 WOLFMQTT_LOCAL int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth);
 WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth);
-int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word16* num_props);
+int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf, word32* prop_len);
 int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf);
 #endif
 
