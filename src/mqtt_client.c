@@ -639,7 +639,8 @@ int MqttClient_Disconnect(MqttClient *client)
     }
 
     /* Encode the disconnect packet */
-    rc = MqttEncode_Disconnect(client->tx_buf, client->tx_buf_len);
+    //TODO: Use the MqttDisconnect structure
+    rc = MqttEncode_Disconnect(client->tx_buf, client->tx_buf_len, NULL);
     if (rc <= 0) { return rc; }
     len = rc;
 
