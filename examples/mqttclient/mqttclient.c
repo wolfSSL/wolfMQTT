@@ -206,13 +206,25 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             {
                 /* Enhanced authentication */
                 /* Add property: Authentication Method */
-                MqttProp* prop = (MqttProp*)WOLFMQTT_MALLOC(sizeof(MqttProp));
-                mqttCtx->connect.props = prop;
-
-                memset(prop, 0, sizeof(MqttProp));
+                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_AUTH_METHOD;
                 prop->data = WOLFMQTT_MALLOC(32);
-                strncpy((char*)prop->data, "test_method", 32);
+                strncpy((char*)prop->data, "ANONYMOUS", 32);
+            }
+
+            {
+                /* Request Response Information */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                byte tmp = 1;
+                prop->type = MQTT_PROP_REQ_RESP_INFO;
+                prop->data = (void*)&tmp;
+            }
+            {
+                /* Request Problem Information */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                byte tmp = 1;
+                prop->type = MQTT_PROP_REQ_PROB_INFO;
+                prop->data = (void*)&tmp;
             }
 #endif
             FALL_THROUGH;
@@ -233,6 +245,17 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
 
+#ifdef WOLFMQTT_V5
+            if (mqttCtx->connect.props != NULL) {
+                /* Release the allocated properties */
+                MqttProps_Free(mqttCtx->connect.props);
+            }
+
+            if (mqttCtx->connect.client_id == NULL) {
+
+            }
+            /* Store assigned client ID */
+#endif
 
             /* Validate Connect Ack info */
             PRINTF("MQTT Connect Ack: Return Code %u, Session Present %d",
@@ -241,6 +264,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ?
                     1 : 0
             );
+
+
 
             /* Build list of topics */
             mqttCtx->topics[0].topic_filter = mqttCtx->topic_name;
@@ -517,6 +542,8 @@ exit:
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
         mqttCtx.app_name = "mqttclient";
+
+        //mqttCtx.enable_eauth = 1;
 
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);

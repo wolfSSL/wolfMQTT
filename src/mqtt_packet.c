@@ -125,6 +125,11 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
     { MQTT_PROP_TYPE_MAX, 0, 0 }
 };
+
+#define MQTT_MAX_PROPS 10
+
+/* Property structure allocation array. Property type equal to zero indicates unused element. */
+MqttProp clientPropStack[MQTT_MAX_PROPS];
 #endif /* WOLFMQTT_V5 */
 
 /* Positive return value is header length, zero or negative indicates error */
@@ -527,7 +532,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf)
 
     int rc = 0;
     word32 prop_len, tmp;
-    MqttProp* cur_prop, * prev_prop = NULL;
+    MqttProp* cur_prop;
 
     *props = NULL;
 
@@ -538,10 +543,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf)
 
     while (prop_len > 0)
     {
-        /* Allocate a structure */
-        cur_prop = WOLFMQTT_MALLOC(sizeof(MqttProp));
+        /* Allocate a structure and add to head. */
+        cur_prop = MqttProps_Add(props);
         if (cur_prop == NULL) {
-            //TODO: Clean up list
+            MqttProps_Free(*props);
             return MQTT_CODE_ERROR_MEMORY;
         }
         memset(cur_prop, 0, sizeof(MqttProp));
@@ -634,17 +639,6 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf)
                 break;
             }
         }
-
-        if (*props == NULL) {
-            /* Store the list head */
-            *props = cur_prop;
-        }
-        else {
-            /* Add to list */
-            prev_prop->next = cur_prop;
-        }
-
-        prev_prop = cur_prop;
     };
 
     return rc;
@@ -757,6 +751,16 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     }
     if (connect->username) {
         tx_payload += MqttEncode_String(tx_payload, connect->username);
+    }
+    else {
+        /* A Server MAY allow a Client to supply a ClientID that has a length
+         * of zero bytes, however if it does so the Server MUST treat this as a
+         * special case and assign a unique ClientID to that Client
+         * [MQTT-3.1.3-6]. It MUST then process the CONNECT packet as if the
+         * Client had provided that unique ClientID, and MUST return the
+         * Assigned Client Identifier in the CONNACK packet [MQTT-3.1.3-7].
+         */
+        tx_payload += MqttEncode_Num(tx_payload, (word16)0);
     }
     if (connect->password) {
         tx_payload += MqttEncode_String(tx_payload, connect->password);
@@ -1455,6 +1459,53 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 
     /* Return total length of packet */
     return header_len + remain_len;
+}
+
+
+/* Add property */
+// TODO: Need a mutex here
+MqttProp* MqttProps_Add(MqttProp **head)
+{
+    MqttProp *new = NULL, *prev = NULL, *cur = *head;
+    int i;
+
+    /* Find the end of the parameter list */
+    while (cur != NULL) {
+        prev = cur;
+        cur = cur->next;
+    };
+
+    /* Find a free element */
+    for (i = 0; i < MQTT_MAX_PROPS; i++) {
+        if (clientPropStack[i].type == 0) {
+            /* Found one */
+            new = &clientPropStack[i];
+            memset(new, 0, sizeof(MqttProp));
+        }
+    }
+
+    if (new != NULL) {
+        if (prev == NULL) {
+            /* Start a new list */
+            *head = new;
+        }
+        else {
+            /* Add to the existing list */
+            prev->next = new;
+        }
+    }
+
+    return new;
+}
+
+/* Free properties */
+// TODO: Need a mutex here
+void MqttProps_Free(MqttProp *head)
+{
+    while (head != NULL) {
+        head->type = 0;
+        head = head->next;
+    }
 }
 #endif /* WOLFMQTT_V5 */
 
