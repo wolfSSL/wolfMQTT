@@ -84,12 +84,26 @@ typedef enum MqttPropertyType {
     MQTT_PROP_TYPE_MAX = 0xFF
 } MqttPropertyType;
 
+struct _MqttProp_Str {
+    word16  len;
+    char    *str;
+};
+
+struct _MqttProp_Bin {
+    word16  len;
+    byte    *data;
+};
+
 /* Property list */
-typedef struct MqttProp {
-    struct MqttProp* next;
-    void* data;
-    word32 dataSz;
+typedef struct _MqttProp {
+    struct  _MqttProp* next;
     MqttPropertyType type;
+    byte    data_byte;
+    word16  data_short;
+    word32  data_int;
+    struct _MqttProp_Str data_str;
+    struct _MqttProp_Bin data_bin;
+    struct _MqttProp_Str data_str2;
 } MqttProp;
 
 /* REASON CODES */
@@ -538,10 +552,14 @@ WOLFMQTT_LOCAL int MqttDecode_Auth(byte *rx_buf, int rx_buf_len,
     MqttAuth *auth);
 WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len,
     MqttAuth *auth);
-WOLFMQTT_LOCAL int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf);
-WOLFMQTT_LOCAL int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf);
+WOLFMQTT_LOCAL int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
+    byte* buf);
+WOLFMQTT_LOCAL int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
+    byte* buf, word32 prop_len);
 WOLFMQTT_LOCAL MqttProp* MqttProps_Add(MqttProp **head);
 WOLFMQTT_LOCAL void MqttProps_Free(MqttProp *head);
+WOLFMQTT_LOCAL MqttProp* MqttProps_FindType(MqttProp *head,
+    MqttPropertyType type);
 #endif
 
 

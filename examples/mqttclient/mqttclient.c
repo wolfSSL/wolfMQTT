@@ -208,23 +208,21 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 /* Add property: Authentication Method */
                 MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_AUTH_METHOD;
-                prop->data = WOLFMQTT_MALLOC(32);
-                strncpy((char*)prop->data, "ANONYMOUS", 32);
+                prop->data_str.str = WOLFMQTT_MALLOC(32);
+                strncpy((char*)prop->data_str.str, "ANONYMOUS", 32);
             }
 
             {
                 /* Request Response Information */
                 MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
-                byte tmp = 1;
                 prop->type = MQTT_PROP_REQ_RESP_INFO;
-                prop->data = (void*)&tmp;
+                prop->data_byte = 1;
             }
             {
                 /* Request Problem Information */
                 MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
-                byte tmp = 1;
                 prop->type = MQTT_PROP_REQ_PROB_INFO;
-                prop->data = (void*)&tmp;
+                prop->data_byte = 1;
             }
 #endif
             FALL_THROUGH;
@@ -251,10 +249,21 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 MqttProps_Free(mqttCtx->connect.props);
             }
 
-            if (mqttCtx->connect.client_id == NULL) {
+            if (strcmp(mqttCtx->client_id, "") == 0) {
+                /* Find assigned client ID property */
+                MqttProp* prop = MqttProps_FindType(mqttCtx->connect.ack.props,
+                                  MQTT_PROP_ASSIGNED_CLIENT_ID);
 
+                /* Store assigned client ID from CONNACK*/
+                mqttCtx->client_id = WOLFMQTT_MALLOC(prop->data_str.len + 1);
+                strncpy((char*)mqttCtx->client_id, prop->data_str.str,
+                         prop->data_str.len);
             }
-            /* Store assigned client ID */
+
+            if (mqttCtx->connect.ack.props != NULL) {
+                /* Release the allocated properties */
+                MqttProps_Free(mqttCtx->connect.ack.props);
+            }
 #endif
 
             /* Validate Connect Ack info */
