@@ -25,6 +25,7 @@
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
+#include "examples/mqttexample.h"
 
 /* Options */
 //#define WOLFMQTT_DEBUG_CLIENT
@@ -49,6 +50,18 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
             }
             rc = MqttDecode_ConnectAck(client->rx_buf, client->packet.buf_len,
                                                                 p_connect_ack);
+            if (rc > 0) {
+#ifdef WOLFMQTT_PROPERTY_CB
+                /* Check for properties set by the server */
+                if (client->property_cb) {
+                    rc = client->property_cb(client, p_connect_ack->props,
+                            client->disconnect_ctx);
+
+                    /* Free the properties */
+                    MqttProps_Free(p_connect_ack->props);
+                }
+#endif
+            }
             break;
         }
         case MQTT_PACKET_TYPE_PUBLISH:
@@ -389,6 +402,20 @@ int MqttClient_SetDisconnectCallback(MqttClient *client, MqttDisconnectCb cb,
 
     client->disconnect_cb = cb;
     client->disconnect_ctx = ctx;
+
+    return MQTT_CODE_SUCCESS;
+}
+#endif
+
+#ifdef WOLFMQTT_PROPERTY_CB
+int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb cb,
+    void* ctx)
+{
+    if (client == NULL)
+        return MQTT_CODE_ERROR_BAD_ARG;
+
+    client->property_cb = cb;
+    client->property_ctx = ctx;
 
     return MQTT_CODE_SUCCESS;
 }

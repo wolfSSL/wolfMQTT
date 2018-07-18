@@ -97,9 +97,73 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef WOLFMQTT_PROPERTY_CB
+/* The property callback is called after decoding a packet that contains at
+   least one property. The property list is deallocated after returning from
+   the callback. */
+static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
+{
+    MqttProp *prop = head;
+    int rc = 0;
+
+    while (prop != NULL)
+    {
+        switch (prop->type)
+        {
+            case MQTT_PROP_PLAYLOAD_FORMAT_IND:
+            case MQTT_PROP_MSG_EXPIRY_INTERVAL:
+            case MQTT_PROP_CONTENT_TYPE:
+            case MQTT_PROP_RESP_TOPIC:
+            case MQTT_PROP_CORRELATION_DATA:
+            case MQTT_PROP_SUBSCRIPTION_ID:
+            case MQTT_PROP_SESSION_EXPIRY_INTERVAL:
+            case MQTT_PROP_SERVER_KEEP_ALIVE:
+            case MQTT_PROP_REQ_PROB_INFO:
+            case MQTT_PROP_WILL_DELAY_INTERVAL:
+            case MQTT_PROP_REQ_RESP_INFO:
+            case MQTT_PROP_TOPIC_ALIAS:
+            case MQTT_PROP_TYPE_MAX:
+            case MQTT_PROP_RECEIVE_MAX:
+            case MQTT_PROP_MAX_QOS:
+            case MQTT_PROP_RETAIN_AVAIL:
+            case MQTT_PROP_MAX_PACKET_SZ:
+                break;
+            case MQTT_PROP_ASSIGNED_CLIENT_ID:
+                /* Store assigned client ID from CONNACK*/
+                ((MQTTCtx*)client->ctx)->client_id =
+                    WOLFMQTT_MALLOC(prop->data_str.len + 1);
+                strncpy((char*)((MQTTCtx*)client->ctx)->client_id,
+                        prop->data_str.str,
+                        prop->data_str.len);
+                break;
+            case MQTT_PROP_TOPIC_ALIAS_MAX:
+            case MQTT_PROP_REASON_STR:
+            case MQTT_PROP_USER_PROP:
+            case MQTT_PROP_WILDCARD_SUB_AVAIL:
+            case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
+            case MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL:
+            case MQTT_PROP_RESP_INFO:
+            case MQTT_PROP_SERVER_REF:
+            case MQTT_PROP_AUTH_METHOD:
+            case MQTT_PROP_AUTH_DATA:
+            default:
+                break;
+        }
+        prop = prop->next;
+    }
+
+    (void)ctx;
+
+    return rc;
+}
+#endif
+
 int mqttclient_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
+#ifdef WOLFMQTT_PROPERTY_CB
+    int assignedClientId = 0;
+#endif
 
     switch (mqttCtx->stat) {
         case WMQ_BEGIN:
@@ -159,7 +223,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
         #endif
-
+        #ifdef WOLFMQTT_PROPERTY_CB
+            rc = MqttClient_SetPropertyCallback(&mqttCtx->client,
+                    mqtt_property_cb, NULL);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+        #endif
             FALL_THROUGH;
         }
 
@@ -208,8 +278,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 /* Add property: Authentication Method */
                 MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_AUTH_METHOD;
-                prop->data_str.str = WOLFMQTT_MALLOC(32);
-                strncpy((char*)prop->data_str.str, "ANONYMOUS", 32);
+                prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
+                prop->data_str.len = strlen(prop->data_str.str);
             }
 
             {
@@ -223,6 +293,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_REQ_PROB_INFO;
                 prop->data_byte = 1;
+            }
+#endif
+#ifdef WOLFMQTT_PROPERTY_CB
+            /* Check if client ID is NULL. It will be assigned in the CONNACK properties. */
+            if (strlen(mqttCtx->client_id) == 0) {
+                assignedClientId = 1;
             }
 #endif
             FALL_THROUGH;
@@ -248,22 +324,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 /* Release the allocated properties */
                 MqttProps_Free(mqttCtx->connect.props);
             }
-
-            if (strcmp(mqttCtx->client_id, "") == 0) {
-                /* Find assigned client ID property */
-                MqttProp* prop = MqttProps_FindType(mqttCtx->connect.ack.props,
-                                  MQTT_PROP_ASSIGNED_CLIENT_ID);
-
-                /* Store assigned client ID from CONNACK*/
-                mqttCtx->client_id = WOLFMQTT_MALLOC(prop->data_str.len + 1);
-                strncpy((char*)mqttCtx->client_id, prop->data_str.str,
-                         prop->data_str.len);
-            }
-
-            if (mqttCtx->connect.ack.props != NULL) {
-                /* Release the allocated properties */
-                MqttProps_Free(mqttCtx->connect.ack.props);
-            }
 #endif
 
             /* Validate Connect Ack info */
@@ -274,7 +334,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     1 : 0
             );
 
-
+#ifdef WOLFMQTT_PROPERTY_CB
+            if (assignedClientId == 1) {
+                /* Print the acquired client ID */
+                PRINTF("MQTT Connect Ack: Assigned Client ID: %s", mqttCtx->client_id);
+            }
+#endif
 
             /* Build list of topics */
             mqttCtx->topics[0].topic_filter = mqttCtx->topic_name;
@@ -551,8 +616,6 @@ exit:
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
         mqttCtx.app_name = "mqttclient";
-
-        //mqttCtx.enable_eauth = 1;
 
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);

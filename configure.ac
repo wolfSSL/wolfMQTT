@@ -193,7 +193,23 @@ then
     AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_V5"
 fi
 
-AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_STDINCAP" = "xyes"])
+AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
+
+# Property callback
+AC_ARG_ENABLE([propcb],
+    [AS_HELP_STRING([--enable-propcb],[Enable property callback (v5 only) (default: disabled)])],
+    [ ENABLED_PROPCB=$enableval ],
+    [ ENABLED_PROPCB=no ]
+    )
+
+if test "x$ENABLED_PROPCB" = "xyes"
+then
+    if test "x$ENABLED_MQTTV50" = "xno"
+    then
+        AC_MSG_ERROR([cannot enable propcb without enabling mqtt5.])
+    fi
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_PROPERTY_CB"
+fi
 
 
 # Disconnect callback
@@ -322,6 +338,7 @@ echo "   * LIB Flags:                 $LIB"
 echo "   * Disconnect Callback        $ENABLED_DISCB"
 echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
 echo "   * Enable MQTT v5.0:          $ENABLED_MQTTV50"
+echo "   * Property Callback          $ENABLED_PROPCB"
 echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"

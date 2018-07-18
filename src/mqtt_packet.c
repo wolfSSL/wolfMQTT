@@ -792,9 +792,6 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
                 /* Decode the Properties */
                 rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT_ACK,
                                &connect_ack->props, rx_payload, props_len);
-                if (connect_ack->props != NULL) {
-                    /* This is where all the server specific settings are given to the client. */
-                }
             }
         }
 #endif

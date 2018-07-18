@@ -40,6 +40,10 @@
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"
 
+#if defined(WOLFMQTT_PROPERTY_CB) && !defined(WOLFMQTT_V5)
+    #error "WOLFMQTT_V5 must be defined to use WOLFMQTT_PROPERTY_CB"
+#endif
+
 struct _MqttClient;
 
 /*! \brief      Mqtt Message Callback
@@ -94,6 +98,9 @@ typedef struct _MqttSk {
 #ifdef WOLFMQTT_DISCONNECT_CB
     typedef int (*MqttDisconnectCb)(struct _MqttClient* client, int error_code, void* ctx);
 #endif
+#ifdef WOLFMQTT_PROPERTY_CB
+    typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
+#endif
 
 /* Client structure */
 typedef struct _MqttClient {
@@ -115,7 +122,7 @@ typedef struct _MqttClient {
     MqttSk       write;
 
     MqttMsgCb    msg_cb;
-    MqttMessage  msg;   /* temp incomming message
+    MqttMessage  msg;   /* temp incoming message
                          * Used for MqttClient_Ping and MqttClient_WaitType */
 
     void*        ctx;   /* user supplied context for publish callbacks */
@@ -123,6 +130,10 @@ typedef struct _MqttClient {
 #ifdef WOLFMQTT_DISCONNECT_CB
     MqttDisconnectCb disconnect_cb;
     void            *disconnect_ctx;
+#endif
+#ifdef WOLFMQTT_PROPERTY_CB
+    MqttPropertyCb property_cb;
+    void          *property_ctx;
 #endif
 } MqttClient;
 
@@ -167,6 +178,20 @@ WOLFMQTT_API int MqttClient_SetDisconnectCallback(
     void* ctx);
 #endif
 
+#ifdef WOLFMQTT_PROPERTY_CB
+/*! \brief      Sets a property callback with custom context
+ *  \param      client      Pointer to MqttClient structure
+                            (uninitialized is okay)
+ *  \param      disCb       Pointer to property callback function
+ *  \param      ctx         Pointer to your own context
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_SetPropertyCallback(
+    MqttClient *client,
+    MqttPropertyCb cb,
+    void* ctx);
+#endif
 
 /*! \brief      Encodes and sends the MQTT Connect packet and waits for the
                 Connect Acknowledgment packet

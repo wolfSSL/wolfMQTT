@@ -64,7 +64,7 @@
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
 #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
 #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
-
+#define DEFAULT_AUTH_METHOD    "EXTERNAL"
 #define PRINT_BUFFER_SIZE       80
 #define MAX_PACKET_ID           ((1 << 16) - 1)
 
