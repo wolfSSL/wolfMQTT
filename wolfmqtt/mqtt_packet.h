@@ -172,6 +172,9 @@ typedef enum _MqttQoS {
 /* Generic Message */
 typedef enum _MqttMsgStat {
     MQTT_MSG_BEGIN,
+#ifdef WOLFMQTT_V5
+    MQTT_MSG_AUTH,
+#endif
     MQTT_MSG_WAIT,
     MQTT_MSG_WRITE,
     MQTT_MSG_READ,

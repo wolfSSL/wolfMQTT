@@ -272,7 +272,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
 #ifdef WOLFMQTT_V5
-            if (mqttCtx->enable_eauth)
+            if (mqttCtx->enable_eauth == 1)
             {
                 /* Enhanced authentication */
                 /* Add property: Authentication Method */
@@ -281,7 +281,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
                 prop->data_str.len = strlen(prop->data_str.str);
             }
-
             {
                 /* Request Response Information */
                 MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);

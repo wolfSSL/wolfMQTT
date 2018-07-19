@@ -50,8 +50,8 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
             }
             rc = MqttDecode_ConnectAck(client->rx_buf, client->packet.buf_len,
                                                                 p_connect_ack);
-            if (rc > 0) {
 #ifdef WOLFMQTT_PROPERTY_CB
+            if (rc > 0) {
                 /* Check for properties set by the server */
                 if (client->property_cb) {
                     rc = client->property_cb(client, p_connect_ack->props,
@@ -60,8 +60,8 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
                     /* Free the properties */
                     MqttProps_Free(p_connect_ack->props);
                 }
-#endif
             }
+#endif
             break;
         }
         case MQTT_PACKET_TYPE_PUBLISH:
@@ -74,6 +74,16 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
                 if (rc <= 0) {
                     return rc;
                 }
+#ifdef WOLFMQTT_PROPERTY_CB
+                /* Check for properties set by the server */
+                if (client->property_cb) {
+                    rc = client->property_cb(client, msg->props,
+                            client->disconnect_ctx);
+
+                    /* Free the properties */
+                    MqttProps_Free(msg->props);
+                }
+#endif
             }
 
             /* Handle packet callback and read remaining payload */
@@ -183,6 +193,17 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
             }
             *packet_id = p_publish_resp->packet_id;
 
+#ifdef WOLFMQTT_PROPERTY_CB
+            /* Check for properties set by the server */
+            if (client->property_cb) {
+                rc = client->property_cb(client, p_publish_resp->props,
+                        client->disconnect_ctx);
+
+                /* Free the properties */
+                MqttProps_Free(p_publish_resp->props);
+            }
+#endif
+
             /* If Qos then send response */
             if (msg->type == MQTT_PACKET_TYPE_PUBLISH_REC ||
                 msg->type == MQTT_PACKET_TYPE_PUBLISH_REL) {
@@ -216,6 +237,18 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
                 return rc;
             }
             *packet_id = p_subscribe_ack->packet_id;
+
+#ifdef WOLFMQTT_PROPERTY_CB
+            /* Check for properties set by the server */
+            if (client->property_cb) {
+                rc = client->property_cb(client, p_subscribe_ack->props,
+                        client->disconnect_ctx);
+
+                /* Free the properties */
+                MqttProps_Free(p_subscribe_ack->props);
+            }
+#endif
+
             break;
         }
         case MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK:
@@ -233,6 +266,18 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
                 return rc;
             }
             *packet_id = p_unsubscribe_ack->packet_id;
+
+#ifdef WOLFMQTT_PROPERTY_CB
+            /* Check for properties set by the server */
+            if (client->property_cb) {
+                rc = client->property_cb(client, p_unsubscribe_ack->props,
+                        client->disconnect_ctx);
+
+                /* Free the properties */
+                MqttProps_Free(p_unsubscribe_ack->props);
+            }
+#endif
+
             break;
         }
         case MQTT_PACKET_TYPE_PING_RESP:
@@ -244,10 +289,24 @@ static int MqttClient_HandlePayload(MqttClient* client, MqttMessage* msg,
 #ifdef WOLFMQTT_V5
         case MQTT_PACKET_TYPE_AUTH:
         {
-            MqttAuth auth;
+            MqttAuth auth, *p_auth = &auth;
 
             /* Decode authorization */
-            rc = MqttDecode_Auth(client->rx_buf, client->packet.buf_len, &auth);
+            rc = MqttDecode_Auth(client->rx_buf, client->packet.buf_len, p_auth);
+
+#ifdef WOLFMQTT_PROPERTY_CB
+            if (rc > 0) {
+                /* Check for properties set by the server */
+                if (client->property_cb) {
+                    rc = client->property_cb(client, p_auth->props,
+                            client->disconnect_ctx);
+
+                    /* Free the properties */
+                    MqttProps_Free(p_auth->props);
+                }
+            }
+#endif
+
             break;
         }
 #endif
@@ -282,6 +341,9 @@ wait_again:
 
             FALL_THROUGH;
         }
+    #ifdef WOLFMQTT_V5
+        case MQTT_MSG_AUTH:
+    #endif
         case MQTT_MSG_WAIT:
         {
             MqttPacket* header;
@@ -444,12 +506,43 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
         if (rc != len) {
             return rc;
         }
-        connect->stat = MQTT_MSG_WAIT;
+    #ifdef WOLFMQTT_V5
+        /* Enhanced authentication */
+        if (((MQTTCtx *)client->ctx)->enable_eauth == 1) {
+            connect->stat = MQTT_MSG_AUTH;
+        }
+        else
+    #endif
+        {
+            connect->stat = MQTT_MSG_WAIT;
+        }
     }
+
 #ifdef WOLFMQTT_V5
     /* Enhanced authentication */
+    if (connect->stat == MQTT_MSG_AUTH) {
+        MqttAuth auth, *p_auth = &auth;
+        MqttProp* prop;
 
+        memset((void*)p_auth, 0, sizeof(MqttAuth));
+
+        /* Set the authentication reason */
+        p_auth->reason_code = MQTT_REASON_CONT_AUTH;
+
+        /* Use the same authentication method property from connect */
+        prop = MqttProps_Add(&p_auth->props);
+        prop->type = MQTT_PROP_AUTH_METHOD;
+        prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
+        prop->data_str.len = strlen(prop->data_str.str);
+
+        /* Send the AUTH packet */
+        rc = MqttClient_Auth(client, p_auth);
+        if (rc != len) {
+            return rc;
+        }
+    }
 #endif
+
     /* Wait for connect ack packet */
     rc = MqttClient_WaitType(client, &client->msg, client->cmd_timeout_ms,
         MQTT_PACKET_TYPE_CONNECT_ACK, 0, &connect->ack);
@@ -480,7 +573,6 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
 
             FALL_THROUGH;
         }
-
         case MQTT_MSG_WRITE:
         {
             publish->stat = MQTT_MSG_WRITE;
@@ -543,6 +635,9 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
             break;
         }
 
+    #ifdef WOLFMQTT_V5
+        case MQTT_MSG_AUTH:
+    #endif
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
         #ifdef WOLFMQTT_DEBUG_CLIENT

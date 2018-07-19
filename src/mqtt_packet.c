@@ -1358,6 +1358,9 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    /* Length of Reason Code */
+    remain_len++;
+
     /* Determine length of properties */
     remain_len += props_len = MqttEncode_Props(MQTT_PACKET_TYPE_AUTH, auth->props, NULL);
 
