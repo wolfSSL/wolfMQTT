@@ -68,6 +68,10 @@
 #define PRINT_BUFFER_SIZE       80
 #define MAX_PACKET_ID           ((1 << 16) - 1)
 
+#ifdef WOLFMQTT_V5
+#define DEFAULT_MAX_PKT_SZ      768 /* The max MQTT control packet size the
+                                       client is willing to accept. */
+#endif
 
 /* MQTT Client state */
 typedef enum MQTTCtxState {
@@ -123,6 +127,7 @@ typedef struct MQTTCtx {
 #endif
 
 #ifdef WOLFMQTT_V5
+    int max_packet_size;
     int enable_eauth; /* Enhanced authentication */
 #endif
 

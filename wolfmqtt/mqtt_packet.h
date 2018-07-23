@@ -471,6 +471,7 @@ typedef struct _MqttUnsubscribeAck {
     word16      packet_id;
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+    byte       *reason_codes;
 #endif
 } MqttUnsubscribeAck;
 

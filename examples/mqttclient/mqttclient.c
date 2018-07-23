@@ -34,8 +34,11 @@
 static int mStopRead = 0;
 
 /* Configuration */
-#define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
-#define TEST_MESSAGE            "test"
+
+/* Maximum size for network read/write callbacks. There is also a v5 define that
+   describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
+#define MAX_BUFFER_SIZE 1024
+#define TEST_MESSAGE    "test"
 
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -110,6 +113,14 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
     {
         switch (prop->type)
         {
+            case MQTT_PROP_ASSIGNED_CLIENT_ID:
+                /* Store assigned client ID from CONNACK*/
+                ((MQTTCtx*)client->ctx)->client_id =
+                    WOLFMQTT_MALLOC(prop->data_str.len + 1);
+                strncpy((char*)((MQTTCtx*)client->ctx)->client_id,
+                        prop->data_str.str,
+                        prop->data_str.len);
+                break;
             case MQTT_PROP_PLAYLOAD_FORMAT_IND:
             case MQTT_PROP_MSG_EXPIRY_INTERVAL:
             case MQTT_PROP_CONTENT_TYPE:
@@ -127,15 +138,6 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_MAX_QOS:
             case MQTT_PROP_RETAIN_AVAIL:
             case MQTT_PROP_MAX_PACKET_SZ:
-                break;
-            case MQTT_PROP_ASSIGNED_CLIENT_ID:
-                /* Store assigned client ID from CONNACK*/
-                ((MQTTCtx*)client->ctx)->client_id =
-                    WOLFMQTT_MALLOC(prop->data_str.len + 1);
-                strncpy((char*)((MQTTCtx*)client->ctx)->client_id,
-                        prop->data_str.str,
-                        prop->data_str.len);
-                break;
             case MQTT_PROP_TOPIC_ALIAS_MAX:
             case MQTT_PROP_REASON_STR:
             case MQTT_PROP_USER_PROP:
@@ -293,6 +295,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->type = MQTT_PROP_REQ_PROB_INFO;
                 prop->data_byte = 1;
             }
+            {
+                /* Maximum Packet Size */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_MAX_PACKET_SZ;
+                prop->data_int = (word32)mqttCtx->max_packet_size;
+            }
 #endif
 #ifdef WOLFMQTT_PROPERTY_CB
             /* Check if client ID is NULL. It will be assigned in the CONNACK properties. */
@@ -384,6 +392,21 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
             mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+#ifdef WOLFMQTT_V5
+            {
+                /* Payload Format Indicator */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
+                prop->type = MQTT_PROP_PLAYLOAD_FORMAT_IND;
+                prop->data_int = 1;
+            }
+            {
+                /* Content Type */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
+                prop->type = MQTT_PROP_CONTENT_TYPE;
+                prop->data_str.str = (char*)"wolf_type";
+                prop->data_str.len = strlen(prop->data_str.str);
+            }
+#endif
 
             FALL_THROUGH;
         }
@@ -401,6 +424,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+#ifdef WOLFMQTT_V5
+            if (mqttCtx->connect.props != NULL) {
+                /* Release the allocated properties */
+                MqttProps_Free(mqttCtx->publish.props);
+            }
+#endif
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");

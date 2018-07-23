@@ -1238,6 +1238,9 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                                &unsubscribe_ack->props, rx_payload, props_len);
             }
         }
+
+        /* Reason codes are stored in the payload */
+        unsubscribe_ack->reason_codes = rx_payload;
 #endif
     }
     (void)rx_payload;
