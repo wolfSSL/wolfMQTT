@@ -121,6 +121,9 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                         prop->data_str.str,
                         prop->data_str.len);
                 break;
+            case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
+                ((MQTTCtx*)client->ctx)->subId_not_avail = prop->data_byte == 0;
+                break;
             case MQTT_PROP_PLAYLOAD_FORMAT_IND:
             case MQTT_PROP_MSG_EXPIRY_INTERVAL:
             case MQTT_PROP_CONTENT_TYPE:
@@ -129,9 +132,6 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_SUBSCRIPTION_ID:
             case MQTT_PROP_SESSION_EXPIRY_INTERVAL:
             case MQTT_PROP_SERVER_KEEP_ALIVE:
-            case MQTT_PROP_REQ_PROB_INFO:
-            case MQTT_PROP_WILL_DELAY_INTERVAL:
-            case MQTT_PROP_REQ_RESP_INFO:
             case MQTT_PROP_TOPIC_ALIAS:
             case MQTT_PROP_TYPE_MAX:
             case MQTT_PROP_RECEIVE_MAX:
@@ -142,13 +142,17 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_REASON_STR:
             case MQTT_PROP_USER_PROP:
             case MQTT_PROP_WILDCARD_SUB_AVAIL:
-            case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
             case MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL:
             case MQTT_PROP_RESP_INFO:
             case MQTT_PROP_SERVER_REF:
             case MQTT_PROP_AUTH_METHOD:
             case MQTT_PROP_AUTH_DATA:
+                break;
+            case MQTT_PROP_REQ_PROB_INFO:
+            case MQTT_PROP_WILL_DELAY_INTERVAL:
+            case MQTT_PROP_REQ_RESP_INFO:
             default:
+                /* Invalid */
                 break;
         }
         prop = prop->next;
@@ -273,7 +277,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
-#ifdef WOLFMQTT_V5
+        #ifdef WOLFMQTT_V5
             if (mqttCtx->enable_eauth == 1)
             {
                 /* Enhanced authentication */
@@ -301,13 +305,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->type = MQTT_PROP_MAX_PACKET_SZ;
                 prop->data_int = (word32)mqttCtx->max_packet_size;
             }
-#endif
-#ifdef WOLFMQTT_PROPERTY_CB
+        #endif
+        #ifdef WOLFMQTT_PROPERTY_CB
             /* Check if client ID is NULL. It will be assigned in the CONNACK properties. */
             if (strlen(mqttCtx->client_id) == 0) {
                 assignedClientId = 1;
             }
-#endif
+        #endif
             FALL_THROUGH;
         }
 
@@ -326,12 +330,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
 
-#ifdef WOLFMQTT_V5
+        #ifdef WOLFMQTT_V5
             if (mqttCtx->connect.props != NULL) {
                 /* Release the allocated properties */
                 MqttProps_Free(mqttCtx->connect.props);
             }
-#endif
+        #endif
 
             /* Validate Connect Ack info */
             PRINTF("MQTT Connect Ack: Return Code %u, Session Present %d",
@@ -341,19 +345,30 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     1 : 0
             );
 
-#ifdef WOLFMQTT_PROPERTY_CB
+        #ifdef WOLFMQTT_PROPERTY_CB
             if (assignedClientId == 1) {
                 /* Print the acquired client ID */
                 PRINTF("MQTT Connect Ack: Assigned Client ID: %s", mqttCtx->client_id);
             }
-#endif
+        #endif
 
             /* Build list of topics */
-            mqttCtx->topics[0].topic_filter = mqttCtx->topic_name;
-            mqttCtx->topics[0].qos = mqttCtx->qos;
+            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
+            i = 0;
+            mqttCtx->topics[i].topic_filter = mqttCtx->topic_name;
+            mqttCtx->topics[i].qos = mqttCtx->qos;
+
+        #ifdef WOLFMQTT_V5
+            if (mqttCtx->subId_not_avail != 1) {
+                /* Subscription Identifier */
+                mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->subscribe.props);
+                prop->type = MQTT_PROP_SUBSCRIPTION_ID;
+                prop->data_int = mqttCtx->topics[i].sub_id;
+            }
+        #endif
 
             /* Subscribe Topic */
-            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
@@ -369,6 +384,14 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
+
+        #ifdef WOLFMQTT_V5
+            if (mqttCtx->subscribe.props != NULL) {
+                /* Release the allocated properties */
+                MqttProps_Free(mqttCtx->subscribe.props);
+            }
+        #endif
+
             PRINTF("MQTT Subscribe: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
@@ -392,7 +415,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
             mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
-#ifdef WOLFMQTT_V5
+        #ifdef WOLFMQTT_V5
             {
                 /* Payload Format Indicator */
                 MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
@@ -406,7 +429,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->data_str.str = (char*)"wolf_type";
                 prop->data_str.len = strlen(prop->data_str.str);
             }
-#endif
+        #endif
 
             FALL_THROUGH;
         }
@@ -424,12 +447,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
-#ifdef WOLFMQTT_V5
+        #ifdef WOLFMQTT_V5
             if (mqttCtx->connect.props != NULL) {
                 /* Release the allocated properties */
                 MqttProps_Free(mqttCtx->publish.props);
             }
-#endif
+        #endif
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");

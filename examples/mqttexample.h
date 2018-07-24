@@ -129,6 +129,7 @@ typedef struct MQTTCtx {
 #ifdef WOLFMQTT_V5
     int max_packet_size;
     int enable_eauth; /* Enhanced authentication */
+    byte subId_not_avail;
 #endif
 
     /* client and net containers */
