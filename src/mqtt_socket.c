@@ -426,8 +426,14 @@ int MqttSocket_Disconnect(MqttClient *client)
     int rc = MQTT_CODE_SUCCESS;
     if (client) {
     #ifdef ENABLE_MQTT_TLS
-        if (client->tls.ssl) wolfSSL_free(client->tls.ssl);
-        if (client->tls.ctx) wolfSSL_CTX_free(client->tls.ctx);
+        if (client->tls.ssl) {
+            wolfSSL_free(client->tls.ssl);
+            client->tls.ssl = NULL;
+        }
+        if (client->tls.ctx) {
+            wolfSSL_CTX_free(client->tls.ctx);
+            client->tls.ctx = NULL;
+        }
         wolfSSL_Cleanup();
         client->flags &= ~MQTT_CLIENT_FLAG_IS_TLS;
     #endif
