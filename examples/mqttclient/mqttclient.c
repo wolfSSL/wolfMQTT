@@ -122,7 +122,13 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                         prop->data_str.len);
                 break;
             case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
-                ((MQTTCtx*)client->ctx)->subId_not_avail = prop->data_byte == 0;
+                ((MQTTCtx*)client->ctx)->subId_not_avail =
+                        prop->data_byte == 0;
+                break;
+            case MQTT_PROP_TOPIC_ALIAS_MAX:
+                ((MQTTCtx*)client->ctx)->topic_alias_max =
+                 (((MQTTCtx*)client->ctx)->topic_alias_max < prop->data_short) ?
+                 ((MQTTCtx*)client->ctx)->topic_alias_max : prop->data_short;
                 break;
             case MQTT_PROP_PLAYLOAD_FORMAT_IND:
             case MQTT_PROP_MSG_EXPIRY_INTERVAL:
@@ -138,7 +144,6 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_MAX_QOS:
             case MQTT_PROP_RETAIN_AVAIL:
             case MQTT_PROP_MAX_PACKET_SZ:
-            case MQTT_PROP_TOPIC_ALIAS_MAX:
             case MQTT_PROP_REASON_STR:
             case MQTT_PROP_USER_PROP:
             case MQTT_PROP_WILDCARD_SUB_AVAIL:
@@ -153,6 +158,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_REQ_RESP_INFO:
             default:
                 /* Invalid */
+                rc = MQTT_CODE_ERROR_PROPERTY;
                 break;
         }
         prop = prop->next;
@@ -305,6 +311,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->type = MQTT_PROP_MAX_PACKET_SZ;
                 prop->data_int = (word32)mqttCtx->max_packet_size;
             }
+            {
+                /* Topic Alias Maximum */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
+                prop->data_short = mqttCtx->topic_alias_max;
+            }
         #endif
         #ifdef WOLFMQTT_PROPERTY_CB
             /* Check if client ID is NULL. It will be assigned in the CONNACK properties. */
@@ -428,6 +440,14 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->type = MQTT_PROP_CONTENT_TYPE;
                 prop->data_str.str = (char*)"wolf_type";
                 prop->data_str.len = strlen(prop->data_str.str);
+            }
+            if ((mqttCtx->topic_alias_max > 0) &&
+                (mqttCtx->topic_alias > 0) &&
+                (mqttCtx->topic_alias < mqttCtx->topic_alias_max)) {
+                /* Topic Alias */
+                MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
+                prop->type = MQTT_PROP_TOPIC_ALIAS;
+                prop->data_short = mqttCtx->topic_alias;
             }
         #endif
 

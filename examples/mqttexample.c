@@ -155,6 +155,8 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
 #ifdef WOLFMQTT_V5
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
+    mqttCtx->topic_alias = 1;
+    mqttCtx->topic_alias_max = 1;
 #endif
 }
 
