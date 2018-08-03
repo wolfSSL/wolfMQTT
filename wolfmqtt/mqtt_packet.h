@@ -39,8 +39,10 @@
 #define MQTT_DATA_LEN_SIZE   2
 #define MQTT_DATA_INT_SIZE   4
 
-
 #ifdef WOLFMQTT_V5
+
+#define MQTT_PACKET_SZ_MAX  0xA0000005
+
 /* DATA TYPES */
 typedef enum MqttDataType {
     MQTT_DATA_TYPE_BYTE,

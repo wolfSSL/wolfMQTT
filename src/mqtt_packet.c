@@ -1537,7 +1537,17 @@ static int MqttPacket_HandleNetError(MqttClient *client, int rc)
 int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 {
     int rc;
-    rc = MqttSocket_Write(client, tx_buf, tx_buf_len, client->cmd_timeout_ms);
+#ifdef WOLFMQTT_V5
+    if ((client->packet_sz_max > 0) && (tx_buf_len >
+        (int)client->packet_sz_max))
+    {
+        rc = MQTT_CODE_ERROR_PAK_SIZE;
+    }
+    else
+#endif
+    {
+        rc = MqttSocket_Write(client, tx_buf, tx_buf_len, client->cmd_timeout_ms);
+    }
 
     return MqttPacket_HandleNetError(client, rc);
 }

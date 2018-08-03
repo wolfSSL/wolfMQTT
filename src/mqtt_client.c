@@ -485,7 +485,7 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb cb,
 
 int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
 {
-    int rc, len;
+    int rc, len = 0;
 
     /* Validate required arguments */
     if (client == NULL || connect == NULL) {

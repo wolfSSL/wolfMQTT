@@ -183,7 +183,7 @@ AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 
 # MQTT v5.0
 AC_ARG_ENABLE([mqtt5],
-    [  --enable-mqtt5       Enable MQTT v5.0 support (default: disabled)],
+    [AS_HELP_STRING([--enable-mqtt5],[Enable MQTT v5.0 support (default: disabled)])],
     [ ENABLED_MQTTV50=$enableval ],
     [ ENABLED_MQTTV50=no ]
     )

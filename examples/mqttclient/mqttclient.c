@@ -130,6 +130,22 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                  (((MQTTCtx*)client->ctx)->topic_alias_max < prop->data_short) ?
                  ((MQTTCtx*)client->ctx)->topic_alias_max : prop->data_short;
                 break;
+            case MQTT_PROP_MAX_PACKET_SZ:
+                if ((prop->data_int > 0) &&
+                    (prop->data_int <= MQTT_PACKET_SZ_MAX))
+                {
+                    client->packet_sz_max =
+                        (client->packet_sz_max < prop->data_int) ?
+                         client->packet_sz_max : prop->data_int;
+                }
+                else {
+                    /* Protocol error */
+                    rc = MQTT_CODE_ERROR_PROPERTY;
+                }
+                break;
+            case MQTT_PROP_SERVER_KEEP_ALIVE:
+                ((MQTTCtx*)client->ctx)->keep_alive_sec = prop->data_short;
+                break;
             case MQTT_PROP_PLAYLOAD_FORMAT_IND:
             case MQTT_PROP_MSG_EXPIRY_INTERVAL:
             case MQTT_PROP_CONTENT_TYPE:
@@ -137,13 +153,11 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_CORRELATION_DATA:
             case MQTT_PROP_SUBSCRIPTION_ID:
             case MQTT_PROP_SESSION_EXPIRY_INTERVAL:
-            case MQTT_PROP_SERVER_KEEP_ALIVE:
             case MQTT_PROP_TOPIC_ALIAS:
             case MQTT_PROP_TYPE_MAX:
             case MQTT_PROP_RECEIVE_MAX:
             case MQTT_PROP_MAX_QOS:
             case MQTT_PROP_RETAIN_AVAIL:
-            case MQTT_PROP_MAX_PACKET_SZ:
             case MQTT_PROP_REASON_STR:
             case MQTT_PROP_USER_PROP:
             case MQTT_PROP_WILDCARD_SUB_AVAIL:
@@ -284,6 +298,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
         #ifdef WOLFMQTT_V5
+            mqttCtx->client.packet_sz_max = mqttCtx->max_packet_size;
+
             if (mqttCtx->enable_eauth == 1)
             {
                 /* Enhanced authentication */

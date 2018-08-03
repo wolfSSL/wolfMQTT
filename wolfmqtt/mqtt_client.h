@@ -127,6 +127,10 @@ typedef struct _MqttClient {
 
     void*        ctx;   /* user supplied context for publish callbacks */
 
+#ifdef WOLFMQTT_V5
+    word32  packet_sz_max; /* Server property */
+#endif
+
 #ifdef WOLFMQTT_DISCONNECT_CB
     MqttDisconnectCb disconnect_cb;
     void            *disconnect_ctx;
