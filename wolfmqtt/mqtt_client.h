@@ -129,6 +129,8 @@ typedef struct _MqttClient {
 
 #ifdef WOLFMQTT_V5
     word32  packet_sz_max; /* Server property */
+    byte    max_qos;       /* Server property */
+    byte    retain_avail;  /* Server property */
 #endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -178,7 +180,7 @@ WOLFMQTT_API int MqttClient_Init(
  */
 WOLFMQTT_API int MqttClient_SetDisconnectCallback(
     MqttClient *client,
-    MqttDisconnectCb cb,
+    MqttDisconnectCb discb,
     void* ctx);
 #endif
 
@@ -186,14 +188,14 @@ WOLFMQTT_API int MqttClient_SetDisconnectCallback(
 /*! \brief      Sets a property callback with custom context
  *  \param      client      Pointer to MqttClient structure
                             (uninitialized is okay)
- *  \param      disCb       Pointer to property callback function
+ *  \param      propCb      Pointer to property callback function
  *  \param      ctx         Pointer to your own context
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_SetPropertyCallback(
     MqttClient *client,
-    MqttPropertyCb cb,
+    MqttPropertyCb propCb,
     void* ctx);
 #endif
 

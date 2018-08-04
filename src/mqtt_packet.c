@@ -1350,6 +1350,43 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len, MqttDisconnect* disconne
 }
 
 #ifdef WOLFMQTT_V5
+int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
+{
+    int header_len, remain_len;
+    byte *rx_payload;
+    word32 props_len = 0;
+
+    /* Validate required arguments */
+    if ((rx_buf == NULL) || (rx_buf_len <= 0) || (disc == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Decode fixed header */
+    header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len, &remain_len,
+        MQTT_PACKET_TYPE_DISCONNECT, NULL, NULL, NULL);
+    if (header_len < 0) {
+        return header_len;
+    }
+    rx_payload = &rx_buf[header_len];
+
+    if (remain_len > 0) {
+        /* Decode variable header */
+        disc->reason_code = *rx_payload++;
+
+        if (remain_len > 1) {
+            /* Decode Length of Properties */
+            rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
+            if (props_len > 0) {
+                /* Decode the AUTH Properties */
+                rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT, &disc->props,
+                              rx_payload, props_len);
+            }
+        }
+    }
+    /* Return total length of packet */
+    return header_len + remain_len;
+}
+
 int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
 {
     int header_len, remain_len = 0;
@@ -1541,7 +1578,7 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
     if ((client->packet_sz_max > 0) && (tx_buf_len >
         (int)client->packet_sz_max))
     {
-        rc = MQTT_CODE_ERROR_PAK_SIZE;
+        rc = MQTT_CODE_ERROR_SERVER_PROP;
     }
     else
 #endif
