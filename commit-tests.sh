@@ -51,4 +51,15 @@ make -j 8 test;
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nTest './configure --enable-nonblock --enable-tls' make test failed " && exit 1
 
+
+# make sure mqtt5 with property callback is okay
+echo -e "\n\nTesting mqtt5 with property callback config additionally...\n\n"
+./configure --enable-mqtt5 --enable-propcb;
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\nTest './configure --enable-mqtt5 --enable-propcb' failed" && exit 1
+
+make -j 8 test;
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\nTest './configure --enable-mqtt5 --enable-propcb' make test failed " && exit 1
+
 exit 0

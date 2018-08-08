@@ -1171,6 +1171,9 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     int header_len, remain_len, i;
     byte *tx_payload;
     MqttTopic *topic;
+#ifdef WOLFMQTT_V5
+    word32 props_len = 0;
+#endif
 
     /* Validate required arguments */
     if (tx_buf == NULL || unsubscribe == NULL) {
@@ -1183,6 +1186,13 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
         topic = &unsubscribe->topics[i];
         remain_len += (int)XSTRLEN(topic->topic_filter) + MQTT_DATA_LEN_SIZE;
     }
+#ifdef WOLFMQTT_V5
+    /* Determine length of properties */
+    remain_len += props_len = MqttEncode_Props(MQTT_PACKET_TYPE_UNSUBSCRIBE, unsubscribe->props, NULL);
+
+    /* Determine the length of the "property length" */
+    remain_len += MqttEncode_Vbi(NULL, props_len);
+#endif
 
     /* Encode fixed header */
     header_len = MqttEncode_FixedHeader(tx_buf, tx_buf_len, remain_len,
@@ -1194,6 +1204,14 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
 
     /* Encode variable header */
     tx_payload += MqttEncode_Num(&tx_buf[header_len], unsubscribe->packet_id);
+#ifdef WOLFMQTT_V5
+    /* Encode the property length */
+    tx_payload += MqttEncode_Vbi(tx_payload, props_len);
+
+    /* Encode properties */
+    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_UNSUBSCRIBE, unsubscribe->props, tx_payload);
+#endif
+
 
     /* Encode payload */
     for (i = 0; i < unsubscribe->topic_count; i++) {

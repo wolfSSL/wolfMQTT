@@ -318,32 +318,32 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             {
                 /* Enhanced authentication */
                 /* Add property: Authentication Method */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_AUTH_METHOD;
                 prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
                 prop->data_str.len = strlen(prop->data_str.str);
             }
             {
                 /* Request Response Information */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_REQ_RESP_INFO;
                 prop->data_byte = 1;
             }
             {
                 /* Request Problem Information */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_REQ_PROB_INFO;
                 prop->data_byte = 1;
             }
             {
                 /* Maximum Packet Size */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_MAX_PACKET_SZ;
                 prop->data_int = (word32)mqttCtx->max_packet_size;
             }
             {
                 /* Topic Alias Maximum */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->connect.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
                 prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
                 prop->data_short = mqttCtx->topic_alias_max;
             }
@@ -375,7 +375,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         #ifdef WOLFMQTT_V5
             if (mqttCtx->connect.props != NULL) {
                 /* Release the allocated properties */
-                MqttProps_Free(mqttCtx->connect.props);
+                MqttClient_PropsFree(mqttCtx->connect.props);
             }
         #endif
 
@@ -404,7 +404,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (mqttCtx->subId_not_avail != 1) {
                 /* Subscription Identifier */
                 mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->subscribe.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
                 prop->type = MQTT_PROP_SUBSCRIPTION_ID;
                 prop->data_int = mqttCtx->topics[i].sub_id;
             }
@@ -430,7 +430,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         #ifdef WOLFMQTT_V5
             if (mqttCtx->subscribe.props != NULL) {
                 /* Release the allocated properties */
-                MqttProps_Free(mqttCtx->subscribe.props);
+                MqttClient_PropsFree(mqttCtx->subscribe.props);
             }
         #endif
 
@@ -460,13 +460,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         #ifdef WOLFMQTT_V5
             {
                 /* Payload Format Indicator */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
                 prop->type = MQTT_PROP_PLAYLOAD_FORMAT_IND;
                 prop->data_int = 1;
             }
             {
                 /* Content Type */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
                 prop->type = MQTT_PROP_CONTENT_TYPE;
                 prop->data_str.str = (char*)"wolf_type";
                 prop->data_str.len = strlen(prop->data_str.str);
@@ -475,7 +475,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 (mqttCtx->topic_alias > 0) &&
                 (mqttCtx->topic_alias < mqttCtx->topic_alias_max)) {
                 /* Topic Alias */
-                MqttProp* prop = MqttProps_Add(&mqttCtx->publish.props);
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
                 prop->type = MQTT_PROP_TOPIC_ALIAS;
                 prop->data_short = mqttCtx->topic_alias;
             }
@@ -500,7 +500,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         #ifdef WOLFMQTT_V5
             if (mqttCtx->connect.props != NULL) {
                 /* Release the allocated properties */
-                MqttProps_Free(mqttCtx->publish.props);
+                MqttClient_PropsFree(mqttCtx->publish.props);
             }
         #endif
 

@@ -6,5 +6,6 @@ if BUILD_EXAMPLES
 dist_noinst_SCRIPTS += scripts/client.test \
                        scripts/firmware.test \
                        scripts/azureiothub.test \
-                       scripts/awsiot.test
+                       scripts/awsiot.test \
+                       scripts/wiot.test
 endif

@@ -558,7 +558,7 @@ WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
     MqttDisconnect* disconnect);
 
 #ifdef WOLFMQTT_V5
-int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc);
+WOLFMQTT_LOCAL int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc);
 WOLFMQTT_LOCAL int MqttDecode_Auth(byte *rx_buf, int rx_buf_len,
     MqttAuth *auth);
 WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len,

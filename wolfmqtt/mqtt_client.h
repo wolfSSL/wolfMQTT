@@ -265,6 +265,7 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
 WOLFMQTT_API int MqttClient_Ping(
     MqttClient *client);
 
+
 #ifdef WOLFMQTT_V5
 /*! \brief      Encodes and sends the MQTT Authentication Request packet and
                 waits for the Ping Response packet
@@ -276,7 +277,28 @@ WOLFMQTT_API int MqttClient_Ping(
 WOLFMQTT_API int MqttClient_Auth(
     MqttClient *client,
 	MqttAuth *auth);
+
+
+/*! \brief      Add a new property
+ *  \discussion Allocate a property structure and add it to the head of the list
+                pointed to by head. To be used prior to calling packet command.
+ *  \param      head        Pointer-pointer to a property structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ */
+WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
+    MqttProp **head);
+
+
+/*! \brief      Free property list
+ *  \discussion Deallocate the list pointed to by head. Must be used after the
+                packet command that used MqttClient_Prop_Add.
+ *  \param      head        Pointer-pointer to a property structure
+ *  \return     Pointer to newly allocated property structure or NULL
+ */
+WOLFMQTT_API void MqttClient_PropsFree(
+    MqttProp *head);
 #endif
+
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
  *  \discussion This is a non-blocking function that will try and send using
@@ -342,6 +364,7 @@ WOLFMQTT_API const char* MqttClient_ReturnCodeToString(
     #define MqttClient_ReturnCodeToString(x) \
                                         "no support for error strings built in"
 #endif /* WOLFMQTT_NO_ERROR_STRINGS */
+
 
 #ifdef __cplusplus
     } /* extern "C" */

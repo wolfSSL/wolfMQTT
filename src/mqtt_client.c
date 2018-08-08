@@ -859,6 +859,17 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 
     return rc;
 }
+
+MqttProp* MqttClient_PropsAdd(MqttProp **head)
+{
+    return(MqttProps_Add(head));
+}
+
+void MqttClient_PropsFree(MqttProp *head)
+{
+    return(MqttProps_Free(head));
+}
+
 #endif /* WOLFMQTT_V5 */
 
 int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
