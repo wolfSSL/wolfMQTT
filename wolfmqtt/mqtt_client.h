@@ -40,6 +40,10 @@
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"
 
+#if defined(WOLFMQTT_PROPERTY_CB) && !defined(WOLFMQTT_V5)
+    #error "WOLFMQTT_V5 must be defined to use WOLFMQTT_PROPERTY_CB"
+#endif
+
 struct _MqttClient;
 
 /*! \brief      Mqtt Message Callback
@@ -94,6 +98,9 @@ typedef struct _MqttSk {
 #ifdef WOLFMQTT_DISCONNECT_CB
     typedef int (*MqttDisconnectCb)(struct _MqttClient* client, int error_code, void* ctx);
 #endif
+#ifdef WOLFMQTT_PROPERTY_CB
+    typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
+#endif
 
 /* Client structure */
 typedef struct _MqttClient {
@@ -115,14 +122,25 @@ typedef struct _MqttClient {
     MqttSk       write;
 
     MqttMsgCb    msg_cb;
-    MqttMessage  msg;   /* temp incomming message
+    MqttMessage  msg;   /* temp incoming message
                          * Used for MqttClient_Ping and MqttClient_WaitType */
 
     void*        ctx;   /* user supplied context for publish callbacks */
 
+#ifdef WOLFMQTT_V5
+    word32  packet_sz_max; /* Server property */
+    byte    max_qos;       /* Server property */
+    byte    retain_avail;  /* Server property */
+    byte    enable_eauth;  /* Enhanced authentication */
+#endif
+
 #ifdef WOLFMQTT_DISCONNECT_CB
     MqttDisconnectCb disconnect_cb;
     void            *disconnect_ctx;
+#endif
+#ifdef WOLFMQTT_PROPERTY_CB
+    MqttPropertyCb property_cb;
+    void          *property_ctx;
 #endif
 } MqttClient;
 
@@ -163,10 +181,24 @@ WOLFMQTT_API int MqttClient_Init(
  */
 WOLFMQTT_API int MqttClient_SetDisconnectCallback(
     MqttClient *client,
-    MqttDisconnectCb cb,
+    MqttDisconnectCb discb,
     void* ctx);
 #endif
 
+#ifdef WOLFMQTT_PROPERTY_CB
+/*! \brief      Sets a property callback with custom context
+ *  \param      client      Pointer to MqttClient structure
+                            (uninitialized is okay)
+ *  \param      propCb      Pointer to property callback function
+ *  \param      ctx         Pointer to your own context
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_SetPropertyCallback(
+    MqttClient *client,
+    MqttPropertyCb propCb,
+    void* ctx);
+#endif
 
 /*! \brief      Encodes and sends the MQTT Connect packet and waits for the
                 Connect Acknowledgment packet
@@ -190,7 +222,8 @@ WOLFMQTT_API int MqttClient_Connect(
  *  \param      client      Pointer to MqttClient structure
  *  \param      publish     Pointer to MqttPublish structure initialized
                             with message data
- *                          Note: MqttPublish and MqttMessage are same structure.
+ *                          Note: MqttPublish and MqttMessage are same
+                            structure.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -234,6 +267,42 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
 WOLFMQTT_API int MqttClient_Ping(
     MqttClient *client);
 
+
+#ifdef WOLFMQTT_V5
+/*! \brief      Encodes and sends the MQTT Authentication Request packet and
+                waits for the Ping Response packet
+ *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      auth        Pointer to MqttAuth structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_Auth(
+    MqttClient *client,
+	MqttAuth *auth);
+
+
+/*! \brief      Add a new property
+ *  \discussion Allocate a property structure and add it to the head of the list
+                pointed to by head. To be used prior to calling packet command.
+ *  \param      head        Pointer-pointer to a property structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ */
+WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
+    MqttProp **head);
+
+
+/*! \brief      Free property list
+ *  \discussion Deallocate the list pointed to by head. Must be used after the
+                packet command that used MqttClient_Prop_Add.
+ *  \param      head        Pointer-pointer to a property structure
+ *  \return     Pointer to newly allocated property structure or NULL
+ */
+WOLFMQTT_API void MqttClient_PropsFree(
+    MqttProp *head);
+#endif
+
+
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
  *  \discussion This is a non-blocking function that will try and send using
                 MqttNet.write
@@ -243,6 +312,19 @@ WOLFMQTT_API int MqttClient_Ping(
  */
 WOLFMQTT_API int MqttClient_Disconnect(
     MqttClient *client);
+
+
+/*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
+ *  \discussion This is a non-blocking function that will try and send using
+                MqttNet.write
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      disconnect  Pointer to MqttDisconnect structure. NULL is valid.
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_Disconnect_ex(
+    MqttClient *client,
+    MqttDisconnect *disconnect);
 
 
 /*! \brief      Waits for packets to arrive. Incoming publish messages
@@ -297,6 +379,7 @@ WOLFMQTT_API const char* MqttClient_ReturnCodeToString(
     #define MqttClient_ReturnCodeToString(x) \
                                         "no support for error strings built in"
 #endif /* WOLFMQTT_NO_ERROR_STRINGS */
+
 
 #ifdef __cplusplus
     } /* extern "C" */

@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# Watson IoT Client test
+
+# Check for application
+[ ! -x ./examples/wiot/wiot ] && echo -e "\n\nWatson IoT MQTT Client doesn't exist" && exit 1
+
+def_args="-T"
+
+# Run
+
+./examples/wiot/wiot $def_args $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nWatson IoT MQTT Client failed! TLS=On, QoS=0" && exit 1
+
+exit 0

@@ -39,7 +39,8 @@
         !defined(FREESCALE_MQX) && !defined(FREESCALE_KSDK_MQX) && \
         !defined(MICROCHIP_MPLAB_HARMONY)
         /* Make sure its not explicitly disabled and not already defined */
-        #if !defined(WOLFMQTT_NO_STDIN_CAP) && !defined(WOLFMQTT_ENABLE_STDIN_CAP)
+        #if !defined(WOLFMQTT_NO_STDIN_CAP) && \
+            !defined(WOLFMQTT_ENABLE_STDIN_CAP)
             /* Wake on stdin activity */
             #define WOLFMQTT_ENABLE_STDIN_CAP
         #endif
@@ -64,10 +65,14 @@
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
 #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
 #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
-
+#define DEFAULT_AUTH_METHOD    "EXTERNAL"
 #define PRINT_BUFFER_SIZE       80
 #define MAX_PACKET_ID           ((1 << 16) - 1)
 
+#ifdef WOLFMQTT_V5
+#define DEFAULT_MAX_PKT_SZ      768 /* The max MQTT control packet size the
+                                       client is willing to accept. */
+#endif
 
 /* MQTT Client state */
 typedef enum MQTTCtxState {
@@ -88,30 +93,10 @@ typedef enum MQTTCtxState {
 /* MQTT Client context */
 typedef struct MQTTCtx {
     MQTTCtxState stat;
-    int return_code;
 
-    /* configuration */
-    const char* app_name;
-    word16 port;
-    const char* host;
-    int use_tls;
-    MqttQoS qos;
-    byte clean_session;
-    word16 keep_alive_sec;
-    const char* client_id;
-    int enable_lwt;
-    const char* username;
-    const char* password;
-    byte *tx_buf, *rx_buf;
-    const char* topic_name;
-    word32 cmd_timeout_ms;
-    byte test_mode;
-    const char* pub_file;
-    int retain;
-#if defined(WOLFMQTT_NONBLOCK)
-    word32 start_sec; /* used for keep-alive */
-#endif
-#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || defined(ENABLE_AWSIOT_EXAMPLE) || defined(WOLFMQTT_CHIBIOS)
+#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || \
+    defined(ENABLE_AWSIOT_EXAMPLE) || \
+    defined(WOLFMQTT_CHIBIOS)
     union {
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
         char sasToken[400];
@@ -133,6 +118,41 @@ typedef struct MQTTCtx {
     MqttUnsubscribe unsubscribe;
     MqttTopic topics[1], *topic;
     MqttPublish publish;
+    MqttDisconnect disconnect;
+
+    /* configuration */
+    MqttQoS qos;
+    const char* app_name;
+    const char* host;
+    const char* username;
+    const char* password;
+    const char* topic_name;
+    const char* pub_file;
+    const char* client_id;
+    byte *tx_buf, *rx_buf;
+    int return_code;
+    int use_tls;
+    int retain;
+    int enable_lwt;
+#ifdef WOLFMQTT_V5
+    int      max_packet_size;
+#endif
+    word32 cmd_timeout_ms;
+#if defined(WOLFMQTT_NONBLOCK)
+    word32  start_sec; /* used for keep-alive */
+#endif
+    word16 keep_alive_sec;
+    word16 port;
+#ifdef WOLFMQTT_V5
+    word16  topic_alias;
+    word16  topic_alias_max; /* Server property */
+#endif
+    byte    clean_session;
+    byte    test_mode;
+#ifdef WOLFMQTT_V5
+    byte    subId_not_avail; /* Server property */
+    byte    enable_eauth; /* Enhanced authentication */
+#endif
 } MQTTCtx;
 
 

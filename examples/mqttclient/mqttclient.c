@@ -27,16 +27,22 @@
 #include "wolfmqtt/mqtt_client.h"
 
 #include "mqttclient.h"
-#include "examples/mqttexample.h"
 #include "examples/mqttnet.h"
 
 /* Locals */
 static int mStopRead = 0;
 
 /* Configuration */
-#define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
-#define TEST_MESSAGE            "test"
 
+/* Maximum size for network read/write callbacks. There is also a v5 define that
+   describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
+#define MAX_BUFFER_SIZE 1024
+#define TEST_MESSAGE    "test"
+
+#ifdef WOLFMQTT_PROPERTY_CB
+#define MAX_CLIENT_ID_LEN 64
+char gClientId[MAX_CLIENT_ID_LEN] = {0};
+#endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
@@ -73,7 +79,9 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         /* for test mode: check if TEST_MESSAGE was received */
         if (mqttCtx->test_mode) {
             if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
-                XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer, msg->buffer_len) == 0) {
+                XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
+                         msg->buffer_len) == 0)
+            {
                 mStopRead = 1;
             }
         }
@@ -97,14 +105,121 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef WOLFMQTT_PROPERTY_CB
+/* The property callback is called after decoding a packet that contains at
+   least one property. The property list is deallocated after returning from
+   the callback. */
+static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
+{
+    MqttProp *prop = head;
+    int rc = 0;
+    MQTTCtx* mqttCtx;
+
+    if ((client == NULL) || (client->ctx == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    mqttCtx = (MQTTCtx*)client->ctx;
+
+    while (prop != NULL)
+    {
+        switch (prop->type)
+        {
+            case MQTT_PROP_ASSIGNED_CLIENT_ID:
+                /* Store assigned client ID from CONNACK*/
+                XSTRNCPY((char*)mqttCtx->client_id,
+                        prop->data_str.str,
+                        MAX_CLIENT_ID_LEN);
+                break;
+
+            case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
+                mqttCtx->subId_not_avail =
+                        prop->data_byte == 0;
+                break;
+
+            case MQTT_PROP_TOPIC_ALIAS_MAX:
+                mqttCtx->topic_alias_max =
+                 (mqttCtx->topic_alias_max < prop->data_short) ?
+                 mqttCtx->topic_alias_max : prop->data_short;
+                break;
+
+            case MQTT_PROP_MAX_PACKET_SZ:
+                if ((prop->data_int > 0) &&
+                    (prop->data_int <= MQTT_PACKET_SZ_MAX))
+                {
+                    client->packet_sz_max =
+                        (client->packet_sz_max < prop->data_int) ?
+                         client->packet_sz_max : prop->data_int;
+                }
+                else {
+                    /* Protocol error */
+                    rc = MQTT_CODE_ERROR_PROPERTY;
+                }
+                break;
+
+            case MQTT_PROP_SERVER_KEEP_ALIVE:
+                mqttCtx->keep_alive_sec = prop->data_short;
+                break;
+
+            case MQTT_PROP_MAX_QOS:
+                client->max_qos = prop->data_byte;
+                break;
+
+            case MQTT_PROP_RETAIN_AVAIL:
+                client->retain_avail = prop->data_byte;
+                break;
+
+            case MQTT_PROP_REASON_STR:
+                PRINTF("Reason String: %s", prop->data_str.str);
+                break;
+
+            case MQTT_PROP_PLAYLOAD_FORMAT_IND:
+            case MQTT_PROP_MSG_EXPIRY_INTERVAL:
+            case MQTT_PROP_CONTENT_TYPE:
+            case MQTT_PROP_RESP_TOPIC:
+            case MQTT_PROP_CORRELATION_DATA:
+            case MQTT_PROP_SUBSCRIPTION_ID:
+            case MQTT_PROP_SESSION_EXPIRY_INTERVAL:
+            case MQTT_PROP_TOPIC_ALIAS:
+            case MQTT_PROP_TYPE_MAX:
+            case MQTT_PROP_RECEIVE_MAX:
+            case MQTT_PROP_USER_PROP:
+            case MQTT_PROP_WILDCARD_SUB_AVAIL:
+            case MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL:
+            case MQTT_PROP_RESP_INFO:
+            case MQTT_PROP_SERVER_REF:
+            case MQTT_PROP_AUTH_METHOD:
+            case MQTT_PROP_AUTH_DATA:
+                break;
+            case MQTT_PROP_REQ_PROB_INFO:
+            case MQTT_PROP_WILL_DELAY_INTERVAL:
+            case MQTT_PROP_REQ_RESP_INFO:
+            case MQTT_PROP_NONE:
+            default:
+                /* Invalid */
+                rc = MQTT_CODE_ERROR_PROPERTY;
+                break;
+        }
+        prop = prop->next;
+    }
+
+    (void)ctx;
+
+    return rc;
+}
+#endif
+
 int mqttclient_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
+#ifdef WOLFMQTT_PROPERTY_CB
+    int assignedClientId = 0;
+#endif
 
     switch (mqttCtx->stat) {
         case WMQ_BEGIN:
         {
-            PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
+            PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
+                    mqttCtx->use_tls);
 
             FALL_THROUGH;
         }
@@ -159,7 +274,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
         #endif
-
+        #ifdef WOLFMQTT_PROPERTY_CB
+            rc = MqttClient_SetPropertyCallback(&mqttCtx->client,
+                    mqtt_property_cb, NULL);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+        #endif
             FALL_THROUGH;
         }
 
@@ -168,7 +289,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_TCP_CONN;
 
             /* Connect to broker */
-            rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host, mqttCtx->port,
+            rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
+                   mqttCtx->port,
                 DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
@@ -196,12 +318,58 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 mqttCtx->lwt_msg.retain = 0;
                 mqttCtx->lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
-                mqttCtx->lwt_msg.total_len = (word16)XSTRLEN(mqttCtx->client_id);
+                mqttCtx->lwt_msg.total_len =
+                  (word16)XSTRLEN(mqttCtx->client_id);
             }
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
+        #ifdef WOLFMQTT_V5
+            mqttCtx->client.packet_sz_max = mqttCtx->max_packet_size;
+            mqttCtx->client.enable_eauth = mqttCtx->enable_eauth;
 
+            if (mqttCtx->client.enable_eauth == 1)
+            {
+                /* Enhanced authentication */
+                /* Add property: Authentication Method */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_AUTH_METHOD;
+                prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
+                prop->data_str.len = XSTRLEN(prop->data_str.str);
+            }
+            {
+                /* Request Response Information */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_REQ_RESP_INFO;
+                prop->data_byte = 1;
+            }
+            {
+                /* Request Problem Information */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_REQ_PROB_INFO;
+                prop->data_byte = 1;
+            }
+            {
+                /* Maximum Packet Size */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_MAX_PACKET_SZ;
+                prop->data_int = (word32)mqttCtx->max_packet_size;
+            }
+            {
+                /* Topic Alias Maximum */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
+                prop->data_short = mqttCtx->topic_alias_max;
+            }
+        #endif
+        #ifdef WOLFMQTT_PROPERTY_CB
+            /* Check if client ID is NULL. It will be assigned in the
+               CONNACK properties. */
+            if (XSTRLEN(mqttCtx->client_id) == 0) {
+                assignedClientId = 1;
+                mqttCtx->client_id = &gClientId[0];
+            }
+        #endif
             FALL_THROUGH;
         }
 
@@ -220,6 +388,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
 
+        #ifdef WOLFMQTT_V5
+            if (mqttCtx->connect.props != NULL) {
+                /* Release the allocated properties */
+                MqttClient_PropsFree(mqttCtx->connect.props);
+            }
+        #endif
+
             /* Validate Connect Ack info */
             PRINTF("MQTT Connect Ack: Return Code %u, Session Present %d",
                 mqttCtx->connect.ack.return_code,
@@ -228,14 +403,35 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     1 : 0
             );
 
+        #ifdef WOLFMQTT_PROPERTY_CB
+            if (assignedClientId == 1) {
+                /* Print the acquired client ID */
+                PRINTF("MQTT Connect Ack: Assigned Client ID: %s",
+                        mqttCtx->client_id);
+            }
+        #endif
+
             /* Build list of topics */
-            mqttCtx->topics[0].topic_filter = mqttCtx->topic_name;
-            mqttCtx->topics[0].qos = mqttCtx->qos;
+            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
+            i = 0;
+            mqttCtx->topics[i].topic_filter = mqttCtx->topic_name;
+            mqttCtx->topics[i].qos = mqttCtx->qos;
+
+        #ifdef WOLFMQTT_V5
+            if (mqttCtx->subId_not_avail != 1) {
+                /* Subscription Identifier */
+                MqttProp* prop;
+                mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
+                prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
+                prop->type = MQTT_PROP_SUBSCRIPTION_ID;
+                prop->data_int = mqttCtx->topics[i].sub_id;
+            }
+        #endif
 
             /* Subscribe Topic */
-            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
-            mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
+            mqttCtx->subscribe.topic_count =
+                    sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
 
             FALL_THROUGH;
@@ -249,6 +445,14 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
+
+        #ifdef WOLFMQTT_V5
+            if (mqttCtx->subscribe.props != NULL) {
+                /* Release the allocated properties */
+                MqttClient_PropsFree(mqttCtx->subscribe.props);
+            }
+        #endif
+
             PRINTF("MQTT Subscribe: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
@@ -272,6 +476,29 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
             mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+        #ifdef WOLFMQTT_V5
+            {
+                /* Payload Format Indicator */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+                prop->type = MQTT_PROP_PLAYLOAD_FORMAT_IND;
+                prop->data_int = 1;
+            }
+            {
+                /* Content Type */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+                prop->type = MQTT_PROP_CONTENT_TYPE;
+                prop->data_str.str = (char*)"wolf_type";
+                prop->data_str.len = XSTRLEN(prop->data_str.str);
+            }
+            if ((mqttCtx->topic_alias_max > 0) &&
+                (mqttCtx->topic_alias > 0) &&
+                (mqttCtx->topic_alias < mqttCtx->topic_alias_max)) {
+                /* Topic Alias */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+                prop->type = MQTT_PROP_TOPIC_ALIAS;
+                prop->data_short = mqttCtx->topic_alias;
+            }
+        #endif
 
             FALL_THROUGH;
         }
@@ -285,10 +512,17 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 return rc;
             }
             PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+                mqttCtx->publish.topic_name,
+                MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
+        #ifdef WOLFMQTT_V5
+            if (mqttCtx->connect.props != NULL) {
+                /* Release the allocated properties */
+                MqttClient_PropsFree(mqttCtx->publish.props);
+            }
+        #endif
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
@@ -325,7 +559,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
                 else if (rc == MQTT_CODE_STDIN_WAKE) {
                     XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
-                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
+                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
+                            stdin) != NULL)
+                    {
                         rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
 
                         /* Publish Topic */
@@ -338,7 +574,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                         mqttCtx->publish.packet_id = mqtt_get_packetid();
                         mqttCtx->publish.buffer = mqttCtx->rx_buf;
                         mqttCtx->publish.total_len = (word16)rc;
-                        rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+                        rc = MqttClient_Publish(&mqttCtx->client,
+                               &mqttCtx->publish);
                         PRINTF("MQTT Publish: Topic %s, %s (%d)",
                             mqttCtx->publish.topic_name,
                             MqttClient_ReturnCodeToString(rc), rc);
@@ -390,7 +627,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         case WMQ_UNSUB:
         {
             /* Unsubscribe Topics */
-            rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
+            rc = MqttClient_Unsubscribe(&mqttCtx->client,
+                   &mqttCtx->unsubscribe);
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
                 /* Track elapsed time with no activity and trigger timeout */
@@ -411,7 +649,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         case WMQ_DISCONNECT:
         {
             /* Disconnect */
-            rc = MqttClient_Disconnect(&mqttCtx->client);
+            rc = MqttClient_Disconnect_ex(&mqttCtx->client,
+                   &mqttCtx->disconnect);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
@@ -511,7 +750,9 @@ exit:
         }
 
     #ifdef USE_WINDOWS_API
-        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
+        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler,
+              TRUE) == FALSE)
+        {
             PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
         }
     #elif HAVE_SIGNAL

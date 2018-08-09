@@ -113,7 +113,34 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 We setup an AWS IoT endpoint and testing device certificate for testing. The AWS server uses TLS client certificate for authentication. The example is located in /examples/aws/. The example subscribes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta` and publishes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update`.
 
 ### Watson IoT Example
-This example enables the wolfMQTT client to connect to the IBM Watson Internet of Things (WIOT) Platform. The WIOT Platform has a limited test broker called "Quickstart" that allows non-secure connections to exercise the component. The example is located in /examples/wiot/.
+This example enables the wolfMQTT client to connect to the IBM Watson Internet of Things (WIOT) Platform. The WIOT Platform has a limited test broker called "Quickstart" that allows non-secure connections to exercise the component. The example is located in /examples/wiot/. Works with MQTT v5 support enabled. 
+
+
+## v5.0 Specification Support
+The wolfMQTT client supports connecting to v5 enabled brokers when built with the --enable-mqtt5 option. Handling properties received from the server is accomplished via a callback when the --enable-propcb option is set. The folowing v5.0 specifciation features are supported by the wolfMQTT:
+* AUTH packet
+* User properties
+* Server connect ACK properties
+* Format and content type for publish
+* Server disconnect
+* Reason codes and strings
+* Maximum packet size
+* Server assigned client identifier
+* Subscription ID
+* Topic Alias
+
+The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
+* Flespi
+** Requires an account tied token that is regnerated hourly.
+** `./examples/mqttclient/mqttclient -h "mqtt.flespi.io" -u "<your-flespi-token>"`
+* VerneMQ MQTTv5 preview
+** Runs locally.
+** `./examples/mqttclient/mqttclient -h localhost`
+* HiveMQ 4.0.0 EAP
+** Runs locally.
+** `./examples/mqttclient/mqttclient -h localhost`
+* Watson IoT Quickserver
+** `./examples/wiot/wiot`
 
 
 ## Release Notes
