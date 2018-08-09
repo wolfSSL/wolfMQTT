@@ -116,7 +116,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_ASSIGNED_CLIENT_ID:
                 /* Store assigned client ID from CONNACK*/
                 ((MQTTCtx*)client->ctx)->client_id =
-                    WOLFMQTT_MALLOC(prop->data_str.len + 1);
+                    (const char *)WOLFMQTT_MALLOC(prop->data_str.len + 1);
                 strncpy((char*)((MQTTCtx*)client->ctx)->client_id,
                         prop->data_str.str,
                         prop->data_str.len);
@@ -184,6 +184,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_REQ_PROB_INFO:
             case MQTT_PROP_WILL_DELAY_INTERVAL:
             case MQTT_PROP_REQ_RESP_INFO:
+            case MQTT_PROP_NONE:
             default:
                 /* Invalid */
                 rc = MQTT_CODE_ERROR_PROPERTY;

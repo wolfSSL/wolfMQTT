@@ -34,30 +34,30 @@ struct MqttPropMatrix {
     word16 packet_type_mask; /* allowed packets */
 };
 static const struct MqttPropMatrix gPropMatrix[] = {
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_PLAYLOAD_FORMAT_IND,        MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CONTENT_TYPE,               MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_RESP_TOPIC,                 MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CORRELATION_DATA,           MQTT_DATA_TYPE_BINARY,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_SUBSCRIPTION_ID,            MQTT_DATA_TYPE_VAR_INT,
         (1 << MQTT_PACKET_TYPE_PUBLISH) |
         (1 << MQTT_PACKET_TYPE_SUBSCRIBE) },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_SESSION_EXPIRY_INTERVAL,    MQTT_DATA_TYPE_INT,
         (1 << MQTT_PACKET_TYPE_CONNECT) |
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
@@ -66,7 +66,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
     { MQTT_PROP_SERVER_KEEP_ALIVE,          MQTT_DATA_TYPE_SHORT,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_AUTH_METHOD,                MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT) |
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
@@ -83,12 +83,12 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_RESP_INFO,                  MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_SERVER_REF,                 MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
         (1 << MQTT_PACKET_TYPE_DISCONNECT) },
-    { 0, 0, 0 },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_REASON_STR,                 MQTT_DATA_TYPE_STRING,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) |
         (1 << MQTT_PACKET_TYPE_PUBLISH_ACK) |
@@ -99,7 +99,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK) |
         (1 << MQTT_PACKET_TYPE_DISCONNECT) |
         (1 << MQTT_PACKET_TYPE_AUTH) },
-    { 0, 0, 0 },
+    { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_RECEIVE_MAX,                MQTT_DATA_TYPE_SHORT,
         (1 << MQTT_PACKET_TYPE_CONNECT) |
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
@@ -123,7 +123,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
     { MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL, MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT_ACK) },
-    { MQTT_PROP_TYPE_MAX, 0, 0 }
+    { MQTT_PROP_TYPE_MAX, MQTT_DATA_TYPE_NONE, 0 }
 };
 
 #ifndef MQTT_MAX_PROPS
@@ -447,6 +447,7 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
                 }
                 break;
             }
+            case MQTT_DATA_TYPE_NONE:
             default:
             {
                 /* Do nothing */
@@ -563,6 +564,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf, word32 
                 prop_len -= tmp;
                 break;
             }
+            case MQTT_DATA_TYPE_NONE:
             default:
             {
                 /* Do nothing */
@@ -910,7 +912,7 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
         remain_len++;
 
         /* Determine length of properties */
-        remain_len += props_len = MqttEncode_Props(type, publish_resp->props, NULL);
+        remain_len += props_len = MqttEncode_Props((MqttPacketType)type, publish_resp->props, NULL);
 
         /* Determine the length of the "property length" */
         remain_len += MqttEncode_Vbi(NULL, props_len);
@@ -943,7 +945,7 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
         tx_payload += MqttEncode_Vbi(tx_payload, props_len);
 
         /* Encode properties */
-        tx_payload += MqttEncode_Props(type, publish_resp->props, tx_payload);
+        tx_payload += MqttEncode_Props((MqttPacketType)type, publish_resp->props, tx_payload);
     }
 #endif
 
@@ -985,7 +987,7 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
             if (props_len > 0) {
                 /* Decode the Properties */
-                rx_payload += MqttDecode_Props(type, &publish_resp->props,
+                rx_payload += MqttDecode_Props((MqttPacketType)type, &publish_resp->props,
                                rx_payload, props_len);
             }
         }
@@ -1460,7 +1462,7 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 // TODO: Need a mutex here
 MqttProp* MqttProps_Add(MqttProp **head)
 {
-    MqttProp *new = NULL, *prev = NULL, *cur;
+    MqttProp *new_prop = NULL, *prev = NULL, *cur;
     int i;
 
     if (head == NULL) {
@@ -1479,23 +1481,23 @@ MqttProp* MqttProps_Add(MqttProp **head)
     for (i = 0; i < MQTT_MAX_PROPS; i++) {
         if (clientPropStack[i].type == 0) {
             /* Found one */
-            new = &clientPropStack[i];
-            memset(new, 0, sizeof(MqttProp));
+            new_prop = &clientPropStack[i];
+            memset(new_prop, 0, sizeof(MqttProp));
         }
     }
 
-    if (new != NULL) {
+    if (new_prop != NULL) {
         if (prev == NULL) {
             /* Start a new list */
-            *head = new;
+            *head = new_prop;
         }
         else {
             /* Add to the existing list */
-            prev->next = new;
+            prev->next = new_prop;
         }
     }
 
-    return new;
+    return new_prop;
 }
 
 /* Free properties */
@@ -1503,7 +1505,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
 void MqttProps_Free(MqttProp *head)
 {
     while (head != NULL) {
-        head->type = 0;
+        head->type = (MqttPropertyType)0;
         head = head->next;
     }
 }

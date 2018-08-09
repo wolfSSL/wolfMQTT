@@ -45,6 +45,7 @@
 
 /* DATA TYPES */
 typedef enum MqttDataType {
+    MQTT_DATA_TYPE_NONE=0,
     MQTT_DATA_TYPE_BYTE,
     MQTT_DATA_TYPE_SHORT,
     MQTT_DATA_TYPE_INT,
@@ -56,6 +57,7 @@ typedef enum MqttDataType {
 
 /* PROPERTIES */
 typedef enum MqttPropertyType {
+    MQTT_PROP_NONE=0,
     MQTT_PROP_PLAYLOAD_FORMAT_IND = 1,
     MQTT_PROP_MSG_EXPIRY_INTERVAL = 2,
     MQTT_PROP_CONTENT_TYPE = 3,
