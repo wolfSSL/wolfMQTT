@@ -774,6 +774,13 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
         MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK, unsubscribe->packet_id,
             &unsubscribe_ack);
 
+#ifdef WOLFMQTT_V5
+    if (unsubscribe_ack.props != NULL) {
+        /* Release the allocated properties */
+        MqttClient_PropsFree(unsubscribe_ack.props);
+    }
+#endif
+
     return rc;
 }
 
@@ -808,6 +815,11 @@ int MqttClient_Ping(MqttClient *client)
 
 int MqttClient_Disconnect(MqttClient *client)
 {
+    return MqttClient_Disconnect_ex(client, NULL);
+}
+
+int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *disconnect)
+{
     int rc, len;
 
     /* Validate required arguments */
@@ -816,8 +828,7 @@ int MqttClient_Disconnect(MqttClient *client)
     }
 
     /* Encode the disconnect packet */
-    //TODO: Use the MqttDisconnect structure
-    rc = MqttEncode_Disconnect(client->tx_buf, client->tx_buf_len, NULL);
+    rc = MqttEncode_Disconnect(client->tx_buf, client->tx_buf_len, disconnect);
     if (rc <= 0) { return rc; }
     len = rc;
 

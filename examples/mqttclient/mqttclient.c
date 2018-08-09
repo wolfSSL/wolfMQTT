@@ -403,8 +403,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         #ifdef WOLFMQTT_V5
             if (mqttCtx->subId_not_avail != 1) {
                 /* Subscription Identifier */
+                MqttProp* prop;
                 mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
-                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
+                prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
                 prop->type = MQTT_PROP_SUBSCRIPTION_ID;
                 prop->data_int = mqttCtx->topics[i].sub_id;
             }
@@ -625,7 +626,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         case WMQ_DISCONNECT:
         {
             /* Disconnect */
-            rc = MqttClient_Disconnect(&mqttCtx->client);
+            rc = MqttClient_Disconnect_ex(&mqttCtx->client, &mqttCtx->disconnect);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }

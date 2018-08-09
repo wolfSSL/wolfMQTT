@@ -126,7 +126,9 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_TYPE_MAX, 0, 0 }
 };
 
+#ifndef MQTT_MAX_PROPS
 #define MQTT_MAX_PROPS 10
+#endif
 
 /* Property structure allocation array. Property type equal to zero indicates unused element. */
 MqttProp clientPropStack[MQTT_MAX_PROPS];
@@ -153,23 +155,24 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     }
 
     /* Encode the length remaining into the header */
-    header_len = MqttEncode_RemainLen(header, tx_buf_len, remain_len);
-    if (header_len < 0) {
-        return header_len;
+    header_len = MqttEncode_Vbi(header->len, remain_len);
+    if (header_len > 0) {
+        header_len++; /* Add one for type and flags */
     }
+
+    (void) tx_buf_len;
 
     return header_len;
 }
 
-static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len,
-    int *remain_len, byte type, MqttQoS *p_qos, byte *p_retain,
-    byte *p_duplicate)
+static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
+    byte type, MqttQoS *p_qos, byte *p_retain, byte *p_duplicate)
 {
     int header_len;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
     /* Decode the length remaining */
-    header_len = MqttDecode_RemainLen(header, rx_buf_len, remain_len);
+    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len);
     if (header_len < 0) {
         return header_len;
     }
@@ -192,44 +195,16 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len,
             MQTT_PACKET_FLAG_DUPLICATE) ? 1 : 0;
     }
 
+    header_len++; /* Add one for type and flags */
+
+    (void)rx_buf_len;
+
     return header_len;
 }
 
 
-/* Packet Element Encoders/Decoders */
-/* Returns number of decoded bytes, errors are negative value */
-int MqttDecode_RemainLen(MqttPacket *header, int buf_len, int *remain_len)
-{
-    int decode_bytes = 0;
-    int multiplier = 1;
-    byte tmp_len;
-
-    if (header == NULL || remain_len == NULL || buf_len <= 0) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-    *remain_len = 0;
-    do {
-        /* Check decoded length byte count */
-        if ((decode_bytes + 1) >= buf_len) {
-            return 0; /* Zero indicates we need another byte */
-        }
-        if (decode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
-            return MQTT_CODE_ERROR_MALFORMED_DATA;
-        }
-
-        /* Decode Length */
-        tmp_len = header->len[decode_bytes++];
-        *remain_len += (tmp_len & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
-        multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
-    } while (tmp_len & MQTT_PACKET_LEN_ENCODE_MASK);
-
-    return decode_bytes + 1; /* Add byte for header flags/type */
-}
-
 /* Returns positive number of buffer bytes decoded or negative error. "value"
    is the decoded variable byte integer */
-// TODO: Update other functions to use these generic routines
 int MqttDecode_Vbi(byte *buf, word32 *value)
 {
     int rc = 0;
@@ -251,39 +226,6 @@ int MqttDecode_Vbi(byte *buf, word32 *value)
     } while ((encodedByte & MQTT_PACKET_LEN_ENCODE_MASK) != 0);
 
     return rc;
-}
-
-/* Returns number of encoded bytes, errors are negative value */
-int MqttEncode_RemainLen(MqttPacket *header, int buf_len, int remain_len)
-{
-    int encode_bytes = 0;
-    byte tmp_len;
-
-    if (header == NULL || remain_len < 0) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-    do {
-        /* Check decoded length byte count */
-        if ((encode_bytes + 1) >= buf_len) {
-            return 0; /* Zero indicates we need another byte */
-        }
-        if (encode_bytes >= MQTT_PACKET_MAX_LEN_BYTES) {
-            return MQTT_CODE_ERROR_MALFORMED_DATA;
-        }
-
-        /* Encode length */
-        tmp_len = (remain_len % MQTT_PACKET_LEN_ENCODE_MASK);
-        remain_len /= MQTT_PACKET_LEN_ENCODE_MASK;
-
-        /* If more length, set the top bit of this byte */
-        if (remain_len > 0) {
-            tmp_len |= MQTT_PACKET_LEN_ENCODE_MASK;
-        }
-        header->len[encode_bytes++] = tmp_len;
-    } while (remain_len > 0);
-
-    return encode_bytes + 1; /* Add byte for header flags/type */
 }
 
 /* Encodes to buf a non-negative integer "x" in a Variable Byte Integer scheme.
@@ -1518,8 +1460,14 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 // TODO: Need a mutex here
 MqttProp* MqttProps_Add(MqttProp **head)
 {
-    MqttProp *new = NULL, *prev = NULL, *cur = *head;
+    MqttProp *new = NULL, *prev = NULL, *cur;
     int i;
+
+    if (head == NULL) {
+        return NULL;
+    }
+
+    cur = *head;
 
     /* Find the end of the parameter list */
     while (cur != NULL) {
@@ -1560,17 +1508,6 @@ void MqttProps_Free(MqttProp *head)
     }
 }
 
-/* Find a specific property by type */
-MqttProp* MqttProps_FindType(MqttProp *head, MqttPropertyType type)
-{
-    while(head != NULL) {
-        if (head->type == type) {
-            break;
-        }
-    }
-
-    return head;
-}
 #endif /* WOLFMQTT_V5 */
 
 static int MqttPacket_HandleNetError(MqttClient *client, int rc)
@@ -1639,7 +1576,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
             do {
                 /* Try and decode remaining length */
-                rc = MqttDecode_RemainLen(header, client->packet.header_len, &client->packet.remain_len);
+                rc = 1 + MqttDecode_Vbi(header->len, (word32*)&client->packet.remain_len);
                 if (rc < 0) { /* Indicates error */
                     return MqttPacket_HandleNetError(client, rc);
                 }

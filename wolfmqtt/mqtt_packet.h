@@ -477,7 +477,7 @@ typedef struct _MqttUnsubscribeAck {
     word16      packet_id;
 #ifdef WOLFMQTT_V5
     MqttProp* props;
-    byte       *reason_codes;
+    byte*     reason_codes;
 #endif
 } MqttUnsubscribeAck;
 
@@ -510,11 +510,6 @@ WOLFMQTT_LOCAL int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf,
     int rx_buf_len, int timeout_ms);
 
 /* Packet Element Encoders/Decoders */
-WOLFMQTT_LOCAL int MqttDecode_RemainLen(MqttPacket *header, int buf_len,
-    int *remain_len);
-WOLFMQTT_LOCAL int MqttEncode_RemainLen(MqttPacket *header, int buf_len,
-    int remain_len);
-
 WOLFMQTT_LOCAL int MqttDecode_Num(byte* buf, word16 *len);
 WOLFMQTT_LOCAL int MqttEncode_Num(byte *buf, word16 len);
 

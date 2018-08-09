@@ -271,6 +271,7 @@ WOLFMQTT_API int MqttClient_Ping(
                 waits for the Ping Response packet
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
+ *  \param      auth        Pointer to MqttAuth structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -304,12 +305,24 @@ WOLFMQTT_API void MqttClient_PropsFree(
  *  \discussion This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
- *  \param      auth        Pointer to MqttAuth structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Disconnect(
     MqttClient *client);
+
+
+/*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
+ *  \discussion This is a non-blocking function that will try and send using
+                MqttNet.write
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      disconnect  Pointer to MqttDisconnect structure. NULL is valid.
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_Disconnect_ex(
+    MqttClient *client,
+    MqttDisconnect *disconnect);
 
 
 /*! \brief      Waits for packets to arrive. Incoming publish messages
