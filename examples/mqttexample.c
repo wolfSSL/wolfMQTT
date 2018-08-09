@@ -131,7 +131,8 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     PRINTF("-w <str>    Password");
     PRINTF("-n <str>    Topic name, default %s", mqttCtx->topic_name);
     PRINTF("-r          Set Retain flag on publish message");
-    PRINTF("-C <num>    Command Timeout, default %dms", mqttCtx->cmd_timeout_ms);
+    PRINTF("-C <num>    Command Timeout, default %dms",
+        mqttCtx->cmd_timeout_ms);
 #ifdef WOLFMQTT_V5
     PRINTF("-P <num>    Max packet size the client will accept, default: %d",
             DEFAULT_MAX_PKT_SZ);
@@ -175,7 +176,8 @@ int rc;
         #define MQTT_V5_ARGS ""
     #endif
 
-    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:n:C:Tf:rt" MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
+    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:n:C:Tf:rt" \
+                            MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
         switch ((char)rc) {
         case '?' :
             mqtt_show_usage(mqttCtx);
@@ -382,7 +384,8 @@ int mqtt_tls_cb(MqttClient* client)
     #if !defined(NO_FILESYSTEM)
         if (mTlsCaFile) {
 	        /* Load CA certificate file */
-	        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx, mTlsCaFile, NULL);
+	        rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx,
+	                mTlsCaFile, NULL);
 	    }
 
         /* If using a client certificate it can be loaded using: */

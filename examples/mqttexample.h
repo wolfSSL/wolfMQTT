@@ -39,7 +39,8 @@
         !defined(FREESCALE_MQX) && !defined(FREESCALE_KSDK_MQX) && \
         !defined(MICROCHIP_MPLAB_HARMONY)
         /* Make sure its not explicitly disabled and not already defined */
-        #if !defined(WOLFMQTT_NO_STDIN_CAP) && !defined(WOLFMQTT_ENABLE_STDIN_CAP)
+        #if !defined(WOLFMQTT_NO_STDIN_CAP) && \
+            !defined(WOLFMQTT_ENABLE_STDIN_CAP)
             /* Wake on stdin activity */
             #define WOLFMQTT_ENABLE_STDIN_CAP
         #endif
@@ -93,7 +94,9 @@ typedef enum MQTTCtxState {
 typedef struct MQTTCtx {
     MQTTCtxState stat;
 
-#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || defined(ENABLE_AWSIOT_EXAMPLE) || defined(WOLFMQTT_CHIBIOS)
+#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || \
+    defined(ENABLE_AWSIOT_EXAMPLE) || \
+    defined(WOLFMQTT_CHIBIOS)
     union {
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
         char sasToken[400];
@@ -132,12 +135,11 @@ typedef struct MQTTCtx {
     int retain;
     int enable_lwt;
 #ifdef WOLFMQTT_V5
-    int     max_packet_size;
-    int     enable_eauth; /* Enhanced authentication */
+    int      max_packet_size;
 #endif
     word32 cmd_timeout_ms;
 #if defined(WOLFMQTT_NONBLOCK)
-    word32 start_sec; /* used for keep-alive */
+    word32  start_sec; /* used for keep-alive */
 #endif
     word16 keep_alive_sec;
     word16 port;
@@ -145,10 +147,11 @@ typedef struct MQTTCtx {
     word16  topic_alias;
     word16  topic_alias_max; /* Server property */
 #endif
-    byte clean_session;
-    byte test_mode;
+    byte    clean_session;
+    byte    test_mode;
 #ifdef WOLFMQTT_V5
     byte    subId_not_avail; /* Server property */
+    byte    enable_eauth; /* Enhanced authentication */
 #endif
 } MQTTCtx;
 

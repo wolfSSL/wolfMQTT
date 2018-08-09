@@ -45,7 +45,7 @@
 
 /* DATA TYPES */
 typedef enum MqttDataType {
-    MQTT_DATA_TYPE_NONE=0,
+    MQTT_DATA_TYPE_NONE = 0,
     MQTT_DATA_TYPE_BYTE,
     MQTT_DATA_TYPE_SHORT,
     MQTT_DATA_TYPE_INT,
@@ -57,7 +57,7 @@ typedef enum MqttDataType {
 
 /* PROPERTIES */
 typedef enum MqttPropertyType {
-    MQTT_PROP_NONE=0,
+    MQTT_PROP_NONE = 0,
     MQTT_PROP_PLAYLOAD_FORMAT_IND = 1,
     MQTT_PROP_MSG_EXPIRY_INTERVAL = 2,
     MQTT_PROP_CONTENT_TYPE = 3,
@@ -192,7 +192,8 @@ typedef struct _MqttMessage {
     MqttQoS     qos;
     byte        retain;
     byte        duplicate;
-    const char *topic_name;   /* Pointer is valid only when msg_new set in callback */
+    const char *topic_name;   /* Pointer is valid only when
+                                 msg_new set in callback */
     word16      topic_name_len;
     word32      total_len;    /* Payload total length */
     byte       *buffer;       /* Payload buffer */
@@ -555,7 +556,8 @@ WOLFMQTT_LOCAL int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
     MqttDisconnect* disconnect);
 
 #ifdef WOLFMQTT_V5
-WOLFMQTT_LOCAL int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc);
+WOLFMQTT_LOCAL int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len,
+    MqttDisconnect *disc);
 WOLFMQTT_LOCAL int MqttDecode_Auth(byte *rx_buf, int rx_buf_len,
     MqttAuth *auth);
 WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len,

@@ -131,6 +131,7 @@ typedef struct _MqttClient {
     word32  packet_sz_max; /* Server property */
     byte    max_qos;       /* Server property */
     byte    retain_avail;  /* Server property */
+    byte    enable_eauth;  /* Enhanced authentication */
 #endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -221,7 +222,8 @@ WOLFMQTT_API int MqttClient_Connect(
  *  \param      client      Pointer to MqttClient structure
  *  \param      publish     Pointer to MqttPublish structure initialized
                             with message data
- *                          Note: MqttPublish and MqttMessage are same structure.
+ *                          Note: MqttPublish and MqttMessage are same
+                            structure.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
