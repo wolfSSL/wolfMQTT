@@ -397,7 +397,7 @@ exit:
 
     /* check for error */
     if (rc != 0) {
-        if (errno == EINPROGRESS || errno = EWOULDBLOCK) {
+        if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
 
