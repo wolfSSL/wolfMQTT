@@ -1609,21 +1609,14 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
         case MQTT_PK_READ_HEAD:
         {
+            int i;
             client->packet.stat = MQTT_PK_READ_HEAD;
 
-            do {
-                /* Try and decode remaining length */
-                rc = MqttDecode_Vbi(header->len,
-                        (word32*)&client->packet.remain_len);
-                if (rc < 0) { /* Indicates error */
-                    return MqttPacket_HandleNetError(client, rc);
-                }
-                /* Indicates decode success and rc is len of header */
-                else if (rc > 0) {
-                    /* Add size of type and flags */
-                    rc += sizeof(header->type_flags);
-                    client->packet.header_len = rc;
-                    break; /* exit while */
+            for (i = 0; i < MQTT_PACKET_MAX_LEN_BYTES; i++) {
+                /* Check if another byte is needed */
+                if ((header->len[i] & MQTT_PACKET_LEN_ENCODE_MASK) == 0) {
+                    /* Variable byte length can be determined */
+                    break;
                 }
 
                 /* Read next byte and try decode again */
@@ -1638,8 +1631,25 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                              MQTT_CODE_ERROR_NETWORK);
                 }
                 client->packet.header_len += len;
+            }
 
-            } while (client->packet.header_len < MQTT_PACKET_MAX_SIZE);
+            if (i == MQTT_PACKET_MAX_LEN_BYTES) {
+                return MqttPacket_HandleNetError(client,
+                        MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+
+            /* Try and decode remaining length */
+            rc = MqttDecode_Vbi(header->len,
+                    (word32*)&client->packet.remain_len);
+            if (rc < 0) { /* Indicates error */
+                return MqttPacket_HandleNetError(client, rc);
+            }
+            /* Indicates decode success and rc is len of header */
+            else {
+                /* Add size of type and flags */
+                rc += sizeof(header->type_flags);
+                client->packet.header_len = rc;
+            }
 
             FALL_THROUGH;
         }
