@@ -82,6 +82,7 @@ static int mStopRead = 0;
 #define AZURE_KEEP_ALIVE_SEC    DEFAULT_KEEP_ALIVE_SEC
 #define AZURE_CMD_TIMEOUT_MS    DEFAULT_CMD_TIMEOUT_MS
 #define AZURE_TOKEN_EXPIRY_SEC  (60 * 60 * 1) /* 1 hour */
+#define AZURE_TOKEN_SIZE        400
 
 #define AZURE_DEVICE_NAME       AZURE_HOST"/devices/"AZURE_DEVICE_ID
 #define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID
@@ -279,8 +280,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             url_encoder_init();
 
             /* build sas token for password */
-            rc = SasTokenCreate(mqttCtx->buffer.sasToken,
-                (int)sizeof(mqttCtx->buffer.sasToken));
+            rc = SasTokenCreate((char*)mqttCtx->app_ctx, AZURE_TOKEN_SIZE);
             if (rc < 0) {
                 goto exit;
             }
@@ -347,7 +347,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
 
             /* Authentication */
             mqttCtx->connect.username = AZURE_USERNAME;
-            mqttCtx->connect.password = mqttCtx->buffer.sasToken;
+            mqttCtx->connect.password = mqttCtx->app_ctx;
 
             FALL_THROUGH;
         }
@@ -620,6 +620,7 @@ exit:
         int rc;
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
         MQTTCtx mqttCtx;
+        char sasToken[AZURE_TOKEN_SIZE] = {0};
 
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
@@ -631,6 +632,7 @@ exit:
         mqttCtx.topic_name = AZURE_MSGS_TOPIC_NAME;
         mqttCtx.cmd_timeout_ms = AZURE_CMD_TIMEOUT_MS;
         mqttCtx.use_tls = 1;
+        mqttCtx.app_ctx = (void*)sasToken;
 
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);

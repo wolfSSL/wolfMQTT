@@ -639,12 +639,18 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
         {
             /* Encode the publish packet */
             rc = MqttEncode_Publish(client->tx_buf, client->tx_buf_len,
-                    publish);
+                    publish, 0);
             if (rc <= 0) {
                 return rc;
             }
 
             client->write.len = rc;
+            publish->buffer_pos = 0;
+
+            /* Backwards compatibility for chunk transfers */
+            if (publish->buffer_len == 0) {
+                publish->buffer_len = publish->total_len;
+            }
 
             FALL_THROUGH;
         }
@@ -652,6 +658,10 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
         {
             publish->stat = MQTT_MSG_WRITE;
 
+            if (publish->buffer_pos > 0) {
+                XMEMCPY(client->tx_buf, publish->buffer,
+                    client->write.len);
+            }
             /* Send packet and payload */
             do {
                 rc = MqttPacket_Write(client, client->tx_buf,
@@ -660,27 +670,164 @@ int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
                     return rc;
                 }
 
-                publish->buffer_pos += publish->buffer_len;
-                publish->buffer_len = 0;
+                publish->intBuf_pos += publish->intBuf_len;
+                publish->intBuf_len = 0;
 
                 /* Check if we are done sending publish message */
-                if (publish->buffer_pos >= publish->total_len) {
+                if (publish->intBuf_pos >= publish->buffer_len) {
                     rc = MQTT_CODE_SUCCESS;
                     break;
                 }
 
                 /* Build packet payload to send */
-                client->write.len = (publish->total_len - publish->buffer_pos);
+                client->write.len = (publish->buffer_len - publish->intBuf_pos);
                 if (client->write.len > client->tx_buf_len) {
                     client->write.len = client->tx_buf_len;
                 }
-                publish->buffer_len = client->write.len;
-                XMEMCPY(client->tx_buf, &publish->buffer[publish->buffer_pos],
+                publish->intBuf_len = client->write.len;
+                XMEMCPY(client->tx_buf, &publish->buffer[publish->intBuf_pos],
                     client->write.len);
 
             #ifdef WOLFMQTT_NONBLOCK
                 return MQTT_CODE_CONTINUE;
             #endif
+
+            } while (publish->intBuf_pos < publish->buffer_len);
+
+            /* If transferring more chunks */
+            publish->buffer_pos += publish->intBuf_pos;
+            if (publish->buffer_pos < publish->total_len) {
+                /* Build next payload to send */
+                client->write.len = (publish->total_len - publish->buffer_pos);
+                if (client->write.len > client->tx_buf_len) {
+                    client->write.len = client->tx_buf_len;
+                }
+                return MQTT_CODE_CONTINUE;
+            }
+            /* if not expecting a reply, the reset state and exit */
+            if (publish->qos == MQTT_QOS_0) {
+                publish->stat = MQTT_MSG_BEGIN;
+                break;
+            }
+
+            FALL_THROUGH;
+        }
+
+        case MQTT_MSG_WAIT:
+        {
+            publish->stat = MQTT_MSG_WAIT;
+
+            /* Handle QoS */
+            if (publish->qos > MQTT_QOS_0) {
+                /* Determine packet type to wait for */
+                MqttPacketType type = (publish->qos == MQTT_QOS_1) ?
+                    MQTT_PACKET_TYPE_PUBLISH_ACK :
+                    MQTT_PACKET_TYPE_PUBLISH_COMP;
+
+                /* Wait for publish response packet */
+                rc = MqttClient_WaitType(client, &client->msg,
+                    client->cmd_timeout_ms, type, publish->packet_id, NULL);
+            }
+
+            break;
+        }
+
+    #ifdef WOLFMQTT_V5
+        case MQTT_MSG_AUTH:
+    #endif
+        case MQTT_MSG_READ:
+        case MQTT_MSG_READ_PAYLOAD:
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("MqttClient_Publish: Invalid state %d!",
+                publish->stat);
+        #endif
+            rc = MQTT_CODE_ERROR_STAT;
+            break;
+    } /* switch (publish->stat) */
+
+    return rc;
+}
+
+int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
+                            MqttPublishCb pubCb)
+{
+    int rc = MQTT_CODE_SUCCESS;
+
+    /* Validate required arguments */
+    if (client == NULL || publish == NULL || pubCb == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+#ifdef WOLFMQTT_V5
+    /* Validate publish request against server properties */
+    if ((publish->qos > client->max_qos) ||
+        ((publish->retain == 1) && (client->retain_avail == 0)))
+    {
+        return MQTT_CODE_ERROR_SERVER_PROP;
+    }
+#endif
+
+    switch (publish->stat)
+    {
+        case MQTT_MSG_BEGIN:
+        {
+            /* Encode the publish packet */
+            rc = MqttEncode_Publish(client->tx_buf, client->tx_buf_len,
+                    publish, 1);
+            if (rc <= 0) {
+                return rc;
+            }
+
+            client->write.len = rc;
+
+            /* Send packet */
+            rc = MqttPacket_Write(client, client->tx_buf,
+                    client->write.len);
+            if (rc < 0) {
+                return rc;
+            }
+            publish->buffer_pos = 0;
+
+            FALL_THROUGH;
+        }
+        case MQTT_MSG_WRITE:
+        {
+            word32 tmp_len = publish->buffer_len;
+            publish->stat = MQTT_MSG_WRITE;
+
+            do {
+                /* Use the callback to get payload */
+                if ((client->write.len = pubCb(publish)) < 0) {
+                    return MQTT_CODE_ERROR_CALLBACK;
+                }
+
+                if ((word32)client->write.len < publish->buffer_len) {
+                    /* Last read */
+                    tmp_len = (word32)client->write.len;
+                }
+
+                /* Send payload */
+                do {
+                    if (client->write.len > client->tx_buf_len) {
+                        client->write.len = client->tx_buf_len;
+                    }
+                    publish->intBuf_len = client->write.len;
+                    XMEMCPY(client->tx_buf, &publish->buffer[publish->intBuf_pos],
+                        client->write.len);
+
+                    rc = MqttPacket_Write(client, client->tx_buf,
+                            client->write.len);
+                    if (rc < 0) {
+                        return rc;
+                    }
+
+                    publish->intBuf_pos += publish->intBuf_len;
+                    publish->intBuf_len = 0;
+
+                } while (publish->intBuf_pos < tmp_len);
+
+                publish->buffer_pos += publish->intBuf_pos;
+                publish->intBuf_pos = 0;
 
             } while (publish->buffer_pos < publish->total_len);
 

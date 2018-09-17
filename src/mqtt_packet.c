@@ -764,7 +764,8 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     return header_len + remain_len;
 }
 
-int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
+int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
+                        byte use_cb)
 {
     int header_len, variable_len, payload_len = 0;
     byte *tx_payload;
@@ -795,7 +796,8 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
     variable_len += MqttEncode_Vbi(NULL, props_len);
 #endif
 
-    if (publish->buffer && publish->total_len > 0) {
+    if (((publish->buffer != NULL) || (use_cb == 1)) &&
+        (publish->total_len > 0)) {
         payload_len = publish->total_len;
     }
 
@@ -807,6 +809,11 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
         return header_len;
     }
     tx_payload = &tx_buf[header_len];
+
+    if (use_cb == 1) {
+        /* The callback will encode the payload */
+        payload_len = 0;
+    }
 
     /* Encode variable header */
     tx_payload += MqttEncode_String(tx_payload, publish->topic_name);
@@ -832,8 +839,8 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
         }
         XMEMCPY(tx_payload, publish->buffer, payload_len);
     }
-    publish->buffer_pos = 0;
-    publish->buffer_len = payload_len;
+    publish->intBuf_pos = 0;
+    publish->intBuf_len = payload_len;
 
     /* Return length of packet placed into tx_buf */
     return header_len + variable_len + payload_len;

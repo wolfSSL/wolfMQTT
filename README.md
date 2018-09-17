@@ -101,10 +101,10 @@ Here are the steps for creating your own implementation.
 ## Examples
 
 ### Client Example
-The example MQTT client is located in /examples/mqttclient/. This example exercises all exposed API’s and prints any incoming publish messages for subscription topic “wolfMQTT/example/testTopic”.
+The example MQTT client is located in /examples/mqttclient/. This example exercises many of the exposed API’s and prints any incoming publish messages for subscription topic “wolfMQTT/example/testTopic”.
 
 ### Firmware Example
-The MQTT firmware update is located in /examples/firmware/. This example has two parts. The first is called “fwpush”, which publishes a signed firmware image. The second is called “fwclient”, which receives the firmware image and verifies the signature. This example publishes message on the topic “wolfMQTT/example/firmware”.
+The MQTT firmware update is located in /examples/firmware/. This example has two parts. The first is called “fwpush”, which signs and publishes a firmware image. The second is called “fwclient”, which receives the firmware image and verifies the signature. This example publishes message on the topic “wolfMQTT/example/firmware”. The "fwpush" application is an example of using a publish callback to send the payload data. 
 
 ### Azure IoT Hub Example
 We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device called `demoDevice`, which you can connect and publish to. The example demonstrates creation of a SasToken, which is used as the password for the MQTT connect packet. It also shows the topic names for publishing events and listening to `devicebound` messages. This example only works with `ENABLE_MQTT_TLS` set and the wolfSSL library present because it requires Base64 Encode/Decode and HMAC-SHA256. Note: The wolfSSL library must be built with `./configure --enable-base64encode` or `#define WOLFSSL_BASE64_ENCODE`. The `wc_GetTime` API was added in 3.9.1 and if not present you'll need to implement your own version of this to get current UTC seconds or update your wolfSSL library.
@@ -117,7 +117,7 @@ This example enables the wolfMQTT client to connect to the IBM Watson Internet o
 
 
 ## v5.0 Specification Support
-The wolfMQTT client supports connecting to v5 enabled brokers when built with the --enable-mqtt5 option. Handling properties received from the server is accomplished via a callback when the --enable-propcb option is set. The folowing v5.0 specifciation features are supported by the wolfMQTT:
+The wolfMQTT client supports connecting to v5 enabled brokers when built with the --enable-mqtt5 option. Handling properties received from the server is accomplished via a callback when the --enable-propcb option is set. The following v5.0 specification features are supported by the wolfMQTT client:
 * AUTH packet
 * User properties
 * Server connect ACK properties

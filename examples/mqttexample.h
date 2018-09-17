@@ -75,7 +75,7 @@
 #endif
 
 /* MQTT Client state */
-typedef enum MQTTCtxState {
+typedef enum _MQTTCtxState {
     WMQ_BEGIN = 0,
     WMQ_NET_INIT,
     WMQ_INIT,
@@ -87,25 +87,14 @@ typedef enum MQTTCtxState {
     WMQ_UNSUB,
     WMQ_DISCONNECT,
     WMQ_NET_DISCONNECT,
-    WMQ_DONE,
+    WMQ_DONE
 } MQTTCtxState;
 
 /* MQTT Client context */
-typedef struct MQTTCtx {
+typedef struct _MQTTCtx {
     MQTTCtxState stat;
 
-#if defined(ENABLE_AZUREIOTHUB_EXAMPLE) || \
-    defined(ENABLE_AWSIOT_EXAMPLE) || \
-    defined(WOLFMQTT_CHIBIOS)
-    union {
-    #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
-        char sasToken[400];
-    #endif
-    #if defined(ENABLE_AWSIOT_EXAMPLE) || defined(WOLFMQTT_CHIBIOS)
-        char pubMsg[400];
-    #endif
-    } buffer;
-#endif
+    void* app_ctx; /* For storing application specific data */
 
     /* client and net containers */
     MqttClient client;

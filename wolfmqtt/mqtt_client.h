@@ -58,8 +58,8 @@ struct _MqttClient;
     The MqttMessage.total_len is the length of the complete payload message.
     If msg_done = 1 the entire publish payload has been received.
  *  \param      client      Pointer to MqttClient structure
- *  \param      message     Pointer to MqttNet structure that has been
-                            initialized with callback pointers and context
+ *  \param      message     Pointer to MqttMessage structure that has been
+                            initialized with the payload properties
  *  \param      msg_new     If non-zero value then message is new and topic
                             name / len is provided and valid.
  *  \param      msg_done    If non-zero value then we have received the entire
@@ -70,6 +70,18 @@ struct _MqttClient;
 typedef int (*MqttMsgCb)(struct _MqttClient *client, MqttMessage *message,
     byte msg_new, byte msg_done);
 
+/*! \brief      Mqtt Publish Callback
+ *  \discussion If the publish payload is larger than the maximum TX buffer
+    then this callback is called multiple times. This callback is executed from
+    within a call to MqttPublish. It is expected to provide a buffer and it's
+    size and return >=0 for success.
+    Each callback populates the payload in MqttPublish.buffer.
+    The MqttPublish.buffer_len is the size of the buffer payload.
+    The MqttPublish.total_len is the length of the complete payload message.
+ *  \param      publish     Pointer to MqttPublish structure
+ *  \return     >= 0        Indicates success
+ */
+typedef int (*MqttPublishCb)(MqttPublish* publish);
 
 /* Client flags */
 enum MqttClientFlags {
@@ -214,7 +226,10 @@ WOLFMQTT_API int MqttClient_Connect(
     MqttConnect *connect);
 
 /*! \brief      Encodes and sends the MQTT Publish packet and waits for the
-                Publish response (if QoS > 0)
+                Publish response (if QoS > 0). If the total size of the
+                payload is larger than the buffer size, it can be called
+                successively to transmit the full payload.
+                (if QoS > 0)
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *              If QoS level = 1 then will wait for PUBLISH_ACK.
  *              If QoS level = 2 then will wait for PUBLISH_REC then send
@@ -230,6 +245,28 @@ WOLFMQTT_API int MqttClient_Connect(
 WOLFMQTT_API int MqttClient_Publish(
     MqttClient *client,
     MqttPublish *publish);
+
+/*! \brief      Encodes and sends the MQTT Publish packet and waits for the
+                Publish response (if QoS > 0). The callback function is used to
+                copy the payload data, allowing the use of transmit buffers
+                smaller than the total size of the payload.
+ *  \discussion This is a blocking function that will wait for MqttNet.read
+ *              If QoS level = 1 then will wait for PUBLISH_ACK.
+ *              If QoS level = 2 then will wait for PUBLISH_REC then send
+                    PUBLISH_REL and wait for PUBLISH_COMP.
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      publish     Pointer to MqttPublish structure initialized
+                            with message data
+ *                          Note: MqttPublish and MqttMessage are same
+                            structure.
+*   \param      pubCb       Function pointer to callback routine
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_Publish_ex(
+    MqttClient *client,
+    MqttPublish *publish,
+    MqttPublishCb pubCb);
 
 /*! \brief      Encodes and sends the MQTT Subscribe packet and waits for the
                 Subscribe Acknowledgment packet
