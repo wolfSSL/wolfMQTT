@@ -82,7 +82,7 @@ static int mqtt_publish_cb(MqttPublish *publish) {
     int ret = -1;
 #if !defined(NO_FILESYSTEM)
     static FILE *fp = NULL;
-    word32 bytes_read;
+    size_t bytes_read;
 
     /* Check for first iteration of callback */
     if (fp == NULL) {
@@ -118,7 +118,7 @@ static int mqtt_publish_cb(MqttPublish *publish) {
         fclose(fp);
     }
 #endif
-    return(ret);
+    return ret;
 }
 
 static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
@@ -432,13 +432,6 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
 
-            FALL_THROUGH;
-        }
-
-        case WMQ_PUB:
-        {
-            mqttCtx->stat = WMQ_PUB;
-
             /* setup publish message */
             XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
             mqttCtx->publish.retain = mqttCtx->retain;
@@ -449,7 +442,10 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.buffer_len = FIRMWARE_MAX_BUFFER;
             mqttCtx->publish.buffer = WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
 
-            /* Load firmware, sign firmware and store header in ctx. */
+            /* Calculate the total payload length and store the FirmwareHeader,
+               signature, and key in publish->ctx to be used by the callback.
+               The publish->ctx is available for use by the application to pass
+               data to the callback routine. */
             rc = fw_message_build(mqttCtx, mqttCtx->pub_file,
                     (byte**)&mqttCtx->publish.ctx,
                     (int*)&mqttCtx->publish.total_len);
@@ -458,7 +454,18 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 exit(rc);
             }
 
-            /* Publish Topic using callback API to copy FW from buffer */
+            FALL_THROUGH;
+        }
+
+        case WMQ_PUB:
+        {
+            mqttCtx->stat = WMQ_PUB;
+
+            /* Publish using the callback version of the publish API. This
+               allows the callback to write the payload data, in this case the
+               FirmwareHeader stored in the publish->ctx and the firmware file.
+               The callback will be executed multiple times until the entire
+               payload in sent. */
             rc = MqttClient_Publish_ex(&mqttCtx->client, &mqttCtx->publish,
                                        mqtt_publish_cb);
             if (rc == MQTT_CODE_CONTINUE) {

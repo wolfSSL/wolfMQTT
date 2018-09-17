@@ -1104,6 +1104,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Property)";
         case MQTT_CODE_ERROR_SERVER_PROP:
             return "Error (Server Property)";
+        case MQTT_CODE_ERROR_CALLBACK:
+            return "Error (Error in Callback)";
 
     }
     return "Unknown";
