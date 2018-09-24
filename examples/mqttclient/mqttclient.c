@@ -125,6 +125,9 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
         switch (prop->type)
         {
             case MQTT_PROP_ASSIGNED_CLIENT_ID:
+                /* Store client ID in global */
+                mqttCtx->client_id = &gClientId[0];
+
                 /* Store assigned client ID from CONNACK*/
                 XSTRNCPY((char*)mqttCtx->client_id,
                         prop->data_str.str,
@@ -211,9 +214,6 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
 int mqttclient_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
-#ifdef WOLFMQTT_PROPERTY_CB
-    int assignedClientId = 0;
-#endif
 
     switch (mqttCtx->stat) {
         case WMQ_BEGIN:
@@ -362,14 +362,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 prop->data_short = mqttCtx->topic_alias_max;
             }
         #endif
-        #ifdef WOLFMQTT_PROPERTY_CB
-            /* Check if client ID is NULL. It will be assigned in the
-               CONNACK properties. */
-            if (XSTRLEN(mqttCtx->client_id) == 0) {
-                assignedClientId = 1;
-                mqttCtx->client_id = &gClientId[0];
-            }
-        #endif
             FALL_THROUGH;
         }
 
@@ -404,11 +396,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             );
 
         #ifdef WOLFMQTT_PROPERTY_CB
-            if (assignedClientId == 1) {
                 /* Print the acquired client ID */
                 PRINTF("MQTT Connect Ack: Assigned Client ID: %s",
                         mqttCtx->client_id);
-            }
         #endif
 
             /* Build list of topics */

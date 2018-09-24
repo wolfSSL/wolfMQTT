@@ -79,6 +79,8 @@ static int mStopRead = 0;
 #define AWSIOT_SUBSCRIBE_TOPIC  "$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta"
 #define AWSIOT_PUBLISH_TOPIC    "$aws/things/"AWSIOT_DEVICE_ID"/shadow/update"
 
+#define AWSIOT_PUBLISH_MSG_SZ   400
+
 /* Demo Certificates */
 static const char* root_ca =
 "-----BEGIN CERTIFICATE-----\n"
@@ -427,7 +429,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
             }
 
             /* Publish Topic */
-            XSNPRINTF(mqttCtx->buffer.pubMsg, sizeof(mqttCtx->buffer.pubMsg),
+            XSNPRINTF((char*)mqttCtx->app_ctx, AWSIOT_PUBLISH_MSG_SZ,
                 "{\"state\":{\"reported\":{\"hardware\":{\"type\":\"%s\",\"firmware_version\":\"%s\"}}}}",
                 APP_HARDWARE, APP_FIRMWARE_VERSION);
 
@@ -437,8 +439,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.duplicate = 0;
             mqttCtx->publish.topic_name = AWSIOT_PUBLISH_TOPIC;
             mqttCtx->publish.packet_id = mqtt_get_packetid();
-            mqttCtx->publish.buffer = (byte*)mqttCtx->buffer.pubMsg;
-            mqttCtx->publish.total_len = (word32)XSTRLEN(mqttCtx->buffer.pubMsg);
+            mqttCtx->publish.buffer = (byte*)mqttCtx->app_ctx;
+            mqttCtx->publish.total_len = (word32)XSTRLEN((char*)mqttCtx->app_ctx);
 
             FALL_THROUGH;
         }
@@ -496,7 +498,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
                         /* rc = (int)XSTRLEN((char*)mqttCtx->rx_buf); */
 
                         /* Publish Topic */
-                        XSNPRINTF(mqttCtx->buffer.pubMsg, sizeof(mqttCtx->buffer.pubMsg),
+                        XSNPRINTF((char*)mqttCtx->app_ctx, AWSIOT_PUBLISH_MSG_SZ,
                             "{\"state\":{\"reported\":{\"msg\":\"%s\"}}}",
                             mqttCtx->rx_buf);
                         mqttCtx->stat = WMQ_PUB;
@@ -506,8 +508,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
                         mqttCtx->publish.duplicate = 0;
                         mqttCtx->publish.topic_name = AWSIOT_PUBLISH_TOPIC;
                         mqttCtx->publish.packet_id = mqtt_get_packetid();
-                        mqttCtx->publish.buffer = (byte*)mqttCtx->buffer.pubMsg;
-                        mqttCtx->publish.total_len = (word32)XSTRLEN(mqttCtx->buffer.pubMsg);
+                        mqttCtx->publish.buffer = (byte*)mqttCtx->app_ctx;
+                        mqttCtx->publish.total_len = (word32)XSTRLEN((char*)mqttCtx->app_ctx);
                         rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
                         PRINTF("MQTT Publish: Topic %s, %s (%d)",
                             mqttCtx->publish.topic_name,
@@ -643,6 +645,7 @@ exit:
         int rc;
     #ifdef ENABLE_AWSIOT_EXAMPLE
         MQTTCtx mqttCtx;
+        char pubMsg[AWSIOT_PUBLISH_MSG_SZ] = {0};
 
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
@@ -654,6 +657,7 @@ exit:
         mqttCtx.topic_name = AWSIOT_SUBSCRIBE_TOPIC;
         mqttCtx.cmd_timeout_ms = AWSIOT_CMD_TIMEOUT_MS;
         mqttCtx.use_tls = 1;
+        mqttCtx.app_ctx = pubMsg;
 
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);

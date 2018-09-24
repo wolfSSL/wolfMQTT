@@ -197,11 +197,13 @@ typedef struct _MqttMessage {
     word16      topic_name_len;
     word32      total_len;    /* Payload total length */
     byte       *buffer;       /* Payload buffer */
+    word32      buffer_len;   /* Payload buffer length */
+    word32      buffer_pos;   /* Payload buffer position */
 
-    /* Used internally for TX/RX */
+    /* Used internally for TX/RX buffers */
     byte        buffer_new;   /* flag to indicate new message */
-    word32      buffer_len;   /* Buffer length */
-    word32      buffer_pos;   /* Buffer position */
+    word32      intBuf_len;   /* Buffer length */
+    word32      intBuf_pos;   /* Buffer position */
 
     void*       ctx;          /* user supplied context for publish callbacks */
 
@@ -535,7 +537,7 @@ WOLFMQTT_LOCAL int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,
 WOLFMQTT_LOCAL int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack);
 WOLFMQTT_LOCAL int MqttEncode_Publish(byte *tx_buf, int tx_buf_len,
-    MqttPublish *publish);
+    MqttPublish *publish, byte use_cb);
 WOLFMQTT_LOCAL int MqttDecode_Publish(byte *rx_buf, int rx_buf_len,
     MqttPublish *publish);
 WOLFMQTT_LOCAL int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len,

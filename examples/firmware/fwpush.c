@@ -75,6 +75,52 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
+/* This callback is executed from within a call to MqttPublish. It is expected
+   to provide a buffer and it's size and return >=0 for success. In this example
+   a firmware header is stored in the publish->ctx. */
+static int mqtt_publish_cb(MqttPublish *publish) {
+    int ret = -1;
+#if !defined(NO_FILESYSTEM)
+    static FILE *fp = NULL;
+    size_t bytes_read;
+
+    /* Check for first iteration of callback */
+    if (fp == NULL) {
+
+        /* Open file */
+        fp = fopen(FIRMWARE_PUSH_DEF_FILE, "rb");
+        if (fp != NULL) {
+
+            /* Get FW size from FW header struct */
+            FirmwareHeader *header = (FirmwareHeader*)publish->ctx;
+            word32 headerSize = sizeof(FirmwareHeader) + header->sigLen +
+                    header->pubKeyLen;
+
+            /* Copy header to buffer */
+            XMEMCPY(publish->buffer, header, headerSize);
+
+            /* read a buffer of data from the file */
+            bytes_read = fread(&publish->buffer[headerSize],
+                    1, publish->buffer_len - headerSize, fp);
+            if (bytes_read != 0) {
+                ret = (int)bytes_read + headerSize;
+            }
+        }
+    }
+    else {
+        /* read a buffer of data from the file */
+        bytes_read = fread(publish->buffer, 1, publish->buffer_len, fp);
+        if (bytes_read != 0) {
+            ret = (int)bytes_read;
+        }
+    }
+    if (feof(fp)) {
+        fclose(fp);
+    }
+#endif
+    return ret;
+}
+
 static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
 {
 #if !defined(NO_FILESYSTEM)
@@ -216,7 +262,10 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
 
     /* Assemble message */
     msgLen = sizeof(FirmwareHeader) + sigLen + keyLen + fwLen;
-    msgBuf = (byte*)WOLFMQTT_MALLOC(msgLen);
+
+    /* The firmware will be copied by the callback */
+    msgBuf = (byte*)WOLFMQTT_MALLOC(msgLen - fwLen);
+
     if (!msgBuf) {
         PRINTF("Message malloc failed! %d", msgLen);
         rc = EXIT_FAILURE;
@@ -228,7 +277,6 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     header->fwLen = fwLen;
     XMEMCPY(&msgBuf[sizeof(FirmwareHeader)], sigBuf, sigLen);
     XMEMCPY(&msgBuf[sizeof(FirmwareHeader) + sigLen], keyBuf, keyLen);
-    XMEMCPY(&msgBuf[sizeof(FirmwareHeader) + sigLen + keyLen], fwBuf, fwLen);
 
     rc = 0;
 
@@ -269,7 +317,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
     {
         case WMQ_BEGIN:
         {
-            PRINTF("MQTT Firmware Push Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
+            PRINTF("MQTT Firmware Push Client: QoS %d, Use TLS %d",
+                    mqttCtx->qos, mqttCtx->use_tls);
 
             FALL_THROUGH;
         }
@@ -292,22 +341,6 @@ int fwpush_test(MQTTCtx *mqttCtx)
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
-
-            /* setup publish message */
-            XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
-            mqttCtx->publish.retain = mqttCtx->retain;
-            mqttCtx->publish.qos = mqttCtx->qos;
-            mqttCtx->publish.duplicate = 0;
-            mqttCtx->publish.topic_name = mqttCtx->topic_name;
-            mqttCtx->publish.packet_id = mqtt_get_packetid();
-
-            /* Load firmware, sign firmware and create message */
-            rc = fw_message_build(mqttCtx, mqttCtx->pub_file,
-                &mqttCtx->publish.buffer, (int*)&mqttCtx->publish.total_len);
-            if (rc != 0) {
-                PRINTF("Firmware message build failed! %d", rc);
-                exit(rc);
-            }
 
             FALL_THROUGH;
         }
@@ -340,8 +373,9 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_TCP_CONN;
 
             /* Connect to broker */
-            rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host, mqttCtx->port,
-                DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
+            rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
+                    mqttCtx->port, DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls,
+                    mqtt_tls_cb);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
@@ -362,7 +396,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 mqttCtx->lwt_msg.retain = 0;
                 mqttCtx->lwt_msg.topic_name = FIRMWARE_TOPIC_NAME"lwttopic";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
-                mqttCtx->lwt_msg.total_len = (word16)XSTRLEN(mqttCtx->client_id);
+                mqttCtx->lwt_msg.total_len =
+                        (word16)XSTRLEN(mqttCtx->client_id);
             }
 
             /* Optional authentication */
@@ -388,7 +423,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             /* Validate Connect Ack info */
             PRINTF("MQTT Connect Ack: Return Code %u, Session Present %d",
                 mqttCtx->connect.ack.return_code,
-                (mqttCtx->connect.ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ?
+                (mqttCtx->connect.ack.flags &
+                        MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ?
                     1 : 0
             );
 
@@ -396,17 +432,27 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
 
-            /* Build list of topics */
-            mqttCtx->topics[0].topic_filter = mqttCtx->topic_name;
-            mqttCtx->topics[0].qos = mqttCtx->qos;
+            /* setup publish message */
+            XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
+            mqttCtx->publish.retain = mqttCtx->retain;
+            mqttCtx->publish.qos = mqttCtx->qos;
+            mqttCtx->publish.duplicate = 0;
+            mqttCtx->publish.topic_name = mqttCtx->topic_name;
+            mqttCtx->publish.packet_id = mqtt_get_packetid();
+            mqttCtx->publish.buffer_len = FIRMWARE_MAX_BUFFER;
+            mqttCtx->publish.buffer = WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
 
-            /* Subscribe Topic */
-            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
-            mqttCtx->subscribe.packet_id = mqtt_get_packetid();
-            mqttCtx->subscribe.topic_count = 1;
-            mqttCtx->subscribe.topics = mqttCtx->topics;
-            mqttCtx->topics[0].topic_filter = FIRMWARE_TOPIC_NAME;
-            mqttCtx->topics[0].qos = mqttCtx->qos;
+            /* Calculate the total payload length and store the FirmwareHeader,
+               signature, and key in publish->ctx to be used by the callback.
+               The publish->ctx is available for use by the application to pass
+               data to the callback routine. */
+            rc = fw_message_build(mqttCtx, mqttCtx->pub_file,
+                    (byte**)&mqttCtx->publish.ctx,
+                    (int*)&mqttCtx->publish.total_len);
+            if (rc != 0) {
+                PRINTF("Firmware message build failed! %d", rc);
+                exit(rc);
+            }
 
             FALL_THROUGH;
         }
@@ -415,13 +461,20 @@ int fwpush_test(MQTTCtx *mqttCtx)
         {
             mqttCtx->stat = WMQ_PUB;
 
-            /* Publish Topic */
-            rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+            /* Publish using the callback version of the publish API. This
+               allows the callback to write the payload data, in this case the
+               FirmwareHeader stored in the publish->ctx and the firmware file.
+               The callback will be executed multiple times until the entire
+               payload in sent. */
+            rc = MqttClient_Publish_ex(&mqttCtx->client, &mqttCtx->publish,
+                                       mqtt_publish_cb);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
+
             PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+                mqttCtx->publish.topic_name,
+                MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
@@ -483,6 +536,7 @@ exit:
 
     if (rc != MQTT_CODE_CONTINUE) {
         /* Free resources */
+        if (mqttCtx->publish.ctx) WOLFMQTT_FREE(mqttCtx->publish.ctx);
         if (mqttCtx->publish.buffer) WOLFMQTT_FREE(mqttCtx->publish.buffer);
         if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
         if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
