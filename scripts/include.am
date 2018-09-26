@@ -7,5 +7,6 @@ dist_noinst_SCRIPTS += scripts/client.test \
                        scripts/firmware.test \
                        scripts/azureiothub.test \
                        scripts/awsiot.test \
-                       scripts/wiot.test
+                       scripts/wiot.test \
+                       scripts/nbclient.test
 endif

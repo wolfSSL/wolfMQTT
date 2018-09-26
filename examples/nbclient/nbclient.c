@@ -1,4 +1,4 @@
-/* azureiothub.c
+/* nbclient.c
  *
  * Copyright (C) 2006-2018 wolfSSL Inc.
  *
@@ -24,111 +24,38 @@
     #include <config.h>
 #endif
 
+
 #include "wolfmqtt/mqtt_client.h"
 
-
-/* This example only works with ENABLE_MQTT_TLS (wolfSSL library) */
-/* Notes:
- *  The wolfSSL library must be built with
- *  #define WOLFSSL_BASE64_ENCODE
- *  or
- *  ./configure --enable-base64encode"
- *
- *  The "wc_GetTime" API was added in 3.9.1 and if not present you'll need to implement
- *  your own version of this to get current UTC seconds or update your wolfSSL library
-*/
-
-/* This example requires features in wolfSSL 3.9.1 or later */
-#if defined(ENABLE_MQTT_TLS)
-    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
-        #include <wolfssl/options.h>
-    #endif
-    #include <wolfssl/wolfcrypt/settings.h>
-    #include <wolfssl/version.h>
-
-    #if defined(LIBWOLFSSL_VERSION_HEX) && \
-        LIBWOLFSSL_VERSION_HEX >= 0x03009001 && defined(WOLFSSL_BASE64_ENCODE)
-        #undef ENABLE_AZUREIOTHUB_EXAMPLE
-        #define ENABLE_AZUREIOTHUB_EXAMPLE
-    #endif
-#endif
-
-
-#ifdef ENABLE_AZUREIOTHUB_EXAMPLE
-
-#include <wolfssl/ssl.h>
-#include <wolfssl/wolfcrypt/asn_public.h>
-#include <wolfssl/wolfcrypt/coding.h>
-#include <wolfssl/wolfcrypt/hmac.h>
-
-#include "azureiothub.h"
-#include "examples/mqttexample.h"
+#ifdef WOLFMQTT_NONBLOCK
+#include "nbclient.h"
 #include "examples/mqttnet.h"
 
 /* Locals */
 static int mStopRead = 0;
 
 /* Configuration */
-/* Reference:
- * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-mqtt-support
- * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-devguide/#mqtt-support
- * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-sas-tokens/#using-sas-tokens-as-a-device
- */
-#define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
-#define AZURE_HOST              "wolfMQTT.azure-devices.net"
-#define AZURE_DEVICE_ID         "demoDevice"
-#define AZURE_KEY               "Vd8RHMAFPyRnAozkNCNFIPhVSffyZkB13r/YqiTWq5s=" /* Base64 Encoded */
-#define AZURE_QOS               MQTT_QOS_1 /* Azure IoT Hub does not yet support QoS level 2 */
-#define AZURE_KEEP_ALIVE_SEC    DEFAULT_KEEP_ALIVE_SEC
-#define AZURE_CMD_TIMEOUT_MS    DEFAULT_CMD_TIMEOUT_MS
-#define AZURE_TOKEN_EXPIRY_SEC  (60 * 60 * 1) /* 1 hour */
-#define AZURE_TOKEN_SIZE        400
 
-#define AZURE_DEVICE_NAME       AZURE_HOST"/devices/"AZURE_DEVICE_ID
-#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID
-#define AZURE_SIG_FMT           "%s\n%ld"
-    /* [device name (URL Encoded)]\n[Expiration sec UTC] */
-#define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%ld"
-    /* sr=[device name (URL Encoded)]
-       sig=[HMAC-SHA256 of AZURE_SIG_FMT using AZURE_KEY (URL Encoded)]
-       se=[Expiration sec UTC] */
+/* Maximum size for network read/write callbacks. */
+#define MAX_BUFFER_SIZE 1024
+#define TEST_MESSAGE    "test"
 
-#define AZURE_MSGS_TOPIC_NAME   "devices/"AZURE_DEVICE_ID"/messages/devicebound/#" /* subscribe */
-#define AZURE_EVENT_TOPIC       "devices/"AZURE_DEVICE_ID"/messages/events/" /* publish */
-
-
-/* Encoding Support */
-static char mRfc3986[256] = {0};
-//static char mHtml5[256] = {0};
-static void url_encoder_init(void)
+#ifdef WOLFMQTT_DISCONNECT_CB
+static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
 {
-    int i;
-    for (i = 0; i < 256; i++){
-        mRfc3986[i] = XISALNUM( i) || i == '~' || i == '-' || i == '.' || i == '_' ? i : 0;
-        //mHtml5[i] = XISALNUM( i) || i == '*' || i == '-' || i == '.' || i == '_' ? i : (i == ' ') ? '+' : 0;
-    }
+    (void)client;
+    (void)ctx;
+    PRINTF("Disconnect (error %d)", error_code);
+    return 0;
 }
-
-static char* url_encode(char* table, unsigned char *s, char *enc)
-{
-    for (; *s; s++){
-        if (table[*s]) {
-            XSNPRINTF(enc, 2, "%c", table[*s]);
-        }
-        else {
-            XSNPRINTF(enc, 4, "%%%02x", *s);
-        }
-        while (*++enc); /* locate end */
-    }
-    return enc;
-}
+#endif
 
 static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
-    MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
     byte buf[PRINT_BUFFER_SIZE+1];
     word32 len;
+    MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
     (void)mqttCtx;
 
@@ -144,6 +71,16 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
             buf, msg->qos, msg->total_len);
+
+        /* for test mode: check if TEST_MESSAGE was received */
+        if (mqttCtx->test_mode) {
+            if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
+                XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
+                         msg->buffer_len) == 0)
+            {
+                mStopRead = 1;
+            }
+        }
     }
 
     /* Print message payload */
@@ -164,95 +101,15 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
-static int SasTokenCreate(char* sasToken, int sasTokenLen)
-{
-    int rc;
-    const char* encodedKey = AZURE_KEY;
-    byte decodedKey[WC_SHA256_DIGEST_SIZE+1];
-    word32 decodedKeyLen = (word32)sizeof(decodedKey);
-    char deviceName[150]; /* uri */
-    char sigData[200]; /* max uri + expiration */
-    byte sig[WC_SHA256_DIGEST_SIZE];
-    byte base64Sig[WC_SHA256_DIGEST_SIZE*2];
-    word32 base64SigLen = (word32)sizeof(base64Sig);
-    byte encodedSig[WC_SHA256_DIGEST_SIZE*4];
-    long lTime;
-    Hmac hmac;
-
-    if (sasToken == NULL) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-    /* Decode Key */
-    rc = Base64_Decode((const byte*)encodedKey, (word32)XSTRLEN(encodedKey), decodedKey, &decodedKeyLen);
-    if (rc != 0) {
-        PRINTF("SasTokenCreate: Decode shared access key failed! %d", rc);
-        return rc;
-    }
-
-    /* Get time */
-    rc = wc_GetTime(&lTime, (word32)sizeof(lTime));
-    if (rc != 0) {
-        PRINTF("SasTokenCreate: Unable to get time! %d", rc);
-        return rc;
-    }
-    lTime += AZURE_TOKEN_EXPIRY_SEC;
-
-    /* URL encode uri (device name) */
-    url_encode(mRfc3986, (byte*)AZURE_DEVICE_NAME, deviceName);
-
-    /* Build signature sting "uri \n expiration" */
-    XSNPRINTF(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
-
-    /* HMAC-SHA256 Hash sigData using decoded key */
-    rc = wc_HmacSetKey(&hmac, WC_SHA256, decodedKey, decodedKeyLen);
-    if (rc < 0) {
-        PRINTF("SasTokenCreate: Hmac setkey failed! %d", rc);
-        return rc;
-    }
-    rc = wc_HmacUpdate(&hmac, (byte*)sigData, (word32)XSTRLEN(sigData));
-    if (rc < 0) {
-        PRINTF("SasTokenCreate: Hmac update failed! %d", rc);
-        return rc;
-    }
-    rc = wc_HmacFinal(&hmac, sig);
-    if (rc < 0) {
-        PRINTF("SasTokenCreate: Hmac final failed! %d", rc);
-        return rc;
-    }
-
-    /* Base64 encode signature */
-    XMEMSET(base64Sig, 0, base64SigLen);
-    rc = Base64_Encode_NoNl(sig, sizeof(sig), base64Sig, &base64SigLen);
-    if (rc < 0) {
-        PRINTF("SasTokenCreate: Encoding sig failed! %d", rc);
-        return rc;
-    }
-
-    /* URL encode signature */
-    url_encode(mRfc3986, base64Sig, (char*)encodedSig);
-
-    /* Build sasToken */
-    XSNPRINTF(sasToken, sasTokenLen, AZURE_PASSWORD_FMT, deviceName, encodedSig, lTime);
-    PRINTF("%s", sasToken);
-
-    return 0;
-}
-
-int azureiothub_test(MQTTCtx *mqttCtx)
+int mqttclient_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
 
-    switch (mqttCtx->stat)
-    {
+    switch (mqttCtx->stat) {
         case WMQ_BEGIN:
         {
-            PRINTF("AzureIoTHub Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
-
-            /* Azure IoT Hub requires TLS */
-            if (!mqttCtx->use_tls) {
-                return MQTT_CODE_ERROR_BAD_ARG;
-            }
+            PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
+                    mqttCtx->use_tls);
 
             FALL_THROUGH;
         }
@@ -276,15 +133,6 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
 
-            /* init URL encode */
-            url_encoder_init();
-
-            /* build sas token for password */
-            rc = SasTokenCreate((char*)mqttCtx->app_ctx, AZURE_TOKEN_SIZE);
-            if (rc < 0) {
-                goto exit;
-            }
-
             FALL_THROUGH;
         }
 
@@ -293,8 +141,10 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_INIT;
 
             /* Initialize MqttClient structure */
-            rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net, mqtt_message_cb,
-                mqttCtx->tx_buf, MAX_BUFFER_SIZE, mqttCtx->rx_buf, MAX_BUFFER_SIZE,
+            rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net,
+                mqtt_message_cb,
+                mqttCtx->tx_buf, MAX_BUFFER_SIZE,
+                mqttCtx->rx_buf, MAX_BUFFER_SIZE,
                 mqttCtx->cmd_timeout_ms);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
@@ -306,6 +156,14 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             }
             mqttCtx->client.ctx = mqttCtx;
 
+        #ifdef WOLFMQTT_DISCONNECT_CB
+            /* setup disconnect callback */
+            rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,
+                mqtt_disconnect_cb, NULL);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+        #endif
             FALL_THROUGH;
         }
 
@@ -314,7 +172,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_TCP_CONN;
 
             /* Connect to broker */
-            rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host, mqttCtx->port,
+            rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
+                   mqttCtx->port,
                 DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
@@ -340,15 +199,14 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 /* Send client id in LWT payload */
                 mqttCtx->lwt_msg.qos = mqttCtx->qos;
                 mqttCtx->lwt_msg.retain = 0;
-                mqttCtx->lwt_msg.topic_name = AZURE_EVENT_TOPIC"lwttopic";
+                mqttCtx->lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
-                mqttCtx->lwt_msg.total_len = (word16)XSTRLEN(mqttCtx->client_id);
+                mqttCtx->lwt_msg.total_len =
+                  (word16)XSTRLEN(mqttCtx->client_id);
             }
-
-            /* Authentication */
-            mqttCtx->connect.username = AZURE_USERNAME;
-            mqttCtx->connect.password = mqttCtx->app_ctx;
-
+            /* Optional authentication */
+            mqttCtx->connect.username = mqttCtx->username;
+            mqttCtx->connect.password = mqttCtx->password;
             FALL_THROUGH;
         }
 
@@ -376,13 +234,15 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             );
 
             /* Build list of topics */
-            mqttCtx->topics[0].topic_filter = mqttCtx->topic_name;
-            mqttCtx->topics[0].qos = mqttCtx->qos;
+            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
+            i = 0;
+            mqttCtx->topics[i].topic_filter = mqttCtx->topic_name;
+            mqttCtx->topics[i].qos = mqttCtx->qos;
 
             /* Subscribe Topic */
-            XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
-            mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
+            mqttCtx->subscribe.topic_count =
+                    sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
 
             FALL_THROUGH;
@@ -396,6 +256,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
+
             PRINTF("MQTT Subscribe: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
@@ -415,10 +276,10 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.retain = 0;
             mqttCtx->publish.qos = mqttCtx->qos;
             mqttCtx->publish.duplicate = 0;
-            mqttCtx->publish.topic_name = AZURE_EVENT_TOPIC;
+            mqttCtx->publish.topic_name = mqttCtx->topic_name;
             mqttCtx->publish.packet_id = mqtt_get_packetid();
-            mqttCtx->publish.buffer = NULL;
-            mqttCtx->publish.total_len = 0;
+            mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
+            mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
 
             FALL_THROUGH;
         }
@@ -432,7 +293,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 return rc;
             }
             PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+                mqttCtx->publish.topic_name,
+                MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
@@ -448,50 +310,25 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_WAIT_MSG;
 
             do {
-                /* check for test mode or stop */
-                if (mStopRead || mqttCtx->test_mode) {
+                /* Try and read packet */
+                rc = MqttClient_WaitMessage(&mqttCtx->client,
+                                                    mqttCtx->cmd_timeout_ms);
+
+                /* check for test mode */
+                if (mStopRead) {
                     rc = MQTT_CODE_SUCCESS;
                     PRINTF("MQTT Exiting...");
                     break;
                 }
 
-                /* Try and read packet */
-                rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
-
-            #ifdef WOLFMQTT_NONBLOCK
                 /* Track elapsed time with no activity and trigger timeout */
                 rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
                     mqttCtx->cmd_timeout_ms/1000);
-            #endif
 
                 /* check return code */
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
-            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if (rc == MQTT_CODE_STDIN_WAKE) {
-                    /* Get data from STDIO */
-                    XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
-                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
-                        rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
-
-                        /* Publish Topic */
-                        mqttCtx->stat = WMQ_PUB;
-                        XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
-                        mqttCtx->publish.retain = 0;
-                        mqttCtx->publish.qos = mqttCtx->qos;
-                        mqttCtx->publish.duplicate = 0;
-                        mqttCtx->publish.topic_name = AZURE_EVENT_TOPIC;
-                        mqttCtx->publish.packet_id = mqtt_get_packetid();
-                        mqttCtx->publish.buffer = mqttCtx->rx_buf;
-                        mqttCtx->publish.total_len = (word16)rc;
-                        rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
-                        PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                            mqttCtx->publish.topic_name,
-                            MqttClient_ReturnCodeToString(rc), rc);
-                    }
-                }
-            #endif
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Keep Alive */
                     PRINTF("Keep-alive timeout, sending ping");
@@ -519,13 +356,44 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
 
+            /* Unsubscribe Topics */
+            XMEMSET(&mqttCtx->unsubscribe, 0, sizeof(MqttUnsubscribe));
+            mqttCtx->unsubscribe.packet_id = mqtt_get_packetid();
+            mqttCtx->unsubscribe.topic_count =
+                sizeof(mqttCtx->topics) / sizeof(MqttTopic);
+            mqttCtx->unsubscribe.topics = mqttCtx->topics;
+
+            mqttCtx->stat = WMQ_UNSUB;
+            mqttCtx->start_sec = 0;
+
+            FALL_THROUGH;
+        }
+
+        case WMQ_UNSUB:
+        {
+            /* Unsubscribe Topics */
+            rc = MqttClient_Unsubscribe(&mqttCtx->client,
+                   &mqttCtx->unsubscribe);
+            if (rc == MQTT_CODE_CONTINUE) {
+                /* Track elapsed time with no activity and trigger timeout */
+                return mqtt_check_timeout(rc, &mqttCtx->start_sec,
+                    mqttCtx->cmd_timeout_ms/1000);
+            }
+            PRINTF("MQTT Unsubscribe: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto disconn;
+            }
+            mqttCtx->return_code = rc;
+
             FALL_THROUGH;
         }
 
         case WMQ_DISCONNECT:
         {
             /* Disconnect */
-            rc = MqttClient_Disconnect(&mqttCtx->client);
+            rc = MqttClient_Disconnect_ex(&mqttCtx->client,
+                   &mqttCtx->disconnect);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
@@ -559,7 +427,6 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             goto exit;
         }
 
-        case WMQ_UNSUB: /* not used */
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;
@@ -583,18 +450,19 @@ exit:
 
     return rc;
 }
-#endif /* ENABLE_AZUREIOTHUB_EXAMPLE */
+
+#endif /* WOLFMQTT_NONBLOCK */
 
 
 /* so overall tests can pull in test function */
-#ifndef NO_MAIN_DRIVER
+#if !defined(NO_MAIN_DRIVER) && !defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef USE_WINDOWS_API
         #include <windows.h> /* for ctrl handler */
 
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
-            #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+            #ifdef WOLFMQTT_NONBLOCK
                 mStopRead = 1;
             #endif
                 PRINTF("Received Ctrl+c");
@@ -607,7 +475,7 @@ exit:
         static void sig_handler(int signo)
         {
             if (signo == SIGINT) {
-            #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+            #ifdef WOLFMQTT_NONBLOCK
                 mStopRead = 1;
             #endif
                 PRINTF("Received SIGINT");
@@ -618,31 +486,24 @@ exit:
     int main(int argc, char** argv)
     {
         int rc;
-    #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+#ifdef WOLFMQTT_NONBLOCK
         MQTTCtx mqttCtx;
-        char sasToken[AZURE_TOKEN_SIZE] = {0};
 
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
-        mqttCtx.app_name = "azureiothub";
-        mqttCtx.host = AZURE_HOST;
-        mqttCtx.qos = AZURE_QOS;
-        mqttCtx.keep_alive_sec = AZURE_KEEP_ALIVE_SEC;
-        mqttCtx.client_id = AZURE_DEVICE_ID;
-        mqttCtx.topic_name = AZURE_MSGS_TOPIC_NAME;
-        mqttCtx.cmd_timeout_ms = AZURE_CMD_TIMEOUT_MS;
-        mqttCtx.use_tls = 1;
-        mqttCtx.app_ctx = (void*)sasToken;
+        mqttCtx.app_name = "nbclient";
 
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);
         if (rc != 0) {
             return rc;
         }
-    #endif
+#endif
 
     #ifdef USE_WINDOWS_API
-        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
+        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler,
+              TRUE) == FALSE)
+        {
             PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
         }
     #elif HAVE_SIGNAL
@@ -651,20 +512,22 @@ exit:
         }
     #endif
 
-    #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
+#ifdef WOLFMQTT_NONBLOCK
         do {
-            rc = azureiothub_test(&mqttCtx);
+            rc = mqttclient_test(&mqttCtx);
         } while (rc == MQTT_CODE_CONTINUE);
-    #else
-        (void)argc;
-        (void)argv;
+#else
+    (void)argc;
+    (void)argv;
 
-        /* This example requires wolfSSL 3.9.1 or later with base64encode enabled */
-        PRINTF("Example not compiled in!");
-        rc = EXIT_FAILURE;
-    #endif
+    /* This example requires non-blocking mode to be enabled
+       ./configure --enable-nonblock */
+    PRINTF("Example not compiled in!");
+    rc = EXIT_FAILURE;
+#endif
 
         return (rc == 0) ? 0 : EXIT_FAILURE;
     }
 
 #endif /* NO_MAIN_DRIVER */
+
