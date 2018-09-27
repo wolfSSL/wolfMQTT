@@ -352,8 +352,19 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
 static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
     char buffer[WOLFSSL_MAX_ERROR_SZ];
+    MQTTCtx *mqttCtx = NULL;
+    char appName[PRINT_BUFFER_SIZE] = {0};
 
-    PRINTF("MQTT TLS Verify Callback: PreVerify %d, Error %d (%s)", preverify,
+    if (store->userCtx != NULL) {
+        /* The client.ctx was stored during MqttSocket_Connect. */
+        mqttCtx = (MQTTCtx *)store->userCtx;
+        XSTRNCPY(appName, " for ", PRINT_BUFFER_SIZE-1);
+        XSTRNCAT(appName, mqttCtx->app_name,
+                 PRINT_BUFFER_SIZE-XSTRLEN(appName)-1);
+    }
+
+    PRINTF("MQTT TLS Verify Callback%s: PreVerify %d, Error %d (%s)",
+        appName, preverify,
         store->error, store->error != 0 ?
             wolfSSL_ERR_error_string(store->error, buffer) : "none");
     PRINTF("  Subject's domain name is %s", store->domain);
