@@ -242,6 +242,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     if (rc != MQTT_CODE_SUCCESS) {
         goto exit;
     }
+    /* The client.ctx will be stored in the cert callback ctx during
+       MqttSocket_Connect for use by mqtt_tls_verify_cb */
     mqttCtx->client.ctx = mqttCtx;
 
 #ifdef WOLFMQTT_DISCONNECT_CB

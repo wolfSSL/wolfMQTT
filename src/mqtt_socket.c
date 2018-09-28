@@ -367,6 +367,11 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         #endif
         }
 
+        if (client->ctx != NULL) {
+            /* Store any app data for use by the tls verify callback*/
+            wolfSSL_SetCertCbCtx(client->tls.ssl, client->ctx);
+        }
+
         rc = wolfSSL_connect(client->tls.ssl);
         if (rc != WOLFSSL_SUCCESS) {
             goto exit;
