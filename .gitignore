@@ -51,6 +51,7 @@ diff
 # scan-build
 client.plist
 examples/mqttclient/mqttclient
+examples/nbclient/nbclient
 Debug
 .vs
 *.aps

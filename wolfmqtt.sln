@@ -20,6 +20,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "awsiot", "examples\aws\awsi
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "wiot", "examples\wiot\wiot.vcxproj", "{CDC51BE2-B7AB-4E17-9B5D-68820411E6CD}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nbclient", "examples\nbclient\nbclient.vcxproj", "{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -84,8 +86,19 @@ Global
 		{CDC51BE2-B7AB-4E17-9B5D-68820411E6CD}.Release|x64.Build.0 = Release|x64
 		{CDC51BE2-B7AB-4E17-9B5D-68820411E6CD}.Release|x86.ActiveCfg = Release|Win32
 		{CDC51BE2-B7AB-4E17-9B5D-68820411E6CD}.Release|x86.Build.0 = Release|Win32
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Debug|x64.ActiveCfg = Debug|x64
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Debug|x64.Build.0 = Debug|x64
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Debug|x86.ActiveCfg = Debug|Win32
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Debug|x86.Build.0 = Debug|Win32
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x64.ActiveCfg = Release|x64
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x64.Build.0 = Release|x64
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x86.ActiveCfg = Release|Win32
+		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {4461BDE3-F07D-47B0-B154-EB5E08245F81}
 	EndGlobalSection
 EndGlobal

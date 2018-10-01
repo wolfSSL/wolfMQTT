@@ -101,7 +101,10 @@ Here are the steps for creating your own implementation.
 ## Examples
 
 ### Client Example
-The example MQTT client is located in /examples/mqttclient/. This example exercises many of the exposed API’s and prints any incoming publish messages for subscription topic “wolfMQTT/example/testTopic”.
+The example MQTT client is located in /examples/mqttclient/. This example exercises many of the exposed API’s and prints any incoming publish messages for subscription topic “wolfMQTT/example/testTopic”. This client contains examples of many MQTTv5 features, including the property callback and server assignment of client ID. The mqqtclient example is a good starting template for your MQTT application.
+
+### Non-Blocking Client Example
+The example MQTT client is located in /examples/nbclient/. This example uses non-blocking I/O for message exchange. The wolfMQTT library must be configured with the `--enable-nonblock` option (or built with `WOLFMQTT_NONBLOCK`).
 
 ### Firmware Example
 The MQTT firmware update is located in /examples/firmware/. This example has two parts. The first is called “fwpush”, which signs and publishes a firmware image. The second is called “fwclient”, which receives the firmware image and verifies the signature. This example publishes message on the topic “wolfMQTT/example/firmware”. The "fwpush" application is an example of using a publish callback to send the payload data. 
@@ -117,7 +120,7 @@ This example enables the wolfMQTT client to connect to the IBM Watson Internet o
 
 
 ## v5.0 Specification Support
-The wolfMQTT client supports connecting to v5 enabled brokers when built with the --enable-mqtt5 option. Handling properties received from the server is accomplished via a callback when the --enable-propcb option is set. The following v5.0 specification features are supported by the wolfMQTT client:
+The wolfMQTT client supports connecting to v5 enabled brokers when configured with the `--enable-mqtt5` option. Handling properties received from the server is accomplished via a callback when the `--enable-propcb` option is set. The following v5.0 specification features are supported by the wolfMQTT client:
 * AUTH packet
 * User properties
 * Server connect ACK properties

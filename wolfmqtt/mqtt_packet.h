@@ -495,6 +495,8 @@ typedef struct _MqttDisconnect {
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;
+#else
+	void *unused; /* Some compilers require at least one member */
 #endif
 } MqttDisconnect;
 

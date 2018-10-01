@@ -470,15 +470,15 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_WAIT_MSG;
 
             do {
-                /* Try and read packet */
-                rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
-
                 /* check for test mode or stop */
                 if (mStopRead || mqttCtx->test_mode) {
                     rc = MQTT_CODE_SUCCESS;
                     PRINTF("MQTT Exiting...");
                     break;
                 }
+
+                /* Try and read packet */
+                rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
 
             #ifdef WOLFMQTT_NONBLOCK
                 /* Track elapsed time with no activity and trigger timeout */

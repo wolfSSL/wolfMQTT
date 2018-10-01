@@ -3,6 +3,7 @@
 
 if BUILD_EXAMPLES
 noinst_PROGRAMS += examples/mqttclient/mqttclient \
+                   examples/nbclient/nbclient \
                    examples/firmware/fwpush \
                    examples/firmware/fwclient \
                    examples/azure/azureiothub \
@@ -10,6 +11,7 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/wiot/wiot
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
+                   examples/nbclient/nbclient.h \
                    examples/firmware/fwpush.h \
                    examples/firmware/fwclient.h \
                    examples/firmware/firmware.h \
@@ -26,6 +28,14 @@ examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
 examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+
+examples_nbclient_nbclient_SOURCES = examples/nbclient/nbclient.c \
+                                               examples/mqttnet.c \
+                                               examples/mqttexample.c
+examples_nbclient_nbclient_LDADD    = src/libwolfmqtt.la
+examples_nbclient_nbclient_DEPENDENCIES = src/libwolfmqtt.la
+examples_nbclient_nbclient_CPPFLAGS = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 
 examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
@@ -72,6 +82,7 @@ endif
 dist_example_DATA+= examples/mqttnet.c \
                     examples/mqttexample.c \
                     examples/mqttclient/mqttclient.c \
+                    examples/nbclient/nbclient.c \
                     examples/firmware/fwpush.c \
                     examples/firmware/fwclient.c \
                     examples/azure/azureiothub.c \
@@ -79,6 +90,7 @@ dist_example_DATA+= examples/mqttnet.c \
                     examples/wiot/wiot.c
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
+                   examples/nbclient/.libs/nbclient \
                    examples/firmware/.libs/fwpush \
                    examples/firmware/.libs/fwclient \
                    examples/azure/.libs/azureiothub \
@@ -87,6 +99,7 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
 
 EXTRA_DIST+=       examples/mqttuart.c \
                    examples/mqttclient/mqttclient.vcxproj \
+                   examples/nbclient/nbclient.vcxproj \
                    examples/firmware/fwclient.vcxproj \
                    examples/firmware/fwpush.vcxproj \
                    examples/azure/azureiothub.vcxproj \
