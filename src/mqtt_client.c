@@ -834,6 +834,9 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
             /* if not expecting a reply, the reset state and exit */
             if (publish->qos == MQTT_QOS_0) {
                 publish->stat = MQTT_MSG_BEGIN;
+                if (rc > 0) {
+                    rc = MQTT_CODE_SUCCESS;
+                }
                 break;
             }
 
