@@ -181,6 +181,20 @@ fi
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 
 
+# MQTT-SN Sensor Network
+AC_ARG_ENABLE([sn],
+    [AS_HELP_STRING([--enable-sn],[Enable MQTT-SN support (default: disabled)])],
+    [ ENABLED_SN=$enableval ],
+    [ ENABLED_SN=no ]
+    )
+
+if test "x$ENABLED_SN" = "xyes"
+then
+    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_SN"
+fi
+
+AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
+
 # MQTT v5.0
 AC_ARG_ENABLE([mqtt5],
     [AS_HELP_STRING([--enable-mqtt5],[Enable MQTT v5.0 support (default: disabled)])],
@@ -337,6 +351,7 @@ echo "   * LIB Flags:                 $LIB"
 
 echo "   * Disconnect Callback:       $ENABLED_DISCB"
 echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
+echo "   * Enable MQTT-SN:            $ENABLED_SN"
 echo "   * Enable MQTT v5.0:          $ENABLED_MQTTV50"
 echo "   * Property Callback:         $ENABLED_PROPCB"
 echo "   * Examples:                  $ENABLED_EXAMPLES"

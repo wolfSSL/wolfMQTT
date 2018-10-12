@@ -213,7 +213,8 @@ static int NetConnect(void *context, const char* host, word16 port,
     return rc;
 }
 
-static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
+static int NetRead(void *context, byte* buf, int buf_len,
+    int timeout_ms)
 {
     SocketContext *sock = (SocketContext*)context;
     int rc = -1, timeout = 0;
@@ -523,7 +524,6 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
 #endif /* WOLFMQTT_NONBLOCK */
 #endif /* !WOLFMQTT_NO_TIMEOUT */
 
-
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
@@ -643,6 +643,88 @@ exit:
     return rc;
 }
 
+#ifdef WOLFMQTT_SN
+static int SN_NetConnect(void *context, const char* host, word16 port,
+    int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    int type = SOCK_DGRAM;
+    int rc;
+    SOERROR_T so_error = 0;
+    struct addrinfo *result = NULL;
+    struct addrinfo hints;
+
+    /* Get address information for host and locate IPv4 */
+    XMEMSET(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM; /* Datagram socket */
+
+    XMEMSET(&sock->addr, 0, sizeof(sock->addr));
+    sock->addr.sin_family = AF_INET;
+
+    rc = getaddrinfo(host, NULL, &hints, &result);
+    if (rc >= 0 && result != NULL) {
+        struct addrinfo* res = result;
+
+        /* prefer ip4 addresses */
+        while (res) {
+            if (res->ai_family == AF_INET) {
+                result = res;
+                break;
+            }
+            res = res->ai_next;
+        }
+
+        if (result->ai_family == AF_INET) {
+            sock->addr.sin_port = htons(port);
+            sock->addr.sin_family = AF_INET;
+            sock->addr.sin_addr =
+                ((SOCK_ADDR_IN*)(result->ai_addr))->sin_addr;
+        }
+        else {
+            rc = -1;
+        }
+
+        freeaddrinfo(result);
+    }
+
+    if (rc == 0) {
+
+    /* Create the socket */
+        sock->fd = socket(sock->addr.sin_family, type, 0);
+        if (sock->fd == SOCKET_INVALID) {
+            rc = -1;
+        }
+    }
+
+    if (rc == 0)
+    {
+    #ifndef WOLFMQTT_NO_TIMEOUT
+        fd_set fdset;
+        struct timeval tv;
+
+        /* Setup timeout and FD's */
+        setup_timeout(&tv, timeout_ms);
+        FD_ZERO(&fdset);
+        FD_SET(sock->fd, &fdset);
+    #else
+        (void)timeout_ms;
+    #endif /* !WOLFMQTT_NO_TIMEOUT */
+
+        /* Start connect */
+        rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
+    }
+
+    /* Show error */
+    if (rc != 0) {
+        close(sock->fd);
+        PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error);
+    }
+
+    return rc;
+}
+#endif
+
 static int NetWrite(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
@@ -687,13 +769,14 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     return rc;
 }
 
-static int NetRead(void *context, byte* buf, int buf_len,
-    int timeout_ms)
+static int NetRead_ex(void *context, byte* buf, int buf_len,
+    int timeout_ms, byte peek)
 {
     SocketContext *sock = (SocketContext*)context;
     int rc = -1, timeout = 0;
     SOERROR_T so_error = 0;
     int bytes = 0;
+    int flags = 0;
 #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
     fd_set recvfds;
     fd_set errfds;
@@ -702,6 +785,10 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (peek == 1) {
+        flags |= MSG_PEEK;
     }
 
 #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
@@ -737,7 +824,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
                 rc = (int)SOCK_RECV(sock->fd,
                                &buf[bytes],
                                buf_len - bytes,
-                               0);
+                               flags);
                 if (rc <= 0) {
                     rc = -1;
                     goto exit; /* Error */
@@ -798,6 +885,18 @@ exit:
     return rc;
 }
 
+static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
+{
+    return NetRead_ex(context, buf, buf_len, timeout_ms, 0);
+}
+
+#ifdef WOLFMQTT_SN
+static int NetPeek(void *context, byte* buf, int buf_len, int timeout_ms)
+{
+    return NetRead_ex(context, buf, buf_len, timeout_ms, 1);
+}
+#endif
+
 static int NetDisconnect(void *context)
 {
     SocketContext *sock = (SocketContext*)context;
@@ -813,7 +912,6 @@ static int NetDisconnect(void *context)
 }
 
 #endif
-
 
 
 /* Public Functions */
@@ -871,6 +969,37 @@ int MqttClientNet_Init(MqttNet* net)
 
     return MQTT_CODE_SUCCESS;
 }
+
+#ifdef WOLFMQTT_SN
+int SN_ClientNet_Init(MqttNet* net)
+{
+    if (net) {
+        XMEMSET(net, 0, sizeof(MqttNet));
+        net->connect = SN_NetConnect;
+        net->read = NetRead;
+        net->write = NetWrite;
+        net->peek = NetPeek;
+        net->disconnect = NetDisconnect;
+        net->context = (SocketContext *)WOLFMQTT_MALLOC(sizeof(SocketContext));
+        if (net->context == NULL) {
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMSET(net->context, 0, sizeof(SocketContext));
+        ((SocketContext*)(net->context))->stat = SOCK_BEGIN;
+
+    #if 0 //TODO: multicast support
+        net->multi_ctx = (SocketContext *)WOLFMQTT_MALLOC(sizeof(SocketContext));
+        if (net->multi_ctx == NULL) {
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMSET(net->multi_ctx, 0, sizeof(SocketContext));
+        ((SocketContext*)(net->multi_ctx))->stat = SOCK_BEGIN;
+    #endif
+    }
+
+    return MQTT_CODE_SUCCESS;
+}
+#endif
 
 int MqttClientNet_DeInit(MqttNet* net)
 {

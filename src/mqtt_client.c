@@ -1115,3 +1115,725 @@ const char* MqttClient_ReturnCodeToString(int return_code)
 }
 #endif /* !WOLFMQTT_NO_ERROR_STRINGS */
 
+#ifdef WOLFMQTT_SN
+
+/* Private functions */
+static int SN_Client_HandlePayload(MqttClient* client, MqttMessage* msg,
+    int timeout, void* p_decode, word16* packet_id)
+{
+    int rc = MQTT_CODE_SUCCESS;
+    (void)timeout;
+
+    switch (msg->type)
+    {
+        case SN_MSG_TYPE_GWINFO:
+        {
+            SN_GwInfo info, *p_info = &info;
+            rc = SN_Decode_GWInfo(client->rx_buf, client->packet.buf_len, p_info);
+            if (rc <= 0) {
+                return rc;
+            }
+            break;
+        }
+        case SN_MSG_TYPE_CONNACK:
+        {
+            /* Decode connect ack */
+            SN_ConnectAck connect_ack, *p_connect_ack = &connect_ack;
+            if (p_decode) {
+                p_connect_ack = (SN_ConnectAck*)p_decode;
+            }
+            p_connect_ack->return_code = client->rx_buf[client->packet.buf_len-1];
+
+            break;
+        }
+        case SN_MSG_TYPE_REGACK:
+        {
+            /* Decode register ack */
+            SN_RegAck regack_s, *regack = &regack_s;
+            if (p_decode) {
+                regack = (SN_RegAck*)p_decode;
+            }
+
+            rc = SN_Decode_RegAck(client->rx_buf, client->packet.buf_len, regack);
+
+            if (rc > 0) {
+                *packet_id = regack->packet_id;
+            }
+
+            break;
+        }
+        case SN_MSG_TYPE_PUBLISH:
+        {
+            /* Decode publish message */
+            rc = SN_Decode_Publish(client->rx_buf, client->packet.buf_len,
+                   msg);
+            if (rc <= 0) {
+                return rc;
+            }
+
+            /* Issue callback for new message */
+            if (client->msg_cb) {
+                /* if using the temp publish message buffer,
+                   then populate message context with client context */
+                if (&client->msg == msg)
+                    msg->ctx = client->ctx;
+                rc = client->msg_cb(client, msg, 1, 1);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    return rc;
+                };
+            }
+
+            /* Handle Qos */
+            if (msg->qos > MQTT_QOS_0) {
+                SN_PublishResp publish_resp;
+                SN_MsgType type;
+
+                *packet_id = msg->packet_id;
+
+                /* Determine packet type to write */
+                type = (msg->qos == MQTT_QOS_1) ?
+                        SN_MSG_TYPE_PUBACK :
+                        SN_MSG_TYPE_PUBREC;
+                publish_resp.packet_id = msg->packet_id;
+
+                /* Encode publish response */
+                rc = SN_Encode_PublishResp(client->tx_buf,
+                                    client->tx_buf_len, type, &publish_resp);
+                if (rc <= 0) {
+                    return rc;
+                }
+                client->packet.buf_len = rc;
+
+                /* Send packet */
+                msg->stat = MQTT_MSG_BEGIN;
+                rc = MqttPacket_Write(client, client->tx_buf,
+                                                    client->packet.buf_len);
+            }
+            break;
+        }
+        case SN_MSG_TYPE_PUBACK:
+        case SN_MSG_TYPE_PUBCOMP:
+        case SN_MSG_TYPE_PUBREC:
+        case SN_MSG_TYPE_PUBREL:
+        {
+            SN_PublishResp publish_resp, *p_publish_resp = &publish_resp;
+            if (p_decode) {
+                p_publish_resp = (SN_PublishResp*)p_decode;
+            }
+            else
+            {
+                XMEMSET(p_publish_resp, 0, sizeof(SN_PublishResp));
+            }
+            /* Decode publish response message */
+            rc = SN_Decode_PublishResp(client->rx_buf, client->packet.buf_len,
+                msg->type, p_publish_resp);
+            if (rc <= 0) {
+                return rc;
+            }
+            *packet_id = p_publish_resp->packet_id;
+
+            /* If Qos then send response */
+            if (msg->type == SN_MSG_TYPE_PUBREC ||
+                msg->type == SN_MSG_TYPE_PUBREL) {
+
+                /* Encode publish response */
+                publish_resp.packet_id = p_publish_resp->packet_id;
+                rc = SN_Encode_PublishResp(client->tx_buf,
+                    client->tx_buf_len, msg->type+1, &publish_resp);
+                if (rc <= 0) {
+                    return rc;
+                }
+                client->packet.buf_len = rc;
+
+                /* Send packet */
+                msg->stat = MQTT_MSG_BEGIN;
+                rc = MqttPacket_Write(client, client->tx_buf,
+                        client->packet.buf_len);
+            }
+            break;
+        }
+        case SN_MSG_TYPE_SUBACK:
+        {
+            /* Decode subscribe ack */
+            SN_SubAck subscribe_ack, *p_subscribe_ack = &subscribe_ack;
+            if (p_decode) {
+                p_subscribe_ack = (SN_SubAck*)p_decode;
+            }
+            else {
+                XMEMSET(p_subscribe_ack, 0, sizeof(SN_SubAck));
+            }
+
+            rc = SN_Decode_SubscribeAck(client->rx_buf, client->packet.buf_len,
+                    p_subscribe_ack);
+            if (rc <= 0) {
+                return rc;
+            }
+            *packet_id = p_subscribe_ack->packet_id;
+
+            break;
+        }
+        case SN_MSG_TYPE_UNSUBACK:
+        {
+            /* Decode unsubscribe ack */
+            SN_UnsubscribeAck unsubscribe_ack;
+            SN_UnsubscribeAck *p_unsubscribe_ack = &unsubscribe_ack;
+
+            if (p_decode) {
+                p_unsubscribe_ack = (SN_UnsubscribeAck*)p_decode;
+            }
+            rc = SN_Decode_UnsubscribeAck(client->rx_buf,
+                    client->packet.buf_len, p_unsubscribe_ack);
+            if (rc <= 0) {
+                return rc;
+            }
+            *packet_id = p_unsubscribe_ack->packet_id;
+
+            break;
+        }
+        case SN_MSG_TYPE_PING_RESP:
+        {
+            /* Decode ping */
+            rc = SN_Decode_Ping(client->rx_buf, client->packet.buf_len);
+            break;
+        }
+        default:
+        {
+            /* Other types are server side only, ignore */
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("SN_Client_WaitMessage: Invalid client packet type %u!",
+                msg->type);
+        #endif
+            break;
+        }
+    } /* switch (msg->type) */
+
+    return rc;
+}
+static int SN_Client_WaitType(MqttClient *client, MqttMessage* msg,
+    int timeout_ms, byte wait_type, word16 wait_packet_id, void* p_decode)
+{
+    int rc;
+    word16 packet_id = 0;
+
+wait_again:
+
+    switch (msg->stat)
+    {
+        case MQTT_MSG_BEGIN:
+        {
+            /* reset the packet state */
+            client->packet.stat = MQTT_PK_BEGIN;
+
+            FALL_THROUGH;
+        }
+        case MQTT_MSG_WAIT:
+        {
+            /* Wait for packet */
+            rc = SN_Packet_Read(client, client->rx_buf, client->rx_buf_len,
+                    timeout_ms);
+            if (rc <= 0) {
+                return rc;
+            }
+
+            msg->stat = MQTT_MSG_WAIT;
+            client->packet.buf_len = rc;
+
+            /* Determine packet type */
+            if (client->rx_buf[0] == 0x01) {
+                /* Type is in fourth byte */
+                msg->type = client->rx_buf[3];
+            }
+            else {
+                /* Type is in second byte */
+                msg->type = client->rx_buf[1];
+            }
+
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("Read Packet: Len %d, Type %d",
+                client->packet.buf_len, msg->type);
+        #endif
+
+            msg->stat = MQTT_MSG_READ;
+
+            FALL_THROUGH;
+        }
+
+        case MQTT_MSG_READ:
+        case MQTT_MSG_READ_PAYLOAD:
+        {
+            rc = SN_Client_HandlePayload(client, msg, timeout_ms, p_decode,
+                                                                &packet_id);
+            if (rc < 0) {
+                return rc;
+            }
+            rc = MQTT_CODE_SUCCESS;
+
+            /* Check for type and packet id */
+            if (wait_type == msg->type) {
+                if (wait_packet_id == 0 || wait_packet_id == packet_id) {
+                    /* We found the packet type and id */
+                    break;
+                }
+            }
+
+            msg->stat = MQTT_MSG_BEGIN;
+            goto wait_again;
+        }
+
+        case MQTT_MSG_WRITE:
+        default:
+        {
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("SN_Client_WaitType: Invalid state %d!",
+                msg->stat);
+        #endif
+            rc = MQTT_CODE_ERROR_STAT;
+            break;
+        }
+    } /* switch (msg->stat) */
+
+    /* reset state */
+    msg->stat = MQTT_MSG_BEGIN;
+
+    return rc;
+}
+
+/* Public Functions */
+int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
+{
+    int rc, len = 0;
+
+    /* Validate required arguments */
+    if (client == NULL || search == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (search->stat == MQTT_MSG_BEGIN) {
+
+        /* Encode the search packet */
+        rc = SN_Encode_SearchGW(client->tx_buf, client->tx_buf_len,
+                search->radius);
+        if (rc <= 0) {
+            return rc;
+        }
+        len = rc;
+
+        /* Send search for gateway packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc != len) {
+            return rc;
+        }
+        search->stat = MQTT_MSG_WAIT;
+    }
+
+    /* Wait for gateway info packet */
+    rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+            SN_MSG_TYPE_GWINFO, 0, &search->gwInfo);
+
+    return rc;
+}
+
+int SN_Client_Connect(MqttClient *client, SN_Connect *connect)
+{
+    int rc = 0, len = 0;
+
+    /* Validate required arguments */
+    if ((client == NULL) || (connect == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (connect->stat == MQTT_MSG_BEGIN) {
+
+        /* Encode the connect packet */
+        rc = SN_Encode_Connect(client->tx_buf, client->tx_buf_len, connect);
+        if (rc <= 0) {
+            return rc;
+        }
+        len = rc;
+
+        /* Send connect packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc == len) {
+            rc = 0;
+            connect->stat = MQTT_MSG_WAIT;
+        }
+        else
+        {
+            if (rc == 0) {
+                /* Some other error */
+                rc = -1;
+            }
+        }
+    }
+
+    if ((rc == 0) && (connect->enable_lwt != 0)) {
+        /* If the will is enabled, then the gateway requests the topic and
+           message in separate packets. */
+        rc = SN_Client_Will(client, &connect->will);
+    }
+
+    if (rc == 0) {
+        connect->enable_lwt = 0;
+
+        /* Wait for connect ack packet */
+        rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+                SN_MSG_TYPE_CONNACK, 0, &connect->ack);
+    }
+
+    return rc;
+}
+
+int SN_Client_Will(MqttClient *client, SN_Will *will)
+{
+    int rc, len;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Wait for Will Topic Request packet */
+    rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+            SN_MSG_TYPE_WILLTOPICREQ, 0, NULL);
+    if (rc == 0) {
+
+        /* Encode Will Topic */
+        len = rc = SN_Encode_WillTopic(client->tx_buf, client->tx_buf_len, will);
+        if (rc > 0) {
+
+            /* Send Will Topic packet */
+            rc = MqttPacket_Write(client, client->tx_buf, len);
+            if ((will != NULL) && (rc == len)) {
+
+                /* Wait for Will Message Request */
+                rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+                        SN_MSG_TYPE_WILLMSGREQ, 0, NULL);
+
+                if (rc == 0) {
+
+                    /* Encode Will Message */
+                    len = rc = SN_Encode_WillMsg(client->tx_buf, client->tx_buf_len, will);
+                    if (rc > 0) {
+
+                        /* Send Will Topic packet */
+                        rc = MqttPacket_Write(client, client->tx_buf, len);
+                        if (rc == len)
+                            rc = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    return rc;
+
+}
+
+int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
+{
+    int rc = 0, len = 0;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Encode Will Topic Update */
+    len = rc = SN_Encode_WillTopicUpdate(client->tx_buf, client->tx_buf_len, will);
+    if (rc > 0) {
+
+        /* Send Will Topic Update packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if ((will != NULL) && (rc == len)) {
+
+            if (will != NULL) {
+                /* Wait for Will Topic Update Response packet */
+                rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+                        SN_MSG_TYPE_WILLTOPICREQ, 0, NULL);
+            }
+        }
+    }
+
+    return rc;
+
+}
+
+int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
+{
+    int rc = 0, len = 0;
+
+    /* Validate required arguments */
+    if ((client == NULL) || (will == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Encode Will Message Update */
+    len = rc = SN_Encode_WillMsgUpdate(client->tx_buf, client->tx_buf_len, will);
+    if (rc > 0) {
+
+        /* Send Will Message Update packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if ((will != NULL) && (rc == len)) {
+
+            if (will != NULL) {
+                /* Wait for Will Message Update Response packet */
+                rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+                        SN_MSG_TYPE_WILLMSGRESP, 0, NULL);
+            }
+        }
+    }
+
+    return rc;
+
+}
+
+int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
+{
+    int rc = -1, len;
+
+    /* Validate required arguments */
+    if (client == NULL || subscribe == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (subscribe->stat == MQTT_MSG_BEGIN) {
+        /* Encode the subscribe packet */
+        rc = SN_Encode_Subscribe(client->tx_buf, client->tx_buf_len,
+                subscribe);
+        if (rc <= 0) { return rc; }
+        len = rc;
+
+        /* Send subscribe packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc != len) { return rc; }
+
+        subscribe->stat = MQTT_MSG_WAIT;
+    }
+
+    /* Wait for subscribe ack packet */
+    rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+            SN_MSG_TYPE_SUBACK, subscribe->packet_id, &subscribe->subAck);
+
+    return rc;
+}
+
+int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
+{
+    int rc = MQTT_CODE_SUCCESS;
+
+    /* Validate required arguments */
+    if (client == NULL || publish == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    switch (publish->stat)
+    {
+        case MQTT_MSG_BEGIN:
+        {
+            /* Encode the publish packet */
+            rc = SN_Encode_Publish(client->tx_buf, client->tx_buf_len,
+                    publish);
+            if (rc <= 0) {
+                return rc;
+            }
+
+            client->write.len = rc;
+            publish->buffer_pos = 0;
+
+            FALL_THROUGH;
+        }
+        case MQTT_MSG_WRITE:
+        {
+            publish->stat = MQTT_MSG_WRITE;
+
+            /* Send packet and payload */
+            rc = MqttPacket_Write(client, client->tx_buf,
+                    client->write.len);
+            if (rc < 0) {
+                return rc;
+            }
+
+            if (rc == client->write.len) {
+                rc = MQTT_CODE_SUCCESS;
+            }
+            else {
+                rc = -1;
+            }
+
+            /* if not expecting a reply, the reset state and exit */
+            if (publish->qos == MQTT_QOS_0) {
+                publish->stat = MQTT_MSG_BEGIN;
+                break;
+            }
+
+            FALL_THROUGH;
+        }
+
+        case MQTT_MSG_WAIT:
+        {
+            publish->stat = MQTT_MSG_WAIT;
+
+            /* Handle QoS */
+            if (publish->qos > MQTT_QOS_0) {
+                SN_PublishResp publish_resp;
+                XMEMSET(&publish_resp, 0, sizeof(SN_PublishResp));
+
+                /* Determine packet type to wait for */
+                SN_MsgType type = (publish->qos == MQTT_QOS_1) ?
+                        SN_MSG_TYPE_PUBACK :
+                        SN_MSG_TYPE_PUBCOMP;
+
+                /* Wait for publish response packet */
+                rc = SN_Client_WaitType(client, &client->msg,
+                    client->cmd_timeout_ms, type, publish->packet_id, &publish_resp);
+
+                publish->return_code = publish_resp.return_code;
+            }
+
+            break;
+        }
+
+        case MQTT_MSG_READ:
+        case MQTT_MSG_READ_PAYLOAD:
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("SN_Client_Publish: Invalid state %d!",
+                publish->stat);
+        #endif
+            rc = MQTT_CODE_ERROR_STAT;
+            break;
+    } /* switch (publish->stat) */
+
+    return rc;
+}
+
+
+int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
+{
+    int rc, len;
+    SN_UnsubscribeAck unsubscribe_ack;
+
+    /* Validate required arguments */
+    if (client == NULL || unsubscribe == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (unsubscribe->stat == MQTT_MSG_BEGIN) {
+        /* Encode the subscribe packet */
+        rc = SN_Encode_Unsubscribe(client->tx_buf, client->tx_buf_len,
+            unsubscribe);
+        if (rc <= 0) { return rc; }
+        len = rc;
+
+        /* Send unsubscribe packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc != len) { return rc; }
+
+        unsubscribe->stat = MQTT_MSG_WAIT;
+    }
+
+    /* Wait for unsubscribe ack packet */
+    rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+            SN_MSG_TYPE_UNSUBACK, unsubscribe->packet_id,
+            &unsubscribe_ack);
+
+    return rc;
+}
+
+int SN_Client_Register(MqttClient *client, SN_Register *regist)
+{
+    int rc, len;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (client->msg.stat == MQTT_MSG_BEGIN) {
+        /* Encode the register packet */
+        rc = SN_Encode_Register(client->tx_buf, client->tx_buf_len, regist);
+        if (rc <= 0) {
+            return rc;
+        }
+        len = rc;
+
+        /* Send packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc != len) {
+            return rc;
+        }
+
+        client->msg.stat = MQTT_MSG_WAIT;
+    }
+
+    /* Wait for register acknowledge packet */
+    rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+            SN_MSG_TYPE_REGACK, regist->packet_id, &regist->regack);
+
+    return rc;
+}
+
+int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
+{
+    int rc, len;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (client->msg.stat == MQTT_MSG_BEGIN) {
+        /* Encode the ping packet */
+        rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, ping);
+        if (rc <= 0) { return rc; }
+        len = rc;
+
+        /* Send ping req packet */
+        rc = MqttPacket_Write(client, client->tx_buf, len);
+        if (rc != len) { return rc; }
+
+        client->msg.stat = MQTT_MSG_WAIT;
+    }
+
+    /* Wait for ping resp packet */
+    rc = SN_Client_WaitType(client, &client->msg, client->cmd_timeout_ms,
+            SN_MSG_TYPE_PING_RESP, 0, NULL);
+
+    return rc;
+}
+
+int SN_Client_Disconnect(MqttClient *client)
+{
+    return SN_Client_Disconnect_ex(client, NULL);
+}
+
+int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
+{
+    int rc, len;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Encode the disconnect packet */
+    rc = SN_Encode_Disconnect(client->tx_buf, client->tx_buf_len, disconnect);
+    if (rc <= 0) { return rc; }
+    len = rc;
+
+    /* Send disconnect packet */
+    rc = MqttPacket_Write(client, client->tx_buf, len);
+    if (rc != len) { return rc; }
+
+    /* No response for MQTT disconnect packet */
+
+    return MQTT_CODE_SUCCESS;
+}
+
+int SN_Client_WaitMessage(MqttClient *client, int timeout_ms)
+{
+    return SN_Client_WaitType(client, &client->msg, timeout_ms,
+        MQTT_PACKET_TYPE_ANY, 0, NULL);
+}
+
+#endif /* defined WOLFMQTT_SN */
+
