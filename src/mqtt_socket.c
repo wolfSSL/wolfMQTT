@@ -46,6 +46,7 @@ static int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     int rc;
     MqttClient *client = (MqttClient*)ptr;
     (void)ssl; /* Not used */
+
     rc = client->net->read(client->net->context, (byte*)buf, sz,
         client->tls.timeout_ms);
 
@@ -277,6 +278,36 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 
     return rc;
 }
+
+#ifdef WOLFMQTT_SN
+int MqttSocket_Peek(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
+{
+    int rc;
+
+    /* Validate arguments */
+    if (client == NULL || client->net == NULL || client->net->peek == NULL ||
+        buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* check for buffer position overflow */
+    if (client->read.pos >= buf_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
+    rc = client->net->peek(client->net->context, buf, buf_len, timeout_ms);
+    if (rc > 0) {
+    #ifdef WOLFMQTT_DEBUG_SOCKET
+        PRINTF("MqttSocket_Peek: Len=%d, Rc=%d", buf_len, rc);
+    #endif
+
+        /* return length read and reset position */
+        client->read.pos = 0;
+    }
+
+    return rc;
+}
+#endif
 
 int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
     int timeout_ms, int use_tls, MqttTlsCb cb)

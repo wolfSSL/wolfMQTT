@@ -9,6 +9,9 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/azure/azureiothub \
                    examples/aws/awsiot \
                    examples/wiot/wiot
+if BUILD_SN
+noinst_PROGRAMS += examples/sn-client/sn-client
+endif
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/nbclient/nbclient.h \
@@ -20,7 +23,9 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/wiot/wiot.h \
                    examples/mqttnet.h \
                    examples/mqttexample.h
-
+if BUILD_SN
+noinst_HEADERS +=  examples/sn-client/sn-client.h
+endif
 
 examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
                                               examples/mqttnet.c \
@@ -77,6 +82,14 @@ examples_wiot_wiot_LDADD                    = src/libwolfmqtt.la
 examples_wiot_wiot_DEPENDENCIES             = src/libwolfmqtt.la
 examples_wiot_wiot_CPPFLAGS                 = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
+if BUILD_SN
+examples_sn_client_sn_client_SOURCES        = examples/sn-client/sn-client.c \
+                                              examples/mqttnet.c \
+                                              examples/mqttexample.c
+examples_sn_client_sn_client_LDADD          = src/libwolfmqtt.la
+examples_sn_client_sn_client_DEPENDENCIES   = src/libwolfmqtt.la
+examples_sn_client_sn_client_CPPFLAGS       = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+endif
 endif
 
 dist_example_DATA+= examples/mqttnet.c \
@@ -88,6 +101,9 @@ dist_example_DATA+= examples/mqttnet.c \
                     examples/azure/azureiothub.c \
                     examples/aws/awsiot.c \
                     examples/wiot/wiot.c
+if BUILD_SN
+dist_example_DATA+= examples/sn-client/sn-client.c
+endif
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/nbclient/.libs/nbclient \
@@ -96,6 +112,9 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/azure/.libs/azureiothub \
                    examples/aws/.libs/awsiot \
                    examples/wiot/.libs/wiot
+if BUILD_SN
+DISTCLEANFILES+=   examples/sn-client/.libs/sn-client
+endif
 
 EXTRA_DIST+=       examples/mqttuart.c \
                    examples/mqttclient/mqttclient.vcxproj \
