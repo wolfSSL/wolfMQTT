@@ -162,7 +162,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
     /* Verify this message is for the firmware topic */
     if (msg_new &&
-        memcmp(msg->topic_name, FIRMWARE_TOPIC_NAME,
+        XMEMCMP(msg->topic_name, FIRMWARE_TOPIC_NAME,
             msg->topic_name_len) == 0 &&
         !mFwBuf)
     {

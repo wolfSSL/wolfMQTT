@@ -440,7 +440,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.topic_name = mqttCtx->topic_name;
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer_len = FIRMWARE_MAX_BUFFER;
-            mqttCtx->publish.buffer = WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
+            mqttCtx->publish.buffer = (byte*)WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
 
             /* Calculate the total payload length and store the FirmwareHeader,
                signature, and key in publish->ctx to be used by the callback.

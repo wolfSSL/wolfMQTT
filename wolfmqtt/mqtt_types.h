@@ -69,6 +69,14 @@
     #ifndef _WIN32_WINNT
         #define _WIN32_WINNT 0x0501
     #endif
+
+    /* Allow "unsafe" strncpy */
+    #ifndef _CRT_SECURE_NO_WARNINGS
+        #define _CRT_SECURE_NO_WARNINGS
+    #endif
+
+    /* Visual Studio build settings from wolfmqtt/vs_settings.h */
+    #include "wolfmqtt/vs_settings.h"
 #endif
 
 #ifndef WOLFMQTT_NO_STDIO
@@ -115,6 +123,7 @@ enum MqttPacketResponseCodes {
 /* Standard wrappers */
 #ifndef WOLFMQTT_CUSTOM_STRING
     #include <string.h>
+
     #ifndef XSTRLEN
         #define XSTRLEN(s1)         strlen((s1))
     #endif
@@ -124,11 +133,17 @@ enum MqttPacketResponseCodes {
     #ifndef XSTRNCMP
         #define XSTRNCMP(s1,s2,n)   strncmp((s1),(s2),(n))
     #endif
+    #ifndef XSTRNCPY
+        #define XSTRNCPY(s1,s2,n)   strncpy((s1),(s2),(n))
+    #endif
     #ifndef XMEMCPY
         #define XMEMCPY(d,s,l)      memcpy((d),(s),(l))
     #endif
     #ifndef XMEMSET
         #define XMEMSET(b,c,l)      memset((b),(c),(l))
+    #endif
+    #ifndef XMEMCMP
+        #define XMEMCMP(s1,s2,n)    memcmp((s1),(s2),(n))
     #endif
     #ifndef XATOI
         #define XATOI(s)            atoi((s))

@@ -10,6 +10,7 @@ This is an implementation of the MQTT Client written in C for embedded use, whic
 1. `./autogen.sh` (if cloned from GitHub)
 2. `./configure` (to see a list of build options use `./configure --help`)
 3. `make`
+4. `sudo make install`
 
 If `wolfssl` was recently installed run `sudo ldconfig` to update the linker cache.
  
@@ -29,7 +30,8 @@ For building wolfMQTT with TLS support in Visual Studio:
 6. Open the `<wolfmqtt-root>/wolfmqtt.sln` solution.
 7. Make sure you have the same architecture (`x86` or `x64` selected) as used in wolfSSL above.
 8. By default the include path for the wolfssl headers is `./../wolfssl/`. If your wolfssl root location is different you can go into the project settings and adjust this in `C/C++` -> `General` -> `Additional Include Directories`.
-9. Build the wolfMQTT solution.
+9. Configure your Visual Studio build settings using `wolfmqtt/vs_settings.h`.
+10. Build the wolfMQTT solution.
 
 ### Arduino
 
@@ -120,10 +122,21 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 ### Watson IoT Example
 This example enables the wolfMQTT client to connect to the IBM Watson Internet of Things (WIOT) Platform. The WIOT Platform has a limited test broker called "Quickstart" that allows non-secure connections to exercise the component. The example is located in `/examples/wiot/`. Works with MQTT v5 support enabled. 
 
-### Mqtt-SN Example
+### MQTT-SN Example
 The Sensor Network client implements the MQTT-SN protocol for low-bandwidth networks. There are several differences from MQTT, including the ability to use a two byte Topic ID instead the full topic during subscribe and publish. The SN client requires an MQTT-SN gateway. The gateway acts as an intermediary between the SN clients and the broker. This client was tested with the Eclipse Paho MQTT-SN Gateway, which connects by default to the public Eclipse broker, much like our wolfMQTT Client example. The address of the gateway must be configured as the host. The example is located in `/examples/sn-client/`.
 
-## v5.0 Specification Support
+
+## Specification Support
+
+### MQTT v3.1.1 Specification Support
+
+The initially supported version with full specification support for all features and packets type such as:
+* QoS 0-2
+* Last Will and Testament (LWT)
+* Client examples for: AWS, Azure IoT, IBM Watson, Firmware update, non-blocking and generic.
+
+### MQTT v5.0 Specification Support
+
 The wolfMQTT client supports connecting to v5 enabled brokers when configured with the `--enable-mqtt5` option. Handling properties received from the server is accomplished via a callback when the `--enable-propcb` option is set. The following v5.0 specification features are supported by the wolfMQTT client:
 * AUTH packet
 * User properties
@@ -149,7 +162,8 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 * Watson IoT Quickserver
 ** `./examples/wiot/wiot`
 
-## Sensor Network Specification Support
+### MQTT Sensor Network (MQTT-SN) Specification Support
+
 The wolfMQTT SN Client implementation is based on the OASIS MQTT-SN v1.2 specification. The SN API is configured with the `--enable-sn` option. There is a separate API for the sensor network API, which all begin with the "SN_" prefix. The wolfMQTT SN Client operates over UDP, which is distinct from the wolfMQTT clients that use TCP. The following features are supported by the wolfMQTT SN Client:
 * Register
 * Will topic and message set up 
@@ -163,7 +177,20 @@ Unsupported features:
 
 The SN client was tested using the Eclipse Paho MQTT-SN Gateway (https://github.com/eclipse/paho.mqtt-sn.embedded-c) running locally and on a separate network node. Instructions for building and running the gateway are in the project README.
 
+
 ## Release Notes
+
+### v1.2 (11/07/18)
+
+* Added MQTT Sensor Network (SN) client support (`--enable-sn` or `WOLFMQTT_SN`). (PR #96)
+* Added MQTT v5.0 support with (`--enable-mqtt5` or `WOLFMQTT_V5`). (PR #87)
+* Added property callback support (MQTT v5.0 only). Enabled with `--enable-propcb` or `WOLFMQTT_PROPERTY_CB`). (PR #87)
+* Fix for Harmony NetConnect function incorrectly checking `EWOULDBLOCK`. Fixes issue #88. (PR #89)
+* Fix to reset the TLS ctx and ssl pointers when they have been free'd. (PR #85)
+* Add way to pass custom context to the wolfMQTT TLS verify callback example `mqtt_tls_verify_cb`. PR #94)
+* Create nonblocking mqttclient example `./examples/nbclient/nbclient`. (PR #93)
+* Add support for publishing in smaller chunks using new API `MqttClient_Publish_ex`. (PR #92)
+* Added simplified Microchip Harmony wolfMQTT network callback example. (PR #83)
 
 ### v1.1 (06/21/18)
 * Fixed case when `use_tls` was requested but TLS feature not compiled in. (PR #57)

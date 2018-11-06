@@ -307,7 +307,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
         prop->type = MQTT_PROP_AUTH_METHOD;
         prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
-        prop->data_str.len = XSTRLEN(prop->data_str.str);
+        prop->data_str.len = (word16)XSTRLEN(prop->data_str.str);
     }
     {
         /* Request Response Information */
@@ -432,7 +432,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
         prop->type = MQTT_PROP_CONTENT_TYPE;
         prop->data_str.str = (char*)"wolf_type";
-        prop->data_str.len = XSTRLEN(prop->data_str.str);
+        prop->data_str.len = (word16)XSTRLEN(prop->data_str.str);
     }
     if ((mqttCtx->topic_alias_max > 0) &&
         (mqttCtx->topic_alias > 0) &&
