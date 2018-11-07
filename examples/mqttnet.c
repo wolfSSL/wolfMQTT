@@ -717,7 +717,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
 
     /* Show error */
     if (rc != 0) {
-        close(sock->fd);
+        SOCK_CLOSE(sock->fd);
         PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error);
     }
 

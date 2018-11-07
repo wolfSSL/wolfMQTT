@@ -1046,12 +1046,12 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 
 MqttProp* MqttClient_PropsAdd(MqttProp **head)
 {
-    return(MqttProps_Add(head));
+    return MqttProps_Add(head);
 }
 
 void MqttClient_PropsFree(MqttProp *head)
 {
-    return(MqttProps_Free(head));
+    MqttProps_Free(head);
 }
 
 #endif /* WOLFMQTT_V5 */
@@ -1380,6 +1380,9 @@ wait_again:
             goto wait_again;
         }
 
+    #ifdef WOLFMQTT_V5
+        case MQTT_MSG_AUTH:
+    #endif
         case MQTT_MSG_WRITE:
         default:
         {
@@ -1693,6 +1696,9 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             break;
         }
 
+    #ifdef WOLFMQTT_V5
+        case MQTT_MSG_AUTH:
+    #endif
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
         #ifdef WOLFMQTT_DEBUG_CLIENT

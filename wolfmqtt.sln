@@ -22,6 +22,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "wiot", "examples\wiot\wiot.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nbclient", "examples\nbclient\nbclient.vcxproj", "{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sn-client", "examples\sn-client\sn-client.vcxproj", "{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -94,6 +96,14 @@ Global
 		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x64.Build.0 = Release|x64
 		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x86.ActiveCfg = Release|Win32
 		{9BD647D2-683B-4BBD-97F9-C19EB2851FE3}.Release|x86.Build.0 = Release|Win32
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Debug|x64.ActiveCfg = Debug|x64
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Debug|x64.Build.0 = Debug|x64
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Debug|x86.ActiveCfg = Debug|Win32
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Debug|x86.Build.0 = Debug|Win32
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x64.ActiveCfg = Release|x64
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x64.Build.0 = Release|x64
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x86.ActiveCfg = Release|Win32
+		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

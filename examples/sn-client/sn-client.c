@@ -26,6 +26,8 @@
 
 #include "wolfmqtt/mqtt_client.h"
 
+#ifdef WOLFMQTT_SN
+
 #include "sn-client.h"
 #include "examples/mqttnet.h"
 
@@ -33,10 +35,10 @@
 static int mStopRead = 0;
 
 /* Configuration */
-
 /* Maximum size for network read/write callbacks. */
 #define MAX_BUFFER_SIZE 1024
 #define TEST_MESSAGE    "test"
+
 
 static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
@@ -284,6 +286,9 @@ int sn_test(MQTTCtx *mqttCtx)
                 PRINTF("MQTT-SN Publish: topic id = %d, msg = \"%s\", rc = %d",
                     (word16)*mqttCtx->publish.topic_name, mqttCtx->publish.buffer,
                     mqttCtx->publish.return_code);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    break;
+                }
             }
         }
     #endif
@@ -361,6 +366,7 @@ exit:
     return rc;
 }
 
+#endif /* WOLFMQTT_SN */
 
 /* so overall tests can pull in test function */
 #if !defined(NO_MAIN_DRIVER) && !defined(MICROCHIP_MPLAB_HARMONY)
@@ -390,7 +396,7 @@ exit:
 int main(int argc, char** argv)
 {
     int rc;
-#ifndef WOLFMQTT_NONBLOCK
+#ifdef WOLFMQTT_SN
     MQTTCtx mqttCtx;
 
     /* init defaults */
@@ -419,14 +425,14 @@ int main(int argc, char** argv)
     }
 #endif
 
-#ifndef WOLFMQTT_NONBLOCK
+#ifdef WOLFMQTT_SN
     rc = sn_test(&mqttCtx);
 #else
     (void)argc;
     (void)argv;
 
-    /* This example requires non-blocking mode to be disabled
-       ./configure --disable-nonblock */
+    /* This example requires MQTT-SN mode to be enabled
+       ./configure --enable-sn */
     PRINTF("Example not compiled in!");
     rc = EXIT_FAILURE;
 #endif

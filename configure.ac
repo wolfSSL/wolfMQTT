@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2018 wolfSSL Inc.])
-AC_INIT([wolfmqtt],[1.1.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
+AC_INIT([wolfmqtt],[1.2.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
 
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -23,7 +23,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=3:0:0
+WOLFMQTT_LIBRARY_VERSION=4:0:0
 #                        | | |
 #                 +------+ | +---+
 #                 |        |     |
@@ -190,7 +190,7 @@ AC_ARG_ENABLE([sn],
 
 if test "x$ENABLED_SN" = "xyes"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_SN"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_SN"
 fi
 
 AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
@@ -204,7 +204,7 @@ AC_ARG_ENABLE([mqtt5],
 
 if test "x$ENABLED_MQTTV50" = "xyes"
 then
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_V5"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_V5"
 fi
 
 AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
@@ -222,7 +222,7 @@ then
     then
         AC_MSG_ERROR([cannot enable propcb without enabling mqtt5.])
     fi
-    AM_CPPFLAGS="$AM_CPPFLAGS -DWOLFMQTT_PROPERTY_CB"
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_PROPERTY_CB"
 fi
 
 

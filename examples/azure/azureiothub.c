@@ -347,7 +347,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
 
             /* Authentication */
             mqttCtx->connect.username = AZURE_USERNAME;
-            mqttCtx->connect.password = mqttCtx->app_ctx;
+            mqttCtx->connect.password = (const char *)mqttCtx->app_ctx;
 
             FALL_THROUGH;
         }

@@ -760,6 +760,8 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
 #endif
     }
 
+    (void)rx_payload;
+
     /* Return total length of packet */
     return header_len + remain_len;
 }
@@ -961,7 +963,6 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
 
     /* Encode variable header */
     tx_payload += MqttEncode_Num(&tx_buf[header_len], publish_resp->packet_id);
-    (void)tx_payload;
 
 #ifdef WOLFMQTT_V5
     if ((publish_resp->reason_code != MQTT_REASON_SUCCESS) ||
@@ -978,6 +979,8 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
                         publish_resp->props, tx_payload);
     }
 #endif
+
+    (void)tx_payload;
 
     /* Return total length of packet */
     return header_len + remain_len;
@@ -1339,6 +1342,8 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
         /* Encode properties */
         tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
                         disconnect->props, tx_payload);
+
+        (void)tx_payload;
     }
 #else
     (void)disconnect;
@@ -1382,6 +1387,9 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
             }
         }
     }
+
+    (void)rx_payload;
+
     /* Return total length of packet */
     return header_len + remain_len;
 }
@@ -1433,6 +1441,7 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
 
+    (void)tx_payload;
 
     /* Return total length of packet */
     return header_len + remain_len;
@@ -1491,6 +1500,8 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     else {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
+
+    (void)rx_payload;
 
     /* Return total length of packet */
     return header_len + remain_len;
@@ -1724,6 +1735,7 @@ int SN_Decode_Advertise(byte *rx_buf, int rx_buf_len, SN_Advertise *gw_info)
 
         rx_payload += MqttDecode_Num(rx_payload, &gw_info->duration);
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -1750,6 +1762,7 @@ int SN_Encode_SearchGW(byte *tx_buf, int tx_buf_len, byte hops)
 
     /* Encode radius */
     *tx_payload++ = hops;
+    (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -1794,6 +1807,7 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
             XMEMCPY(gw_info->gwAddr, rx_payload, total_len - 3);
         }
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -1816,7 +1830,7 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *connect)
     total_len = 6; /* Len + Message Type + Flags + ProtocolID + Duration(2) */
 
     /* Client ID size */
-    id_len = (int)XSTRLEN(connect->client_id);
+    id_len = (word16)XSTRLEN(connect->client_id);
     id_len = (id_len <= SN_CLIENTID_MAX_LEN) ? id_len : SN_CLIENTID_MAX_LEN;
 
     total_len += id_len;
@@ -1831,7 +1845,7 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *connect)
 
     /* Encode length */
     if (total_len <= SN_PACKET_MAX_SMALL_SIZE) {
-        *tx_payload++ = total_len;
+        *tx_payload++ = (byte)total_len;
     }
     else {
         *tx_payload++ = SN_PACKET_LEN_IND;
@@ -1858,6 +1872,8 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *connect)
 
     /* Encode Client ID */
      XMEMCPY(tx_payload, connect->client_id, id_len);
+     tx_payload += id_len;
+     (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -1883,6 +1899,7 @@ int SN_Decode_WillTopicReq(byte *rx_buf, int rx_buf_len)
     if (type != SN_MSG_TYPE_WILLTOPICREQ) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -1938,6 +1955,8 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     *tx_payload++ = SN_MSG_TYPE_WILLTOPIC;
 
     if (willTopic != NULL) {
+        int will_len;
+
         /* Encode flags */
         flags |= ((willTopic->qos << SN_PACKET_FLAG_QOS_SHIFT) &
                   SN_PACKET_FLAG_QOS_MASK);
@@ -1945,8 +1964,11 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         *tx_payload++ = flags;
 
         /* Encode Will Topic */
-        XMEMCPY(tx_payload, willTopic->willTopic, XSTRLEN(willTopic->willTopic));
+        will_len = (int)XSTRLEN(willTopic->willTopic);
+        XMEMCPY(tx_payload, willTopic->willTopic, will_len);
+        tx_payload += will_len;
     }
+    (void)tx_payload;
 
     return total_len;
 }
@@ -1974,6 +1996,7 @@ int SN_Decode_WillMsgReq(byte *rx_buf, int rx_buf_len)
     if (type != SN_MSG_TYPE_WILLMSGREQ) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2022,6 +2045,8 @@ int SN_Encode_WillMsg(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
 
     /* Encode Will Message */
     XMEMCPY(tx_payload, willMsg->willMsg, willMsg->willMsgLen);
+    tx_payload += willMsg->willMsgLen;
+    (void)tx_payload;
 
     return total_len;
 }
@@ -2073,6 +2098,8 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     *tx_payload++ = SN_MSG_TYPE_WILLTOPICUPD;
 
     if (willTopic != NULL) {
+        int will_len;
+
         /* Encode flags */
         flags |= ((willTopic->qos << SN_PACKET_FLAG_QOS_SHIFT) &
                   SN_PACKET_FLAG_QOS_MASK);
@@ -2080,8 +2107,11 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         *tx_payload++ = flags;
 
         /* Encode Will Topic */
-        XMEMCPY(tx_payload, willTopic->willTopic, XSTRLEN(willTopic->willTopic));
+        will_len = (int)XSTRLEN(willTopic->willTopic);
+        XMEMCPY(tx_payload, willTopic->willTopic, will_len);
+        tx_payload += will_len;
     }
+    (void)tx_payload;
 
     return total_len;
 
@@ -2107,6 +2137,7 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len)
     if (type != SN_MSG_TYPE_WILLTOPICRESP) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2155,6 +2186,8 @@ int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
 
     /* Encode Will Message */
     XMEMCPY(tx_payload, willMsg->willMsg, willMsg->willMsgLen);
+    tx_payload += willMsg->willMsgLen;
+    (void)tx_payload;
 
     return total_len;
 }
@@ -2179,6 +2212,7 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len)
     if (type != SN_MSG_TYPE_WILLMSGRESP) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2210,6 +2244,7 @@ int SN_Decode_ConnectAck(byte *rx_buf, int rx_buf_len,
     if (connect_ack) {
         connect_ack->return_code = *rx_payload++;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2217,7 +2252,7 @@ int SN_Decode_ConnectAck(byte *rx_buf, int rx_buf_len,
 
 int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
 {
-    int total_len;
+    int total_len, topic_len;
     byte *tx_payload;
 
     /* Validate required arguments */
@@ -2263,7 +2298,10 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     tx_payload += MqttEncode_Num(tx_payload, regist->packet_id);
 
     /* Encode Topic Name */
-    XMEMCPY(tx_payload, regist->topicName, XSTRLEN(regist->topicName));
+    topic_len = (int)XSTRLEN(regist->topicName);
+    XMEMCPY(tx_payload, regist->topicName, topic_len);
+    tx_payload += topic_len;
+    (void)tx_payload;
 
     return total_len;
 }
@@ -2299,6 +2337,7 @@ int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len, SN_RegAck *regack)
         /* Decode return code */
         regack->return_code = *rx_payload++;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2370,12 +2409,12 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
         /* Topic name is a string */
         XMEMCPY(tx_payload, subscribe->topicNameId, XSTRLEN(subscribe->topicNameId));
     }
-    else
-    {
+    else {
         /* Topic ID */
         tx_payload += MqttEncode_Num(tx_payload,
                 (word16)subscribe->topicNameId[0]);
     }
+    (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2410,6 +2449,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
         rx_payload += MqttDecode_Num(rx_payload, &subscribe_ack->packet_id);
         subscribe_ack->return_code = *rx_payload++;
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2444,7 +2484,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
 
     /* Encode header */
     if (total_len <= SN_PACKET_MAX_SMALL_SIZE) {
-        *tx_payload++ = total_len;
+        *tx_payload++ = (byte)total_len;
     }
     else {
         *tx_payload++ = SN_PACKET_LEN_IND;
@@ -2469,6 +2509,9 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
 
     /* Encode payload */
     XMEMCPY(tx_payload, publish->buffer, publish->total_len);
+    tx_payload += publish->total_len;
+
+    (void)tx_payload;
 
     /* Return length of packet placed into tx_buf */
     return total_len;
@@ -2515,7 +2558,7 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     /* Set flags */
     publish->duplicate = flags & SN_PACKET_FLAG_DUPLICATE;
 
-    publish->qos = (flags >> SN_PACKET_FLAG_QOS_SHIFT) & SN_PACKET_FLAG_QOS_MASK;
+    publish->qos = (MqttQoS)((flags >> SN_PACKET_FLAG_QOS_SHIFT) & SN_PACKET_FLAG_QOS_MASK);
 
     publish->retain = flags & SN_PACKET_FLAG_RETAIN;
 
@@ -2563,6 +2606,7 @@ int SN_Encode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
     if (type == SN_MSG_TYPE_PUBACK) {
         *tx_payload++ = publish_resp->return_code;
     }
+    (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2604,6 +2648,7 @@ int SN_Decode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             publish_resp->return_code = *rx_payload++;
         }
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2679,6 +2724,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
         tx_payload += MqttEncode_Num(tx_payload,
                 (word16)unsubscribe->topicNameId[0]);
     }
+    (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2710,6 +2756,7 @@ int SN_Decode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
     if (unsubscribe_ack) {
         rx_payload += MqttDecode_Num(rx_payload, &unsubscribe_ack->packet_id);
     }
+    (void)rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2742,6 +2789,7 @@ int SN_Encode_Disconnect(byte *tx_buf, int tx_buf_len,
     if ((disconnect != NULL) && (disconnect->sleepTmr > 0)) {
         tx_payload += MqttEncode_Num(tx_payload, disconnect->sleepTmr);
     }
+    (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2771,7 +2819,9 @@ int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping)
 
     if (clientId_len > 0) {
         XMEMCPY(tx_payload, ping->clientId, clientId_len);
+        tx_payload += clientId_len;
     }
+    (void)tx_payload;
 
     /* Return total length of packet */
     return total_len;
