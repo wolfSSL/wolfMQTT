@@ -325,6 +325,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
 
             /* Subscribe Topic */
             XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
+            mqttCtx->subscribe.stat = MQTT_MSG_BEGIN;
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = 1;
             mqttCtx->subscribe.topics = mqttCtx->topics;

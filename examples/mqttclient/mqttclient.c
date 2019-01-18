@@ -367,6 +367,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
     /* Build list of topics */
     XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
+
     i = 0;
     mqttCtx->topics[i].topic_filter = mqttCtx->topic_name;
     mqttCtx->topics[i].qos = mqttCtx->qos;
@@ -383,6 +384,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 #endif
 
     /* Subscribe Topic */
+    mqttCtx->subscribe.stat = MQTT_MSG_BEGIN;
     mqttCtx->subscribe.packet_id = mqtt_get_packetid();
     mqttCtx->subscribe.topic_count =
             sizeof(mqttCtx->topics) / sizeof(MqttTopic);
