@@ -129,7 +129,7 @@ int wiot_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
 
     /* Initialize Network */
-    rc = MqttClientNet_Init(&mqttCtx->net);
+    rc = MqttClientNet_Init(&mqttCtx->net, mqttCtx);
 
     PRINTF("MQTT Net Init: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
