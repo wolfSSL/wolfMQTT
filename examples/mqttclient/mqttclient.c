@@ -219,7 +219,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->use_tls);
 
     /* Initialize Network */
-    rc = MqttClientNet_Init(&mqttCtx->net);
+    rc = MqttClientNet_Init(&mqttCtx->net, mqttCtx);
     PRINTF("MQTT Net Init: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {

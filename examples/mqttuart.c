@@ -84,7 +84,7 @@ static int NetDisconnect(void *context)
 }
 
 /* Public Functions */
-int MqttClientNet_Init(MqttNet* net)
+int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
 {
     if (net) {
         XMEMSET(net, 0, sizeof(MqttNet));
@@ -94,6 +94,7 @@ int MqttClientNet_Init(MqttNet* net)
         net->disconnect = NetDisconnect;
         net->context = WOLFMQTT_MALLOC(sizeof(UartContext));
     }
+    (void)mqttCtx;
     return 0;
 }
 

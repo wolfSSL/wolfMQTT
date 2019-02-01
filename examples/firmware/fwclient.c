@@ -219,7 +219,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_NET_INIT;
 
             /* Initialize Network */
-            rc = MqttClientNet_Init(&mqttCtx->net);
+            rc = MqttClientNet_Init(&mqttCtx->net, mqttCtx);
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }

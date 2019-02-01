@@ -146,6 +146,14 @@ typedef enum {
     SOCK_CONN,
 } NB_Stat;
 
+
+#if 0 /* TODO: add multicast support */
+typedef struct MulticastContext {
+
+} MulticastContext;
+#endif
+
+
 typedef struct _SocketContext {
     SOCKET_T fd;
     NB_Stat stat;
@@ -153,8 +161,8 @@ typedef struct _SocketContext {
 #ifdef MICROCHIP_MPLAB_HARMONY
     word32 bytes;
 #endif
+    MQTTCtx* mqttCtx;
 } SocketContext;
-
 
 /* Private functions */
 
@@ -172,9 +180,13 @@ static int NetConnect(void *context, const char* host, word16 port,
     SocketContext *sock = (SocketContext*)context;
     uint32_t hostIp = 0;
     int rc = -1;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
 
     switch (sock->stat) {
     case SOCK_BEGIN:
+        PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
+            host, port, timeout_ms, mqttCtx->use_tls);
+
         hostIp = FreeRTOS_gethostbyname_a(host, NULL, 0, 0);
         if (hostIp == 0)
             break;
@@ -345,11 +357,15 @@ static int NetConnect(void *context, const char* host, word16 port,
     int rc = MQTT_CODE_ERROR_NETWORK;
     struct addrinfo hints;
     struct hostent *hostInfo;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
 
     /* Get address information for host and locate IPv4 */
     switch(sock->stat) {
         case SOCK_BEGIN:
         {
+            PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
+                host, port, timeout_ms, mqttCtx->use_tls);
+
             XMEMSET(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
             hints.ai_socktype = SOCK_STREAM;
@@ -533,11 +549,15 @@ static int NetConnect(void *context, const char* host, word16 port,
     SOERROR_T so_error = 0;
     struct addrinfo *result = NULL;
     struct addrinfo hints;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
 
     /* Get address information for host and locate IPv4 */
     switch(sock->stat) {
         case SOCK_BEGIN:
         {
+            PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
+                host, port, timeout_ms, mqttCtx->use_tls);
+
             XMEMSET(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
             hints.ai_socktype = SOCK_STREAM;
@@ -653,6 +673,10 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     SOERROR_T so_error = 0;
     struct addrinfo *result = NULL;
     struct addrinfo hints;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
+
+    PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d\n",
+        host, port, timeout_ms, mqttCtx->use_tls);
 
     /* Get address information for host and locate IPv4 */
     XMEMSET(&hints, 0, sizeof(struct addrinfo));
@@ -915,7 +939,7 @@ static int NetDisconnect(void *context)
 
 
 /* Public Functions */
-int MqttClientNet_Init(MqttNet* net)
+int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
 {
 #if defined(USE_WINDOWS_API) && !defined(FREERTOS_TCP)
     WSADATA wsd;
@@ -953,47 +977,58 @@ int MqttClientNet_Init(MqttNet* net)
 #endif /* MICROCHIP_MPLAB_HARMONY */
 
     if (net) {
+        SocketContext* sockCtx;
+
         XMEMSET(net, 0, sizeof(MqttNet));
         net->connect = NetConnect;
         net->read = NetRead;
         net->write = NetWrite;
         net->disconnect = NetDisconnect;
-        net->context = (SocketContext *)WOLFMQTT_MALLOC(sizeof(SocketContext));
-        if (net->context == NULL) {
+
+        sockCtx = (SocketContext*)WOLFMQTT_MALLOC(sizeof(SocketContext));
+        if (sockCtx == NULL) {
             return MQTT_CODE_ERROR_MEMORY;
         }
-        XMEMSET(net->context, 0, sizeof(SocketContext));
-
-        ((SocketContext*)(net->context))->stat = SOCK_BEGIN;
+        net->context = sockCtx;
+        XMEMSET(sockCtx, 0, sizeof(SocketContext));
+        sockCtx->stat = SOCK_BEGIN;
+        sockCtx->mqttCtx = mqttCtx;
     }
 
     return MQTT_CODE_SUCCESS;
 }
 
 #ifdef WOLFMQTT_SN
-int SN_ClientNet_Init(MqttNet* net)
+int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
 {
     if (net) {
+        SocketContext* sockCtx;
+
         XMEMSET(net, 0, sizeof(MqttNet));
         net->connect = SN_NetConnect;
         net->read = NetRead;
         net->write = NetWrite;
         net->peek = NetPeek;
         net->disconnect = NetDisconnect;
-        net->context = (SocketContext *)WOLFMQTT_MALLOC(sizeof(SocketContext));
-        if (net->context == NULL) {
-            return MQTT_CODE_ERROR_MEMORY;
-        }
-        XMEMSET(net->context, 0, sizeof(SocketContext));
-        ((SocketContext*)(net->context))->stat = SOCK_BEGIN;
 
-    #if 0 //TODO: multicast support
-        net->multi_ctx = (SocketContext *)WOLFMQTT_MALLOC(sizeof(SocketContext));
-        if (net->multi_ctx == NULL) {
+        sockCtx = (SocketContext*)WOLFMQTT_MALLOC(sizeof(SocketContext));
+        if (sockCtx == NULL) {
             return MQTT_CODE_ERROR_MEMORY;
         }
-        XMEMSET(net->multi_ctx, 0, sizeof(SocketContext));
-        ((SocketContext*)(net->multi_ctx))->stat = SOCK_BEGIN;
+        net->context = sockCtx;
+        XMEMSET(sockCtx, 0, sizeof(SocketContext));
+        sockCtx->stat = SOCK_BEGIN;
+        sockCtx->mqttCtx = mqttCtx;
+
+    #if 0 /* TODO: add multicast support */
+        MulticastContext* multi_ctx;
+        multi_ctx = (MulticastContext*)WOLFMQTT_MALLOC(sizeof(MulticastContext));
+        if (multi_ctx == NULL) {
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        net->multi_ctx = multi_ctx;
+        XMEMSET(multi_ctx, 0, sizeof(MulticastContext));
+        multi_ctx->stat = SOCK_BEGIN;
     #endif
     }
 

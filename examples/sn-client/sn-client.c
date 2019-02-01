@@ -99,7 +99,7 @@ int sn_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT-SN Client: QoS %d", mqttCtx->qos);
 
     /* Initialize Network */
-    rc = SN_ClientNet_Init(&mqttCtx->net);
+    rc = SN_ClientNet_Init(&mqttCtx->net, mqttCtx);
     PRINTF("MQTT-SN Net Init: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {

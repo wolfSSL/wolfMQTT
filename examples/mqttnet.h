@@ -26,15 +26,16 @@
     extern "C" {
 #endif
 
+#include "examples/mqttexample.h"
 
 /* Default MQTT host broker to use, when none is specified in the examples */
 #define DEFAULT_MQTT_HOST       "iot.eclipse.org" /* broker.hivemq.com */
 
 /* Functions used to handle the MqttNet structure creation / destruction */
-int MqttClientNet_Init(MqttNet* net);
+int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx);
 int MqttClientNet_DeInit(MqttNet* net);
 #ifdef WOLFMQTT_SN
-int SN_ClientNet_Init(MqttNet* net);
+int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx);
 #endif
 
 #ifdef __cplusplus
