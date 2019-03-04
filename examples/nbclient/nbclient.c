@@ -41,11 +41,13 @@ static int mStopRead = 0;
 #define TEST_MESSAGE    "test"
 
 #ifdef WOLFMQTT_DISCONNECT_CB
+/* callback indicates a network error occurred */
 static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
 {
     (void)client;
     (void)ctx;
-    PRINTF("Disconnect (error %d)", error_code);
+    PRINTF("Network Error Callback: %s (error %d)",
+        MqttClient_ReturnCodeToString(error_code), error_code);
     return 0;
 }
 #endif
