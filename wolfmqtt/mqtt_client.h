@@ -114,6 +114,34 @@ typedef struct _MqttSk {
     typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
 #endif
 
+#ifdef WOLFMQTT_MULTITHREAD
+    #include <wolfssl/wolfcrypt/wc_port.h>
+    /*
+    wolfSSL_Mutex
+    WOLFSSL_API int wc_InitMutex(wolfSSL_Mutex*);
+    WOLFSSL_API int wc_FreeMutex(wolfSSL_Mutex*);
+    WOLFSSL_API int wc_LockMutex(wolfSSL_Mutex*);
+    WOLFSSL_API int wc_UnLockMutex(wolfSSL_Mutex*);
+    */
+
+    /* Pending Response Structure */
+    typedef struct MqttPendResp {
+        word16         packet_id;
+        MqttPacketType packet_type;
+        void*          packet_resp;
+        time_t         timestamp;
+
+        /* bits */
+        word16         packetDone:1;
+        word16         gotError:1;
+
+        /* double linked list */
+        struct MqttPendResp* next;
+        struct MqttPendResp* prev;
+    } MqttPendResp;
+#endif
+
+
 /* Client structure */
 typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
@@ -154,6 +182,13 @@ typedef struct _MqttClient {
     MqttPropertyCb property_cb;
     void          *property_ctx;
 #endif
+#ifdef WOLFMQTT_MULTITHREAD
+    wolfSSL_Mutex lockSend;
+    wolfSSL_Mutex lockRecv;
+    wolfSSL_Mutex lockClient;
+    struct MqttPendResp* firstPendResp;
+    struct MqttPendResp* lastPendResp;
+#endif
 } MqttClient;
 
 
@@ -181,6 +216,9 @@ WOLFMQTT_API int MqttClient_Init(
     byte *tx_buf, int tx_buf_len,
     byte *rx_buf, int rx_buf_len,
     int cmd_timeout_ms);
+
+/* TODO: Add MqttClient_Cleanup */
+
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 /*! \brief      Sets a disconnect callback with custom context

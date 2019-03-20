@@ -214,6 +214,9 @@ typedef struct _MqttMessage {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
 #endif
+#ifdef WOLFMQTTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 } MqttMessage;
 
 
