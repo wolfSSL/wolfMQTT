@@ -831,7 +831,9 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         if (payload_len > (tx_buf_len - (header_len + variable_len))) {
             payload_len = (tx_buf_len - (header_len + variable_len));
         }
-        XMEMCPY(tx_payload, publish->buffer, payload_len);
+        if (tx_payload != NULL) {
+            XMEMCPY(tx_payload, publish->buffer, payload_len);
+        }
     }
     publish->intBuf_pos = 0;
     publish->intBuf_len = payload_len;
@@ -1047,8 +1049,14 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
     remain_len = MQTT_DATA_LEN_SIZE; /* For packet_id */
     for (i = 0; i < subscribe->topic_count; i++) {
         topic = &subscribe->topics[i];
-        remain_len += (int)XSTRLEN(topic->topic_filter) + MQTT_DATA_LEN_SIZE;
-        remain_len++; /* For QoS */
+        if ((topic != NULL) && (topic->topic_filter != NULL)) {
+            remain_len += (int)XSTRLEN(topic->topic_filter) + MQTT_DATA_LEN_SIZE;
+            remain_len++; /* For QoS */
+        }
+        else {
+            /* Topic count is invalid */
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
     }
 #ifdef WOLFMQTT_V5
     /* Determine length of properties */
@@ -1155,7 +1163,14 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     remain_len = MQTT_DATA_LEN_SIZE; /* For packet_id */
     for (i = 0; i < unsubscribe->topic_count; i++) {
         topic = &unsubscribe->topics[i];
-        remain_len += (int)XSTRLEN(topic->topic_filter) + MQTT_DATA_LEN_SIZE;
+        if ((topic != NULL) && (topic->topic_filter != NULL)) {
+            remain_len += (int)XSTRLEN(topic->topic_filter) +
+                                MQTT_DATA_LEN_SIZE;
+        }
+        else {
+            /* Topic count is invalid */
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
     }
 #ifdef WOLFMQTT_V5
     /* Determine length of properties */
@@ -1695,7 +1710,6 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     /* Return read length */
     return client->packet.header_len + remain_read;
 }
-
 
 #ifdef WOLFMQTT_SN
 int SN_Decode_Advertise(byte *rx_buf, int rx_buf_len, SN_Advertise *gw_info)

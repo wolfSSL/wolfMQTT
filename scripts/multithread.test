@@ -1,0 +1,36 @@
+#!/bin/sh
+
+# MQTT Client test
+
+# Check for application
+[ ! -x ./examples/multithread/multithread ] && echo -e "\n\nMultithread Client doesn't exist" && exit 1
+
+def_args="-T -C 1000"
+
+# Run with and without TLS and QoS 0-2
+
+./examples/multithread/multithread $def_args -q 0 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=0" && exit 1
+
+./examples/multithread/multithread $def_args -q 1 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=1" && exit 1
+
+./examples/multithread/multithread $def_args -q 2 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=2" && exit 1
+
+./examples/multithread/multithread $def_args -t -q 0 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=0" && exit 1
+
+./examples/multithread/multithread $def_args -t -q 1 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=1" && exit 1
+
+./examples/multithread/multithread $def_args -t -q 2 $1
+RESULT=$?
+[ $RESULT -lt 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=2" && exit 1
+
+exit 0

@@ -572,6 +572,8 @@ exit:
     /* Cleanup network */
     MqttClientNet_DeInit(&mqttCtx->net);
 
+    MqttClient_DeInit(&mqttCtx->client);
+
     return rc;
 }
 
