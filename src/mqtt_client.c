@@ -1236,10 +1236,13 @@ static int SN_Client_HandlePayload(MqttClient* client, MqttMessage* msg,
             if (msg->type == SN_MSG_TYPE_PUBREC ||
                 msg->type == SN_MSG_TYPE_PUBREL) {
 
+                byte resp_type = (msg->type == SN_MSG_TYPE_PUBREC) ?
+                        SN_MSG_TYPE_PUBREL : SN_MSG_TYPE_PUBCOMP;
+
                 /* Encode publish response */
                 publish_resp.packet_id = p_publish_resp->packet_id;
                 rc = SN_Encode_PublishResp(client->tx_buf,
-                    client->tx_buf_len, msg->type+1, &publish_resp);
+                    client->tx_buf_len, resp_type, &publish_resp);
                 if (rc <= 0) {
                     return rc;
                 }
