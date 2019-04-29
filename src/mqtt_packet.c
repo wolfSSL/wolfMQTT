@@ -2551,14 +2551,16 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 
     flags = *rx_payload++;
 
-    rx_payload += MqttDecode_Num(rx_payload, (word16*)publish->topic_name);
+    publish->topic_name = (char*)rx_payload;
+    rx_payload += MQTT_DATA_LEN_SIZE;
 
     rx_payload += MqttDecode_Num(rx_payload, &publish->packet_id);
 
     /* Set flags */
     publish->duplicate = flags & SN_PACKET_FLAG_DUPLICATE;
 
-    publish->qos = (MqttQoS)((flags >> SN_PACKET_FLAG_QOS_SHIFT) & SN_PACKET_FLAG_QOS_MASK);
+    publish->qos = (MqttQoS)((flags & SN_PACKET_FLAG_QOS_MASK) >>
+            SN_PACKET_FLAG_QOS_SHIFT);
 
     publish->retain = flags & SN_PACKET_FLAG_RETAIN;
 
