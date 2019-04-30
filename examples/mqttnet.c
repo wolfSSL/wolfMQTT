@@ -74,6 +74,9 @@
     #endif
     #include <rtcs.h>
     /* Note: Use "RTCS_geterror(sock->fd);" to get error number */
+    #define SOCKET_INVALID  RTCS_SOCKET_ERROR
+    #define SOCKET_T        uint32_t
+    #define SOCK_CLOSE      closesocket
 
 /* Microchip MPLABX Harmony, TCP/IP */
 #elif defined(MICROCHIP_MPLAB_HARMONY)
