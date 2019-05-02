@@ -77,6 +77,7 @@
     #define SOCKET_INVALID  RTCS_SOCKET_ERROR
     #define SOCKET_T        uint32_t
     #define SOCK_CLOSE      closesocket
+    #define SOCK_OPEN       RTCS_socket
 
 /* Microchip MPLABX Harmony, TCP/IP */
 #elif defined(MICROCHIP_MPLAB_HARMONY)
@@ -111,6 +112,9 @@
 #endif
 
 /* Setup defaults */
+#ifndef SOCK_OPEN
+    #define SOCK_OPEN       socket
+#endif
 #ifndef SOCKET_T
     #define SOCKET_T        int
 #endif
@@ -389,7 +393,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             }
 
             /* Create socket */
-            sock->fd = socket(sock->addr.sin_family, type, 0);
+            sock->fd = SOCK_OPEN(sock->addr.sin_family, type, 0);
             if (sock->fd == SOCKET_INVALID)
                 goto exit;
 
@@ -601,7 +605,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             rc = -1;
 
             /* Create socket */
-            sock->fd = socket(sock->addr.sin_family, type, 0);
+            sock->fd = SOCK_OPEN(sock->addr.sin_family, type, 0);
             if (sock->fd == SOCKET_INVALID)
                 goto exit;
 
@@ -718,7 +722,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     if (rc == 0) {
 
     /* Create the socket */
-        sock->fd = socket(sock->addr.sin_family, type, 0);
+        sock->fd = SOCK_OPEN(sock->addr.sin_family, type, 0);
         if (sock->fd == SOCKET_INVALID) {
             rc = -1;
         }
