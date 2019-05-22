@@ -2671,7 +2671,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     if ((unsubscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
             SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
-        total_len = MqttEncode_String(NULL, unsubscribe->topicNameId);
+        total_len = (int)XSTRLEN(unsubscribe->topicNameId);
     }
     else {
         /* Topic ID or Short name */
@@ -2719,13 +2719,15 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     if ((unsubscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
             SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
-        tx_payload += MqttEncode_String(tx_payload, unsubscribe->topicNameId);
+        XMEMCPY(tx_payload, unsubscribe->topicNameId,
+                XSTRLEN(unsubscribe->topicNameId));
     }
     else {
         /* Topic ID or Short name */
         tx_payload += MqttEncode_Num(tx_payload,
                 (word16)unsubscribe->topicNameId[0]);
     }
+
     (void)tx_payload;
 
     /* Return total length of packet */

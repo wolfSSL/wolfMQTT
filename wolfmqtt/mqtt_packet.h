@@ -771,6 +771,9 @@ typedef struct _SN_Subscribe {
     byte qos;
     word16 packet_id;
     byte topic_type;
+    /* 5.3.12 TopicName
+       The TopicName field has a variable length and contains an UTF8-encoded
+       string that specifies the topic name.*/
     const char* topicNameId; /* Contains topic name, ID,
                                 or short name as indicated in topic type */
     SN_SubAck subAck;
