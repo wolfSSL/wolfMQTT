@@ -10,7 +10,7 @@ if [ "$DIR" = "ARDUINO" ]; then
     rm -rf wolfMQTT
 
     mkdir wolfMQTT
-    cp ../../src/*.c ./wolfMQTT
+    cp ../../src/*.c ./wolfMQTT/wolfmqtt
 
     mkdir wolfMQTT/wolfmqtt
     cp ../../wolfmqtt/*.h ./wolfMQTT/wolfmqtt
