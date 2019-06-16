@@ -890,7 +890,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     }
 
     /* Clear local structure */
-    memset(&subscribe_ack, 0, sizeof(MqttSubscribeAck));
+    XMEMSET(&subscribe_ack, 0, sizeof(MqttSubscribeAck));
 
     if (subscribe->stat == MQTT_MSG_BEGIN) {
         /* Encode the subscribe packet */
@@ -932,7 +932,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     }
 
     /* Clear local structure */
-    memset(&unsubscribe_ack, 0, sizeof(MqttUnsubscribeAck));
+    XMEMSET(&unsubscribe_ack, 0, sizeof(MqttUnsubscribeAck));
 
     if (unsubscribe->stat == MQTT_MSG_BEGIN) {
         /* Encode the subscribe packet */
@@ -1733,7 +1733,7 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
     }
 
     /* Clear local structure */
-    memset(&unsubscribe_ack, 0, sizeof(SN_MqttUnsubscribeAck));
+    XMEMSET(&unsubscribe_ack, 0, sizeof(SN_MqttUnsubscribeAck));
 
     if (unsubscribe->stat == MQTT_MSG_BEGIN) {
         /* Encode the subscribe packet */
