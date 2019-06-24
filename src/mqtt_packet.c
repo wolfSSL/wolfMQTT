@@ -419,14 +419,6 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_BINARY:
             {
-                /* Binary type is a two byte integer "length"
-                   followed by that number of bytes */
-                tmp = MqttEncode_Num(buf, cur_prop->data_bin.len);
-                rc += tmp;
-                if (buf != NULL) {
-                    buf += tmp;
-                }
-
                 tmp = MqttEncode_Data(buf, (const byte*)cur_prop->data_bin.data,
                         cur_prop->data_bin.len);
                 rc += tmp;
