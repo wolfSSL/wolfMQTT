@@ -30,7 +30,7 @@
 
 
 /* locals */
-static int mPacketIdLast;
+static volatile word16 mPacketIdLast;
 
 /* argument parsing */
 static int myoptind = 0;
@@ -297,9 +297,12 @@ int err_sys(const char* msg)
 
 word16 mqtt_get_packetid(void)
 {
-    mPacketIdLast = (mPacketIdLast >= MAX_PACKET_ID) ?
-        1 : mPacketIdLast + 1;
-    return (word16)mPacketIdLast;
+    /* Check rollover */
+    if (mPacketIdLast >= MAX_PACKET_ID) {
+        mPacketIdLast = 0;
+    }
+
+    return ++mPacketIdLast;
 }
 
 #ifdef WOLFMQTT_NONBLOCK

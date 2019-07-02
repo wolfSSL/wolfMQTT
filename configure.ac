@@ -238,7 +238,19 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_DISCONNECT_CB"
 fi
 
+# Multithread support
+AC_ARG_ENABLE([mt],
+    [AS_HELP_STRING([--enable-mt],[Enable multiple thread support (default: disabled)])],
+    [ ENABLED_MULTITHREAD=$enableval ],
+    [ ENABLED_MULTITHREAD=no ]
+    )
 
+if test "x$ENABLED_MULTITHREAD" = "xyes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_MULTITHREAD"
+fi
+
+AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
 
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
@@ -358,4 +370,5 @@ echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"
 echo "   * TLS:                       $ENABLED_TLS"
+echo "   * Multi-thread:              $ENABLED_MULTITHREAD"
 

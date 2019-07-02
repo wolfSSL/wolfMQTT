@@ -33,13 +33,6 @@
 
 #include "wolfmqtt/mqtt_types.h"
 #ifdef ENABLE_MQTT_TLS
-    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
-        #include <wolfssl/options.h>
-    #endif
-	#include <wolfssl/wolfcrypt/settings.h>
-    #include <wolfssl/ssl.h>
-    #include <wolfssl/wolfcrypt/types.h>
-
     #ifndef WOLF_TLS_DHKEY_BITS_MIN /* allow define to be overridden */
         #ifdef WOLFSSL_MAX_STRENGTH
             #define WOLF_TLS_DHKEY_BITS_MIN 2048

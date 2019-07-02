@@ -325,7 +325,6 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
     }
 #endif
 
-
     if ((client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) == 0) {
         /* Validate port */
         if (port == 0) {

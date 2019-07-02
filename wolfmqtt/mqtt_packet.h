@@ -173,50 +173,6 @@ typedef enum _MqttQoS {
 } MqttQoS;
 
 
-/* Generic Message */
-typedef enum _MqttMsgStat {
-    MQTT_MSG_BEGIN,
-#ifdef WOLFMQTT_V5
-    MQTT_MSG_AUTH,
-#endif
-    MQTT_MSG_WAIT,
-    MQTT_MSG_WRITE,
-    MQTT_MSG_READ,
-    MQTT_MSG_READ_PAYLOAD,
-} MqttMsgStat;
-
-typedef struct _MqttMessage {
-    MqttMsgStat stat;
-    word16      packet_id;
-    byte        type;
-    MqttQoS     qos;
-    byte        retain;
-    byte        duplicate;
-#ifdef WOLFMQTT_SN
-    byte        topic_type;
-    byte        return_code;
-#endif
-    const char *topic_name;   /* Pointer is valid only when
-                                 msg_new set in callback */
-    word16      topic_name_len;
-    word32      total_len;    /* Payload total length */
-    byte       *buffer;       /* Payload buffer */
-    word32      buffer_len;   /* Payload buffer length */
-    word32      buffer_pos;   /* Payload buffer position */
-
-    /* Used internally for TX/RX buffers */
-    byte        buffer_new;   /* flag to indicate new message */
-    word32      intBuf_len;   /* Buffer length */
-    word32      intBuf_pos;   /* Buffer position */
-
-    void*       ctx;          /* user supplied context for publish callbacks */
-
-#ifdef WOLFMQTT_V5
-    MqttProp* props;
-#endif
-} MqttMessage;
-
-
 /* Topic */
 typedef struct _MqttTopic {
     const char* topic_filter;
@@ -306,6 +262,70 @@ typedef struct _MqttPacket {
     /* Must be non-zero value */
 } WOLFMQTT_PACK MqttPacket;
 #define MQTT_PACKET_MAX_SIZE        (int)sizeof(MqttPacket)
+
+
+/* Generic Message */
+typedef enum _MqttMsgStat {
+    MQTT_MSG_BEGIN,
+#ifdef WOLFMQTT_V5
+    MQTT_MSG_AUTH,
+#endif
+    MQTT_MSG_WAIT,
+    MQTT_MSG_WRITE,
+    MQTT_MSG_READ,
+    MQTT_MSG_READ_PAYLOAD,
+} MqttMsgStat;
+
+#ifdef WOLFMQTT_MULTITHREAD
+/* Pending Response Structure */
+typedef struct _MqttPendResp {
+    word16         packet_id;
+    MqttPacketType packet_type;
+    void*          packet_resp;
+
+    /* bits */
+    word16         packetDone:1;
+    word16         gotError:1;
+
+    /* double linked list */
+    struct _MqttPendResp* next;
+    struct _MqttPendResp* prev;
+} MqttPendResp;
+#endif
+
+typedef struct _MqttMessage {
+    MqttMsgStat stat;
+    word16      packet_id;
+    byte        type;
+    MqttQoS     qos;
+    byte        retain;
+    byte        duplicate;
+#ifdef WOLFMQTT_SN
+    byte        topic_type;
+    byte        return_code;
+#endif
+    const char *topic_name;   /* Pointer is valid only when
+                                 msg_new set in callback */
+    word16      topic_name_len;
+    word32      total_len;    /* Payload total length */
+    byte       *buffer;       /* Payload buffer */
+    word32      buffer_len;   /* Payload buffer length */
+    word32      buffer_pos;   /* Payload buffer position */
+
+    /* Used internally for TX/RX buffers */
+    byte        buffer_new;   /* flag to indicate new message */
+    word32      intBuf_len;   /* Buffer length */
+    word32      intBuf_pos;   /* Buffer position */
+
+    void*       ctx;          /* user supplied context for publish callbacks */
+
+#ifdef WOLFMQTT_V5
+    MqttProp* props;
+#endif
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
+} MqttMessage;
 
 
 /* CONNECT PACKET */
@@ -417,6 +437,9 @@ typedef struct _MqttConnect {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
 #endif
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 } MqttConnect;
 
 
@@ -442,6 +465,9 @@ typedef struct _MqttPublishResp {
     byte reason_code;
     MqttProp* props;
 #endif
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 } MqttPublishResp;
 
 /* SUBSCRIBE PACKET */
@@ -454,6 +480,9 @@ typedef struct _MqttSubscribe {
 
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+#endif
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
 #endif
 } MqttSubscribe;
 

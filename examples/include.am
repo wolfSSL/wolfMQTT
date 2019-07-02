@@ -9,6 +9,9 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/azure/azureiothub \
                    examples/aws/awsiot \
                    examples/wiot/wiot
+if BUILD_MULTITHREAD
+noinst_PROGRAMS += examples/multithread/multithread
+endif
 if BUILD_SN
 noinst_PROGRAMS += examples/sn-client/sn-client
 endif
@@ -23,6 +26,9 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/wiot/wiot.h \
                    examples/mqttnet.h \
                    examples/mqttexample.h
+if BUILD_MULTITHREAD
+noinst_HEADERS +=  examples/multithread/multithread.h
+endif
 if BUILD_SN
 noinst_HEADERS +=  examples/sn-client/sn-client.h
 endif
@@ -34,6 +40,14 @@ examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
+if BUILD_MULTITHREAD
+examples_multithread_multithread_SOURCES      = examples/multithread/multithread.c \
+                                                examples/mqttnet.c \
+                                                examples/mqttexample.c
+examples_multithread_multithread_LDADD        = src/libwolfmqtt.la
+examples_multithread_multithread_DEPENDENCIES = src/libwolfmqtt.la
+examples_multithread_multithread_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+endif
 
 examples_nbclient_nbclient_SOURCES = examples/nbclient/nbclient.c \
                                                examples/mqttnet.c \
@@ -101,6 +115,9 @@ dist_example_DATA+= examples/mqttnet.c \
                     examples/azure/azureiothub.c \
                     examples/aws/awsiot.c \
                     examples/wiot/wiot.c
+if BUILD_MULTITHREAD
+dist_example_DATA+= examples/multithread/multithread.c
+endif
 if BUILD_SN
 dist_example_DATA+= examples/sn-client/sn-client.c
 endif
@@ -112,6 +129,9 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/azure/.libs/azureiothub \
                    examples/aws/.libs/awsiot \
                    examples/wiot/.libs/wiot
+if BUILD_MULTITHREAD
+DISTCLEANFILES+=   examples/multithread/.libs/multithread
+endif
 if BUILD_SN
 DISTCLEANFILES+=   examples/sn-client/.libs/sn-client
 endif
@@ -125,3 +145,4 @@ EXTRA_DIST+=       examples/mqttuart.c \
                    examples/aws/awsiot.vcxproj \
                    examples/wiot/wiot.vcxproj \
                    examples/sn-client/sn-client.vcxproj
+#                   examples/multithread/multithread.vcxproj

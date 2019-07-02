@@ -114,6 +114,12 @@ typedef struct _MqttSk {
     typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
 #endif
 
+#ifdef WOLFMQTT_MULTITHREAD
+    #define WOLFMQTT_NOT_DONE   0
+    #define WOLFMQTT_DONE       1
+#endif
+
+
 /* Client structure */
 typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
@@ -154,6 +160,13 @@ typedef struct _MqttClient {
     MqttPropertyCb property_cb;
     void          *property_ctx;
 #endif
+#ifdef WOLFMQTT_MULTITHREAD
+    wolfSSL_Mutex lockSend;
+    wolfSSL_Mutex lockRecv;
+    wolfSSL_Mutex lockClient;
+    struct _MqttPendResp* firstPendResp;
+    struct _MqttPendResp* lastPendResp;
+#endif
 } MqttClient;
 
 
@@ -181,6 +194,12 @@ WOLFMQTT_API int MqttClient_Init(
     byte *tx_buf, int tx_buf_len,
     byte *rx_buf, int rx_buf_len,
     int cmd_timeout_ms);
+
+/*! \brief      Cleans up resources allocated to the MqttClient structure
+ *  \param      client      Pointer to MqttClient structure
+ *  \return     none
+ */
+WOLFMQTT_API void MqttClient_DeInit(MqttClient *client);
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 /*! \brief      Sets a disconnect callback with custom context
