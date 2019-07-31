@@ -83,22 +83,23 @@ static int mqtt_publish_cb(MqttPublish *publish) {
 #if !defined(NO_FILESYSTEM)
     static FILE *fp = NULL;
     size_t bytes_read;
+    FwpushCBdata *cbData;
 
     /* Check for first iteration of callback */
     if (fp == NULL) {
+        /* Structure was stored in ctx pointer */
+        cbData = (FwpushCBdata*)publish->ctx;
+        FirmwareHeader *header = (FirmwareHeader*)cbData->data;
+        /* Get FW size from FW header struct */
+        word32 headerSize = sizeof(FirmwareHeader) + header->sigLen +
+                header->pubKeyLen;
+
+        /* Copy header to buffer */
+        XMEMCPY(publish->buffer, header, headerSize);
 
         /* Open file */
-        fp = fopen(FIRMWARE_PUSH_DEF_FILE, "rb");
+        fp = fopen(cbData->filename, "rb");
         if (fp != NULL) {
-
-            /* Get FW size from FW header struct */
-            FirmwareHeader *header = (FirmwareHeader*)publish->ctx;
-            word32 headerSize = sizeof(FirmwareHeader) + header->sigLen +
-                    header->pubKeyLen;
-
-            /* Copy header to buffer */
-            XMEMCPY(publish->buffer, header, headerSize);
-
             /* read a buffer of data from the file */
             bytes_read = fread(&publish->buffer[headerSize],
                     1, publish->buffer_len - headerSize, fp);
@@ -305,6 +306,7 @@ exit:
 int fwpush_test(MQTTCtx *mqttCtx)
 {
     int rc;
+    FwpushCBdata cbData;
 
     /* check for stop */
     if (mStopRead) {
@@ -443,16 +445,20 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.buffer = (byte*)WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
 
             /* Calculate the total payload length and store the FirmwareHeader,
-               signature, and key in publish->ctx to be used by the callback.
-               The publish->ctx is available for use by the application to pass
-               data to the callback routine. */
-            rc = fw_message_build(mqttCtx, mqttCtx->pub_file,
-                    (byte**)&mqttCtx->publish.ctx,
+               signature, and key in fwpushCBdata structure to be used by the
+               callback. */
+            cbData.filename = mqttCtx->pub_file;
+
+            rc = fw_message_build(mqttCtx, cbData.filename,
+                    (byte**)&cbData.data,
                     (int*)&mqttCtx->publish.total_len);
             if (rc != 0) {
                 PRINTF("Firmware message build failed! %d", rc);
                 exit(rc);
             }
+            /* The publish->ctx is available for use by the application to pass
+               data to the callback routine. */
+            mqttCtx->publish.ctx = &cbData;
 
             FALL_THROUGH;
         }
@@ -536,7 +542,7 @@ exit:
 
     if (rc != MQTT_CODE_CONTINUE) {
         /* Free resources */
-        if (mqttCtx->publish.ctx) WOLFMQTT_FREE(mqttCtx->publish.ctx);
+        WOLFMQTT_FREE(cbData.data);
         if (mqttCtx->publish.buffer) WOLFMQTT_FREE(mqttCtx->publish.buffer);
         if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
         if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
