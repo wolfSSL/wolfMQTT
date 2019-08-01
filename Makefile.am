@@ -38,6 +38,7 @@ include scripts/include.am
 include IDE/include.am
 
 EXTRA_DIST+= README.md
+EXTRA_DIST+= ChangeLog.md
 EXTRA_DIST+= LICENSE
 EXTRA_DIST+= wolfmqtt.sln
 EXTRA_DIST+= wolfmqtt.vcxproj
