@@ -313,7 +313,14 @@ exit:
 int fwpush_test(MQTTCtx *mqttCtx)
 {
     int rc;
-    FwpushCBdata cbData;
+    FwpushCBdata* cbData = NULL;
+
+    if (mqttCtx == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* restore callback data */
+    cbData = mqttCtx->publish.ctx;
 
     /* check for stop */
     if (mStopRead) {
@@ -450,22 +457,33 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->publish.packet_id = mqtt_get_packetid();
             mqttCtx->publish.buffer_len = FIRMWARE_MAX_BUFFER;
             mqttCtx->publish.buffer = (byte*)WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
+            if (mqttCtx->publish.buffer == NULL) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+                goto disconn;
+            }
 
             /* Calculate the total payload length and store the FirmwareHeader,
                signature, and key in fwpushCBdata structure to be used by the
                callback. */
-            cbData.fp = NULL;
-            cbData.filename = mqttCtx->pub_file;
+            cbData = (FwpushCBdata*)WOLFMQTT_MALLOC(sizeof(FwpushCBdata));
+            if (cbData == NULL) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+                goto disconn;
+            }
+            XMEMSET(cbData, 0, sizeof(FwpushCBdata));
+            cbData->filename = mqttCtx->pub_file;
 
-            rc = fw_message_build(mqttCtx, cbData.filename, &cbData.data,
+            rc = fw_message_build(mqttCtx, cbData->filename, &cbData->data,
                     (int*)&mqttCtx->publish.total_len);
+
+            /* The publish->ctx is available for use by the application to pass
+               data to the callback routine. */
+            mqttCtx->publish.ctx = cbData;
+
             if (rc != 0) {
                 PRINTF("Firmware message build failed! %d", rc);
                 exit(rc);
             }
-            /* The publish->ctx is available for use by the application to pass
-               data to the callback routine. */
-            mqttCtx->publish.ctx = &cbData;
 
             FALL_THROUGH;
         }
@@ -548,8 +566,10 @@ disconn:
 exit:
 
     if (rc != MQTT_CODE_CONTINUE) {
-        /* Free resources */
-        WOLFMQTT_FREE(cbData.data);
+        if (cbData) {
+            if (cbData->data) WOLFMQTT_FREE(cbData->data);
+            WOLFMQTT_FREE(cbData);
+        }
         if (mqttCtx->publish.buffer) WOLFMQTT_FREE(mqttCtx->publish.buffer);
         if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
         if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
