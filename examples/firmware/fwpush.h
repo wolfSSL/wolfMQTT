@@ -32,6 +32,7 @@
 typedef struct FwpushCBdata_s {
     const char *filename;
     byte *data;
+    FILE *fp;
 }FwpushCBdata;
 
 /* Exposed functions */
