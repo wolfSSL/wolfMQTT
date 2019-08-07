@@ -35,7 +35,7 @@ For building wolfMQTT with TLS support in Visual Studio:
 
 ### Arduino
 
-See `README.md` at [IDE/ARDUINO/README.md](IDE/ARDUINO.README.md)
+See `README.md` at [IDE/ARDUINO/README.md](IDE/ARDUINO/README.md)
 
 
 ## Architecture
