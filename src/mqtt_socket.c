@@ -119,7 +119,10 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
         if (rc < 0) {
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
-            PRINTF("MqttSocket_Write: SSL Error=%d", error);
+            if (error != WOLFSSL_ERROR_WANT_WRITE) {
+                PRINTF("MqttSocket_Write: SSL Error=%d (rc %d, sockrc %d)",
+    				error, rc, client->tls.sockRc);
+            }
         #endif
 
             /* return code from net callback */

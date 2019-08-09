@@ -770,6 +770,9 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    if (sock->fd == SOCKET_INVALID)
+        return MQTT_CODE_ERROR_BAD_ARG;
+
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
@@ -782,7 +785,12 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
         if (so_error == 0) {
+        #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
+			/* assume non-blocking case */
+            rc = MQTT_CODE_CONTINUE;
+        #else
             rc = 0; /* Handle signal */
+        #endif
         }
         else {
         #ifdef WOLFMQTT_NONBLOCK
@@ -817,6 +825,9 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+    if (sock->fd == SOCKET_INVALID)
+        return MQTT_CODE_ERROR_BAD_ARG;
 
     if (peek == 1) {
         flags |= MSG_PEEK;
@@ -998,6 +1009,7 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         }
         net->context = sockCtx;
         XMEMSET(sockCtx, 0, sizeof(SocketContext));
+        sockCtx->fd = SOCKET_INVALID;
         sockCtx->stat = SOCK_BEGIN;
         sockCtx->mqttCtx = mqttCtx;
     }
