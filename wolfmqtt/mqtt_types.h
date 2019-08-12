@@ -46,20 +46,20 @@
 #include "wolfmqtt/visibility.h"
 
 #ifdef _WIN32
-	#define USE_WINDOWS_API
+    #define USE_WINDOWS_API
 
-	/* Make sure a level of Win compatibility is defined */
-	#ifndef _WIN32_WINNT
-	#define _WIN32_WINNT 0x0501
-	#endif
+    /* Make sure a level of Win compatibility is defined */
+    #ifndef _WIN32_WINNT
+    #define _WIN32_WINNT 0x0501
+    #endif
 
-	/* Allow "unsafe" strncpy */
-	#ifndef _CRT_SECURE_NO_WARNINGS
-	#define _CRT_SECURE_NO_WARNINGS
-	#endif
+    /* Allow "unsafe" strncpy */
+    #ifndef _CRT_SECURE_NO_WARNINGS
+    #define _CRT_SECURE_NO_WARNINGS
+    #endif
 
-	/* Visual Studio build settings from wolfmqtt/vs_settings.h */
-	#include "wolfmqtt/vs_settings.h"
+    /* Visual Studio build settings from wolfmqtt/vs_settings.h */
+    #include "wolfmqtt/vs_settings.h"
 #endif
 
 #ifdef ENABLE_MQTT_TLS
@@ -106,10 +106,10 @@
         #define WOLFMQTT_NONBLOCK
     #endif
 
-	#include "system_config.h"
+    #include "system_config.h"
     #ifdef SYS_CMD_ENABLE
         extern void SYS_CMD_PRINT(const char *format, ...);
-  
+
         /* use SYS_PRINT for printf */
         #define WOLFMQTT_CUSTOM_PRINTF
         #define PRINTF(_f_, ...)  SYS_CMD_PRINT( (_f_ "\n"), ##__VA_ARGS__)
