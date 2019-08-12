@@ -786,7 +786,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
         if (so_error == 0) {
         #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
-			/* assume non-blocking case */
+            /* assume non-blocking case */
             rc = MQTT_CODE_CONTINUE;
         #else
             rc = 0; /* Handle signal */
