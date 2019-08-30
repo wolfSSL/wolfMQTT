@@ -114,11 +114,6 @@ typedef struct _MqttSk {
     typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
 #endif
 
-#ifdef WOLFMQTT_MULTITHREAD
-    #define WOLFMQTT_NOT_DONE   0
-    #define WOLFMQTT_DONE       1
-#endif
-
 
 /* Client structure */
 typedef struct _MqttClient {
@@ -140,9 +135,10 @@ typedef struct _MqttClient {
     MqttSk       write;
 
     MqttMsgCb    msg_cb;
-    MqttMessage  msg;   /* temp incoming message
-                         * Used for MqttClient_Ping and MqttClient_WaitType */
-
+    MqttObject   msg;   /* generic incoming message used by MqttClient_WaitType */
+#ifdef WOLFMQTT_SN
+    SN_Object    msgSN;
+#endif
     void*        ctx;   /* user supplied context for publish callbacks */
 
 #ifdef WOLFMQTT_V5
@@ -322,7 +318,7 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
  */
 WOLFMQTT_API int MqttClient_Ping(
     MqttClient *client);
-
+WOLFMQTT_API int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping);
 
 #ifdef WOLFMQTT_V5
 /*! \brief      Encodes and sends the MQTT Authentication Request packet and
@@ -395,6 +391,20 @@ WOLFMQTT_API int MqttClient_WaitMessage(
     MqttClient *client,
     int timeout_ms);
 
+/*! \brief      Waits for packets to arrive. Incoming publish messages
+                will arrive via callback provided in MqttClient_Init.
+ *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      msg         Pointer to MqttObject structure
+ *  \param      timeout_ms  Milliseconds until read timeout
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_WaitMessage_ex(
+    MqttClient *client,
+    MqttObject* msg,
+    int timeout_ms);
+
 
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)
  *  \discussion Will perform the MqttTlsCb callback if use_tls is non-zero value
@@ -433,7 +443,7 @@ WOLFMQTT_API const char* MqttClient_ReturnCodeToString(
     int return_code);
 #else
     #define MqttClient_ReturnCodeToString(x) \
-                                        "no support for error strings built in"
+                                        "not compiled in"
 #endif /* WOLFMQTT_NO_ERROR_STRINGS */
 
 #ifdef WOLFMQTT_SN
@@ -617,6 +627,10 @@ WOLFMQTT_API int SN_Client_Ping(
 WOLFMQTT_API int SN_Client_WaitMessage(
     MqttClient *client,
     int timeout_ms);
+
+WOLFMQTT_API int SN_Client_WaitMessage_ex(MqttClient *client, SN_Object* packet_obj,
+    int timeout_ms);
+
 #endif /* WOLFMQTT_SN */
 
 #ifdef __cplusplus

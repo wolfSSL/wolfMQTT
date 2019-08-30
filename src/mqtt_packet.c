@@ -796,8 +796,9 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     }
 
     /* Encode fixed header */
+    publish->type = MQTT_PACKET_TYPE_PUBLISH;
     header_len = MqttEncode_FixedHeader(tx_buf, tx_buf_len,
-        variable_len + payload_len, MQTT_PACKET_TYPE_PUBLISH,
+        variable_len + payload_len, publish->type,
         publish->retain, publish->qos, publish->duplicate);
     if (header_len < 0) {
         return header_len;
@@ -820,7 +821,7 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     tx_payload += MqttEncode_Vbi(tx_payload, props_len);
 
     /* Encode properties */
-    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, publish->props,
+    tx_payload += MqttEncode_Props(publish->type, publish->props,
                     tx_payload);
 #endif
 
@@ -853,8 +854,9 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     }
 
     /* Decode fixed header */
+    publish->type = MQTT_PACKET_TYPE_PUBLISH;
     header_len = MqttDecode_FixedHeader(rx_buf, rx_buf_len,
-        &remain_len, MQTT_PACKET_TYPE_PUBLISH, &publish->qos,
+        &remain_len, publish->type, &publish->qos,
         &publish->retain, &publish->duplicate);
     if (header_len < 0) {
         return header_len;
@@ -883,8 +885,8 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         variable_len += tmp + props_len;
         if (props_len > 0) {
             /* Decode the Properties */
-            rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH,
-                           &publish->props, rx_payload, props_len);
+            rx_payload += MqttDecode_Props(publish->type, &publish->props,
+                rx_payload, props_len);
             if (publish->props != NULL) {
                 /* Parse properties. */
             }
@@ -895,6 +897,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     /* Decode Payload */
     payload_len = remain_len - variable_len;
     publish->buffer = rx_payload;
+    publish->buffer_new = 1;
     publish->buffer_pos = 0;
     publish->buffer_len = payload_len;
     publish->total_len = payload_len;
@@ -918,7 +921,6 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
 #ifdef WOLFMQTT_V5
     word32 props_len = 0;
 #endif
-
 
     /* Validate required arguments */
     if (tx_buf == NULL || publish_resp == NULL) {
@@ -1255,7 +1257,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
     return header_len + remain_len;
 }
 
-int MqttEncode_Ping(byte *tx_buf, int tx_buf_len)
+int MqttEncode_Ping(byte *tx_buf, int tx_buf_len, MqttPing* ping)
 {
     int header_len, remain_len = 0;
 
@@ -1271,11 +1273,15 @@ int MqttEncode_Ping(byte *tx_buf, int tx_buf_len)
         return header_len;
     }
 
+    if (ping) {
+        /* nothing to encode */
+    }
+
     /* Return total length of packet */
     return header_len + remain_len;
 }
 
-int MqttDecode_Ping(byte *rx_buf, int rx_buf_len)
+int MqttDecode_Ping(byte *rx_buf, int rx_buf_len, MqttPing* ping)
 {
     int header_len, remain_len;
 
@@ -1289,6 +1295,10 @@ int MqttDecode_Ping(byte *rx_buf, int rx_buf_len)
         MQTT_PACKET_TYPE_PING_RESP, NULL, NULL, NULL);
     if (header_len < 0) {
         return header_len;
+    }
+
+    if (ping) {
+        /* nothing to decode */
     }
 
     /* Return total length of packet */
@@ -1711,7 +1721,82 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     return client->packet.header_len + remain_read;
 }
 
+#ifndef WOLFMQTT_NO_ERROR_STRINGS
+const char* MqttPacket_TypeDesc(MqttPacketType packet_type)
+{
+    switch (packet_type) {
+        case MQTT_PACKET_TYPE_CONNECT:
+            return "Connect";
+        case MQTT_PACKET_TYPE_CONNECT_ACK:
+            return "Connect Ack";
+        case MQTT_PACKET_TYPE_PUBLISH:
+            return "Publish";
+        case MQTT_PACKET_TYPE_PUBLISH_ACK:
+            return "Publish Ack";
+        case MQTT_PACKET_TYPE_PUBLISH_REC:
+            return "Publish Received";
+        case MQTT_PACKET_TYPE_PUBLISH_REL:
+            return "Publish Release";
+        case MQTT_PACKET_TYPE_PUBLISH_COMP:
+            return "Publish Complete";
+        case MQTT_PACKET_TYPE_SUBSCRIBE:
+            return "Subscribe";
+        case MQTT_PACKET_TYPE_SUBSCRIBE_ACK:
+            return "Subscribe Ack";
+        case MQTT_PACKET_TYPE_UNSUBSCRIBE:
+            return "Unsubscribe";
+        case MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK:
+            return "Unsubscribe Ack";
+        case MQTT_PACKET_TYPE_PING_REQ:
+            return "Ping Req";
+        case MQTT_PACKET_TYPE_PING_RESP:
+            return "Ping Resp";
+        case MQTT_PACKET_TYPE_DISCONNECT:
+            return "Disconnect";
+        case MQTT_PACKET_TYPE_AUTH:
+            return "Auth";
+        case MQTT_PACKET_TYPE_RESERVED:
+            return "Reserved";
+        case MQTT_PACKET_TYPE_ANY:
+            return "Any";
+        default:
+            break;
+    }
+    return "Unknown";
+}
+#endif
+
 #ifdef WOLFMQTT_SN
+int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
+    SN_MsgType* p_packet_type)
+{
+    SN_MsgType packet_type;
+    word16 total_len;
+
+    if (rx_buf == NULL || rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Decode fixed header */
+    total_len = *rx_buf++;
+    if (total_len == SN_PACKET_LEN_IND) {
+        /* The length is stored in the next two bytes */
+        rx_buf += MqttDecode_Num(rx_buf, &total_len);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
+    /* Message Type */
+    packet_type = *rx_buf++;
+
+    if (p_packet_type)
+        *p_packet_type = packet_type;
+
+    return (int)total_len;
+}
+
 int SN_Decode_Advertise(byte *rx_buf, int rx_buf_len, SN_Advertise *gw_info)
 {
     int total_len;
@@ -2461,7 +2546,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     return total_len;
 }
 
-int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
+int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 {
     word16 total_len;
     byte *tx_payload = tx_buf;
@@ -2523,7 +2608,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish)
     return total_len;
 }
 
-int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
+int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
 {
     word16 total_len;
     byte *rx_payload = rx_buf;
@@ -2973,4 +3058,5 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     /* Return read length */
     return remain_read;
 }
-#endif /* defined WOLFMQTT_SN */
+
+#endif /* WOLFMQTT_SN */
