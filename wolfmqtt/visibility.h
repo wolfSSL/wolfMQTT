@@ -31,25 +31,25 @@
 */
 
 #if defined(BUILDING_WOLFMQTT)
-    #if defined(HAVE_VISIBILITY) && HAVE_VISIBILITY
-        #define WOLFMQTT_API   __attribute__ ((visibility("default")))
-        #define WOLFMQTT_LOCAL __attribute__ ((visibility("hidden")))
-    #elif defined(__SUNPRO_C) && (__SUNPRO_C >= 0x550)
-        #define WOLFMQTT_API   __global
-        #define WOLFMQTT_LOCAL __hidden
-    #elif defined(_MSC_VER)
+    #if defined(_MSC_VER) || defined(__CYGWIN__)
         #ifdef _WINDLL
             #define WOLFMQTT_API __declspec(dllexport)
         #else
             #define WOLFMQTT_API
         #endif
         #define WOLFMQTT_LOCAL
+    #elif defined(HAVE_VISIBILITY) && HAVE_VISIBILITY
+        #define WOLFMQTT_API   __attribute__ ((visibility("default")))
+        #define WOLFMQTT_LOCAL __attribute__ ((visibility("hidden")))
+    #elif defined(__SUNPRO_C) && (__SUNPRO_C >= 0x550)
+        #define WOLFMQTT_API   __global
+        #define WOLFMQTT_LOCAL __hidden
     #else
         #define WOLFMQTT_API
         #define WOLFMQTT_LOCAL
     #endif /* HAVE_VISIBILITY */
 #else /* BUILDING_WOLFMQTT */
-    #if defined(_MSC_VER)
+    #if defined(_MSC_VER) || defined(__CYGWIN__)
         #define WOLFMQTT_API __declspec(dllimport)
         #define WOLFMQTT_LOCAL
     #else
