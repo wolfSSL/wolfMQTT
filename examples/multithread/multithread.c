@@ -36,8 +36,18 @@
 static int mStopRead = 0;
 
 #ifdef WOLFMQTT_MULTITHREAD
-static wolfSSL_Mutex demoLock; /* Protect access to mqtt_get_packetid() */
+static wolfSSL_Mutex packetIdLock; /* Protect access to mqtt_get_packetid() */
+
+static word16 mqtt_get_packetid_threadsafe(void)
+{
+    word16 packet_id;
+    wc_LockMutex(&packetIdLock);
+    packet_id = mqtt_get_packetid();
+    wc_UnLockMutex(&packetIdLock);
+    return packet_id;
+}
 #endif
+
 
 /* Configuration */
 
@@ -80,8 +90,8 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         buf[len] = '\0'; /* Make sure its null terminated */
 
         /* Print incoming message */
-        PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+        PRINTF("MQTT Message: Topic %s, Qos %d, Id %d, Len %u",
+            buf, msg->qos, msg->packet_id, msg->total_len);
 
         /* for test mode: count the number of TEST_MESSAGE matches received */
         if (mqttCtx->test_mode) {
@@ -136,10 +146,10 @@ static void client_disconnect(MQTTCtx *mqttCtx)
         /* Disconnect */
         rc = MqttClient_Disconnect_ex(&mqttCtx->client,
                &mqttCtx->disconnect);
+    } while (rc == MQTT_CODE_CONTINUE);
 
-        PRINTF("MQTT Disconnect: %s (%d)",
-            MqttClient_ReturnCodeToString(rc), rc);
-    } while (rc != MQTT_CODE_SUCCESS);
+    PRINTF("MQTT Disconnect: %s (%d)",
+        MqttClient_ReturnCodeToString(rc), rc);
 
     rc = MqttClient_NetDisconnect(&mqttCtx->client);
 
@@ -154,7 +164,7 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     int rc = MQTT_CODE_SUCCESS;
 
     /* Create a demo mutex for making packet id values */
-    rc = wc_InitMutex(&demoLock);
+    rc = wc_InitMutex(&packetIdLock);
     if (rc != 0) {
         client_exit(mqttCtx);
     }
@@ -259,32 +269,36 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
 static int multithread_test_finish(MQTTCtx *mqttCtx)
 {
     client_disconnect(mqttCtx);
-    wc_FreeMutex(&demoLock);
+    wc_FreeMutex(&packetIdLock);
 
     return mqttCtx->return_code;
 }
 
-/* This task subscribes to a topic and waits for messages */
-static void *waitMessage_task(void *param)
+static void *subscribe_task(void *param)
 {
-    int rc, i;
+    int rc = MQTT_CODE_SUCCESS;
+    uint16_t i;
     MQTTCtx *mqttCtx = param;
 
     /* Build list of topics */
     XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
-
     i = 0;
     mqttCtx->topics[i].topic_filter = mqttCtx->topic_name;
     mqttCtx->topics[i].qos = mqttCtx->qos;
 
+#ifdef WOLFMQTT_V5
+    if (mqttCtx->subId_not_avail != 1) {
+        /* Subscription Identifier */
+        MqttProp* prop;
+        mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
+        prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
+        prop->type = MQTT_PROP_SUBSCRIPTION_ID;
+        prop->data_int = mqttCtx->topics[i].sub_id;
+    }
+#endif
+
     /* Subscribe Topic */
-    mqttCtx->subscribe.stat = MQTT_MSG_BEGIN;
-
-    /* Get the demo lock */
-    wc_LockMutex(&demoLock);
-    mqttCtx->subscribe.packet_id = mqtt_get_packetid();
-    wc_UnLockMutex(&demoLock);
-
+    mqttCtx->subscribe.packet_id = mqtt_get_packetid_threadsafe();
     mqttCtx->subscribe.topic_count =
             sizeof(mqttCtx->topics) / sizeof(MqttTopic);
     mqttCtx->subscribe.topics = mqttCtx->topics;
@@ -293,17 +307,32 @@ static void *waitMessage_task(void *param)
 
     PRINTF("MQTT Subscribe: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
-    if (rc != MQTT_CODE_SUCCESS) {
-        client_disconnect(mqttCtx);
+
+    if (rc == MQTT_CODE_SUCCESS) {
+        /* show subscribe results */
+        for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
+            mqttCtx->topic = &mqttCtx->subscribe.topics[i];
+            PRINTF("  Topic %s, Qos %u, Return Code %u",
+                mqttCtx->topic->topic_filter,
+                mqttCtx->topic->qos, mqttCtx->topic->return_code);
+        }
     }
 
-    /* show subscribe results */
-    for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
-        mqttCtx->topic = &mqttCtx->subscribe.topics[i];
-        PRINTF("  Topic %s, Qos %u, Return Code %u",
-            mqttCtx->topic->topic_filter,
-            mqttCtx->topic->qos, mqttCtx->topic->return_code);
+#ifdef WOLFMQTT_V5
+    if (mqttCtx->subscribe.props != NULL) {
+        /* Release the allocated properties */
+        MqttClient_PropsFree(mqttCtx->subscribe.props);
     }
+#endif
+
+    pthread_exit(NULL);
+}
+
+/* This task subscribes to a topic and waits for messages */
+static void *waitMessage_task(void *param)
+{
+    int rc;
+    MQTTCtx *mqttCtx = param;
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
@@ -314,9 +343,38 @@ static void *waitMessage_task(void *param)
 
         /* check for test mode */
         if (mStopRead) {
+            rc = MQTT_CODE_SUCCESS;
             PRINTF("MQTT Exiting...");
             break;
         }
+
+        /* check return code */
+    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+        else if (rc == MQTT_CODE_STDIN_WAKE) {
+            XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
+            if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
+                    stdin) != NULL)
+            {
+                rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
+
+                /* Publish Topic */
+                mqttCtx->stat = WMQ_PUB;
+                XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
+                mqttCtx->publish.retain = 0;
+                mqttCtx->publish.qos = mqttCtx->qos;
+                mqttCtx->publish.duplicate = 0;
+                mqttCtx->publish.topic_name = mqttCtx->topic_name;
+                mqttCtx->publish.packet_id = mqtt_get_packetid_threadsafe();
+                mqttCtx->publish.buffer = mqttCtx->rx_buf;
+                mqttCtx->publish.total_len = (word16)rc;
+                rc = MqttClient_Publish(&mqttCtx->client,
+                       &mqttCtx->publish);
+                PRINTF("MQTT Publish: Topic %s, %s (%d)",
+                    mqttCtx->publish.topic_name,
+                    MqttClient_ReturnCodeToString(rc), rc);
+            }
+        }
+    #endif
         else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             /* Keep Alive */
             PRINTF("Keep-alive timeout, sending ping");
@@ -330,31 +388,11 @@ static void *waitMessage_task(void *param)
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
-            PRINTF("MQTT Message Wait: %s (%d)",
+            PRINTF("MQTT Message Wait Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
     } while(!mStopRead);
-
-
-    /* Unsubscribe Topics */
-    XMEMSET(&mqttCtx->unsubscribe, 0, sizeof(MqttUnsubscribe));
-
-    /* Get the demo lock */
-    wc_LockMutex(&demoLock);
-    mqttCtx->unsubscribe.packet_id = mqtt_get_packetid();
-    wc_UnLockMutex(&demoLock);
-
-    mqttCtx->unsubscribe.topic_count =
-        sizeof(mqttCtx->topics) / sizeof(MqttTopic);
-    mqttCtx->unsubscribe.topics = mqttCtx->topics;
-
-    /* Unsubscribe Topics */
-    rc = MqttClient_Unsubscribe(&mqttCtx->client,
-           &mqttCtx->unsubscribe);
-
-    PRINTF("MQTT Unsubscribe: %s (%d)",
-        MqttClient_ReturnCodeToString(rc), rc);
 
     mqttCtx->return_code = rc;
 
@@ -376,12 +414,7 @@ static void *publish_task(void *param)
     publish.qos = mqttCtx->qos;
     publish.duplicate = 0;
     publish.topic_name = mqttCtx->topic_name;
-
-    /* Get the demo lock */
-    wc_LockMutex(&demoLock);
-    publish.packet_id = mqtt_get_packetid();
-    wc_UnLockMutex(&demoLock);
-
+    publish.packet_id = mqtt_get_packetid_threadsafe();
     XSTRNCPY(buf, TEST_MESSAGE, sizeof(buf));
     buf[4] = '0' + ((publish.packet_id / 10) % 10);
     buf[5] = '0' + (publish.packet_id % 10);
@@ -397,16 +430,45 @@ static void *publish_task(void *param)
     pthread_exit(NULL);
 }
 
+static int unsubscribe_do(MQTTCtx *mqttCtx)
+{
+    int rc;
+
+    /* Unsubscribe Topics */
+    XMEMSET(&mqttCtx->unsubscribe, 0, sizeof(MqttUnsubscribe));
+    mqttCtx->unsubscribe.packet_id = mqtt_get_packetid_threadsafe();
+    mqttCtx->unsubscribe.topic_count =
+        sizeof(mqttCtx->topics) / sizeof(MqttTopic);
+    mqttCtx->unsubscribe.topics = mqttCtx->topics;
+
+    /* Unsubscribe Topics */
+    rc = MqttClient_Unsubscribe(&mqttCtx->client,
+           &mqttCtx->unsubscribe);
+
+    PRINTF("MQTT Unsubscribe: %s (%d)",
+        MqttClient_ReturnCodeToString(rc), rc);
+
+    return rc;
+}
+
 int multithread_test(MQTTCtx *mqttCtx)
 {
     int rc = 0;
     int i;
     pthread_t waitMessage_thread;
+    pthread_t sub_thread;
     pthread_t publish_thread[NUM_PUB_TASKS];
 
     rc = multithread_test_init(mqttCtx);
 
     if (rc == 0) {
+        pthread_create(&sub_thread, NULL, subscribe_task, mqttCtx);
+
+        /* for test mode, we must complete subscribe to track number of pubs received */
+        if (mqttCtx->test_mode) {
+            pthread_join(sub_thread, NULL);
+        }
+
         /* Create the thread that waits for messages */
         pthread_create(&waitMessage_thread, NULL, waitMessage_task, mqttCtx);
 
@@ -420,6 +482,8 @@ int multithread_test(MQTTCtx *mqttCtx)
         for (i = 0; i < NUM_PUB_TASKS; i++) {
             pthread_join(publish_thread[i], NULL);
         }
+
+        (void)unsubscribe_do(mqttCtx);
 
         rc = multithread_test_finish(mqttCtx);
     }

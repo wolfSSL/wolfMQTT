@@ -109,6 +109,10 @@ typedef struct _MQTTCtx {
     MqttPublish publish;
     MqttDisconnect disconnect;
 
+#ifdef WOLFMQTT_SN
+    SN_Publish publishSN;
+#endif
+
     /* configuration */
     MqttQoS qos;
     const char* app_name;

@@ -326,6 +326,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
     if (mStopRead) {
         rc = MQTT_CODE_SUCCESS;
         PRINTF("MQTT Exiting...");
+        mStopRead = 0;
         goto disconn;
     }
 

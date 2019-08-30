@@ -220,28 +220,28 @@ int sn_test(MQTTCtx *mqttCtx)
 
     {
         /* Publish Topic */
-        XMEMSET(&mqttCtx->publish, 0, sizeof(SN_Publish));
-        mqttCtx->publish.retain = 0;
-        mqttCtx->publish.qos = mqttCtx->qos;
-        mqttCtx->publish.duplicate = 0;
-        mqttCtx->publish.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
-        mqttCtx->publish.topic_name = (char*)&topicID;
-        if (mqttCtx->publish.qos > MQTT_QOS_0) {
-            mqttCtx->publish.packet_id = mqtt_get_packetid();
+        XMEMSET(&mqttCtx->publishSN, 0, sizeof(SN_Publish));
+        mqttCtx->publishSN.retain = 0;
+        mqttCtx->publishSN.qos = mqttCtx->qos;
+        mqttCtx->publishSN.duplicate = 0;
+        mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+        mqttCtx->publishSN.topic_name = (char*)&topicID;
+        if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
+            mqttCtx->publishSN.packet_id = mqtt_get_packetid();
         }
         else {
-            mqttCtx->publish.packet_id = 0x00;
+            mqttCtx->publishSN.packet_id = 0x00;
         }
 
-        mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
-        mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+        mqttCtx->publishSN.buffer = (byte*)TEST_MESSAGE;
+        mqttCtx->publishSN.total_len = (word16)XSTRLEN(TEST_MESSAGE);
 
-        rc = SN_Client_Publish(&mqttCtx->client, &mqttCtx->publish);
+        rc = SN_Client_Publish(&mqttCtx->client, &mqttCtx->publishSN);
 
         PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
-            (word16)*mqttCtx->publish.topic_name,
-                mqttCtx->publish.return_code,
-                mqttCtx->publish.buffer);
+            (word16)*mqttCtx->publishSN.topic_name,
+                mqttCtx->publishSN.return_code,
+                mqttCtx->publishSN.buffer);
         if (rc != MQTT_CODE_SUCCESS) {
             goto disconn;
         }
@@ -273,21 +273,21 @@ int sn_test(MQTTCtx *mqttCtx)
 
                 /* Publish Topic */
                 mqttCtx->stat = WMQ_PUB;
-                XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
-                mqttCtx->publish.retain = 0;
-                mqttCtx->publish.qos = mqttCtx->qos;
-                mqttCtx->publish.duplicate = 0;
-                mqttCtx->publish.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
-                mqttCtx->publish.topic_name = (char*)&topicID;
-                mqttCtx->publish.packet_id = mqtt_get_packetid();
-                mqttCtx->publish.buffer = mqttCtx->rx_buf;
-                mqttCtx->publish.total_len = (word16)rc;
+                XMEMSET(&mqttCtx->publishSN, 0, sizeof(SN_Publish));
+                mqttCtx->publishSN.retain = 0;
+                mqttCtx->publishSN.qos = mqttCtx->qos;
+                mqttCtx->publishSN.duplicate = 0;
+                mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+                mqttCtx->publishSN.topic_name = (char*)&topicID;
+                mqttCtx->publishSN.packet_id = mqtt_get_packetid();
+                mqttCtx->publishSN.buffer = mqttCtx->rx_buf;
+                mqttCtx->publishSN.total_len = (word16)rc;
                 rc = SN_Client_Publish(&mqttCtx->client,
-                       &mqttCtx->publish);
+                       &mqttCtx->publishSN);
                 PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
-                    (word16)*mqttCtx->publish.topic_name,
-                        mqttCtx->publish.return_code,
-                        mqttCtx->publish.buffer);
+                    (word16)*mqttCtx->publishSN.topic_name,
+                        mqttCtx->publishSN.return_code,
+                        mqttCtx->publishSN.buffer);
                 if (rc != MQTT_CODE_SUCCESS) {
                     break;
                 }
@@ -323,7 +323,7 @@ int sn_test(MQTTCtx *mqttCtx)
         SN_Unsubscribe unsubscribe;
 
         /* Build list of topics */
-        XMEMSET(&unsubscribe, 0, sizeof(SN_Subscribe));
+        XMEMSET(&unsubscribe, 0, sizeof(SN_Unsubscribe));
 
         unsubscribe.topicNameId = mqttCtx->topic_name;
 

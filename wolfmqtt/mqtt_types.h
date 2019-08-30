@@ -93,7 +93,6 @@
         WOLFSSL_API int wc_FreeMutex(wolfSSL_Mutex*);
         WOLFSSL_API int wc_LockMutex(wolfSSL_Mutex*);
         WOLFSSL_API int wc_UnLockMutex(wolfSSL_Mutex*);
-        #define BAD_MUTEX_E -106
         */
 #endif
 

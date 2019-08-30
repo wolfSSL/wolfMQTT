@@ -243,7 +243,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->topics[i].qos = mqttCtx->qos;
 
             /* Subscribe Topic */
-            mqttCtx->subscribe.stat = MQTT_MSG_BEGIN;
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count =
                     sizeof(mqttCtx->topics) / sizeof(MqttTopic);
