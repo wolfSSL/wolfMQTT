@@ -2015,7 +2015,7 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     /* Determine packet length */
     if (willTopic != NULL) {
         /* Will Topic is a string */
-        total_len += XSTRLEN(willTopic->willTopic);
+        total_len += (int)XSTRLEN(willTopic->willTopic);
 
         /* Flags */
         total_len++;
@@ -2158,7 +2158,7 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     /* Determine packet length */
     if (willTopic != NULL) {
         /* Will Topic is a string */
-        total_len += XSTRLEN(willTopic->willTopic);
+        total_len += (int)XSTRLEN(willTopic->willTopic);
 
         /* Flags */
         total_len++;
