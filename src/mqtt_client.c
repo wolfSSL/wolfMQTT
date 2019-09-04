@@ -630,7 +630,7 @@ wait_again:
     packet_id = 0;
     packet_type = MQTT_PACKET_TYPE_RESERVED;
 #ifdef WOLFMQTT_MULTITHREAD
-    pendResp = 0;
+    pendResp = NULL;
     readLocked = 0;
 #endif
     waitMatchFound = 0;
@@ -750,6 +750,7 @@ wait_again:
             if (pendResp) {
                 rc = MqttClient_HandlePacket(client, pendResp->packet_type,
                     pendResp->packet_obj, timeout_ms);
+                waitMatchFound = 0; /* req from another thread... not a match */
             }
             else
         #endif /* WOLFMQTT_MULTITHREAD */
