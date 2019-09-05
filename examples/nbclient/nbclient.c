@@ -113,6 +113,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
                     mqttCtx->use_tls);
 
+            mqttCtx->useNonBlockMode = 1;
+
             FALL_THROUGH;
         }
 
@@ -535,4 +537,3 @@ exit:
     }
 
 #endif /* NO_MAIN_DRIVER */
-

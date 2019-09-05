@@ -627,28 +627,31 @@ static int NetConnect(void *context, const char* host, word16 port,
         #endif /* !WOLFMQTT_NO_TIMEOUT */
 
         #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
-            /* Set socket as non-blocking */
-            tcp_set_nonblocking(&sock->fd);
+            if (mqttCtx->useNonBlockMode) {
+                /* Set socket as non-blocking */
+                tcp_set_nonblocking(&sock->fd);
+            }
         #endif
 
             /* Start connect */
             rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
-        #ifndef WOLFMQTT_NO_TIMEOUT
-            /* Wait for connect */
-            if (rc < 0 || select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0)
-        #else
-            if (rc < 0)
-        #endif /* !WOLFMQTT_NO_TIMEOUT */
-            {
+            if (rc < 0) {
                 /* Check for error */
                 socklen_t len = sizeof(so_error);
                 getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-                if (so_error == 0) {
-                    rc = 0; /* Success */
-                }
-            #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
-                else if (so_error == EINPROGRESS) {
+
+                /* set default error case */
+                rc = MQTT_CODE_ERROR_NETWORK;
+            #ifdef WOLFMQTT_NONBLOCK
+                if (errno == EINPROGRESS || so_error == EINPROGRESS) {
+                #ifndef WOLFMQTT_NO_TIMEOUT
+                    /* Wait for connect */
+                    if (select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0) {
+                        rc = MQTT_CODE_SUCCESS;
+                    }
+                #else
                     rc = MQTT_CODE_CONTINUE;
+                #endif
                 }
             #endif
             }
@@ -816,10 +819,11 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     SOERROR_T so_error = 0;
     int bytes = 0;
     int flags = 0;
-#if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
+#ifndef WOLFMQTT_NO_TIMEOUT
     fd_set recvfds;
     fd_set errfds;
     struct timeval tv;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
 #endif
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
@@ -833,7 +837,7 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
         flags |= MSG_PEEK;
     }
 
-#if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
+#ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout and FD's */
     setup_timeout(&tv, timeout_ms);
     FD_ZERO(&recvfds);
@@ -851,50 +855,69 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
 
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
+        int do_read = 0;
 
-    #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
-        /* Wait for rx data to be available */
-        rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
-        if (rc > 0)
-        {
-            /* Check if rx or error */
-            if (FD_ISSET(sock->fd, &recvfds)) {
-    #endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
-
-                /* Try and read number of buf_len provided,
-                    minus what's already been read */
-                rc = (int)SOCK_RECV(sock->fd,
-                               &buf[bytes],
-                               buf_len - bytes,
-                               flags);
-                if (rc <= 0) {
-                    rc = -1;
-                    goto exit; /* Error */
-                }
-                else {
-                    bytes += rc; /* Data */
-                }
-
-    #if !defined(WOLFMQTT_NO_TIMEOUT) && !defined(WOLFMQTT_NONBLOCK)
-            }
-        #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-            else if (FD_ISSET(STDIN, &recvfds)) {
-                return MQTT_CODE_STDIN_WAKE;
-            }
-        #endif
-            if (FD_ISSET(sock->fd, &errfds)) {
-                rc = -1;
-                break;
-            }
+    #ifndef WOLFMQTT_NO_TIMEOUT
+        #ifdef WOLFMQTT_NONBLOCK
+        if (mqttCtx->useNonBlockMode) {
+            do_read = 1;
         }
-        else {
-            timeout = 1;
-            break; /* timeout or signal */
+        else
+        #endif
+        {
+            /* Wait for rx data to be available */
+            rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
+            if (rc > 0)
+            {
+                if (FD_ISSET(sock->fd, &recvfds))
+                {
+                    do_read = 1;
+                }
+                /* Check if rx or error */
+            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+                else if (FD_ISSET(STDIN, &recvfds)) {
+                    return MQTT_CODE_STDIN_WAKE;
+                }
+            #endif
+                if (FD_ISSET(sock->fd, &errfds)) {
+                    rc = -1;
+                    break;
+                }
+            }
+            else {
+                timeout = 1;
+                break; /* timeout or signal */
+            }
         }
     #else
-        /* non-blocking should always exit loop */
+        do_read = 1;
+    #endif /* !WOLFMQTT_NO_TIMEOUT */
+
+        if (do_read) {
+            /* Try and read number of buf_len provided,
+                minus what's already been read */
+            rc = (int)SOCK_RECV(sock->fd,
+                           &buf[bytes],
+                           buf_len - bytes,
+                           flags);
+            if (rc <= 0) {
+                rc = -1;
+                goto exit; /* Error */
+            }
+            else {
+                bytes += rc; /* Data */
+            }
+        }
+
+        /* no timeout and non-block should always exit loop */
+    #ifdef WOLFMQTT_NONBLOCK
+        if (mqttCtx->useNonBlockMode) {
+            break;
+        }
+    #endif
+    #ifdef WOLFMQTT_NO_TIMEOUT
         break;
-    #endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
+    #endif
     } /* while */
 
 exit:

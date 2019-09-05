@@ -146,6 +146,9 @@ typedef struct _MQTTCtx {
     byte    subId_not_avail; /* Server property */
     byte    enable_eauth; /* Enhanced authentication */
 #endif
+#ifdef WOLFMQTT_NONBLOCK
+    unsigned int useNonBlockMode:1;
+#endif
 } MQTTCtx;
 
 

@@ -470,6 +470,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         rc = MqttClient_WaitMessage(&mqttCtx->client,
                                             mqttCtx->cmd_timeout_ms);
 
+    #ifdef WOLFMQTT_NONBLOCK
+        /* Track elapsed time with no activity and trigger timeout */
+        rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
+            mqttCtx->cmd_timeout_ms/1000);
+    #endif
+
         /* check for test mode */
         if (mStopRead) {
             rc = MQTT_CODE_SUCCESS;
@@ -605,7 +611,6 @@ exit:
 int main(int argc, char** argv)
 {
     int rc;
-#ifndef WOLFMQTT_NONBLOCK
     MQTTCtx mqttCtx;
 
     /* init defaults */
@@ -617,7 +622,7 @@ int main(int argc, char** argv)
     if (rc != 0) {
         return rc;
     }
-#endif
+
 #ifdef USE_WINDOWS_API
     if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler,
           TRUE) == FALSE)
@@ -630,17 +635,7 @@ int main(int argc, char** argv)
     }
 #endif
 
-#ifndef WOLFMQTT_NONBLOCK
     rc = mqttclient_test(&mqttCtx);
-#else
-    (void)argc;
-    (void)argv;
-
-    /* This example requires non-blocking mode to be disabled
-       ./configure --disable-nonblock */
-    PRINTF("Example not compiled in!");
-    rc = EXIT_FAILURE;
-#endif
 
 
     return (rc == 0) ? 0 : EXIT_FAILURE;
