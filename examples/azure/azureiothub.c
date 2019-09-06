@@ -73,8 +73,10 @@ static int mStopRead = 0;
  * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-mqtt-support
  * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-devguide/#mqtt-support
  * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-sas-tokens/#using-sas-tokens-as-a-device
+ * https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-mqtt-support
  */
 #define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
+#define AZURE_API_VERSION       "?api-version=2018-06-30"
 #define AZURE_HOST              "wolfMQTT.azure-devices.net"
 #define AZURE_DEVICE_ID         "demoDevice"
 #define AZURE_KEY               "Vd8RHMAFPyRnAozkNCNFIPhVSffyZkB13r/YqiTWq5s=" /* Base64 Encoded */
@@ -85,7 +87,7 @@ static int mStopRead = 0;
 #define AZURE_TOKEN_SIZE        400
 
 #define AZURE_DEVICE_NAME       AZURE_HOST"/devices/"AZURE_DEVICE_ID
-#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID
+#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID"/"AZURE_API_VERSION
 #define AZURE_SIG_FMT           "%s\n%ld"
     /* [device name (URL Encoded)]\n[Expiration sec UTC] */
 #define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%ld"
