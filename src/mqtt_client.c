@@ -614,7 +614,7 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     MqttPendResp *pendResp;
     int readLocked;
 #endif
-    MqttMsgStat* stat;
+    MqttMsgStat* mms_stat;
     int waitMatchFound;
 
     if (client == NULL || packet_obj == NULL) {
@@ -622,7 +622,7 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     }
 
     /* all packet type structures must have MqttMsgStat at top */
-    stat = (MqttMsgStat*)packet_obj;
+    mms_stat = (MqttMsgStat*)packet_obj;
 
 wait_again:
 
@@ -640,7 +640,7 @@ wait_again:
         MqttPacket_TypeDesc(wait_type), wait_type, wait_packet_id);
 #endif
 
-    switch (*stat)
+    switch (*mms_stat)
     {
         case MQTT_MSG_BEGIN:
         {
@@ -689,7 +689,7 @@ wait_again:
             }
         #endif /* WOLFMQTT_MULTITHREAD */
 
-            *stat = MQTT_MSG_WAIT;
+            *mms_stat = MQTT_MSG_WAIT;
 
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len,
@@ -708,7 +708,7 @@ wait_again:
                 break;
             }
 
-            *stat = MQTT_MSG_READ;
+            *mms_stat = MQTT_MSG_READ;
 
             FALL_THROUGH;
         }
@@ -720,7 +720,7 @@ wait_again:
             readLocked = 1; /* if in this state read is locked */
         #endif
 
-            if (*stat == MQTT_MSG_READ_PAYLOAD) {
+            if (*mms_stat == MQTT_MSG_READ_PAYLOAD) {
                 /* read payload state only happens for publish messages */
                 packet_type = MQTT_PACKET_TYPE_PUBLISH;
             }
@@ -796,12 +796,12 @@ wait_again:
         default:
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("MqttClient_WaitType: Invalid state %d!", *stat);
+            PRINTF("MqttClient_WaitType: Invalid state %d!", *mms_stat);
         #endif
             rc = MQTT_CODE_ERROR_STAT;
             break;
         }
-    } /* switch (*stat) */
+    } /* switch (*mms_stat) */
 
 #ifdef WOLFMQTT_MULTITHREAD
     if (readLocked) {
@@ -810,7 +810,7 @@ wait_again:
 #endif
 
     /* reset state */
-    *stat = MQTT_MSG_BEGIN;
+    *mms_stat = MQTT_MSG_BEGIN;
 
     if (rc < 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -922,16 +922,16 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 }
 #endif
 
-int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
+int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 {
     int rc, len = 0;
 
     /* Validate required arguments */
-    if (client == NULL || connect == NULL) {
+    if (client == NULL || mc_connect == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (connect->stat == MQTT_MSG_BEGIN) {
+    if (mc_connect->stat == MQTT_MSG_BEGIN) {
     #ifdef WOLFMQTT_MULTITHREAD
         /* Lock send socket mutex */
         rc = wc_LockMutex(&client->lockSend);
@@ -941,7 +941,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
     #endif
 
         /* Encode the connect packet */
-        rc = MqttEncode_Connect(client->tx_buf, client->tx_buf_len, connect);
+        rc = MqttEncode_Connect(client->tx_buf, client->tx_buf_len, mc_connect);
         if (rc <= 0) {
             #ifdef WOLFMQTT_MULTITHREAD
                 wc_UnLockMutex(&client->lockSend);
@@ -955,7 +955,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
         if (rc == 0) {
             /* inform other threads of expected response */
             rc = MqttClient_RespList_Add(client, MQTT_PACKET_TYPE_CONNECT_ACK, 0,
-                &connect->pendResp, &connect->ack);
+                &mc_connect->pendResp, &mc_connect->ack);
             wc_UnLockMutex(&client->lockClient);
         }
         if (rc != 0) {
@@ -975,30 +975,30 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
     #ifdef WOLFMQTT_V5
         /* Enhanced authentication */
         if (client->enable_eauth == 1) {
-            connect->stat = MQTT_MSG_AUTH;
+            mc_connect->stat = MQTT_MSG_AUTH;
         }
         else
     #endif
         {
-            connect->stat = MQTT_MSG_WAIT;
+            mc_connect->stat = MQTT_MSG_WAIT;
         }
     }
 
 #ifdef WOLFMQTT_V5
     /* Enhanced authentication */
-    if (connect->stat == MQTT_MSG_AUTH) {
+    if (mc_connect->stat == MQTT_MSG_AUTH) {
         MqttAuth auth, *p_auth = &auth;
         MqttProp* prop, *conn_prop;
 
         /* Find the AUTH property in the connect structure */
-        for (conn_prop = connect->props;
+        for (conn_prop = mc_connect->props;
              (conn_prop != NULL) && (conn_prop->type != MQTT_PROP_AUTH_METHOD);
              conn_prop = conn_prop->next) {
         }
         if (conn_prop == NULL) {
         #ifdef WOLFMQTT_MULTITHREAD
             if (wc_LockMutex(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &connect->pendResp);
+                MqttClient_RespList_Remove(client, &mc_connect->pendResp);
                 wc_UnLockMutex(&client->lockClient);
             }
         #endif
@@ -1027,7 +1027,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
         if (rc != len) {
         #ifdef WOLFMQTT_MULTITHREAD
             if (wc_LockMutex(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &connect->pendResp);
+                MqttClient_RespList_Remove(client, &mc_connect->pendResp);
                 wc_UnLockMutex(&client->lockClient);
             }
         #endif
@@ -1037,7 +1037,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
 #endif /* WOLFMQTT_V5 */
 
     /* Wait for connect ack packet */
-    rc = MqttClient_WaitType(client, &connect->ack,
+    rc = MqttClient_WaitType(client, &mc_connect->ack,
         MQTT_PACKET_TYPE_CONNECT_ACK, 0, client->cmd_timeout_ms);
 #ifdef WOLFMQTT_NONBLOCK
     if (rc == MQTT_CODE_CONTINUE)
@@ -1046,13 +1046,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *connect)
 
 #ifdef WOLFMQTT_MULTITHREAD
     if (wc_LockMutex(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &connect->pendResp);
+        MqttClient_RespList_Remove(client, &mc_connect->pendResp);
         wc_UnLockMutex(&client->lockClient);
     }
 #endif
 
     /* reset state */
-    connect->stat = MQTT_MSG_BEGIN;
+    mc_connect->stat = MQTT_MSG_BEGIN;
 
     return rc;
 }
@@ -2269,19 +2269,19 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
     return rc;
 }
 
-int SN_Client_Connect(MqttClient *client, SN_Connect *connect)
+int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 {
     int rc = 0, len = 0;
 
     /* Validate required arguments */
-    if ((client == NULL) || (connect == NULL)) {
+    if ((client == NULL) || (mc_connect == NULL)) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (connect->stat == MQTT_MSG_BEGIN) {
+    if (mc_connect->stat == MQTT_MSG_BEGIN) {
 
         /* Encode the connect packet */
-        rc = SN_Encode_Connect(client->tx_buf, client->tx_buf_len, connect);
+        rc = SN_Encode_Connect(client->tx_buf, client->tx_buf_len, mc_connect);
         if (rc <= 0) {
             return rc;
         }
@@ -2291,7 +2291,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *connect)
         rc = MqttPacket_Write(client, client->tx_buf, len);
         if (rc == len) {
             rc = 0;
-            connect->stat = MQTT_MSG_WAIT;
+            mc_connect->stat = MQTT_MSG_WAIT;
         }
         else
         {
@@ -2302,17 +2302,17 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *connect)
         }
     }
 
-    if ((rc == 0) && (connect->enable_lwt != 0)) {
+    if ((rc == 0) && (mc_connect->enable_lwt != 0)) {
         /* If the will is enabled, then the gateway requests the topic and
            message in separate packets. */
-        rc = SN_Client_Will(client, &connect->will);
+        rc = SN_Client_Will(client, &mc_connect->will);
     }
 
     if (rc == 0) {
-        connect->enable_lwt = 0;
+        mc_connect->enable_lwt = 0;
 
         /* Wait for connect ack packet */
-        rc = SN_Client_WaitType(client, &connect->ack,
+        rc = SN_Client_WaitType(client, &mc_connect->ack,
                 SN_MSG_TYPE_CONNACK, 0, client->cmd_timeout_ms);
     }
 

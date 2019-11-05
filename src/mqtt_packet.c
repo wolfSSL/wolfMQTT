@@ -587,7 +587,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf,
 #endif
 
 /* Packet Type Encoders/Decoders */
-int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
+int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
 {
     int header_len, remain_len;
 #ifdef WOLFMQTT_V5
@@ -597,7 +597,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     byte *tx_payload;
 
     /* Validate required arguments */
-    if (tx_buf == NULL || connect == NULL || connect->client_id == NULL) {
+    if (tx_buf == NULL || mc_connect == NULL || mc_connect->client_id == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
@@ -608,33 +608,33 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
 #ifdef WOLFMQTT_V5
     /* Determine length of properties */
     remain_len += props_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
-            connect->props, NULL);
+            mc_connect->props, NULL);
 
     /* Determine the length of the "property length" */
     remain_len += MqttEncode_Vbi(NULL, props_len);
 #endif
 
-    remain_len += (int)XSTRLEN(connect->client_id) + MQTT_DATA_LEN_SIZE;
-    if (connect->enable_lwt) {
+    remain_len += (int)XSTRLEN(mc_connect->client_id) + MQTT_DATA_LEN_SIZE;
+    if (mc_connect->enable_lwt) {
         /* Verify all required fields are present */
-        if (connect->lwt_msg == NULL ||
-            connect->lwt_msg->topic_name == NULL ||
-            connect->lwt_msg->buffer == NULL ||
-            connect->lwt_msg->total_len <= 0)
+        if (mc_connect->lwt_msg == NULL ||
+            mc_connect->lwt_msg->topic_name == NULL ||
+            mc_connect->lwt_msg->buffer == NULL ||
+            mc_connect->lwt_msg->total_len <= 0)
         {
             return MQTT_CODE_ERROR_BAD_ARG;
         }
 
-        remain_len += (int)XSTRLEN(connect->lwt_msg->topic_name);
+        remain_len += (int)XSTRLEN(mc_connect->lwt_msg->topic_name);
         remain_len += MQTT_DATA_LEN_SIZE;
-        remain_len += connect->lwt_msg->total_len;
+        remain_len += mc_connect->lwt_msg->total_len;
         remain_len += MQTT_DATA_LEN_SIZE;
     }
-    if (connect->username) {
-        remain_len += (int)XSTRLEN(connect->username) + MQTT_DATA_LEN_SIZE;
+    if (mc_connect->username) {
+        remain_len += (int)XSTRLEN(mc_connect->username) + MQTT_DATA_LEN_SIZE;
     }
-    if (connect->password) {
-        remain_len += (int)XSTRLEN(connect->password) + MQTT_DATA_LEN_SIZE;
+    if (mc_connect->password) {
+        remain_len += (int)XSTRLEN(mc_connect->password) + MQTT_DATA_LEN_SIZE;
     }
 
     /* Encode fixed header */
@@ -647,31 +647,31 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
 
     /* Encode variable header */
     /* Protocol version */
-    if (connect->protocol_level != 0) {
-        packet.protocol_level = connect->protocol_level;
+    if (mc_connect->protocol_level != 0) {
+        packet.protocol_level = mc_connect->protocol_level;
     }
 
     /* Set connection flags */
-    if (connect->clean_session) {
+    if (mc_connect->clean_session) {
         packet.flags |= MQTT_CONNECT_FLAG_CLEAN_SESSION;
     }
-    if (connect->enable_lwt) {
+    if (mc_connect->enable_lwt) {
         packet.flags |= MQTT_CONNECT_FLAG_WILL_FLAG;
 
-        if (connect->lwt_msg->qos) {
-            packet.flags |= MQTT_CONNECT_FLAG_SET_QOS(connect->lwt_msg->qos);
+        if (mc_connect->lwt_msg->qos) {
+            packet.flags |= MQTT_CONNECT_FLAG_SET_QOS(mc_connect->lwt_msg->qos);
         }
-        if (connect->lwt_msg->retain) {
+        if (mc_connect->lwt_msg->retain) {
             packet.flags |= MQTT_CONNECT_FLAG_WILL_RETAIN;
         }
     }
-    if (connect->username) {
+    if (mc_connect->username) {
         packet.flags |= MQTT_CONNECT_FLAG_USERNAME;
     }
-    if (connect->password) {
+    if (mc_connect->password) {
         packet.flags |= MQTT_CONNECT_FLAG_PASSWORD;
     }
-    MqttEncode_Num((byte*)&packet.keep_alive, connect->keep_alive_sec);
+    MqttEncode_Num((byte*)&packet.keep_alive, mc_connect->keep_alive_sec);
     XMEMCPY(tx_payload, &packet, sizeof(MqttConnectPacket));
     tx_payload += sizeof(MqttConnectPacket);
 
@@ -680,20 +680,20 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
     tx_payload += MqttEncode_Vbi(tx_payload, props_len);
 
     /* Encode properties */
-    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, connect->props,
+    tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, mc_connect->props,
                     tx_payload);
 #endif
 
     /* Encode payload */
-    tx_payload += MqttEncode_String(tx_payload, connect->client_id);
-    if (connect->enable_lwt) {
+    tx_payload += MqttEncode_String(tx_payload, mc_connect->client_id);
+    if (mc_connect->enable_lwt) {
         tx_payload += MqttEncode_String(tx_payload,
-            connect->lwt_msg->topic_name);
+            mc_connect->lwt_msg->topic_name);
         tx_payload += MqttEncode_Data(tx_payload,
-            connect->lwt_msg->buffer, (word16)connect->lwt_msg->total_len);
+            mc_connect->lwt_msg->buffer, (word16)mc_connect->lwt_msg->total_len);
     }
-    if (connect->username) {
-        tx_payload += MqttEncode_String(tx_payload, connect->username);
+    if (mc_connect->username) {
+        tx_payload += MqttEncode_String(tx_payload, mc_connect->username);
     }
     else {
         /* A Server MAY allow a Client to supply a ClientID that has a length
@@ -705,8 +705,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *connect)
          */
         tx_payload += MqttEncode_Num(tx_payload, (word16)0);
     }
-    if (connect->password) {
-        tx_payload += MqttEncode_String(tx_payload, connect->password);
+    if (mc_connect->password) {
+        tx_payload += MqttEncode_String(tx_payload, mc_connect->password);
     }
     (void)tx_payload;
 
@@ -1905,15 +1905,15 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
 }
 
 /* Packet Type Encoders/Decoders */
-int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *connect)
+int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
 {
     word16 total_len, id_len;
     byte flags = 0;
     byte *tx_payload = tx_buf;
 
     /* Validate required arguments */
-    if ((tx_buf == NULL) || (connect == NULL) ||
-        (connect->client_id == NULL) || (connect->protocol_level == 0)) {
+    if ((tx_buf == NULL) || (mc_connect == NULL) ||
+        (mc_connect->client_id == NULL) || (mc_connect->protocol_level == 0)) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
@@ -1921,7 +1921,7 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *connect)
     total_len = 6; /* Len + Message Type + Flags + ProtocolID + Duration(2) */
 
     /* Client ID size */
-    id_len = (word16)XSTRLEN(connect->client_id);
+    id_len = (word16)XSTRLEN(mc_connect->client_id);
     id_len = (id_len <= SN_CLIENTID_MAX_LEN) ? id_len : SN_CLIENTID_MAX_LEN;
 
     total_len += id_len;
@@ -1947,22 +1947,22 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *connect)
     *tx_payload++ = SN_MSG_TYPE_CONNECT;
 
     /* Encode flags */
-    if (connect->clean_session) {
+    if (mc_connect->clean_session) {
         flags |= SN_PACKET_FLAG_CLEANSESSION;
     }
-    if (connect->enable_lwt) {
+    if (mc_connect->enable_lwt) {
         flags |= SN_PACKET_FLAG_WILL;
     }
     *tx_payload++ = flags;
 
     /* Protocol version */
-    *tx_payload++ = connect->protocol_level;
+    *tx_payload++ = mc_connect->protocol_level;
 
     /* Encode duration (keep-alive) */
-    tx_payload += MqttEncode_Num(tx_payload, connect->keep_alive_sec);
+    tx_payload += MqttEncode_Num(tx_payload, mc_connect->keep_alive_sec);
 
     /* Encode Client ID */
-     XMEMCPY(tx_payload, connect->client_id, id_len);
+     XMEMCPY(tx_payload, mc_connect->client_id, id_len);
      tx_payload += id_len;
      (void)tx_payload;
 
