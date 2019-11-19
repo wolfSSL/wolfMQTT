@@ -25,7 +25,11 @@
 #endif
 
 #ifdef WOLFMQTT_NONBLOCK
-    #include <sys/errno.h>
+    /* need EWOULDBLOCK and EAGAIN */
+    #ifdef MICROCHIP_MPLAB_HARMONY
+        #include <sys/errno.h>
+    #endif
+    #include <errno.h>
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
