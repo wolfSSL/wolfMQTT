@@ -545,8 +545,6 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
     rc = multithread_test(&mqttCtx);
-
-    return (rc == 0) ? 0 : EXIT_FAILURE;
 #else
     (void)argc;
     (void)argv;
@@ -557,6 +555,7 @@ int main(int argc, char** argv)
     rc = EXIT_FAILURE;
     (void) rc;
 #endif
+    return (rc == 0) ? 0 : EXIT_FAILURE;
 }
 
 #endif /* NO_MAIN_DRIVER */
