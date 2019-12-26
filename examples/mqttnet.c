@@ -826,6 +826,8 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     MQTTCtx* mqttCtx = sock->mqttCtx;
 #endif
 
+    (void)mqttCtx;
+
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
