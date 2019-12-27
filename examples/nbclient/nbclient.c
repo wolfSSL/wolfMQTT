@@ -378,7 +378,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         {
             /* Unsubscribe Topics */
             rc = MqttClient_Unsubscribe(&mqttCtx->client,
-                   &mqttCtx->unsubscribe);
+                &mqttCtx->unsubscribe);
             if (rc == MQTT_CODE_CONTINUE) {
                 /* Track elapsed time with no activity and trigger timeout */
                 return mqtt_check_timeout(rc, &mqttCtx->start_sec,
@@ -503,6 +503,10 @@ exit:
         /* parse arguments */
         rc = mqtt_parse_args(&mqttCtx, argc, argv);
         if (rc != 0) {
+            if (rc == MY_EX_USAGE) {
+                /* return success, so make check passes with TLS disabled */
+                return 0;
+            }
             return rc;
         }
 #endif

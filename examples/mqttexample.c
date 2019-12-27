@@ -109,16 +109,24 @@ static int mygetopt(int argc, char** argv, const char* optstring)
 /* used for testing only, requires wolfSSL RNG */
 #ifdef ENABLE_MQTT_TLS
 #include <wolfssl/wolfcrypt/random.h>
+#endif
 
 static int mqtt_get_rand(byte* data, word32 len)
 {
     int ret = -1;
+#ifdef ENABLE_MQTT_TLS
     WC_RNG rng;
     ret = wc_InitRng(&rng);
     if (ret == 0) {
         ret = wc_RNG_GenerateBlock(&rng, data, len);
         wc_FreeRng(&rng);
     }
+#elif defined(HAVE_RAND)
+    word32 i;
+    for (i = 0; i<len; i++) {
+        data[i] = (byte)rand();
+    }
+#endif
     return ret;
 }
 
@@ -159,7 +167,6 @@ static char* mqtt_append_random(const char* inStr, word32 inLen)
     }
     return tmp;
 }
-#endif /* ENABLE_MQTT_TLS */
 
 void mqtt_show_usage(MQTTCtx* mqttCtx)
 {
@@ -338,7 +345,6 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     }
 #endif
 
-#ifdef ENABLE_MQTT_TLS
     /* for test mode only */
     /* add random data to end of client_id and topic_name */
     if (mqttCtx->test_mode && mqttCtx->topic_name == kDefTopicName) {
@@ -357,7 +363,6 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             mqttCtx->dynamicClientId = 1;
         }
     }
-#endif
 
     return rc;
 }
