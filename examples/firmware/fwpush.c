@@ -658,7 +658,7 @@ exit:
 
         /* This example requires wolfSSL after 3.7.1 for signature wrapper */
         PRINTF("Example not compiled in!");
-        rc = EXIT_FAILURE;
+        rc = 0; /* return success, so make check passes with TLS disabled */
     #endif
 
         return (rc == 0) ? 0 : EXIT_FAILURE;

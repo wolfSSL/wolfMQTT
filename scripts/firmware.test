@@ -28,6 +28,6 @@ compare_result=$?
 # Delete file
 rm $fileout
 
-echo MQTT Firmware Example Test Success!
+echo -e "\n\nFirmware Example MQTT Client Tests Passed"
 
 exit 0

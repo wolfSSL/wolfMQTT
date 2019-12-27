@@ -524,13 +524,13 @@ exit:
             rc = mqttclient_test(&mqttCtx);
         } while (rc == MQTT_CODE_CONTINUE);
 #else
-    (void)argc;
-    (void)argv;
+        (void)argc;
+        (void)argv;
 
-    /* This example requires non-blocking mode to be enabled
-       ./configure --enable-nonblock */
-    PRINTF("Example not compiled in!");
-    rc = EXIT_FAILURE;
+        /* This example requires non-blocking mode to be enabled
+           ./configure --enable-nonblock */
+        PRINTF("Example not compiled in!");
+        rc = 0; /* return success, so make check passes with TLS disabled */
 #endif
 
         return (rc == 0) ? 0 : EXIT_FAILURE;

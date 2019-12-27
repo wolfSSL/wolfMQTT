@@ -29,11 +29,14 @@
 #include "multithread.h"
 #include "examples/mqttnet.h"
 #ifdef WOLFMQTT_MULTITHREAD
+    #define _GNU_SOURCE
     #include <pthread.h>
+    #include <sched.h>
 #endif
 
 /* Locals */
 static int mStopRead = 0;
+static int mNumMsgsRecvd;
 
 #ifdef WOLFMQTT_MULTITHREAD
 static wolfSSL_Mutex packetIdLock; /* Protect access to mqtt_get_packetid() */
@@ -77,7 +80,6 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte buf[PRINT_BUFFER_SIZE+1];
     word32 len;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
-    static int num_msgs_recvd;
     (void)mqttCtx;
 
     if (msg_new) {
@@ -98,10 +100,10 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
             if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
                 /* Only compare the "test" part */
                 XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
-                         msg->buffer_len-3) == 0)
+                         msg->buffer_len-2) == 0)
             {
-                num_msgs_recvd++;
-                if (num_msgs_recvd == NUM_PUB_TASKS) {
+                mNumMsgsRecvd++;
+                if (mNumMsgsRecvd == NUM_PUB_TASKS) {
                     mStopRead = 1;
                 }
             }
@@ -162,6 +164,8 @@ static void client_disconnect(MQTTCtx *mqttCtx)
 static int multithread_test_init(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
+
+    mNumMsgsRecvd = 0;
 
     /* Create a demo mutex for making packet id values */
     rc = wc_InitMutex(&packetIdLock);
@@ -247,7 +251,9 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     mqttCtx->connect.password = mqttCtx->password;
 
     /* Send Connect and wait for Connect Ack */
-    rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
+    do {
+        rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
+    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
     PRINTF("MQTT Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
@@ -274,6 +280,7 @@ static int multithread_test_finish(MQTTCtx *mqttCtx)
     return mqttCtx->return_code;
 }
 
+/* this task subscribes to topic */
 static void *subscribe_task(void *param)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -328,7 +335,7 @@ static void *subscribe_task(void *param)
     pthread_exit(NULL);
 }
 
-/* This task subscribes to a topic and waits for messages */
+/* This task waits for messages */
 static void *waitMessage_task(void *param)
 {
     int rc;
@@ -376,6 +383,12 @@ static void *waitMessage_task(void *param)
         }
     #endif
         else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+            if (mqttCtx->test_mode) {
+                /* timeout in test mode should exit */
+                PRINTF("MQTT Exiting timeout...");
+                break;
+            }
+
             /* Keep Alive */
             PRINTF("Keep-alive timeout, sending ping");
 
@@ -392,7 +405,15 @@ static void *waitMessage_task(void *param)
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
-    } while(!mStopRead);
+
+        if (!mStopRead) {
+            /* make sure other threads get time before waiting */
+            /* there may be marked completions recieved that need processed by
+                other threads first */
+            PRINTF("Yielding Wait Thread");
+            sched_yield();
+        }
+    } while (!mStopRead);
 
     mqttCtx->return_code = rc;
 
@@ -554,8 +575,7 @@ int main(int argc, char** argv)
     /* This example requires multithread mode to be enabled
        ./configure --enable-mt */
     PRINTF("Example not compiled in!");
-    rc = EXIT_FAILURE;
-    (void) rc;
+    rc = 0; /* return success, so make check passes with TLS disabled */
 #endif
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }

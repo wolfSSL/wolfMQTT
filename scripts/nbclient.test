@@ -35,4 +35,6 @@ RESULT=$?
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && exit 1
 
+echo -e "\n\nNon-blocking MQTT Client Tests Passed"
+
 exit 0

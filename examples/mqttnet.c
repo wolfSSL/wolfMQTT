@@ -723,8 +723,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     }
 
     if (rc == 0) {
-
-    /* Create the socket */
+        /* Create the socket */
         sock->fd = SOCK_OPEN(sock->addr.sin_family, type, 0);
         if (sock->fd == SOCKET_INVALID) {
             rc = -1;

@@ -32,6 +32,10 @@
 	#define exit(rc) return rc
 #endif
 
+#ifndef MY_EX_USAGE
+#define MY_EX_USAGE 2 /* Exit reason code */
+#endif
+
 /* STDIN / FGETS for examples */
 #ifndef WOLFMQTT_NO_STDIO
     /* For Linux/Mac */

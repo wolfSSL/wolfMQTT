@@ -31,6 +31,8 @@
 
 /* locals */
 static volatile word16 mPacketIdLast;
+static const char* kDefTopicName = DEFAULT_TOPIC_NAME;
+static const char* kDefClientId =  DEFAULT_CLIENT_ID;
 
 /* argument parsing */
 static int myoptind = 0;
@@ -40,7 +42,6 @@ static char* myoptarg = NULL;
 	static const char* mTlsCaFile;
 #endif
 
-#define MY_EX_USAGE 2 /* Exit reason code */
 static int mygetopt(int argc, char** argv, const char* optstring)
 {
     static char* next = NULL;
@@ -207,8 +208,8 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->qos = DEFAULT_MQTT_QOS;
     mqttCtx->clean_session = 1;
     mqttCtx->keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
-    mqttCtx->client_id = DEFAULT_CLIENT_ID;
-    mqttCtx->topic_name = DEFAULT_TOPIC_NAME;
+    mqttCtx->client_id = kDefClientId;
+    mqttCtx->topic_name = kDefTopicName;
     mqttCtx->cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
 #ifdef WOLFMQTT_V5
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
@@ -340,17 +341,17 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 #ifdef ENABLE_MQTT_TLS
     /* for test mode only */
     /* add random data to end of client_id and topic_name */
-    if (mqttCtx->test_mode && mqttCtx->topic_name == DEFAULT_TOPIC_NAME) {
-        char* topic_name = mqtt_append_random(DEFAULT_TOPIC_NAME,
-            (word32)XSTRLEN(DEFAULT_TOPIC_NAME));
+    if (mqttCtx->test_mode && mqttCtx->topic_name == kDefTopicName) {
+        char* topic_name = mqtt_append_random(kDefTopicName,
+            (word32)XSTRLEN(kDefTopicName));
         if (topic_name) {
             mqttCtx->topic_name = (const char*)topic_name;
             mqttCtx->dynamicTopic = 1;
         }
     }
-    if (mqttCtx->test_mode && mqttCtx->client_id == DEFAULT_CLIENT_ID) {
-        char* client_id = mqtt_append_random(DEFAULT_CLIENT_ID,
-            (word32)XSTRLEN(DEFAULT_CLIENT_ID));
+    if (mqttCtx->test_mode && mqttCtx->client_id == kDefClientId) {
+        char* client_id = mqtt_append_random(kDefClientId,
+            (word32)XSTRLEN(kDefClientId));
         if (client_id) {
             mqttCtx->client_id = (const char*)client_id;
             mqttCtx->dynamicClientId = 1;

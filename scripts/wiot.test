@@ -13,4 +13,6 @@ def_args="-T -C 2000"
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nWatson IoT MQTT Client failed! TLS=On, QoS=0" && exit 1
 
+echo -e "\n\nWatson IoT MQTT Client Tests Passed"
+
 exit 0
