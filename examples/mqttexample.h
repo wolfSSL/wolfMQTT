@@ -91,6 +91,8 @@ typedef enum _MQTTCtxState {
 } MQTTCtxState;
 
 /* MQTT Client context */
+/* This is used for the examples as reference */
+/* Use of this structure allow non-blocking context */
 typedef struct _MQTTCtx {
     MQTTCtxState stat;
 
@@ -146,14 +148,18 @@ typedef struct _MQTTCtx {
     byte    subId_not_avail; /* Server property */
     byte    enable_eauth; /* Enhanced authentication */
 #endif
+    unsigned int dynamicTopic:1;
+    unsigned int dynamicClientId:1;
 #ifdef WOLFMQTT_NONBLOCK
-    unsigned int useNonBlockMode:1;
+    unsigned int useNonBlockMode:1; /* set to use non-blocking mode.
+        network callbacks can return MQTT_CODE_CONTINUE to indicate "would block" */
 #endif
 } MQTTCtx;
 
 
 void mqtt_show_usage(MQTTCtx* mqttCtx);
 void mqtt_init_ctx(MQTTCtx* mqttCtx);
+void mqtt_free_ctx(MQTTCtx* mqttCtx);
 int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv);
 int err_sys(const char* msg);
 

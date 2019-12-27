@@ -13,26 +13,26 @@ def_args="-T -C 2000"
 
 ./examples/nbclient/nbclient $def_args -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=0" && exit 1
 
 ./examples/nbclient/nbclient $def_args -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=1" && exit 1
 
 ./examples/nbclient/nbclient $def_args -q 2 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=2" && exit 1
 
 ./examples/nbclient/nbclient $def_args -t -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && exit 1
 
 ./examples/nbclient/nbclient $def_args -t -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && exit 1
 
 ./examples/nbclient/nbclient $def_args -t -q 2 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && exit 1
 
 exit 0

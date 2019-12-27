@@ -13,17 +13,17 @@ fileout=./README.md.trs
 # Start firmware push
 ./examples/firmware/fwpush $def_args -r -f $filein $1
 server_result=$?
-[ $server_result -lt 0 ] && echo -e "\n\nMQTT Example fwpush failed!" && exit 1
+[ $server_result -ne 0 ] && echo -e "\n\nMQTT Example fwpush failed!" && exit 1
 
 # Start firmware client
 ./examples/firmware/fwclient $def_args -f $fileout $1
 client_result=$?
-[ $client_result -lt 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && exit 1
+[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && exit 1
 
 # Compare files
 md5sum -b $filein $fileout
 compare_result=$?
-[ $client_result -lt 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && exit 1
+[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && exit 1
 
 # Delete file
 rm $fileout

@@ -659,6 +659,8 @@ exit:
         do {
             rc = azureiothub_test(&mqttCtx);
         } while (rc == MQTT_CODE_CONTINUE);
+
+        mqtt_free_ctx(&mqttCtx);
     #else
         (void)argc;
         (void)argv;

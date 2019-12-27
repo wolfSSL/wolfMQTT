@@ -637,6 +637,7 @@ int main(int argc, char** argv)
 
     rc = mqttclient_test(&mqttCtx);
 
+    mqtt_free_ctx(&mqttCtx);
 
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }

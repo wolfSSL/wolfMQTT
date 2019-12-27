@@ -11,10 +11,10 @@ def_args="-T -C 2000"
 
 ./examples/aws/awsiot $def_args -t -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nAWS IoT MQTT Client failed! TLS=On, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nAWS IoT MQTT Client failed! TLS=On, QoS=0" && exit 1
 
 ./examples/aws/awsiot $def_args -t -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nAWS IoT MQTT Client failed! TLS=On, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nAWS IoT MQTT Client failed! TLS=On, QoS=1" && exit 1
 
 exit 0

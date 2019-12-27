@@ -401,7 +401,6 @@ exit:
 int main(int argc, char** argv)
 {
     int rc;
-#ifndef WOLFMQTT_NONBLOCK
     MQTTCtx mqttCtx;
 
     /* init defaults */
@@ -420,7 +419,6 @@ int main(int argc, char** argv)
     if (rc != 0) {
         return rc;
     }
-#endif
 
 #ifdef USE_WINDOWS_API
     if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
@@ -432,17 +430,11 @@ int main(int argc, char** argv)
     }
 #endif
 
-#ifndef WOLFMQTT_NONBLOCK
-    rc = wiot_test(&mqttCtx);
-#else
-    (void)argc;
-    (void)argv;
+    do {
+        rc = wiot_test(&mqttCtx);
+    } while (rc == MQTT_CODE_CONTINUE);
 
-    /* This example requires non-blocking mode to be disabled
-       ./configure --disable-nonblock */
-    PRINTF("Example not compiled in!");
-    rc = EXIT_FAILURE;
-#endif
+    mqtt_free_ctx(&mqttCtx);
 
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }

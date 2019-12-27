@@ -545,6 +545,8 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
     rc = multithread_test(&mqttCtx);
+
+    mqtt_free_ctx(&mqttCtx);
 #else
     (void)argc;
     (void)argv;
