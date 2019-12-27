@@ -814,6 +814,7 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     int timeout_ms, byte peek)
 {
     SocketContext *sock = (SocketContext*)context;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
     int rc = -1, timeout = 0;
     SOERROR_T so_error = 0;
     int bytes = 0;
@@ -822,7 +823,6 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     fd_set recvfds;
     fd_set errfds;
     struct timeval tv;
-    MQTTCtx* mqttCtx = sock->mqttCtx;
 #endif
 
     (void)mqttCtx;
@@ -847,7 +847,9 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     FD_SET(sock->fd, &errfds);
 
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+    if (!mqttCtx->test_mode) {
         FD_SET(STDIN, &recvfds);
+    }
     #endif
 
 #else
@@ -876,7 +878,7 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                 }
                 /* Check if rx or error */
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if (FD_ISSET(STDIN, &recvfds)) {
+                else if (!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds)) {
                     return MQTT_CODE_STDIN_WAKE;
                 }
             #endif
