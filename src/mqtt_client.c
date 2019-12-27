@@ -1830,7 +1830,7 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
             rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_AUTH),
-            MQTT_PACKET_TYPE_AUTH, auth->packet_id, auth->packet_qos);
+            MQTT_PACKET_TYPE_AUTH, 0, 0);
     #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
