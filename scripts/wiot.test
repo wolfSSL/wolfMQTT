@@ -5,7 +5,7 @@
 # Check for application
 [ ! -x ./examples/wiot/wiot ] && echo -e "\n\nWatson IoT MQTT Client doesn't exist" && exit 1
 
-def_args="-T"
+def_args="-T -C 2000"
 
 # Run
 

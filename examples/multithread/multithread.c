@@ -519,7 +519,7 @@ int multithread_test(MQTTCtx *mqttCtx)
 int main(int argc, char** argv)
 {
     int rc;
-#if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+#ifdef WOLFMQTT_MULTITHREAD
     MQTTCtx mqttCtx;
 
     /* init defaults */
@@ -543,7 +543,7 @@ int main(int argc, char** argv)
         PRINTF("Can't catch SIGINT");
     }
 #endif
-#if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+#ifdef WOLFMQTT_MULTITHREAD
     rc = multithread_test(&mqttCtx);
 #else
     (void)argc;

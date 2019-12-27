@@ -5,7 +5,7 @@
 # Check for application
 [ ! -x ./examples/multithread/multithread ] && echo -e "\n\nMultithread Client doesn't exist" && exit 1
 
-def_args="-T -C 1000"
+def_args="-T -C 2000"
 
 # Run with and without TLS and QoS 0-2
 

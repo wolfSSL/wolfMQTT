@@ -388,7 +388,11 @@ typedef struct _MqttConnectAck {
 /* Connect structure */
 struct _MqttMessage;
 typedef struct _MqttConnect {
-    MqttMsgStat stat; /* must be first member at top */
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     word16      keep_alive_sec;
     byte        clean_session;
@@ -411,9 +415,6 @@ typedef struct _MqttConnect {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
 #endif
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
 } MqttConnect;
 
 
@@ -429,23 +430,27 @@ typedef struct _MqttConnect {
     QoS2 protocol exchange */
 /* Expect response packet with type = MQTT_PACKET_TYPE_PUBLISH_COMP */
 typedef struct _MqttPublishResp {
-    MqttMsgStat stat; /* must be first member at top */
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     word16      packet_id;
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;
 #endif
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
 } MqttPublishResp;
 
 /* PUBLISH */
 /* PacketId sent only if QoS > 0 */
 typedef struct _MqttMessage {
-    MqttMsgStat stat; /* must be first member at top */
-
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
     word16      packet_id;
     byte        type;
     MqttQoS     qos;
@@ -476,9 +481,6 @@ typedef struct _MqttMessage {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
 #endif
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
 } MqttMessage;
 typedef MqttMessage MqttPublish; /* Publish is message */
 
@@ -505,7 +507,11 @@ typedef struct _MqttSubscribeAck {
 /* SUBSCRIBE */
 /* Packet Id followed by contiguous list of topics w/Qos to subscribe to. */
 typedef struct _MqttSubscribe {
-    MqttMsgStat stat; /* must be first member at top */
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     word16      packet_id;
     int         topic_count;
@@ -515,9 +521,6 @@ typedef struct _MqttSubscribe {
 
 #ifdef WOLFMQTT_V5
     MqttProp* props;
-#endif
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
 #endif
 } MqttSubscribe;
 
@@ -537,7 +540,11 @@ typedef struct _MqttUnsubscribeAck {
 /* UNSUBSCRIBE */
 /* Packet Id followed by contiguous list of topics to unsubscribe from. */
 typedef struct _MqttUnsubscribe {
-    MqttMsgStat stat; /* must be first member at top */
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     word16      packet_id;
     int         topic_count;
@@ -548,17 +555,14 @@ typedef struct _MqttUnsubscribe {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
 #endif
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
 } MqttUnsubscribe;
 
 
 /* PING / PING RESPONSE */
 /* Fixed header "MqttPacket" only. No variable header or payload */
 typedef struct _MqttPing {
-    MqttMsgStat stat; /* must be first member at top */
-
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp pendResp;
 #endif
@@ -579,13 +583,14 @@ typedef struct _MqttDisconnect {
 #ifdef WOLFMQTT_V5
 /* AUTH */
 typedef struct _MqttAuth {
-    MqttMsgStat stat; /* must be first member at top */
-
-    byte        reason_code;
-    MqttProp*   props;
+    /* stat and pendResp must be first members at top */
+    MqttMsgStat stat;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp pendResp;
 #endif
+
+    byte        reason_code;
+    MqttProp*   props;
 } MqttAuth;
 #endif
 
