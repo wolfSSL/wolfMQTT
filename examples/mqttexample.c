@@ -31,6 +31,8 @@
 
 /* locals */
 static volatile word16 mPacketIdLast;
+static const char* kDefTopicName = DEFAULT_TOPIC_NAME;
+static const char* kDefClientId =  DEFAULT_CLIENT_ID;
 
 /* argument parsing */
 static int myoptind = 0;
@@ -40,7 +42,6 @@ static char* myoptarg = NULL;
 	static const char* mTlsCaFile;
 #endif
 
-#define MY_EX_USAGE 2 /* Exit reason code */
 static int mygetopt(int argc, char** argv, const char* optstring)
 {
     static char* next = NULL;
@@ -104,6 +105,69 @@ static int mygetopt(int argc, char** argv, const char* optstring)
     return c;
 }
 
+
+/* used for testing only, requires wolfSSL RNG */
+#ifdef ENABLE_MQTT_TLS
+#include <wolfssl/wolfcrypt/random.h>
+#endif
+
+static int mqtt_get_rand(byte* data, word32 len)
+{
+    int ret = -1;
+#ifdef ENABLE_MQTT_TLS
+    WC_RNG rng;
+    ret = wc_InitRng(&rng);
+    if (ret == 0) {
+        ret = wc_RNG_GenerateBlock(&rng, data, len);
+        wc_FreeRng(&rng);
+    }
+#elif defined(HAVE_RAND)
+    word32 i;
+    for (i = 0; i<len; i++) {
+        data[i] = (byte)rand();
+    }
+#endif
+    return ret;
+}
+
+#ifndef TEST_RAND_SZ
+#define TEST_RAND_SZ 4
+#endif
+static char* mqtt_append_random(const char* inStr, word32 inLen)
+{
+    int rc;
+    const char kHexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
+                              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+    byte rndBytes[TEST_RAND_SZ], rndHexStr[TEST_RAND_SZ*2];
+    char *tmp = NULL;
+
+    rc = mqtt_get_rand(rndBytes, (word32)sizeof(rndBytes));
+    if (rc == 0) {
+        /* Convert random to hex string */
+        int i;
+        for (i=0; i<(int)sizeof(rndBytes); i++) {
+            byte in = rndBytes[i];
+            rndHexStr[(i*2)] =   kHexChar[in >> 4];
+            rndHexStr[(i*2)+1] = kHexChar[in & 0xf];
+        }
+    }
+    if (rc == 0) {
+        /* Allocate topic name and client id */
+        tmp = (char*)WOLFMQTT_MALLOC(inLen + 1 + sizeof(rndHexStr) + 1);
+        if (tmp == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
+    }
+    if (rc == 0) {
+        /* Format: inStr + `_` randhex + null term */
+        XMEMCPY(tmp, inStr, inLen);
+        tmp[inLen] = '_';
+        XMEMCPY(tmp + inLen + 1, rndHexStr, sizeof(rndHexStr));
+        tmp[inLen + 1 + sizeof(rndHexStr)] = '\0';
+    }
+    return tmp;
+}
+
 void mqtt_show_usage(MQTTCtx* mqttCtx)
 {
     PRINTF("%s:", mqttCtx->app_name);
@@ -151,8 +215,8 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->qos = DEFAULT_MQTT_QOS;
     mqttCtx->clean_session = 1;
     mqttCtx->keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
-    mqttCtx->client_id = DEFAULT_CLIENT_ID;
-    mqttCtx->topic_name = DEFAULT_TOPIC_NAME;
+    mqttCtx->client_id = kDefClientId;
+    mqttCtx->topic_name = kDefTopicName;
     mqttCtx->cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
 #ifdef WOLFMQTT_V5
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
@@ -163,7 +227,7 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
 
 int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 {
-int rc;
+    int rc;
 
     #ifdef ENABLE_MQTT_TLS
         #define MQTT_TLS_ARGS "c:"
@@ -267,6 +331,7 @@ int rc;
         }
     }
 
+    rc = 0;
     myoptind = 0; /* reset for test cases */
 
     /* if TLS not enable, check args */
@@ -280,7 +345,42 @@ int rc;
     }
 #endif
 
-    return 0;
+    /* for test mode only */
+    /* add random data to end of client_id and topic_name */
+    if (mqttCtx->test_mode && mqttCtx->topic_name == kDefTopicName) {
+        char* topic_name = mqtt_append_random(kDefTopicName,
+            (word32)XSTRLEN(kDefTopicName));
+        if (topic_name) {
+            mqttCtx->topic_name = (const char*)topic_name;
+            mqttCtx->dynamicTopic = 1;
+        }
+    }
+    if (mqttCtx->test_mode && mqttCtx->client_id == kDefClientId) {
+        char* client_id = mqtt_append_random(kDefClientId,
+            (word32)XSTRLEN(kDefClientId));
+        if (client_id) {
+            mqttCtx->client_id = (const char*)client_id;
+            mqttCtx->dynamicClientId = 1;
+        }
+    }
+
+    return rc;
+}
+
+void mqtt_free_ctx(MQTTCtx* mqttCtx)
+{
+    if (mqttCtx == NULL) {
+        return;
+    }
+
+    if (mqttCtx->dynamicTopic && mqttCtx->topic_name) {
+        WOLFMQTT_FREE((char*)mqttCtx->topic_name);
+        mqttCtx->topic_name = NULL;
+    }
+    if (mqttCtx->dynamicClientId && mqttCtx->client_id) {
+        WOLFMQTT_FREE((char*)mqttCtx->client_id);
+        mqttCtx->client_id = NULL;
+    }
 }
 
 #if defined(__GNUC__) && !defined(NO_EXIT)
@@ -342,6 +442,7 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
         elapsed_sec -= *start_sec;
         if (elapsed_sec >= timeout_sec) {
             *start_sec = mqtt_get_timer_seconds();
+            PRINTF("Timeout timer %d seconds", timeout_sec);
             return MQTT_CODE_ERROR_TIMEOUT;
         }
     }

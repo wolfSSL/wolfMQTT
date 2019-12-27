@@ -5,32 +5,36 @@
 # Check for application
 [ ! -x ./examples/nbclient/nbclient ] && echo -e "\n\nNon-blocking Client doesn't exist" && exit 1
 
-def_args="-T -C 1000"
+# Use minimum of 2 seconds
+# The check timout will sometimes incorrectly trigger if 1 second is used
+def_args="-T -C 2000"
 
 # Run with and without TLS and QoS 0-2
 
 ./examples/nbclient/nbclient $def_args -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=0" && exit 1
 
 ./examples/nbclient/nbclient $def_args -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=1" && exit 1
 
 ./examples/nbclient/nbclient $def_args -q 2 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=2" && exit 1
 
 ./examples/nbclient/nbclient $def_args -t -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && exit 1
 
 ./examples/nbclient/nbclient $def_args -t -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && exit 1
 
 ./examples/nbclient/nbclient $def_args -t -q 2 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && exit 1
+
+echo -e "\n\nNon-blocking MQTT Client Tests Passed"
 
 exit 0

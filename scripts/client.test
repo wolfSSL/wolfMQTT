@@ -5,32 +5,34 @@
 # Check for application
 [ ! -x ./examples/mqttclient/mqttclient ] && echo -e "\n\nMQTT Client doesn't exist" && exit 1
 
-def_args="-T -C 1000"
+def_args="-T -C 2000"
 
 # Run with and without TLS and QoS 0-2
 
 ./examples/mqttclient/mqttclient $def_args -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=0" && exit 1
 
 ./examples/mqttclient/mqttclient $def_args -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=1" && exit 1
 
 ./examples/mqttclient/mqttclient $def_args -q 2 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=2" && exit 1
 
 ./examples/mqttclient/mqttclient $def_args -t -q 0 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0" && exit 1
 
 ./examples/mqttclient/mqttclient $def_args -t -q 1 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=1" && exit 1
 
 ./examples/mqttclient/mqttclient $def_args -t -q 2 $1
 RESULT=$?
-[ $RESULT -lt 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=2" && exit 1
+
+echo -e "\n\nMQTT Client Tests Passed"
 
 exit 0

@@ -201,7 +201,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
 
     /* Decode header */
     header = (MqttPacket*)rx_buf;
-    packet_type = MQTT_PACKET_TYPE_GET(header->type_flags);
+    packet_type = (MqttPacketType)MQTT_PACKET_TYPE_GET(header->type_flags);
     if (ppacket_type) {
         *ppacket_type = packet_type;
     }
@@ -434,7 +434,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
             MqttPublish *publish = (MqttPublish*)packet_obj;
             MqttPacketType resp_type;
 
-            if (publish->stat == MQTT_MSG_READ) {
+            if (publish->stat == MQTT_MSG_BEGIN || publish->stat == MQTT_MSG_READ) {
                 rc = MqttClient_DecodePacket(client, client->rx_buf,
                     client->packet.buf_len, packet_obj, &packet_type,
                     &packet_qos, &packet_id);
@@ -471,6 +471,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
             /* Encode publish response */
             rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len,
                 resp_type, &publish->resp);
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+                rc, MqttPacket_TypeDesc(resp_type), resp_type, packet_id,
+                packet_qos);
+        #endif
             if (rc <= 0) {
             #ifdef WOLFMQTT_MULTITHREAD
                 wc_UnLockMutex(&client->lockSend);
@@ -518,8 +523,15 @@ static int MqttClient_HandlePacket(MqttClient* client,
         #endif
 
             /* Encode publish response */
+            publish_resp.packet_id = packet_id;
+            packet_type = (MqttPacketType)((int)packet_type+1); /* next ack */
             rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len,
-                packet_type+1, &publish_resp);
+                packet_type, &publish_resp);
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+                rc, MqttPacket_TypeDesc(packet_type), packet_type, packet_id,
+                packet_qos);
+        #endif
             if (rc <= 0) {
             #ifdef WOLFMQTT_MULTITHREAD
                 wc_UnLockMutex(&client->lockSend);
@@ -716,20 +728,30 @@ wait_again:
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
         {
+            MqttPacketType use_packet_type;
+            void* use_packet_obj;
+
         #ifdef WOLFMQTT_MULTITHREAD
             readLocked = 1; /* if in this state read is locked */
         #endif
 
+            /* read payload state only happens for publish messages */
             if (*mms_stat == MQTT_MSG_READ_PAYLOAD) {
-                /* read payload state only happens for publish messages */
                 packet_type = MQTT_PACKET_TYPE_PUBLISH;
             }
 
             /* Determine if we received data for this request */
             if ((wait_type == MQTT_PACKET_TYPE_ANY || wait_type == packet_type) &&
-               (wait_packet_id == 0 || wait_packet_id == packet_id)) {
+               (wait_packet_id == 0 || wait_packet_id == packet_id))
+            {
+                use_packet_obj = packet_obj;
                 waitMatchFound = 1;
             }
+            else {
+                /* use generic packet object */
+                use_packet_obj = &client->msg;
+            }
+            use_packet_type = packet_type;
 
         #ifdef WOLFMQTT_MULTITHREAD
             /* Check to see if we have a pending response for this packet */
@@ -740,26 +762,20 @@ wait_again:
                                                                    &pendResp)) {
                     /* we found packet match this incoming read packet */
                     pendResp->packetProcessing = 1;
+                    use_packet_obj = pendResp->packet_obj;
+                    use_packet_type = pendResp->packet_type;
+                    waitMatchFound = 0; /* req from another thread... not a match */
                 }
                 wc_UnLockMutex(&client->lockClient);
             }
             else {
                 break; /* error */
             }
-
-            if (pendResp) {
-                rc = MqttClient_HandlePacket(client, pendResp->packet_type,
-                    pendResp->packet_obj, timeout_ms);
-                waitMatchFound = 0; /* req from another thread... not a match */
-            }
-            else
         #endif /* WOLFMQTT_MULTITHREAD */
-            /* always try and "handle" packet */
-            /* we need to call this for the publish QoS responses */
-            {
-                rc = MqttClient_HandlePacket(client, packet_type,
-                    packet_obj, timeout_ms);
-            }
+
+            /* Perform packet handling for publish callback and QoS */
+            rc = MqttClient_HandlePacket(client, use_packet_type,
+                use_packet_obj, timeout_ms);
 
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
@@ -942,6 +958,11 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 
         /* Encode the connect packet */
         rc = MqttEncode_Connect(client->tx_buf, client->tx_buf_len, mc_connect);
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+            rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_CONNECT),
+            MQTT_PACKET_TYPE_CONNECT, 0, 0);
+    #endif
         if (rc <= 0) {
             #ifdef WOLFMQTT_MULTITHREAD
                 wc_UnLockMutex(&client->lockSend);
@@ -1290,6 +1311,12 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
             /* Encode the publish packet */
             rc = MqttEncode_Publish(client->tx_buf, client->tx_buf_len,
                     publish, pubCb ? 1 : 0);
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+                rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_PUBLISH),
+                MQTT_PACKET_TYPE_PUBLISH, publish->packet_id,
+                publish->qos);
+        #endif
             if (rc <= 0) {
             #ifdef WOLFMQTT_MULTITHREAD
                 wc_UnLockMutex(&client->lockSend);
@@ -1462,6 +1489,11 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         /* Encode the subscribe packet */
         rc = MqttEncode_Subscribe(client->tx_buf, client->tx_buf_len,
                 subscribe);
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+            rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_SUBSCRIBE),
+            MQTT_PACKET_TYPE_SUBSCRIBE, subscribe->packet_id, 0);
+    #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
             wc_UnLockMutex(&client->lockSend);
@@ -1555,6 +1587,11 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
         /* Encode the subscribe packet */
         rc = MqttEncode_Unsubscribe(client->tx_buf, client->tx_buf_len,
             unsubscribe);
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+            rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_UNSUBSCRIBE),
+            MQTT_PACKET_TYPE_UNSUBSCRIBE, unsubscribe->packet_id, 0);
+    #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
             wc_UnLockMutex(&client->lockSend);
@@ -1645,6 +1682,11 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
 
         /* Encode the subscribe packet */
         rc = MqttEncode_Ping(client->tx_buf, client->tx_buf_len, ping);
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+            rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_PING_REQ),
+            MQTT_PACKET_TYPE_PING_REQ, 0, 0);
+    #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
             wc_UnLockMutex(&client->lockSend);
@@ -1737,6 +1779,11 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *disconnect)
 
     /* Encode the disconnect packet */
     rc = MqttEncode_Disconnect(client->tx_buf, client->tx_buf_len, disconnect);
+#ifdef WOLFMQTT_DEBUG_CLIENT
+    PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+        rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_DISCONNECT),
+        MQTT_PACKET_TYPE_DISCONNECT, 0, 0);
+#endif
     if (rc <= 0) {
     #ifdef WOLFMQTT_MULTITHREAD
         wc_UnLockMutex(&client->lockSend);
@@ -1780,6 +1827,11 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 
         /* Encode the authentication packet */
         rc = MqttEncode_Auth(client->tx_buf, client->tx_buf_len, auth);
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
+            rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_AUTH),
+            MQTT_PACKET_TYPE_AUTH, 0, 0);
+    #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
             wc_UnLockMutex(&client->lockSend);
@@ -2687,4 +2739,3 @@ int SN_Client_WaitMessage(MqttClient *client, int timeout_ms)
 }
 
 #endif /* defined WOLFMQTT_SN */
-

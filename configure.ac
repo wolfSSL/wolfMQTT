@@ -61,7 +61,7 @@ AC_CHECK_SIZEOF([long long], 8)
 AC_CHECK_SIZEOF([long], 4)
 
 # Check headers/libs
-AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket signal])
+AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket signal rand])
 AC_CHECK_LIB([network],[socket])
 
 # DEBUG
@@ -153,7 +153,7 @@ AC_ARG_ENABLE([examples],
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 
 
-# Error strings 
+# Error strings
 AC_ARG_ENABLE([errorstrings],
     [AS_HELP_STRING([--enable-errorstrings],[Enable error strings  (default: enabled)])],
     [ ENABLED_ERROR_STRINGS=$enableval ],
@@ -371,4 +371,3 @@ echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"
 echo "   * TLS:                       $ENABLED_TLS"
 echo "   * Multi-thread:              $ENABLED_MULTITHREAD"
-
