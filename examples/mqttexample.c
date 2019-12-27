@@ -136,10 +136,10 @@ static char* mqtt_append_random(const char* inStr, word32 inLen)
     if (rc == 0) {
         /* Convert random to hex string */
         int i;
-        for (i=0; i<(int)sizeof(rndHexStr); i+=2) {
+        for (i=0; i<(int)sizeof(rndBytes); i++) {
             byte in = rndBytes[i];
-            rndHexStr[i] =   kHexChar[in >> 4];
-            rndHexStr[i+1] = kHexChar[in & 0xf];
+            rndHexStr[(i*2)] =   kHexChar[in >> 4];
+            rndHexStr[(i*2)+1] = kHexChar[in & 0xf];
         }
     }
     if (rc == 0) {
@@ -340,7 +340,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 #ifdef ENABLE_MQTT_TLS
     /* for test mode only */
     /* add random data to end of client_id and topic_name */
-    if (mqttCtx->test_mode && mqttCtx->topic_name == DEFAULT_CLIENT_ID) {
+    if (mqttCtx->test_mode && mqttCtx->topic_name == DEFAULT_TOPIC_NAME) {
         char* topic_name = mqtt_append_random(DEFAULT_TOPIC_NAME,
             (word32)XSTRLEN(DEFAULT_TOPIC_NAME));
         if (topic_name) {
