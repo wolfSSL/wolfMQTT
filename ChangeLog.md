@@ -1,6 +1,38 @@
 
 ## Release Notes
 
+### v1.4 (12/27/19)
+
+* Fixes for non-blocking and multi-threading edge cases. (PR #130)
+    - Improved logic for processing objects from different threads.
+    - Improved network connect/read to handle runtime option for block/non-block.
+    - Improved examples to support adding random hex string to client_id and topic name when "-T" option is used.
+    - Fix for test scripts to check non-zero return code.
+    - Enabled the mqttclient, multithread and wiot examples when non-blocking is enabled.
+    - Added encode debug log messages when `WOLFMQTT_DEBUG_CLIENT` is defined.
+    - Added thread logging when `WOLFMQTT_DEBUG_THREAD` is defined with multi-threading support enabled.
+* Fixes for Visual Studio project (PR #122)
+    - Improvements to catch use of socket file descriptor before its been created/opened.
+    - Improved handling for Windows socket want write.
+    - Added library references to wolfSSL project.
+    - Adjusted include to have IDE/WIN for user_settings.h.
+* Fixes for Visual Studio conversion warning (PR #128)
+* Fix visibility warnings in Cygwin (PR #127)
+* Fix global declaration conflicts for CentOS (PR #133)
+* Fix Microchip Harmony for `mqtt_socket.c` with non-blocking and `errno.h`  (PR #135)
+* Fix to not return from `MqttClient_WaitMessage` if response from another thread (PR #129)
+* Refactor of the multi-threading code to better handle edge case and state for non-blocking (PR #126)
+    - Fixes for multi-thread handling of ack's when processing.
+    - Refactor to use `stat` from own struct, not shared `msg->stat`.
+    - Eliminated use of `client->msg` except for `MqttClient_WaitMessage`.
+    - Fixes to restore "state" after performing MqttClient operation.
+    - Refactor of publish read and write payload.
+    - Improvements to multithread example.
+    - Refactor of the SN code to support new object type and unique state for future multi-thread support.
+    - Added build option `TEST_NONBLOCK` to force testing non-blocking edge cases.
+    - Fix for fwpush getting stuck in stop loop on Ctrl+c exit.
+* Update Azure login and default broker (PR #131)
+
 ### v1.3 (08/01/19)
 
 * Fix `fwpush` example to use filename option `-f`. (PR #117)
