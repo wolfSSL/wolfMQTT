@@ -1,9 +1,9 @@
 # wolfmqtt
-# Copyright (C) 2018 wolfSSL Inc.
+# Copyright (C) 2019 wolfSSL Inc.
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2019 wolfSSL Inc.])
-AC_INIT([wolfmqtt],[1.3.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
+AC_INIT([wolfmqtt],[1.4.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
 
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -23,7 +23,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=5:0:0
+WOLFMQTT_LIBRARY_VERSION=5:1:0
 #                        | | |
 #                 +------+ | +---+
 #                 |        |     |
@@ -288,7 +288,7 @@ rm -f $OPTION_FILE
 echo "/* wolfmqtt options.h" > $OPTION_FILE
 echo " * generated from configure options" >> $OPTION_FILE
 echo " *" >> $OPTION_FILE
-echo " * Copyright (C) 2006-2018 wolfSSL Inc." >> $OPTION_FILE
+echo " * Copyright (C) 2006-2019 wolfSSL Inc." >> $OPTION_FILE
 echo " *" >> $OPTION_FILE
 echo " * * This file is part of wolfMQTT." >> $OPTION_FILE
 echo " *" >> $OPTION_FILE
