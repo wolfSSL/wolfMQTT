@@ -239,7 +239,6 @@ enum MqttPacketResponseCodes {
     #endif
     #ifndef PRINTF
         #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_DEBUG_THREAD)
-            #define _GNU_SOURCE
             #include <pthread.h>
             #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
         #else

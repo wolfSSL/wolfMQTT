@@ -201,7 +201,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
 
     /* Decode header */
     header = (MqttPacket*)rx_buf;
-    packet_type = MQTT_PACKET_TYPE_GET(header->type_flags);
+    packet_type = (MqttPacketType)MQTT_PACKET_TYPE_GET(header->type_flags);
     if (ppacket_type) {
         *ppacket_type = packet_type;
     }
@@ -524,11 +524,12 @@ static int MqttClient_HandlePacket(MqttClient* client,
 
             /* Encode publish response */
             publish_resp.packet_id = packet_id;
+            packet_type = (MqttPacketType)((int)packet_type+1); /* next ack */
             rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len,
-                packet_type+1, &publish_resp);
+                packet_type, &publish_resp);
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
-                rc, MqttPacket_TypeDesc(packet_type+1), packet_type+1, packet_id,
+                rc, MqttPacket_TypeDesc(packet_type), packet_type, packet_id,
                 packet_qos);
         #endif
             if (rc <= 0) {

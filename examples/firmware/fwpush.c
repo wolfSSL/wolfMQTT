@@ -320,7 +320,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
     }
 
     /* restore callback data */
-    cbData = mqttCtx->publish.ctx;
+    cbData = (FwpushCBdata*)mqttCtx->publish.ctx;
 
     /* check for stop */
     if (mStopRead) {

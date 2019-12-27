@@ -29,7 +29,6 @@
 #include "multithread.h"
 #include "examples/mqttnet.h"
 #ifdef WOLFMQTT_MULTITHREAD
-    #define _GNU_SOURCE
     #include <pthread.h>
     #include <sched.h>
 #endif
