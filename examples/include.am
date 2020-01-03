@@ -3,6 +3,7 @@
 
 if BUILD_EXAMPLES
 noinst_PROGRAMS += examples/mqttclient/mqttclient \
+                   examples/mqttsimple/mqttsimple \
                    examples/nbclient/nbclient \
                    examples/firmware/fwpush \
                    examples/firmware/fwclient \
@@ -17,6 +18,7 @@ noinst_PROGRAMS += examples/sn-client/sn-client
 endif
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
+                   examples/mqttsimple/mqttsimple.h \
                    examples/nbclient/nbclient.h \
                    examples/firmware/fwpush.h \
                    examples/firmware/fwclient.h \
@@ -39,6 +41,10 @@ examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
 examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+examples_mqttsimple_mqttsimple_SOURCES      = examples/mqttsimple/mqttsimple.c
+examples_mqttsimple_mqttsimple_LDADD        = src/libwolfmqtt.la
+examples_mqttsimple_mqttsimple_DEPENDENCIES = src/libwolfmqtt.la
 
 if BUILD_MULTITHREAD
 examples_multithread_multithread_SOURCES      = examples/multithread/multithread.c \
@@ -106,9 +112,11 @@ examples_sn_client_sn_client_CPPFLAGS       = -I$(top_srcdir)/examples $(AM_CPPF
 endif
 endif
 
+
 dist_example_DATA+= examples/mqttnet.c \
                     examples/mqttexample.c \
                     examples/mqttclient/mqttclient.c \
+					examples/mqttsimple/mqttsimple.c \
                     examples/nbclient/nbclient.c \
                     examples/firmware/fwpush.c \
                     examples/firmware/fwclient.c \

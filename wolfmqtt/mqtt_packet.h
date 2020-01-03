@@ -39,6 +39,10 @@
 #define MQTT_DATA_LEN_SIZE   2
 #define MQTT_DATA_INT_SIZE   4
 
+#ifndef MAX_PACKET_ID
+#define MAX_PACKET_ID           ((1 << 16) - 1)
+#endif
+
 #ifdef WOLFMQTT_V5
 
 #define MQTT_PACKET_SZ_MAX  0xA0000005
