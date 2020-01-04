@@ -50,9 +50,9 @@
     #define MQTT_USE_TLS     0
     #define MQTT_PORT        1883
 #endif
-#define MQTT_MAX_PACKET_SZ 1024
-#define INVALID_SOCKET_FD -1
-#define PRINT_BUFFER_SIZE       80
+#define MQTT_MAX_PACKET_SZ   1024
+#define INVALID_SOCKET_FD    -1
+#define PRINT_BUFFER_SIZE    80
 
 /* Local Variables */
 static MqttClient mClient;
@@ -220,12 +220,17 @@ static int mqtt_net_read(void *context, byte* buf, int buf_len, int timeout_ms)
     while (bytes < buf_len) {
         rc = (int)recv(*pSockFd, &buf[bytes], buf_len - bytes, 0);
         if (rc < 0) {
-            PRINTF("NetRead: Error %d (Sock Err %d)",
-                rc, socket_get_error(*pSockFd));
+            rc = socket_get_error(*pSockFd);
+            PRINTF("NetRead: Error %d", rc);
+            if (rc == 0)
+                break; /* timeout */
             return MQTT_CODE_ERROR_NETWORK;
         }
-
         bytes += rc; /* Data */
+    }
+
+    if (bytes == 0) {
+        return MQTT_CODE_ERROR_TIMEOUT;
     }
 
     return bytes;
@@ -420,6 +425,9 @@ int mqttsimple_test(void)
                 break;
             }
             PRINTF("MQTT Keep-Alive Ping");
+        }
+        else if (rc != MQTT_CODE_SUCCESS) {
+            break;
         }
     }
 
