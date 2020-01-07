@@ -63,7 +63,7 @@
 #endif
 
 #ifdef WOLFMQTT_USER_SETTINGS
-#include <user_settings.h>
+#include "user_settings.h"
 #endif
 
 #ifdef ENABLE_MQTT_TLS
