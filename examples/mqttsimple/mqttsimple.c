@@ -384,7 +384,9 @@ int mqttsimple_test(void)
 		goto exit;
 	}
     PRINTF("MQTT Broker Connect Success: ClientID %s, Username %s, Password %s",
-        MQTT_CLIENT_ID, MQTT_USERNAME, MQTT_PASSWORD);
+        MQTT_CLIENT_ID,
+        (MQTT_USERNAME == NULL) ? "Null" : MQTT_USERNAME,
+        (MQTT_PASSWORD == NULL) ? "Null" : MQTT_PASSWORD);
 
     /* Subscribe and wait for Ack */
     XMEMSET(&mqttObj, 0, sizeof(mqttObj));
