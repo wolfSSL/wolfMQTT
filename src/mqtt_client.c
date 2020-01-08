@@ -1323,14 +1323,7 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
             #endif
                 return rc;
             }
-
             client->write.len = rc;
-            publish->buffer_pos = 0;
-
-            /* Backwards compatibility for chunk transfers */
-            if (publish->buffer_len == 0) {
-                publish->buffer_len = publish->total_len;
-            }
 
         #ifdef WOLFMQTT_MULTITHREAD
             if (publish->qos > MQTT_QOS_0) {
@@ -1376,8 +1369,6 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
             #endif
                 return rc;
             }
-            /* mark how much data was sent */
-            publish->buffer_pos += rc;
 
             /* advance state */
             publish->stat = MQTT_MSG_WRITE_PAYLOAD;

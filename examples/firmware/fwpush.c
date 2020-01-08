@@ -97,6 +97,11 @@ static int mqtt_publish_cb(MqttPublish *publish) {
                 /* Get FW size from FW header struct */
                 headerSize = sizeof(FirmwareHeader) + header->sigLen +
                         header->pubKeyLen;
+                if (headerSize > publish->buffer_len) {
+                    PRINTF("Error: Firmware Header %d larger than max buffer %d",
+                        headerSize, publish->buffer_len);
+                    return -1;
+                }
 
                 /* Copy header to buffer */
                 XMEMCPY(publish->buffer, header, headerSize);
@@ -120,7 +125,7 @@ static int mqtt_publish_cb(MqttPublish *publish) {
                     ret = (int)bytes_read;
                 }
             }
-            if (feof(cbData->fp)) {
+            if (cbData->fp && feof(cbData->fp)) {
                 fclose(cbData->fp);
             }
         }

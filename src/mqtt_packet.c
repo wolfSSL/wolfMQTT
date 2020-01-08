@@ -142,6 +142,11 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     int header_len;
     MqttPacket* header = (MqttPacket*)tx_buf;
 
+    /* make sure destination buffer has space for header */
+    if (tx_buf_len < MQTT_PACKET_MAX_LEN_BYTES+1) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
     /* Encode fixed header */
     header->type_flags = MQTT_PACKET_TYPE_SET(type) | MQTT_PACKET_FLAGS_SET(0);
     if (retain) {
@@ -643,6 +648,10 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     if (header_len < 0) {
         return header_len;
     }
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + remain_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
@@ -827,13 +836,23 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
 
     /* Encode payload */
     if (payload_len > 0) {
-
+        /* Check for buffer room */
+        if (tx_buf_len < header_len + variable_len) {
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        }
         /* Determine max size to copy into tx_payload */
         if (payload_len > (tx_buf_len - (header_len + variable_len))) {
             payload_len = (tx_buf_len - (header_len + variable_len));
         }
         if (tx_payload != NULL) {
             XMEMCPY(tx_payload, publish->buffer, payload_len);
+        }
+        /* mark how much data was sent */
+        publish->buffer_pos = payload_len;
+
+        /* Backwards compatibility for chunk transfers */
+        if (publish->buffer_len == 0) {
+            publish->buffer_len = publish->total_len;
         }
     }
     publish->intBuf_pos = 0;
@@ -954,6 +973,10 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
         type, 0, qos, 0);
     if (header_len < 0) {
         return header_len;
+    }
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + remain_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
     tx_payload = &tx_buf[header_len];
 
@@ -1076,6 +1099,10 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
     if (header_len < 0) {
         return header_len;
     }
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + remain_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
@@ -1188,6 +1215,10 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
         MQTT_PACKET_TYPE_UNSUBSCRIBE, 0, MQTT_QOS_1, 0);
     if (header_len < 0) {
         return header_len;
+    }
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + remain_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
     tx_payload = &tx_buf[header_len];
 
@@ -1342,6 +1373,10 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
     if (header_len < 0) {
         return header_len;
     }
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + remain_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
 
 #ifdef WOLFMQTT_V5
     if ((disconnect != NULL) &&
@@ -1438,7 +1473,10 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     if (header_len < 0) {
         return header_len;
     }
-
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + remain_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
@@ -1691,25 +1729,27 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
         case MQTT_PK_READ:
         {
+            /* read remainder of packet */
+            remain_read = client->packet.remain_len;
             client->packet.stat = MQTT_PK_READ;
 
             /* Make sure it does not overflow rx_buf */
-            if (client->packet.remain_len >
-                (rx_buf_len - client->packet.header_len)) {
-                client->packet.remain_len = rx_buf_len -
-                                            client->packet.header_len;
+            if (rx_buf_len < client->packet.header_len) {
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+            if (remain_read > rx_buf_len - client->packet.header_len) {
+                remain_read = rx_buf_len - client->packet.header_len;
             }
 
             /* Read remaining */
             if (client->packet.remain_len > 0) {
                 rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len],
-                    client->packet.remain_len, timeout_ms);
+                    remain_read, timeout_ms);
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
                 }
                 remain_read = rc;
             }
-
             break;
         }
     } /* switch (client->packet.stat) */
