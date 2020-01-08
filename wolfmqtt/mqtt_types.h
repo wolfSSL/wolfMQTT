@@ -62,6 +62,10 @@
     #include "wolfmqtt/vs_settings.h"
 #endif
 
+#ifdef WOLFMQTT_USER_SETTINGS
+#include "user_settings.h"
+#endif
+
 #ifdef ENABLE_MQTT_TLS
     #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
         #include <wolfssl/options.h>
