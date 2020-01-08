@@ -55,12 +55,12 @@ examples_multithread_multithread_DEPENDENCIES = src/libwolfmqtt.la
 examples_multithread_multithread_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 endif
 
-examples_nbclient_nbclient_SOURCES = examples/nbclient/nbclient.c \
-                                               examples/mqttnet.c \
-                                               examples/mqttexample.c
-examples_nbclient_nbclient_LDADD    = src/libwolfmqtt.la
-examples_nbclient_nbclient_DEPENDENCIES = src/libwolfmqtt.la
-examples_nbclient_nbclient_CPPFLAGS = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+examples_nbclient_nbclient_SOURCES          = examples/nbclient/nbclient.c \
+                                              examples/mqttnet.c \
+                                              examples/mqttexample.c
+examples_nbclient_nbclient_LDADD            = src/libwolfmqtt.la
+examples_nbclient_nbclient_DEPENDENCIES     = src/libwolfmqtt.la
+examples_nbclient_nbclient_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 
 examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
@@ -116,7 +116,7 @@ endif
 dist_example_DATA+= examples/mqttnet.c \
                     examples/mqttexample.c \
                     examples/mqttclient/mqttclient.c \
-					examples/mqttsimple/mqttsimple.c \
+                    examples/mqttsimple/mqttsimple.c \
                     examples/nbclient/nbclient.c \
                     examples/firmware/fwpush.c \
                     examples/firmware/fwclient.c \
