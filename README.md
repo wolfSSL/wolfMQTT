@@ -135,6 +135,17 @@ The Sensor Network client implements the MQTT-SN protocol for low-bandwidth netw
 ### Multithread Example
 This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (10 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
 
+## Broker compatibility
+wolfMQTT client library has been tested with the following brokers:
+* Adafruit IO by Adafruit
+* AWS by Amazon
+* Azure by Microsoft
+* flespi by Gurtam
+* HiveMQ by dc-square GmbH
+* IBM WIoTP Message Gateway by IBM
+* Mosquitto by Eclipse
+* Paho MQTT-SN Gateway by Eclipse
+* VerneMQ by VerneMQ/Erlio
 
 ## Specification Support
 
