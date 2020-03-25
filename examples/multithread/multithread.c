@@ -38,14 +38,14 @@ static int mStopRead = 0;
 static int mNumMsgsRecvd;
 
 #ifdef WOLFMQTT_MULTITHREAD
-static wolfSSL_Mutex packetIdLock; /* Protect access to mqtt_get_packetid() */
+static wm_Sem packetIdLock; /* Protect access to mqtt_get_packetid() */
 
 static word16 mqtt_get_packetid_threadsafe(void)
 {
     word16 packet_id;
-    wc_LockMutex(&packetIdLock);
+    wm_SemLock(&packetIdLock);
     packet_id = mqtt_get_packetid();
-    wc_UnLockMutex(&packetIdLock);
+    wm_SemUnlock(&packetIdLock);
     return packet_id;
 }
 #endif
@@ -167,7 +167,7 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     mNumMsgsRecvd = 0;
 
     /* Create a demo mutex for making packet id values */
-    rc = wc_InitMutex(&packetIdLock);
+    rc = wm_SemInit(&packetIdLock);
     if (rc != 0) {
         client_exit(mqttCtx);
     }
@@ -274,7 +274,7 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
 static int multithread_test_finish(MQTTCtx *mqttCtx)
 {
     client_disconnect(mqttCtx);
-    wc_FreeMutex(&packetIdLock);
+    wm_SemFree(&packetIdLock);
 
     return mqttCtx->return_code;
 }

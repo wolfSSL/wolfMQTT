@@ -157,9 +157,9 @@ typedef struct _MqttClient {
     void          *property_ctx;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    wolfSSL_Mutex lockSend;
-    wolfSSL_Mutex lockRecv;
-    wolfSSL_Mutex lockClient;
+    wm_Sem lockSend;
+    wm_Sem lockRecv;
+    wm_Sem lockClient;
     struct _MqttPendResp* firstPendResp;
     struct _MqttPendResp* lastPendResp;
 #endif
