@@ -82,10 +82,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
     /* FreeRTOS binary semaphore */
     int wm_SemInit(wm_Sem *s) {
         *s = xSemaphoreCreateBinary();
+        xSemaphoreGive(*s);
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
-        sem_destroy(*s);
+        vSemaphoreDelete(*s);
         *s = NULL;
         return 0;
     }

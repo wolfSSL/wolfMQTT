@@ -91,7 +91,7 @@
         #include <dispatch/dispatch.h>
         typedef dispatch_semaphore_t wm_Sem;
 
-    #elif defined(__FreeBSD__) || defined(__linux__))
+    #elif defined(__FreeBSD__) || defined(__linux__)
         /* Posix Style Semaphore */
         #define WOLFMQTT_POSIX_SEMAPHORES
         #include <semaphore.h>
@@ -261,7 +261,7 @@ enum MqttPacketResponseCodes {
     #ifndef PRINTF
         #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_DEBUG_THREAD)
             #include <pthread.h>
-            #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), (unsigned long)(void*)pthread_self(), ##__VA_ARGS__)
+            #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
         #else
             #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
         #endif
