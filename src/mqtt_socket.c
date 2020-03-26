@@ -397,9 +397,6 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
             wolfSSL_SetIOReadCtx(client->tls.ssl, (void *)client);
             wolfSSL_SetIOWriteCtx(client->tls.ssl, (void *)client);
-        #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
-            wolfSSL_set_using_nonblock(client->tls.ssl, 1);
-        #endif
         }
 
         if (client->ctx != NULL) {
