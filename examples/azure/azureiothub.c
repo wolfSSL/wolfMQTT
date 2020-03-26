@@ -308,6 +308,11 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             }
             mqttCtx->client.ctx = mqttCtx;
 
+        #ifdef WOLFMQTT_V5
+            /* AWS broker only supports v3.1.1 client */
+            mqttCtx->client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+        #endif
+
             FALL_THROUGH;
         }
 
@@ -487,6 +492,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                         mqttCtx->publish.packet_id = mqtt_get_packetid();
                         mqttCtx->publish.buffer = mqttCtx->rx_buf;
                         mqttCtx->publish.total_len = (word16)rc;
+
                         rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
                         PRINTF("MQTT Publish: Topic %s, %s (%d)",
                             mqttCtx->publish.topic_name,

@@ -194,11 +194,11 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_SERVER_REF:
             case MQTT_PROP_AUTH_METHOD:
             case MQTT_PROP_AUTH_DATA:
+            case MQTT_PROP_NONE:
                 break;
             case MQTT_PROP_REQ_PROB_INFO:
             case MQTT_PROP_WILL_DELAY_INTERVAL:
             case MQTT_PROP_REQ_RESP_INFO:
-            case MQTT_PROP_NONE:
             default:
                 /* Invalid */
                 rc = MQTT_CODE_ERROR_PROPERTY;

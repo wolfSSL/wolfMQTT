@@ -325,6 +325,12 @@ int awsiot_test(MQTTCtx *mqttCtx)
             }
             mqttCtx->client.ctx = mqttCtx;
 
+        #ifdef WOLFMQTT_V5
+            /* AWS broker only supports v3.1.1 client */
+            mqttCtx->client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+        #endif
+
+
             FALL_THROUGH;
         }
 
