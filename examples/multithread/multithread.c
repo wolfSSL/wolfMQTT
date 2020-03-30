@@ -388,29 +388,13 @@ static void *waitMessage_task(void *param)
                 break;
             }
 
-            /* Keep Alive */
-            PRINTF("Keep-alive timeout, sending ping");
-
-            rc = MqttClient_Ping(&mqttCtx->client);
-            if (rc != MQTT_CODE_SUCCESS) {
-                PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
-                    MqttClient_ReturnCodeToString(rc), rc);
-                break;
-            }
+            /* Keep Alive handled in ping thread */
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
             PRINTF("MQTT Message Wait Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
-        }
-
-        if (!mStopRead) {
-            /* make sure other threads get time before waiting */
-            /* there may be marked completions recieved that need processed by
-                other threads first */
-            PRINTF("Yielding Wait Thread");
-            sched_yield();
         }
     } while (!mStopRead);
 
@@ -450,6 +434,30 @@ static void *publish_task(void *param)
     pthread_exit(NULL);
 }
 
+static void *ping_task(void *param)
+{
+    int rc;
+    MQTTCtx *mqttCtx = param;
+    MqttPing ping;
+
+    XMEMSET(&ping, 0, sizeof(ping));
+
+    do {
+        /* Keep Alive Ping */
+        PRINTF("Sending ping keep-alive");
+
+        rc = MqttClient_Ping_ex(&mqttCtx->client, &ping);
+        if (rc != MQTT_CODE_SUCCESS) {
+            PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+            break;
+        }
+        sleep(DEFAULT_KEEP_ALIVE_SEC);
+    } while (1);
+
+    pthread_exit(NULL);
+}
+
 static int unsubscribe_do(MQTTCtx *mqttCtx)
 {
     int rc;
@@ -478,6 +486,7 @@ int multithread_test(MQTTCtx *mqttCtx)
     pthread_t waitMessage_thread;
     pthread_t sub_thread;
     pthread_t publish_thread[NUM_PUB_TASKS];
+    pthread_t ping_thread;
 
     rc = multithread_test_init(mqttCtx);
 
@@ -497,11 +506,16 @@ int multithread_test(MQTTCtx *mqttCtx)
             pthread_create(&publish_thread[i], NULL, publish_task, mqttCtx);
         }
 
+        /* Ping */
+        pthread_create(&ping_thread, NULL, ping_task, mqttCtx);
+
         pthread_join(waitMessage_thread, NULL);
 
         for (i = 0; i < NUM_PUB_TASKS; i++) {
             pthread_join(publish_thread[i], NULL);
         }
+
+        pthread_join(ping_thread, NULL);
 
         (void)unsubscribe_do(mqttCtx);
 
