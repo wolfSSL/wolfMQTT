@@ -28,6 +28,7 @@
 
 #include "multithread.h"
 #include "examples/mqttnet.h"
+#include "examples/mqttexample.h"
 #ifdef WOLFMQTT_MULTITHREAD
     #include <pthread.h>
     #include <sched.h>
@@ -39,6 +40,9 @@ static int mNumMsgsRecvd;
 
 #ifdef WOLFMQTT_MULTITHREAD
 static wm_Sem packetIdLock; /* Protect access to mqtt_get_packetid() */
+static wm_Sem pingSignal;
+
+static MQTTCtx gMqttCtx;
 
 static word16 mqtt_get_packetid_threadsafe(void)
 {
@@ -171,6 +175,12 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     if (rc != 0) {
         client_exit(mqttCtx);
     }
+    rc = wm_SemInit(&pingSignal);
+    if (rc != 0) {
+        wm_SemFree(&packetIdLock);
+        client_exit(mqttCtx);
+    }
+    wm_SemLock(&pingSignal); /* default to locked */
 
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
             mqttCtx->use_tls);
@@ -274,6 +284,8 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
 static int multithread_test_finish(MQTTCtx *mqttCtx)
 {
     client_disconnect(mqttCtx);
+    printf("Freeing signals\n");
+    wm_SemFree(&pingSignal);
     wm_SemFree(&packetIdLock);
 
     return mqttCtx->return_code;
@@ -389,6 +401,8 @@ static void *waitMessage_task(void *param)
             }
 
             /* Keep Alive handled in ping thread */
+            /* Signal keep alive thread */
+            wm_SemUnlock(&pingSignal);
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
@@ -399,6 +413,7 @@ static void *waitMessage_task(void *param)
     } while (!mStopRead);
 
     mqttCtx->return_code = rc;
+    wm_SemUnlock(&pingSignal); /* wake ping thread */
 
     pthread_exit(NULL);
 }
@@ -443,6 +458,10 @@ static void *ping_task(void *param)
     XMEMSET(&ping, 0, sizeof(ping));
 
     do {
+        wm_SemLock(&pingSignal);
+        if (mStopRead)
+            break;
+
         /* Keep Alive Ping */
         PRINTF("Sending ping keep-alive");
 
@@ -452,8 +471,7 @@ static void *ping_task(void *param)
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
-        sleep(DEFAULT_KEEP_ALIVE_SEC);
-    } while (1);
+    } while (!mStopRead);
 
     pthread_exit(NULL);
 }
@@ -545,6 +563,9 @@ int multithread_test(MQTTCtx *mqttCtx)
         {
             if (signo == SIGINT) {
                 mStopRead = 1;
+            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+                MqttClientNet_Wake(&gMqttCtx.net);
+            #endif
                 PRINTF("Received SIGINT");
             }
         }
@@ -554,14 +575,12 @@ int main(int argc, char** argv)
 {
     int rc;
 #ifdef WOLFMQTT_MULTITHREAD
-    MQTTCtx mqttCtx;
-
     /* init defaults */
-    mqtt_init_ctx(&mqttCtx);
-    mqttCtx.app_name = "wolfMQTT multithread client";
+    mqtt_init_ctx(&gMqttCtx);
+    gMqttCtx.app_name = "wolfMQTT multithread client";
 
     /* parse arguments */
-    rc = mqtt_parse_args(&mqttCtx, argc, argv);
+    rc = mqtt_parse_args(&gMqttCtx, argc, argv);
     if (rc != 0) {
         return rc;
     }
@@ -578,9 +597,9 @@ int main(int argc, char** argv)
     }
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    rc = multithread_test(&mqttCtx);
+    rc = multithread_test(&gMqttCtx);
 
-    mqtt_free_ctx(&mqttCtx);
+    mqtt_free_ctx(&gMqttCtx);
 #else
     (void)argc;
     (void)argv;
