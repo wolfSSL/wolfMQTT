@@ -24,6 +24,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nbclient", "examples\nbclie
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sn-client", "examples\sn-client\sn-client.vcxproj", "{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "multithread", "examples\multithread\multithread.vcxproj", "{7D62F9C5-1416-4E8F-8931-103701C23D8D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -104,6 +106,14 @@ Global
 		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x64.Build.0 = Release|x64
 		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x86.ActiveCfg = Release|Win32
 		{CBA36D33-BBC1-458B-BDB5-E8A4FEBE6A8C}.Release|x86.Build.0 = Release|Win32
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Debug|x64.ActiveCfg = Debug|x64
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Debug|x64.Build.0 = Debug|x64
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Debug|x86.ActiveCfg = Debug|Win32
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Debug|x86.Build.0 = Debug|Win32
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Release|x64.ActiveCfg = Release|x64
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Release|x64.Build.0 = Release|x64
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Release|x86.ActiveCfg = Release|Win32
+		{7D62F9C5-1416-4E8F-8931-103701C23D8D}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

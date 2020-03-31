@@ -35,6 +35,10 @@
 #undef  WOLFMQTT_DISCONNECT_CB
 #define WOLFMQTT_DISCONNECT_CB
 
+/* Multi-threading */
+#undef  WOLFMQTT_MULTITHREAD
+#define WOLFMQTT_MULTITHREAD
+
 /* Debugging */
 #undef  DEBUG_WOLFMQTT
 #define DEBUG_WOLFMQTT
@@ -44,6 +48,9 @@
 
 #undef  WOLFMQTT_DEBUG_SOCKET
 #define WOLFMQTT_DEBUG_SOCKET
+
+#undef  WOLFMQTT_DEBUG_THREAD
+#define WOLFMQTT_DEBUG_THREAD
 
 /* Disable error strings */
 #undef  WOLFMQTT_NO_ERROR_STRINGS

@@ -168,6 +168,10 @@ typedef struct _SocketContext {
 #ifdef MICROCHIP_MPLAB_HARMONY
     word32 bytes;
 #endif
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+    /* "self pipe" -> signal wake sleep() */
+    SOCKET_T pfd[2];
+#endif
     MQTTCtx* mqttCtx;
 } SocketContext;
 
@@ -841,17 +845,18 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout and FD's */
     setup_timeout(&tv, timeout_ms);
-    FD_ZERO(&recvfds);
-    FD_SET(sock->fd, &recvfds);
     FD_ZERO(&errfds);
     FD_SET(sock->fd, &errfds);
-
+    FD_ZERO(&recvfds);
+    FD_SET(sock->fd, &recvfds);
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+    #ifdef WOLFMQTT_MULTITHREAD
+        FD_SET(sock->pfd[0], &recvfds);
+    #endif
     if (!mqttCtx->test_mode) {
         FD_SET(STDIN, &recvfds);
     }
     #endif
-
 #else
     (void)timeout_ms;
 #endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
@@ -872,13 +877,16 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
             rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
             if (rc > 0)
             {
-                if (FD_ISSET(sock->fd, &recvfds))
-                {
+                if (FD_ISSET(sock->fd, &recvfds)) {
                     do_read = 1;
                 }
                 /* Check if rx or error */
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if (!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds)) {
+                else if ((!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds)) 
+                #ifdef WOLFMQTT_MULTITHREAD
+                    || FD_ISSET(sock->pfd[0], &recvfds)
+                #endif
+                ) {
                     return MQTT_CODE_STDIN_WAKE;
                 }
             #endif
@@ -1038,6 +1046,14 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         sockCtx->fd = SOCKET_INVALID;
         sockCtx->stat = SOCK_BEGIN;
         sockCtx->mqttCtx = mqttCtx;
+    
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+        /* setup the pipe for waking select() */
+        if (pipe(sockCtx->pfd) != 0) {
+            PRINTF("Failed to set up pipe for stdin");
+            return -1;
+        }
+    #endif
     }
 
     return MQTT_CODE_SUCCESS;
@@ -1075,6 +1091,14 @@ int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         XMEMSET(multi_ctx, 0, sizeof(MulticastContext));
         multi_ctx->stat = SOCK_BEGIN;
     #endif
+
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+        /* setup the pipe for waking select() */
+        if (pipe(sockCtx->pfd) != 0) {
+            PRINTF("Failed to set up pipe for stdin");
+            return -1;
+        }
+    #endif
     }
 
     return MQTT_CODE_SUCCESS;
@@ -1089,5 +1113,24 @@ int MqttClientNet_DeInit(MqttNet* net)
         }
         XMEMSET(net, 0, sizeof(MqttNet));
     }
+    return 0;
+}
+
+int MqttClientNet_Wake(MqttNet* net)
+{
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+    if (net) {
+        SocketContext* sockCtx = (SocketContext*)net->context;
+        if (sockCtx) {
+            /* wake the select() */
+            if (write(sockCtx->pfd[1], "\n", 1) < 0) {
+                PRINTF("Failed to wake select");
+                return -1;
+            }
+        }
+    }
+#else
+    (void)net;
+#endif
     return 0;
 }

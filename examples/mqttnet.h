@@ -40,6 +40,8 @@ int MqttClientNet_DeInit(MqttNet* net);
 int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx);
 #endif
 
+int MqttClientNet_Wake(MqttNet* net);
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif
