@@ -1050,7 +1050,7 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
     #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
         /* setup the pipe for waking select() */
         if (pipe(sockCtx->pfd) != 0) {
-            PRINTF("Failed to set up pipe for stdin\n");
+            PRINTF("Failed to set up pipe for stdin");
             return -1;
         }
     #endif
@@ -1095,7 +1095,7 @@ int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
     #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
         /* setup the pipe for waking select() */
         if (pipe(sockCtx->pfd) != 0) {
-            PRINTF("Failed to set up pipe for stdin\n");
+            PRINTF("Failed to set up pipe for stdin");
             return -1;
         }
     #endif
@@ -1124,7 +1124,7 @@ int MqttClientNet_Wake(MqttNet* net)
         if (sockCtx) {
             /* wake the select() */
             if (write(sockCtx->pfd[1], "\n", 1) < 0) {
-                PRINTF("Failed to wake select.\n");
+                PRINTF("Failed to wake select");
                 return -1;
             }
         }
