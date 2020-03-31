@@ -98,6 +98,26 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         xSemaphoreGive(*s);
         return 0;
     }
+#elif defined(USE_WINDOWS_API)
+    /* Windows semaphore object */
+    int wm_SemInit(wm_Sem *s) {
+        *s = CreateSemaphore( NULL, 0, 1, NULL);
+        return 0;
+    }
+    int wm_SemFree(wm_Sem *s) {
+        CloseHandle(*s);
+        *s = NULL;
+        return 0;
+    }
+    int wm_SemLock(wm_Sem *s) {
+        WaitForSingleObject(*s, 0);
+        return 0;
+    }
+    int wm_SemUnlock(wm_Sem *s) {
+        ReleaseSemaphore(*s, 1, NULL);
+        return 0;
+    }
+
 #endif
 
 /* These RespList functions assume caller has locked client->lockClient mutex */

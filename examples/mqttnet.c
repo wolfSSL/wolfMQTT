@@ -1108,12 +1108,15 @@ int MqttClientNet_DeInit(MqttNet* net)
 int MqttClientNet_Wake(MqttNet* net)
 {
 #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-    SocketContext* sockCtx = (SocketContext*)net->context;
-
-    /* wake the select() */
-    write(sockCtx->pfd[1], "\n", 1);
+    if (net) {
+        SocketContext* sockCtx = (SocketContext*)net->context;
+        if (sockCtx) {
+            /* wake the select() */
+            write(sockCtx->pfd[1], "\n", 1);
+        }
+    }
 #else
-    (void)context;
+    (void)net;
 #endif
     return 0;
 }

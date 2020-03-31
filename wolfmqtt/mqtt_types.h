@@ -103,6 +103,13 @@
         
         #include <semphr.h>
         typedef SemaphoreHandle_t wm_Sem;
+
+    #elif defined(USE_WINDOWS_API)
+        /* Windows semaphore object */
+        #include <winsock2.h> /* winsock2.h needs included before windows.h */
+        #include <ws2tcpip.h>
+        #include <windows.h>
+        typedef HANDLE wm_Sem;
     
     #elif defined(WOLFMQTT_USER_THREADING)
         /* User provides API's and wm_Sem type */
@@ -260,8 +267,12 @@ enum MqttPacketResponseCodes {
     #endif
     #ifndef PRINTF
         #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_DEBUG_THREAD)
-            #include <pthread.h>
-            #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
+            #ifdef USE_WINDOWS_API
+                #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), GetCurrentThreadId(), ##__VA_ARGS__)
+            #else
+                #include <pthread.h>
+                #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
+            #endif
         #else
             #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
         #endif
