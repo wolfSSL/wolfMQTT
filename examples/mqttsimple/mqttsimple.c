@@ -32,6 +32,14 @@
 /* Requires BSD Style Socket */
 #ifdef HAVE_SOCKET
 
+#ifndef ENABLE_MQTT_TLS
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <unistd.h>
+#endif
+
 /* Configuration */
 #define MQTT_HOST            "mqtt.eclipse.org" /* broker.hivemq.com */
 #define MQTT_QOS             MQTT_QOS_0

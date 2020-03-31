@@ -384,6 +384,7 @@ typedef struct _MqttConnectAck {
 
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttConnectAck;
 /* Connect Ack has no payload */
@@ -444,6 +445,7 @@ typedef struct _MqttPublishResp {
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttPublishResp;
 
@@ -484,6 +486,7 @@ typedef struct _MqttMessage {
 
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttMessage;
 typedef MqttMessage MqttPublish; /* Publish is message */
@@ -505,6 +508,7 @@ typedef struct _MqttSubscribeAck {
     byte       *return_codes; /* MqttSubscribeAckReturnCodes */
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttSubscribeAck;
 
@@ -525,6 +529,7 @@ typedef struct _MqttSubscribe {
 
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttSubscribe;
 
@@ -538,6 +543,7 @@ typedef struct _MqttUnsubscribeAck {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
     byte*     reason_codes;
+    byte protocol_level;
 #endif
 } MqttUnsubscribeAck;
 
@@ -558,6 +564,7 @@ typedef struct _MqttUnsubscribe {
 
 #ifdef WOLFMQTT_V5
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttUnsubscribe;
 
@@ -580,6 +587,7 @@ typedef struct _MqttDisconnect {
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;
+    byte protocol_level;
 #endif
 } MqttDisconnect;
 

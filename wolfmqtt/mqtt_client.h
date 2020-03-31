@@ -146,6 +146,7 @@ typedef struct _MqttClient {
     byte    max_qos;       /* Server property */
     byte    retain_avail;  /* Server property */
     byte    enable_eauth;  /* Enhanced authentication */
+    byte protocol_level;
 #endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB

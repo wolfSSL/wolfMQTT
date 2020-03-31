@@ -222,6 +222,9 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             else {
                 XMEMSET(p_connect_ack, 0, sizeof(MqttConnectAck));
             }
+        #ifdef WOLFMQTT_V5
+            p_connect_ack->protocol_level = client->protocol_level;
+        #endif
             rc = MqttDecode_ConnectAck(rx_buf, rx_len, p_connect_ack);
         #ifdef WOLFMQTT_V5
             if (packet_obj && rc >= 0) {
@@ -239,6 +242,9 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             else {
                 XMEMSET(p_publish, 0, sizeof(MqttPublish));
             }
+        #ifdef WOLFMQTT_V5
+            p_publish->protocol_level = client->protocol_level;
+        #endif
             rc = MqttDecode_Publish(rx_buf, rx_len, p_publish);
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
@@ -262,7 +268,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             else {
                 XMEMSET(p_publish_resp, 0, sizeof(MqttPublishResp));
             }
-            rc = MqttDecode_PublishResp(rx_buf, rx_len, packet_type,
+        #ifdef WOLFMQTT_V5
+                p_publish_resp->protocol_level = client->protocol_level;
+        #endif
+                rc = MqttDecode_PublishResp(rx_buf, rx_len, packet_type,
                 p_publish_resp);
             if (rc >= 0) {
                 packet_id = p_publish_resp->packet_id;
@@ -283,6 +292,9 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             else {
                 XMEMSET(p_subscribe_ack, 0, sizeof(MqttSubscribeAck));
             }
+        #ifdef WOLFMQTT_V5
+            p_subscribe_ack->protocol_level = client->protocol_level;
+        #endif
             rc = MqttDecode_SubscribeAck(rx_buf, rx_len, p_subscribe_ack);
             if (rc >= 0) {
                 packet_id = p_subscribe_ack->packet_id;
@@ -303,6 +315,9 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             else {
                 XMEMSET(p_unsubscribe_ack, 0, sizeof(MqttUnsubscribeAck));
             }
+        #ifdef WOLFMQTT_V5
+            p_unsubscribe_ack->protocol_level = client->protocol_level;
+        #endif
             rc = MqttDecode_UnsubscribeAck(rx_buf, rx_len, p_unsubscribe_ack);
             if (rc >= 0) {
                 packet_id = p_unsubscribe_ack->packet_id;
@@ -874,6 +889,7 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
 #ifdef WOLFMQTT_V5
     client->max_qos = MQTT_QOS_2;
     client->retain_avail = 1;
+    client->protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL;
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
@@ -954,6 +970,11 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         if (rc != 0) {
             return rc;
         }
+    #endif
+
+    #ifdef WOLFMQTT_V5
+        /* Use specified protocol version if set */
+        mc_connect->protocol_level = client->protocol_level;
     #endif
 
         /* Encode the connect packet */
@@ -1288,6 +1309,9 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
     }
 
 #ifdef WOLFMQTT_V5
+    /* Use specified protocol version if set */
+    publish->protocol_level = client->protocol_level;
+
     /* Validate publish request against server properties */
     if ((publish->qos > client->max_qos) ||
         ((publish->retain == 1) && (client->retain_avail == 0)))
@@ -1468,6 +1492,11 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+#ifdef WOLFMQTT_V5
+    /* Use specified protocol version if set */
+    subscribe->protocol_level = client->protocol_level;
+#endif
+
     if (subscribe->stat == MQTT_MSG_BEGIN) {
     #ifdef WOLFMQTT_MULTITHREAD
         /* Lock send socket mutex */
@@ -1565,6 +1594,11 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     if (client == NULL || unsubscribe == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+#ifdef WOLFMQTT_V5
+    /* Use specified protocol version if set */
+    unsubscribe->protocol_level = client->protocol_level;
+#endif
 
     if (unsubscribe->stat == MQTT_MSG_BEGIN) {
     #ifdef WOLFMQTT_MULTITHREAD
@@ -1759,6 +1793,13 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *disconnect)
     if (client == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+#ifdef WOLFMQTT_V5
+    if (disconnect != NULL) {
+        /* Use specified protocol version if set */
+        disconnect->protocol_level = client->protocol_level;
+    }
+#endif
 
 #ifdef WOLFMQTT_MULTITHREAD
     /* Lock send socket mutex */
