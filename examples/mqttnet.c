@@ -168,7 +168,7 @@ typedef struct _SocketContext {
 #ifdef MICROCHIP_MPLAB_HARMONY
     word32 bytes;
 #endif
-#ifdef WOLFMQTT_ENABLE_STDIN_CAP
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
     /* "self pipe" -> signal wake sleep() */
     SOCKET_T pfd[2];
 #endif
@@ -850,7 +850,9 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     FD_ZERO(&recvfds);
     FD_SET(sock->fd, &recvfds);
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-    FD_SET(sock->pfd[0], &recvfds);
+    #ifdef WOLFMQTT_MULTITHREAD
+        FD_SET(sock->pfd[0], &recvfds);
+    #endif
     if (!mqttCtx->test_mode) {
         FD_SET(STDIN, &recvfds);
     }
@@ -880,8 +882,11 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                 }
                 /* Check if rx or error */
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if ((!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds)) || 
-                        FD_ISSET(sock->pfd[0], &recvfds)) {
+                else if ((!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds)) 
+                #ifdef WOLFMQTT_MULTITHREAD
+                    || FD_ISSET(sock->pfd[0], &recvfds)
+                #endif
+                ) {
                     return MQTT_CODE_STDIN_WAKE;
                 }
             #endif
@@ -1042,7 +1047,7 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         sockCtx->stat = SOCK_BEGIN;
         sockCtx->mqttCtx = mqttCtx;
     
-    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
         /* setup the pipe for waking select() */
         pipe(sockCtx->pfd);
     #endif
@@ -1084,7 +1089,7 @@ int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         multi_ctx->stat = SOCK_BEGIN;
     #endif
 
-    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
         /* setup the pipe for waking select() */
         pipe(sockCtx->pfd);
     #endif
@@ -1107,7 +1112,7 @@ int MqttClientNet_DeInit(MqttNet* net)
 
 int MqttClientNet_Wake(MqttNet* net)
 {
-#ifdef WOLFMQTT_ENABLE_STDIN_CAP
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
     if (net) {
         SocketContext* sockCtx = (SocketContext*)net->context;
         if (sockCtx) {
