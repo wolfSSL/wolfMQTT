@@ -12,7 +12,7 @@ AC_CONFIG_AUX_DIR([build-aux])
 : ${CFLAGS=""}
 
 # Test ar for the "U" option. Should be checked before the libtool macros.
-xxx_ar_flags=$((ar --help) 2>&1)
+xxx_ar_flags=$(ar --help 2>&1)
 AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
@@ -39,7 +39,7 @@ AC_SUBST([WOLFMQTT_LIBRARY_VERSION])
 
 
 LT_PREREQ([2.2])
-LT_INIT([disable-static], [win32-dll])
+LT_INIT([disable-static win32-dll])
 LT_LANG([C])
 
 gl_VISIBILITY
