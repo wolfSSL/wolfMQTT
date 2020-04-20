@@ -439,7 +439,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 return rc;
             }
 
-            PRINTF("MQTT Connect: %s (%d)",
+            PRINTF("MQTT Connect: Proto (%s), %s (%d)",
+                MqttClient_GetProtocolVersionString(&mqttCtx->client),
                 MqttClient_ReturnCodeToString(rc), rc);
 
             /* Validate Connect Ack info */

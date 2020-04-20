@@ -340,7 +340,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     /* Send Connect and wait for Connect Ack */
     rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
 
-    PRINTF("MQTT Connect: %s (%d)",
+    PRINTF("MQTT Connect: Proto (%s), %s (%d)",
+        MqttClient_GetProtocolVersionString(&mqttCtx->client),
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         goto disconn;
@@ -456,7 +457,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         goto disconn;
     }
 #ifdef WOLFMQTT_V5
-    if (mqttCtx->connect.props != NULL) {
+    if (mqttCtx->publish.props != NULL) {
         /* Release the allocated properties */
         MqttClient_PropsFree(mqttCtx->publish.props);
     }

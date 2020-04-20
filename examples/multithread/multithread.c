@@ -280,7 +280,8 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
     } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
-    PRINTF("MQTT Connect: %s (%d)",
+    PRINTF("MQTT Connect: Proto (%s), %s (%d)",
+        MqttClient_GetProtocolVersionString(&mqttCtx->client),
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         client_disconnect(mqttCtx);
