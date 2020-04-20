@@ -456,7 +456,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         goto disconn;
     }
 #ifdef WOLFMQTT_V5
-    if (mqttCtx->connect.props != NULL) {
+    if (mqttCtx->publish.props != NULL) {
         /* Release the allocated properties */
         MqttClient_PropsFree(mqttCtx->publish.props);
     }
