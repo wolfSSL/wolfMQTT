@@ -1110,7 +1110,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 
 #ifdef WOLFMQTT_V5
     /* Enhanced authentication */
-    if (mc_connect->stat == MQTT_MSG_AUTH) {
+    if (mc_connect->protocol_level > MQTT_CONNECT_PROTOCOL_LEVEL_4 && 
+            mc_connect->stat == MQTT_MSG_AUTH)
+    {
         MqttAuth auth, *p_auth = &auth;
         MqttProp* prop, *conn_prop;
 
@@ -2040,6 +2042,33 @@ int MqttClient_NetConnect(MqttClient *client, const char* host,
 int MqttClient_NetDisconnect(MqttClient *client)
 {
     return MqttSocket_Disconnect(client);
+}
+
+int MqttClient_GetProtocolVersion(MqttClient *client)
+{
+#ifdef WOLFMQTT_V5
+    if (client && client->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5)
+        return MQTT_CONNECT_PROTOCOL_LEVEL_5;
+#else
+    (void)client;
+#endif
+    return MQTT_CONNECT_PROTOCOL_LEVEL_4;
+}
+const char* MqttClient_GetProtocolVersionString(MqttClient *client)
+{
+    const char* str = NULL;
+    int ver = MqttClient_GetProtocolVersion(client);
+    switch (ver) {
+        case MQTT_CONNECT_PROTOCOL_LEVEL_4:
+            return "v3.1.1";
+    #ifdef WOLFMQTT_V5
+        case MQTT_CONNECT_PROTOCOL_LEVEL_5:
+            return "v5";
+    #endif
+        default:
+            break;
+    }
+    return str;
 }
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS

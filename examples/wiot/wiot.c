@@ -202,7 +202,8 @@ int wiot_test(MQTTCtx *mqttCtx)
     /* Send Connect and wait for Connect Ack */
     rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
 
-    PRINTF("MQTT Connect: %s (%d)",
+    PRINTF("MQTT Connect: Proto (%s), %s (%d)",
+        MqttClient_GetProtocolVersionString(&mqttCtx->client),
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         goto disconn;

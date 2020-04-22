@@ -385,7 +385,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
-            PRINTF("MQTT Connect: %s (%d)",
+            PRINTF("MQTT Connect: Proto (%s), %s (%d)",
+                MqttClient_GetProtocolVersionString(&mqttCtx->client),
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;

@@ -435,6 +435,18 @@ WOLFMQTT_API int MqttClient_NetConnect(
 WOLFMQTT_API int MqttClient_NetDisconnect(
     MqttClient *client);
 
+/*! \brief      Gets number version of connected protocol version
+ *  \param      client      Pointer to MqttClient structure
+ *  \return     4 (v3.1.1) or 5 (v5)
+ */
+WOLFMQTT_API int MqttClient_GetProtocolVersion(MqttClient *client);
+
+/*! \brief      Gets string version of connected protocol version
+ *  \param      client      Pointer to MqttClient structure
+ *  \return     String v3.1.1 or v5
+ */
+WOLFMQTT_API const char* MqttClient_GetProtocolVersionString(MqttClient *client);
+
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
 /*! \brief      Performs lookup of the WOLFMQTT_API return values
  *  \param      return_code The return value from a WOLFMQTT_API function
