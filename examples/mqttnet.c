@@ -584,17 +584,16 @@ static int NetConnect(void *context, const char* host, word16 port,
                 /* prefer ip4 addresses */
                 while (res) {
                     if (res->ai_family == AF_INET) {
-                        result = res;
                         break;
                     }
                     res = res->ai_next;
                 }
 
-                if (result->ai_family == AF_INET) {
+                if (res && res->ai_family == AF_INET) {
                     sock->addr.sin_port = htons(port);
                     sock->addr.sin_family = AF_INET;
                     sock->addr.sin_addr =
-                        ((SOCK_ADDR_IN*)(result->ai_addr))->sin_addr;
+                        ((SOCK_ADDR_IN*)(res->ai_addr))->sin_addr;
                 }
                 else {
                     rc = -1;
@@ -707,17 +706,16 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
         /* prefer ip4 addresses */
         while (res) {
             if (res->ai_family == AF_INET) {
-                result = res;
                 break;
             }
             res = res->ai_next;
         }
 
-        if (result->ai_family == AF_INET) {
+        if (res && res->ai_family == AF_INET) {
             sock->addr.sin_port = htons(port);
             sock->addr.sin_family = AF_INET;
             sock->addr.sin_addr =
-                ((SOCK_ADDR_IN*)(result->ai_addr))->sin_addr;
+                ((SOCK_ADDR_IN*)(res->ai_addr))->sin_addr;
         }
         else {
             rc = -1;
