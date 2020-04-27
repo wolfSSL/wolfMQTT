@@ -35,7 +35,7 @@ struct MqttPropMatrix {
 };
 static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
-    { MQTT_PROP_PLAYLOAD_FORMAT_IND,        MQTT_DATA_TYPE_BYTE,
+    { MQTT_PROP_PAYLOAD_FORMAT_IND,         MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },

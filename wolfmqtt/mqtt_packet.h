@@ -62,7 +62,7 @@ typedef enum MqttDataType {
 /* PROPERTIES */
 typedef enum MqttPropertyType {
     MQTT_PROP_NONE = 0,
-    MQTT_PROP_PLAYLOAD_FORMAT_IND = 1,
+    MQTT_PROP_PAYLOAD_FORMAT_IND = 1,
     MQTT_PROP_MSG_EXPIRY_INTERVAL = 2,
     MQTT_PROP_CONTENT_TYPE = 3,
     MQTT_PROP_RESP_TOPIC = 8,
@@ -91,6 +91,9 @@ typedef enum MqttPropertyType {
     MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL = 42,
     MQTT_PROP_TYPE_MAX = 0xFF
 } MqttPropertyType;
+
+/* backwards compatibility for anyone using the typo name */
+#define MQTT_PROP_PLAYLOAD_FORMAT_IND MQTT_PROP_PAYLOAD_FORMAT_IND
 
 struct _MqttProp_Str {
     word16  len;
