@@ -759,8 +759,9 @@ typedef enum _SN_MsgType {
     SN_MSG_TYPE_WILLMSGUPD      = 0x1C,
     SN_MSG_TYPE_WILLMSGRESP     = 0x1D,
     /* 0x1E - 0xFD reserved */
-    SN_MSG_TYPE_ENCAPMSG        = 0xFE    /* Encapsulated message */
+    SN_MSG_TYPE_ENCAPMSG        = 0xFE,    /* Encapsulated message */
     /* 0xFF reserved */
+    SN_MSG_TYPE_RESERVED        = 0xFF
 } SN_MsgType;
 
 /* Topic ID types */

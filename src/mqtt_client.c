@@ -748,7 +748,7 @@ wait_again:
         MqttPacket_TypeDesc(wait_type), wait_type, wait_packet_id);
 #endif
 
-    switch (*mms_stat)
+    switch ((int)*mms_stat)
     {
         case MQTT_MSG_BEGIN:
         {
@@ -776,8 +776,8 @@ wait_again:
             pendResp = NULL;
             rc = wm_SemLock(&client->lockClient);
             if (rc == 0) {
-                if (MqttClient_RespList_Find(client, wait_type, wait_packet_id,
-                        &pendResp)) {
+                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type, 
+                        wait_packet_id, &pendResp)) {
                     if (pendResp->packetDone) {
                         /* pending response is already done, so return */
                         rc = pendResp->packet_ret;
@@ -2336,19 +2336,23 @@ static int SN_Client_WaitType(MqttClient *client, void* packet_obj,
 {
     int rc;
     SN_MsgType packet_type;
-    word16 packet_id = 0;
-    MqttMsgStat* stat;
+    word16 packet_id;
+    MqttMsgStat* mms_stat;
 
     if (client == NULL || packet_obj == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
     /* all packet type structures must have MqttMsgStat at top */
-    stat = (MqttMsgStat*)packet_obj;
+    mms_stat = (MqttMsgStat*)packet_obj;
 
 wait_again:
 
-    switch ((int)*stat)
+    /* initialize variables */
+    packet_id = 0;
+    packet_type = SN_MSG_TYPE_RESERVED;
+
+    switch ((int)*mms_stat)
     {
         case MQTT_MSG_BEGIN:
         {
@@ -2366,7 +2370,7 @@ wait_again:
                 return rc;
             }
 
-            *stat = MQTT_MSG_WAIT;
+            *mms_stat = MQTT_MSG_WAIT;
             client->packet.buf_len = rc;
 
             /* Decode header */
@@ -2380,7 +2384,7 @@ wait_again:
                 client->packet.buf_len, packet_type);
         #endif
 
-            *stat = MQTT_MSG_READ;
+            *mms_stat = MQTT_MSG_READ;
 
             FALL_THROUGH;
         }
@@ -2388,7 +2392,7 @@ wait_again:
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
         {
-            if (*stat == MQTT_MSG_READ_PAYLOAD) {
+            if (*mms_stat == MQTT_MSG_READ_PAYLOAD) {
                 packet_type = SN_MSG_TYPE_PUBLISH;
             }
             rc = SN_Client_HandlePacket(client, packet_type, packet_obj,
@@ -2405,7 +2409,7 @@ wait_again:
                 break;
             }
 
-            *stat = MQTT_MSG_BEGIN;
+            *mms_stat = MQTT_MSG_BEGIN;
             goto wait_again;
         }
 
@@ -2416,7 +2420,7 @@ wait_again:
         default:
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("SN_Client_WaitType: Invalid state %d!", *stat);
+            PRINTF("SN_Client_WaitType: Invalid state %d!", *mms_stat);
         #endif
             rc = MQTT_CODE_ERROR_STAT;
             break;
@@ -2424,7 +2428,7 @@ wait_again:
     } /* switch (msg->stat) */
 
     /* reset state */
-    *stat = MQTT_MSG_BEGIN;
+    *mms_stat = MQTT_MSG_BEGIN;
 
     return rc;
 }

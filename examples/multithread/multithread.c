@@ -317,7 +317,7 @@ static void *subscribe_task(void *param)
 {
     int rc = MQTT_CODE_SUCCESS;
     uint16_t i;
-    MQTTCtx *mqttCtx = param;
+    MQTTCtx *mqttCtx = (MQTTCtx*)param;
 
     /* Build list of topics */
     XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
@@ -375,7 +375,7 @@ static void *waitMessage_task(void *param)
 #endif
 {
     int rc;
-    MQTTCtx *mqttCtx = param;
+    MQTTCtx *mqttCtx = (MQTTCtx*)param;
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
@@ -453,7 +453,7 @@ static void *publish_task(void *param)
 {
     int rc;
     char buf[7];
-    MQTTCtx *mqttCtx = param;
+    MQTTCtx *mqttCtx = (MQTTCtx*)param;
     MqttPublish publish;
 
     /* Publish Topic */
@@ -485,7 +485,7 @@ static void *ping_task(void *param)
 #endif
 {
     int rc;
-    MQTTCtx *mqttCtx = param;
+    MQTTCtx *mqttCtx = (MQTTCtx*)param;
     MqttPing ping;
 
     XMEMSET(&ping, 0, sizeof(ping));
