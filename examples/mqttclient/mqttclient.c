@@ -177,7 +177,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                 PRINTF("Reason String: %s", prop->data_str.str);
                 break;
 
-            case MQTT_PROP_PLAYLOAD_FORMAT_IND:
+            case MQTT_PROP_PAYLOAD_FORMAT_IND:
             case MQTT_PROP_MSG_EXPIRY_INTERVAL:
             case MQTT_PROP_CONTENT_TYPE:
             case MQTT_PROP_RESP_TOPIC:
@@ -428,7 +428,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     {
         /* Payload Format Indicator */
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
-        prop->type = MQTT_PROP_PLAYLOAD_FORMAT_IND;
+        prop->type = MQTT_PROP_PAYLOAD_FORMAT_IND;
         prop->data_int = 1;
     }
     {

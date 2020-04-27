@@ -35,7 +35,7 @@ struct MqttPropMatrix {
 };
 static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
-    { MQTT_PROP_PLAYLOAD_FORMAT_IND,        MQTT_DATA_TYPE_BYTE,
+    { MQTT_PROP_PAYLOAD_FORMAT_IND,         MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
@@ -837,8 +837,8 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         tx_payload += MqttEncode_Vbi(tx_payload, props_len);
 
         /* Encode properties */
-        tx_payload += MqttEncode_Props(publish->type, publish->props,
-                        tx_payload);
+        tx_payload += MqttEncode_Props((MqttPacketType)publish->type, 
+            publish->props, tx_payload);
     }
 #endif
 
@@ -912,8 +912,8 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         variable_len += tmp + props_len;
         if (props_len > 0) {
             /* Decode the Properties */
-            rx_payload += MqttDecode_Props(publish->type, &publish->props,
-                rx_payload, props_len);
+            rx_payload += MqttDecode_Props((MqttPacketType)publish->type, 
+                &publish->props, rx_payload, props_len);
             if (publish->props != NULL) {
                 /* Parse properties. */
             }
@@ -1854,7 +1854,7 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
     }
 
     /* Message Type */
-    packet_type = *rx_buf++;
+    packet_type = (SN_MsgType)*rx_buf++;
 
     if (p_packet_type)
         *p_packet_type = packet_type;

@@ -1,6 +1,24 @@
 
 ## Release Notes
 
+### v1.6 (04/24/2020)
+
+* Fixes to improve buffer size checking when using a small tx or rx buffer. (PR #137)
+* Fix for MQTT v5 issue with using wrong property free. (PR #152)
+* Refactor of the thread locking to use binary semaphore, which resolves issue with thread synchronization. (PR #146)
+* Improved multi-thread example exit (ctrl+c). Use internal pipe to wake "select()" and use semaphore signal to "wake" ping thread. (PR #146)
+* Adjust multi-threading use case to use separate thread for ping keep-alive. (PR #146)
+* Added simple standalone MQTT client example. (PR #138)
+* Added include for "user_settings.h" when `WOLFMQTT_USER_SETTINGS` is defined. (PR #138)
+* Added broker compatibility list (PR #145)
+* Added protocol version API's. (PR #152)
+* Added multithread example for Windows and Visual Studio. (PR #146)
+* Made protocol level a run time option (PR #147)
+* Remove obsolete "sched_yield" call. (PR #146)
+* Remove deprecated call to `wolfSSL_set_using_nonblock()` (PR #148)
+* Sync automake fixes from wolfSSL to wolfMQTT. (PR #150)
+* Moved `MAX_PACKET_ID` to library. (PR #138)
+
 ### v1.4 (12/27/19)
 
 * Fixes for non-blocking and multi-threading edge cases. (PR #130)
