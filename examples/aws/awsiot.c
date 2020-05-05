@@ -270,6 +270,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 int awsiot_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
+    MqttTopic *topic;
 
     switch (mqttCtx->stat)
     {
@@ -429,10 +430,10 @@ int awsiot_test(MQTTCtx *mqttCtx)
 
             /* show subscribe results */
             for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
-                mqttCtx->topic = &mqttCtx->subscribe.topics[i];
+                topic = &mqttCtx->subscribe.topics[i];
                 PRINTF("  Topic %s, Qos %u, Return Code %u",
-                    mqttCtx->topic->topic_filter,
-                    mqttCtx->topic->qos, mqttCtx->topic->return_code);
+                    topic->topic_filter,
+                    topic->qos, topic->return_code);
             }
 
             /* Publish Topic */

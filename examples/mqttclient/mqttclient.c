@@ -216,6 +216,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
 int mqttclient_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
+    MqttTopic *topic;
 
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
             mqttCtx->use_tls);
@@ -409,10 +410,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
     /* show subscribe results */
     for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
-        mqttCtx->topic = &mqttCtx->subscribe.topics[i];
+        topic = &mqttCtx->subscribe.topics[i];
         PRINTF("  Topic %s, Qos %u, Return Code %u",
-            mqttCtx->topic->topic_filter,
-            mqttCtx->topic->qos, mqttCtx->topic->return_code);
+            topic->topic_filter,
+            topic->qos, topic->return_code);
     }
 
     /* Publish Topic */
