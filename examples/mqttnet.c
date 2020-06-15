@@ -843,8 +843,10 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     }
 
 #ifndef WOLFMQTT_NO_TIMEOUT
-    /* Setup timeout and FD's */
+    /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
+
+    /* Setup select file descriptors to watch */
     FD_ZERO(&errfds);
     FD_SET(sock->fd, &errfds);
     FD_ZERO(&recvfds);
@@ -856,10 +858,10 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     if (!mqttCtx->test_mode) {
         FD_SET(STDIN, &recvfds);
     }
-    #endif
+    #endif /* WOLFMQTT_ENABLE_STDIN_CAP */
 #else
     (void)timeout_ms;
-#endif /* !WOLFMQTT_NO_TIMEOUT && !WOLFMQTT_NONBLOCK */
+#endif /* !WOLFMQTT_NO_TIMEOUT */
 
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
