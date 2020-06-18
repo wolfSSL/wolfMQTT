@@ -222,16 +222,16 @@ static int mqtt_net_read(void *context, byte* buf, int buf_len, int timeout_ms)
 
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
-    setsockopt(*pSockFd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    setsockopt(*pSockFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
 
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
         rc = (int)recv(*pSockFd, &buf[bytes], buf_len - bytes, 0);
         if (rc < 0) {
             rc = socket_get_error(*pSockFd);
-            PRINTF("NetRead: Error %d", rc);
             if (rc == 0)
                 break; /* timeout */
+            PRINTF("NetRead: Error %d", rc);
             return MQTT_CODE_ERROR_NETWORK;
         }
         bytes += rc; /* Data */
