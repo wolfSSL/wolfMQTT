@@ -596,7 +596,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
 {
     int header_len, remain_len;
 #ifdef WOLFMQTT_V5
-    word32 props_len = 0;
+    word32 props_len = 0, lwt_props_len = 0;
 #endif
     MqttConnectPacket packet = MQTT_CONNECT_INIT;
     byte *tx_payload;
@@ -626,8 +626,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         /* Verify all required fields are present */
         if (mc_connect->lwt_msg == NULL ||
             mc_connect->lwt_msg->topic_name == NULL ||
-            mc_connect->lwt_msg->buffer == NULL ||
-            mc_connect->lwt_msg->total_len <= 0)
+            (mc_connect->lwt_msg->buffer == NULL &&
+             mc_connect->lwt_msg->total_len != 0))
         {
             return MQTT_CODE_ERROR_BAD_ARG;
         }
@@ -636,6 +636,16 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         remain_len += MQTT_DATA_LEN_SIZE;
         remain_len += mc_connect->lwt_msg->total_len;
         remain_len += MQTT_DATA_LEN_SIZE;
+#ifdef WOLFMQTT_V5
+    if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        /* Determine length of properties */
+        remain_len += lwt_props_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+                mc_connect->lwt_msg->props, NULL);
+
+        /* Determine the length of the "lwt property length" */
+        remain_len += MqttEncode_Vbi(NULL, lwt_props_len);
+    }
+#endif
     }
     if (mc_connect->username) {
         remain_len += (int)XSTRLEN(mc_connect->username) + MQTT_DATA_LEN_SIZE;
@@ -700,6 +710,16 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     /* Encode payload */
     tx_payload += MqttEncode_String(tx_payload, mc_connect->client_id);
     if (mc_connect->enable_lwt) {
+#ifdef WOLFMQTT_V5
+    if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        /* Encode the lwt property length */
+        tx_payload += MqttEncode_Vbi(tx_payload, lwt_props_len);
+
+        /* Encode lwt properties */
+        tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+                mc_connect->lwt_msg->props, tx_payload);
+    }
+#endif
         tx_payload += MqttEncode_String(tx_payload,
             mc_connect->lwt_msg->topic_name);
         tx_payload += MqttEncode_Data(tx_payload,

@@ -292,8 +292,16 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         mqttCtx->lwt_msg.retain = 0;
         mqttCtx->lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
         mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
-        mqttCtx->lwt_msg.total_len =
-          (word16)XSTRLEN(mqttCtx->client_id);
+        mqttCtx->lwt_msg.total_len = (word16)XSTRLEN(mqttCtx->client_id);
+
+#ifdef WOLFMQTT_V5
+        {
+            /* Add a 5 second delay to sending the LWT */
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->lwt_msg.props);
+            prop->type = MQTT_PROP_WILL_DELAY_INTERVAL;
+            prop->data_int = 5;
+        }
+#endif
     }
     /* Optional authentication */
     mqttCtx->connect.username = mqttCtx->username;
@@ -351,6 +359,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     if (mqttCtx->connect.props != NULL) {
         /* Release the allocated properties */
         MqttClient_PropsFree(mqttCtx->connect.props);
+    }
+    if (mqttCtx->lwt_msg.props != NULL) {
+        /* Release the allocated properties */
+        MqttClient_PropsFree(mqttCtx->lwt_msg.props);
     }
 #endif
 
