@@ -627,7 +627,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         if (mc_connect->lwt_msg == NULL ||
             mc_connect->lwt_msg->topic_name == NULL ||
             mc_connect->lwt_msg->buffer == NULL ||
-            mc_connect->lwt_msg->total_len <= 0)
+            mc_connect->lwt_msg->total_len < 0)
         {
             return MQTT_CODE_ERROR_BAD_ARG;
         }
