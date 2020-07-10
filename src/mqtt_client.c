@@ -1325,8 +1325,14 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
     }
     else if (publish->buffer_pos < publish->total_len) {
         if (publish->buffer_pos > 0) {
-            XMEMCPY(client->tx_buf, publish->buffer,
+            client->write.len = (publish->total_len - publish->buffer_pos);
+            if (client->write.len > client->tx_buf_len) {
+                client->write.len = client->tx_buf_len;
+            }
+
+            XMEMCPY(client->tx_buf, &publish->buffer[publish->buffer_pos],
                 client->write.len);
+            publish->intBuf_pos += client->write.len;
         }
 
         /* Send packet and payload */
