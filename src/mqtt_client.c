@@ -2547,7 +2547,7 @@ int SN_Client_Will(MqttClient *client, SN_Will *will)
             if ((will != NULL) && (rc == len)) {
 
                 /* Wait for Will Message Request */
-                rc = SN_Client_WaitType(client, &will->msgResp,
+                rc = SN_Client_WaitType(client, &will->resp.msgResp,
                         SN_MSG_TYPE_WILLMSGREQ, 0, client->cmd_timeout_ms);
 
                 if (rc == 0) {
@@ -2590,7 +2590,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
 
             if (will != NULL) {
                 /* Wait for Will Topic Update Response packet */
-                rc = SN_Client_WaitType(client, &will->topicResp,
+                rc = SN_Client_WaitType(client, &will->resp.topicResp,
                         SN_MSG_TYPE_WILLTOPICREQ, 0, client->cmd_timeout_ms);
             }
         }
@@ -2617,7 +2617,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         rc = MqttPacket_Write(client, client->tx_buf, len);
         if (rc == len) {
             /* Wait for Will Message Update Response packet */
-            rc = SN_Client_WaitType(client, &will->msgUpd,
+            rc = SN_Client_WaitType(client, &will->resp.msgUpd,
                     SN_MSG_TYPE_WILLMSGRESP, 0, client->cmd_timeout_ms);
         }
     }

@@ -851,6 +851,13 @@ typedef struct _SN_WillTopicResp {
 
 typedef SN_WillTopicResp SN_WillMsgResp;
 
+typedef union _SN_WillResp {
+    SN_WillMsgResp   msgResp;
+    SN_WillMsgUpd    msgUpd;
+    SN_WillTopicResp topicResp;
+    SN_WillTopicUpd  topicUpd;
+} SN_WillResp;
+
 typedef struct _SN_Will {
     MqttMsgStat stat;
 
@@ -860,12 +867,7 @@ typedef struct _SN_Will {
     byte* willMsg;
     word16 willMsgLen;
 
-    union {
-        SN_WillMsgResp   msgResp;
-        SN_WillMsgUpd    msgUpd;
-        SN_WillTopicResp topicResp;
-        SN_WillTopicUpd  topicUpd;
-    };
+    SN_WillResp resp;
 } SN_Will;
 
 /* Connect */
