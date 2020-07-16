@@ -922,8 +922,13 @@ wait_again:
     }
 #endif
 
-    /* reset state */
-    *mms_stat = MQTT_MSG_BEGIN;
+#ifdef WOLFMQTT_NONBLOCK
+    if (rc != MQTT_CODE_CONTINUE)
+#endif
+    {
+        /* reset state */
+        *mms_stat = MQTT_MSG_BEGIN;
+    }
 
     if (rc < 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -2433,8 +2438,13 @@ wait_again:
         }
     } /* switch (msg->stat) */
 
-    /* reset state */
-    *mms_stat = MQTT_MSG_BEGIN;
+#ifdef WOLFMQTT_NONBLOCK
+    if (rc != MQTT_CODE_CONTINUE)
+#endif
+    {
+        /* reset state */
+        *mms_stat = MQTT_MSG_BEGIN;
+    }
 
     return rc;
 }
