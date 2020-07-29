@@ -133,7 +133,8 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                 /* Store assigned client ID from CONNACK*/
                 XSTRNCPY((char*)mqttCtx->client_id,
                         prop->data_str.str,
-                        MAX_CLIENT_ID_LEN);
+                        MAX_CLIENT_ID_LEN-1);
+		((char*)mqttCtx->client_id)[MAX_CLIENT_ID_LEN-1] = 0; /* really want strlcpy() semantics, but that's non-portable. */
                 break;
 
             case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
@@ -421,10 +422,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
     /* show subscribe results */
     for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
-        mqttCtx->topic = &mqttCtx->subscribe.topics[i];
+        MqttTopic *topic = &mqttCtx->subscribe.topics[i];
         PRINTF("  Topic %s, Qos %u, Return Code %u",
-            mqttCtx->topic->topic_filter,
-            mqttCtx->topic->qos, mqttCtx->topic->return_code);
+            topic->topic_filter,
+            topic->qos, topic->return_code);
     }
 
     /* Publish Topic */

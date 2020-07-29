@@ -578,23 +578,26 @@ static int NetConnect(void *context, const char* host, word16 port,
             sock->addr.sin_family = AF_INET;
 
             rc = getaddrinfo(host, NULL, &hints, &result);
-            if (rc >= 0 && result != NULL) {
-                struct addrinfo* res = result;
+            if (rc == 0) {
+                struct addrinfo* result_i = result;
 
-                /* prefer ip4 addresses */
-                while (res) {
-                    if (res->ai_family == AF_INET) {
-                        result = res;
-                        break;
-                    }
-                    res = res->ai_next;
+                if (! result) {
+                    rc = -1;
+                    goto exit;
                 }
 
-                if (result->ai_family == AF_INET) {
+                /* prefer ip4 addresses */
+                while (result_i) {
+                    if (result_i->ai_family == AF_INET)
+                        break;
+                    result_i = result_i->ai_next;
+                }
+
+                if (result_i) {
                     sock->addr.sin_port = htons(port);
                     sock->addr.sin_family = AF_INET;
                     sock->addr.sin_addr =
-                        ((SOCK_ADDR_IN*)(result->ai_addr))->sin_addr;
+                        ((SOCK_ADDR_IN*)(result_i->ai_addr))->sin_addr;
                 }
                 else {
                     rc = -1;
@@ -701,23 +704,26 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     sock->addr.sin_family = AF_INET;
 
     rc = getaddrinfo(host, NULL, &hints, &result);
-    if (rc >= 0 && result != NULL) {
-        struct addrinfo* res = result;
+    if (rc == 0) {
+        struct addrinfo* result_i = result;
 
-        /* prefer ip4 addresses */
-        while (res) {
-            if (res->ai_family == AF_INET) {
-                result = res;
-                break;
-            }
-            res = res->ai_next;
+        if (! result) {
+            rc = -1;
+            goto exit;
         }
 
-        if (result->ai_family == AF_INET) {
+        /* prefer ip4 addresses */
+        while (result_i) {
+            if (result_i->ai_family == AF_INET)
+                break;
+            result_i = result_i->ai_next;
+        }
+
+        if (result_i) {
             sock->addr.sin_port = htons(port);
             sock->addr.sin_family = AF_INET;
             sock->addr.sin_addr =
-                ((SOCK_ADDR_IN*)(result->ai_addr))->sin_addr;
+                ((SOCK_ADDR_IN*)(result_i->ai_addr))->sin_addr;
         }
         else {
             rc = -1;
@@ -725,6 +731,8 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
 
         freeaddrinfo(result);
     }
+    if (rc != 0)
+        goto exit;
 
     if (rc == 0) {
         /* Create the socket */
@@ -752,6 +760,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
         rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
     }
 
+  exit:
     /* Show error */
     if (rc != 0) {
         SOCK_CLOSE(sock->fd);

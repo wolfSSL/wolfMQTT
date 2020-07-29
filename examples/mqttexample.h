@@ -110,7 +110,7 @@ typedef struct _MQTTCtx {
     MqttMessage lwt_msg;
     MqttSubscribe subscribe;
     MqttUnsubscribe unsubscribe;
-    MqttTopic topics[1], *topic;
+    MqttTopic topics[1];
     MqttPublish publish;
     MqttDisconnect disconnect;
 
