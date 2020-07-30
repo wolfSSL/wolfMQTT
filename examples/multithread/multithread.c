@@ -40,7 +40,7 @@
 #define MAX_BUFFER_SIZE 1024
 #define TEST_MESSAGE    "test00"
 /* Number of publish tasks. Each will send a unique message to the broker. */
-#define NUM_PUB_TASKS   10
+#define NUM_PUB_TASKS   7
 
 
 /* Locals */
@@ -62,8 +62,8 @@ static int mNumMsgsRecvd;
 	#include <pthread.h>
 	#include <sched.h>
     typedef pthread_t THREAD_T;
-    #define THREAD_CREATE(h, f, c) pthread_create(h, NULL, f, c)
-    #define THREAD_JOIN(h, c)      ({ int x; for(x=0;x<c;x++) { pthread_join(h[x], NULL);} })
+    #define THREAD_CREATE(h, f, c) ({ int ret = pthread_create(h, NULL, f, c); if (ret) { errno = ret; } ret; })
+    #define THREAD_JOIN(h, c)      ({ int ret, x; for(x=0;x<c;x++) { ret = pthread_join(h[x], NULL); if (ret) { errno = ret; break; }} ret; })
     #define THREAD_EXIT(e)         pthread_exit((void*)e)
 #endif
 
@@ -147,7 +147,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
-static void client_exit(MQTTCtx *mqttCtx)
+static void client_cleanup(MQTTCtx *mqttCtx)
 {
     /* Free resources */
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
@@ -157,6 +157,12 @@ static void client_exit(MQTTCtx *mqttCtx)
     MqttClientNet_DeInit(&mqttCtx->net);
 
     MqttClient_DeInit(&mqttCtx->client);
+}
+
+static void client_exit(MQTTCtx *mqttCtx)
+{
+    client_cleanup(mqttCtx);
+    exit(1);
 }
 
 static void client_disconnect(MQTTCtx *mqttCtx)
@@ -177,7 +183,7 @@ static void client_disconnect(MQTTCtx *mqttCtx)
     PRINTF("MQTT Socket Disconnect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
 
-    client_exit(mqttCtx);
+    client_cleanup(mqttCtx);
 }
 
 static int multithread_test_init(MQTTCtx *mqttCtx)
@@ -539,22 +545,29 @@ int multithread_test(MQTTCtx *mqttCtx)
 
     rc = multithread_test_init(mqttCtx);
     if (rc == 0) {
-        THREAD_CREATE(&threadList[threadCount++], subscribe_task, mqttCtx);
+        if (THREAD_CREATE(&threadList[threadCount++], subscribe_task, mqttCtx))
+            return -1;
         /* for test mode, we must complete subscribe to track number of pubs received */
         if (mqttCtx->test_mode) {
-            THREAD_JOIN(threadList, threadCount);
+            if (THREAD_JOIN(threadList, threadCount))
+                return -1;
+            threadCount = 0;
         }
         /* Create the thread that waits for messages */
-        THREAD_CREATE(&threadList[threadCount++], waitMessage_task, mqttCtx);
+        if (THREAD_CREATE(&threadList[threadCount++], waitMessage_task, mqttCtx))
+            return -1;
         /* Ping */
-        THREAD_CREATE(&threadList[threadCount++], ping_task, mqttCtx);
+        if (THREAD_CREATE(&threadList[threadCount++], ping_task, mqttCtx))
+            return -1;
         /* Create threads that publish unique messages */
         for (i = 0; i < NUM_PUB_TASKS; i++) {
-            THREAD_CREATE(&threadList[threadCount++], publish_task, mqttCtx);
+            if (THREAD_CREATE(&threadList[threadCount++], publish_task, mqttCtx))
+                return -1;
         }
         
         /* Join threads - wait for completion */
-        THREAD_JOIN(threadList, threadCount);
+        if (THREAD_JOIN(threadList, threadCount))
+            PRINTF("THREAD_JOIN failed: %m\n"); /* %m is specific to glibc/uclibc/musl */
 
         (void)unsubscribe_do(mqttCtx);
 
