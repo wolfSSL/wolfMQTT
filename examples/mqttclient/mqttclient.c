@@ -134,7 +134,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                 XSTRNCPY((char*)mqttCtx->client_id,
                         prop->data_str.str,
                         MAX_CLIENT_ID_LEN-1);
-		((char*)mqttCtx->client_id)[MAX_CLIENT_ID_LEN-1] = 0; /* really want strlcpy() semantics, but that's non-portable. */
+                ((char*)mqttCtx->client_id)[MAX_CLIENT_ID_LEN-1] = 0; /* really want strlcpy() semantics, but that's non-portable. */
                 break;
 
             case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
