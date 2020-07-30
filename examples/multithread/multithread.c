@@ -551,6 +551,7 @@ int multithread_test(MQTTCtx *mqttCtx)
         if (mqttCtx->test_mode) {
             if (THREAD_JOIN(threadList, threadCount))
                 return -1;
+            threadCount = 0;
         }
         /* Create the thread that waits for messages */
         if (THREAD_CREATE(&threadList[threadCount++], waitMessage_task, mqttCtx))
