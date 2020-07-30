@@ -147,7 +147,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
-static void client_exit(MQTTCtx *mqttCtx)
+static void client_cleanup(MQTTCtx *mqttCtx)
 {
     /* Free resources */
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
@@ -157,6 +157,12 @@ static void client_exit(MQTTCtx *mqttCtx)
     MqttClientNet_DeInit(&mqttCtx->net);
 
     MqttClient_DeInit(&mqttCtx->client);
+}
+
+static void client_exit(MQTTCtx *mqttCtx)
+{
+    client_cleanup(mqttCtx);
+    exit(1);
 }
 
 static void client_disconnect(MQTTCtx *mqttCtx)
@@ -177,7 +183,7 @@ static void client_disconnect(MQTTCtx *mqttCtx)
     PRINTF("MQTT Socket Disconnect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
 
-    client_exit(mqttCtx);
+    client_cleanup(mqttCtx);
 }
 
 static int multithread_test_init(MQTTCtx *mqttCtx)
