@@ -40,7 +40,7 @@
 #define MAX_BUFFER_SIZE 1024
 #define TEST_MESSAGE    "test00"
 /* Number of publish tasks. Each will send a unique message to the broker. */
-#define NUM_PUB_TASKS   10
+#define NUM_PUB_TASKS   7
 
 
 /* Locals */
