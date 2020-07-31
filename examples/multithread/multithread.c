@@ -40,7 +40,7 @@
 #define MAX_BUFFER_SIZE 1024
 #define TEST_MESSAGE    "test00"
 /* Number of publish tasks. Each will send a unique message to the broker. */
-#define NUM_PUB_TASKS   7
+#define NUM_PUB_TASKS   10
 
 
 /* Locals */
@@ -365,7 +365,6 @@ static void *subscribe_task(void *param)
 
 #ifdef WOLFMQTT_V5
     if (mqttCtx->subscribe.props != NULL) {
-        /* Release the allocated properties */
         MqttClient_PropsFree(mqttCtx->subscribe.props);
     }
 #endif
@@ -566,8 +565,13 @@ int multithread_test(MQTTCtx *mqttCtx)
         }
         
         /* Join threads - wait for completion */
-        if (THREAD_JOIN(threadList, threadCount))
-            PRINTF("THREAD_JOIN failed: %m\n"); /* %m is specific to glibc/uclibc/musl */
+        if (THREAD_JOIN(threadList, threadCount)) {
+#ifdef __GLIBC__
+            PRINTF("THREAD_JOIN failed: %m\n"); /* %m is specific to glibc/uclibc/musl, and recently (2018) added to FreeBSD */
+#else
+            PRINTF("THREAD_JOIN failed: %d\n",errno);
+#endif
+        }
 
         (void)unsubscribe_do(mqttCtx);
 

@@ -303,7 +303,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         #endif
             rc = MqttDecode_ConnectAck(rx_buf, rx_len, p_connect_ack);
         #ifdef WOLFMQTT_V5
-            if (packet_obj && rc >= 0) {
+            if (rc >= 0) {
                 props = p_connect_ack->props;
             }
         #endif
@@ -325,9 +325,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
-                if (packet_obj) {
-                    props = p_publish->props;
-                }
+                props = p_publish->props;
             #endif
             }
             break;
@@ -352,9 +350,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish_resp->packet_id;
             #ifdef WOLFMQTT_V5
-                if (packet_obj) {
-                    props = p_publish_resp->props;
-                }
+                props = p_publish_resp->props;
             #endif
             }
             break;
@@ -375,9 +371,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_subscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                if (packet_obj) {
-                    props = p_subscribe_ack->props;
-                }
+                props = p_subscribe_ack->props;
             #endif
             }
             break;
@@ -398,9 +392,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_unsubscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                if (packet_obj) {
-                    props = p_unsubscribe_ack->props;
-                }
+                props = p_unsubscribe_ack->props;
             #endif
             }
             break;
@@ -428,7 +420,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 XMEMSET(p_auth, 0, sizeof(MqttAuth));
             }
             rc = MqttDecode_Auth(rx_buf, rx_len, p_auth);
-            if (rc >= 0 && packet_obj) {
+            if (rc >= 0) {
                 props = p_auth->props;
             }
         #else
@@ -447,7 +439,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 XMEMSET(p_disc, 0, sizeof(MqttDisconnect));
             }
             rc = MqttDecode_Disconnect(rx_buf, rx_len, p_disc);
-            if (rc >= 0 && packet_obj) {
+            if (rc >= 0) {
                 props = p_disc->props;
             }
         #else
@@ -476,7 +468,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
     if (props) {
     #ifdef WOLFMQTT_PROPERTY_CB
         /* Check for properties set by the server */
-        if (client->property_cb) {
+        if (packet_obj && client->property_cb) {
             /* capture error if returned */
             int rc_err = client->property_cb(client, props, client->property_ctx);
             if (rc_err < 0) {
@@ -972,10 +964,13 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     client->max_qos = MQTT_QOS_2;
     client->retain_avail = 1;
     client->protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL;
+    rc = MqttProps_Init();
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    rc = wm_SemInit(&client->lockSend);
+    if (rc == 0) {
+        rc = wm_SemInit(&client->lockSend);
+    }
     if (rc == 0) {
         rc = wm_SemInit(&client->lockRecv);
     }
@@ -1006,6 +1001,9 @@ void MqttClient_DeInit(MqttClient *client)
         (void)wm_SemFree(&client->lockClient);
 #endif
     }
+#ifdef WOLFMQTT_V5
+    (void)MqttProps_ShutDown();
+#endif
 }
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -2020,9 +2018,9 @@ MqttProp* MqttClient_PropsAdd(MqttProp **head)
     return MqttProps_Add(head);
 }
 
-void MqttClient_PropsFree(MqttProp *head)
+int MqttClient_PropsFree(MqttProp *head)
 {
-    MqttProps_Free(head);
+    return MqttProps_Free(head);
 }
 
 #endif /* WOLFMQTT_V5 */

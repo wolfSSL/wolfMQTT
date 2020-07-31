@@ -344,14 +344,13 @@ WOLFMQTT_API int MqttClient_Auth(
 WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
     MqttProp **head);
 
-
 /*! \brief      Free property list
  *  \discussion Deallocate the list pointed to by head. Must be used after the
                 packet command that used MqttClient_Prop_Add.
  *  \param      head        Pointer-pointer to a property structure
- *  \return     Pointer to newly allocated property structure or NULL
+ *  \return     MQTT_CODE_SUCCESS or -1 on error (and sets errno)
  */
-WOLFMQTT_API void MqttClient_PropsFree(
+WOLFMQTT_API int MqttClient_PropsFree(
     MqttProp *head);
 #endif
 
