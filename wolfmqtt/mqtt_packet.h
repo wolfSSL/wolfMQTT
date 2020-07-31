@@ -690,8 +690,9 @@ WOLFMQTT_LOCAL int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
     byte* buf);
 WOLFMQTT_LOCAL int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
     byte* buf, word32 prop_len);
+WOLFMQTT_LOCAL int MqttProps_Init(void);
 WOLFMQTT_LOCAL MqttProp* MqttProps_Add(MqttProp **head);
-WOLFMQTT_LOCAL void MqttProps_Free(MqttProp *head);
+WOLFMQTT_LOCAL int MqttProps_Free(MqttProp *head);
 WOLFMQTT_LOCAL MqttProp* MqttProps_FindType(MqttProp *head,
     MqttPropertyType type);
 #endif

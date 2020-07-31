@@ -132,7 +132,10 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 
 /* Property structure allocation array. Property type equal
    to zero indicates unused element. */
-MqttProp clientPropStack[MQTT_MAX_PROPS];
+static MqttProp clientPropStack[MQTT_MAX_PROPS] = {};
+#ifdef WOLFMQTT_MULTITHREAD
+static wm_Sem clientPropStack_lock;
+#endif
 #endif /* WOLFMQTT_V5 */
 
 /* Positive return value is header length, zero or negative indicates error */
@@ -485,11 +488,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf,
     {
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
-        if (cur_prop == NULL) {
-            MqttProps_Free(*props);
+        if (cur_prop == NULL)
             return MQTT_CODE_ERROR_MEMORY;
-        }
-        XMEMSET(cur_prop, 0, sizeof(MqttProp));
 
         /* Decode the Identifier */
         tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type);
@@ -1607,9 +1607,15 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     return header_len + remain_len;
 }
 
+int MqttProps_Init(void) {
+#ifdef WOLFMQTT_MULTITHREAD
+    return wm_SemInit(&clientPropStack_lock);
+#else
+    return 0;
+#endif
+}
 
 /* Add property */
-// TODO: Need a mutex here
 MqttProp* MqttProps_Add(MqttProp **head)
 {
     MqttProp *new_prop = NULL, *prev = NULL, *cur;
@@ -1618,6 +1624,11 @@ MqttProp* MqttProps_Add(MqttProp **head)
     if (head == NULL) {
         return NULL;
     }
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&clientPropStack_lock))
+        return NULL;
+#endif
 
     cur = *head;
 
@@ -1637,6 +1648,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
     }
 
     if (new_prop != NULL) {
+        new_prop->type = MQTT_PROP_TYPE_MAX; /* placeholder until caller sets it to a real type. */
         if (prev == NULL) {
             /* Start a new list */
             *head = new_prop;
@@ -1647,17 +1659,29 @@ MqttProp* MqttProps_Add(MqttProp **head)
         }
     }
 
+#ifdef WOLFMQTT_MULTITHREAD
+    (void)wm_SemUnlock(&clientPropStack_lock);
+#endif
+
     return new_prop;
 }
 
 /* Free properties */
-// TODO: Need a mutex here
-void MqttProps_Free(MqttProp *head)
+int MqttProps_Free(MqttProp *head)
 {
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&clientPropStack_lock))
+        return -1;
+#endif
     while (head != NULL) {
         head->type = (MqttPropertyType)0;
         head = head->next;
     }
+#ifdef WOLFMQTT_MULTITHREAD
+    return wm_SemUnlock(&clientPropStack_lock);
+#else
+    return 0;
+#endif
 }
 
 #endif /* WOLFMQTT_V5 */
