@@ -1615,6 +1615,14 @@ int MqttProps_Init(void) {
 #endif
 }
 
+int MqttProps_ShutDown(void) {
+#ifdef WOLFMQTT_MULTITHREAD
+    return wm_SemFree(&clientPropStack_lock);
+#else
+    return 0;
+#endif
+}
+
 /* Add property */
 MqttProp* MqttProps_Add(MqttProp **head)
 {

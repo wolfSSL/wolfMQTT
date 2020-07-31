@@ -1001,6 +1001,9 @@ void MqttClient_DeInit(MqttClient *client)
         (void)wm_SemFree(&client->lockClient);
 #endif
     }
+#ifdef WOLFMQTT_V5
+    (void)MqttProps_ShutDown();
+#endif
 }
 
 #ifdef WOLFMQTT_DISCONNECT_CB
