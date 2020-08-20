@@ -38,7 +38,7 @@ static int mStopRead = 0;
 /* Maximum size for network read/write callbacks. */
 #define MAX_BUFFER_SIZE 1024
 #define TEST_MESSAGE    "test"
-
+#define SHORT_TOPIC_NAME "s1"
 
 static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
@@ -247,6 +247,53 @@ int sn_test(MQTTCtx *mqttCtx)
         }
     }
 
+    {
+        /* Short Topic Name Subscribe */
+        SN_Subscribe subscribe;
+        SN_Publish publish;
+
+        XMEMSET(&subscribe, 0, sizeof(SN_Subscribe));
+
+        subscribe.duplicate = 0;
+        subscribe.qos = MQTT_QOS_0;
+        subscribe.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+        subscribe.topicNameId = SHORT_TOPIC_NAME;
+        subscribe.packet_id = mqtt_get_packetid();
+
+        PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
+        rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+
+        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+                subscribe.subAck.topicId, subscribe.subAck.return_code);
+
+        /* Short Topic Name Publish */
+        XMEMSET(&publish, 0, sizeof(SN_Publish));
+        publish.retain = 0;
+        publish.qos = mqttCtx->qos;
+        publish.duplicate = 0;
+        publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+        publish.topic_name = SHORT_TOPIC_NAME;
+        if (publish.qos > MQTT_QOS_0) {
+            publish.packet_id = mqtt_get_packetid();
+        }
+        else {
+            publish.packet_id = 0x00;
+        }
+
+        publish.buffer = (byte*)TEST_MESSAGE;
+        publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+
+        rc = SN_Client_Publish(&mqttCtx->client, &publish);
+
+        PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
+            (word16)*publish.topic_name,
+            publish.return_code,
+            publish.buffer);
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
+    }
+
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
 
@@ -279,7 +326,12 @@ int sn_test(MQTTCtx *mqttCtx)
                 mqttCtx->publishSN.duplicate = 0;
                 mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
                 mqttCtx->publishSN.topic_name = (char*)&topicID;
-                mqttCtx->publishSN.packet_id = mqtt_get_packetid();
+                if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
+                    mqttCtx->publishSN.packet_id = mqtt_get_packetid();
+                }
+                else {
+                    mqttCtx->publishSN.packet_id = 0x00;
+                }
                 mqttCtx->publishSN.buffer = mqttCtx->rx_buf;
                 mqttCtx->publishSN.total_len = (word16)rc;
                 rc = SN_Client_Publish(&mqttCtx->client,
