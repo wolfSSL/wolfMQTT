@@ -2417,9 +2417,6 @@ wait_again:
             goto wait_again;
         }
 
-    #ifdef WOLFMQTT_V5
-        case MQTT_MSG_AUTH:
-    #endif
         case MQTT_MSG_WRITE:
         default:
         {
@@ -2735,9 +2732,6 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             break;
         }
 
-    #ifdef WOLFMQTT_V5
-        case MQTT_MSG_AUTH:
-    #endif
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
         #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -2822,6 +2816,7 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
 int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
 {
     int rc, len;
+    SN_PingReq loc_ping;
 
     /* Validate required arguments */
     if (client == NULL) {
@@ -2829,8 +2824,8 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     }
 
     if (ping == NULL) {
-        /* use client global */
-        ping = &client->msgSN.pingReq;
+        XMEMSET(&loc_ping, 0, sizeof(SN_PingReq));
+        ping = &loc_ping;
     }
 
     if (ping->stat == MQTT_MSG_BEGIN) {

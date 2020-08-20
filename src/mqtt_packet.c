@@ -2712,7 +2712,17 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 
     *tx_payload++ = flags;
 
-    tx_payload += MqttEncode_Num(tx_payload, (word16)*publish->topic_name);
+    /* Encode topic */
+    if (publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) {
+        /* Short topic name is 2 chars */
+        XMEMCPY(tx_payload, publish->topic_name, 2);
+        tx_payload += 2;
+    }
+    else {
+        /* Topic ID */
+        tx_payload += MqttEncode_Num(tx_payload, (word16)*publish->topic_name);
+    }
+
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
 
     /* Encode payload */
