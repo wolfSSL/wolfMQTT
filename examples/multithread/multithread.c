@@ -55,7 +55,7 @@ static int mNumMsgsRecvd;
     #include <process.h>
     typedef HANDLE THREAD_T;
     #define THREAD_CREATE(h, f, c) *h = CreateThread(NULL, 0, f, c, 0, NULL)
-    #define THREAD_JOIN(h, c)      WaitForMultipleObjects(c, h, TRUE, INFINITE);
+    #define THREAD_JOIN(h, c)      WaitForMultipleObjects(c, h, TRUE, INFINITE)
     #define THREAD_EXIT(e)         return e;
 #else
     /* Posix (Linux/Mac) */

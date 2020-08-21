@@ -22,7 +22,7 @@ Notes:
 
 For building wolfMQTT with TLS support in Visual Studio:
 
-1. Open the `wolfssl-root>/wolfssl64.sln`.
+1. Open the `<wolfssl-root>/wolfssl64.sln`.
 2. Re-target for your Visual Studio version (right-click on solution and choose `Retarget solution`).
 3. Make sure the `Debug DLL` or `Release DLL` configuration is selected. Make note if you are building 32-bit `x86` or 64-bit `x64`.
 4. Build the wolfSSL solution.
@@ -173,6 +173,9 @@ The wolfMQTT client supports connecting to v5 enabled brokers when configured wi
 * Topic Alias
 
 The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
+* Mosquitto
+** Runs locally.
+** `./examples/mqttclient/mqttclient -h localhost`
 * Flespi
 ** Requires an account tied token that is regenerated hourly.
 ** `./examples/mqttclient/mqttclient -h "mqtt.flespi.io" -u "<your-flespi-token>"`

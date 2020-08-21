@@ -62,7 +62,9 @@
     #define SOCKET_T        SOCKET
     #define SOERROR_T       char
     #define SELECT_FD(fd)   (fd)
-    #define SOCKET_INVALID  ((SOCKET_T)INVALID_SOCKET)
+    #ifndef SOCKET_INVALID /* Do not redefine from wolfssl */
+        #define SOCKET_INVALID  ((SOCKET_T)INVALID_SOCKET)
+    #endif
     #define SOCK_CLOSE      closesocket
     #define SOCK_SEND(s,b,l,f) send((s), (const char*)(b), (size_t)(l), (f))
     #define SOCK_RECV(s,b,l,f) recv((s), (char*)(b), (size_t)(l), (f))

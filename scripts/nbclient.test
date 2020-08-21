@@ -2,6 +2,9 @@
 
 # Non-blocking Client test
 
+# Wait 3 secs for other tests to conclude
+sleep 3
+
 # Check for application
 [ ! -x ./examples/nbclient/nbclient ] && echo -e "\n\nNon-blocking Client doesn't exist" && exit 1
 

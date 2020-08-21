@@ -1,6 +1,18 @@
 
 ## Release Notes
 
+### v1.7 (08/21/2020)
+
+* Fix for publish with short topic name and example. (PR #169)
+Add MqttProps_ShutDown(). Fix MqttProp leaks(PR #167)
+* Multithread fixes. (PR #166)
+* Fix buffer overrun in strcpy(). Fix logic around getaddrinfo(). (PR #165)
+* Fix MqttClient_WaitType for nonblock mode. (PR #164)
+* Change anon union for ARMv6 error. (PR #163)
+* Fix for publish large payload. (PR #162)
+* Fixing LWT prop and allow null LWT. (PR #161)
+* Fix for receive timeout in mqttsimple example. (PR #158)
+
 ### v1.6 (04/24/2020)
 
 * Fixes to improve buffer size checking when using a small tx or rx buffer. (PR #137)
