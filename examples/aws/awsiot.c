@@ -76,8 +76,8 @@ static int mStopRead = 0;
 #define AWSIOT_KEEP_ALIVE_SEC   DEFAULT_KEEP_ALIVE_SEC
 #define AWSIOT_CMD_TIMEOUT_MS   DEFAULT_CMD_TIMEOUT_MS
 
-#define AWSIOT_SUBSCRIBE_TOPIC  "$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta"
-#define AWSIOT_PUBLISH_TOPIC    "$aws/things/"AWSIOT_DEVICE_ID"/shadow/update"
+#define AWSIOT_SUBSCRIBE_TOPIC  "$aws/things/" AWSIOT_DEVICE_ID "/shadow/update/delta"
+#define AWSIOT_PUBLISH_TOPIC    "$aws/things/" AWSIOT_DEVICE_ID "/shadow/update"
 
 #define AWSIOT_PUBLISH_MSG_SZ   400
 

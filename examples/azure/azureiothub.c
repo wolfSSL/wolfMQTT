@@ -86,8 +86,8 @@ static int mStopRead = 0;
 #define AZURE_TOKEN_EXPIRY_SEC  (60 * 60 * 1) /* 1 hour */
 #define AZURE_TOKEN_SIZE        400
 
-#define AZURE_DEVICE_NAME       AZURE_HOST"/devices/"AZURE_DEVICE_ID
-#define AZURE_USERNAME          AZURE_HOST"/"AZURE_DEVICE_ID"/"AZURE_API_VERSION
+#define AZURE_DEVICE_NAME       AZURE_HOST "/devices/" AZURE_DEVICE_ID
+#define AZURE_USERNAME          AZURE_HOST "/" AZURE_DEVICE_ID "/" AZURE_API_VERSION
 #define AZURE_SIG_FMT           "%s\n%ld"
     /* [device name (URL Encoded)]\n[Expiration sec UTC] */
 #define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%ld"
@@ -95,8 +95,8 @@ static int mStopRead = 0;
        sig=[HMAC-SHA256 of AZURE_SIG_FMT using AZURE_KEY (URL Encoded)]
        se=[Expiration sec UTC] */
 
-#define AZURE_MSGS_TOPIC_NAME   "devices/"AZURE_DEVICE_ID"/messages/devicebound/#" /* subscribe */
-#define AZURE_EVENT_TOPIC       "devices/"AZURE_DEVICE_ID"/messages/events/" /* publish */
+#define AZURE_MSGS_TOPIC_NAME   "devices/" AZURE_DEVICE_ID "/messages/devicebound/#" /* subscribe */
+#define AZURE_EVENT_TOPIC       "devices/" AZURE_DEVICE_ID "/messages/events/" /* publish */
 
 
 /* Encoding Support */

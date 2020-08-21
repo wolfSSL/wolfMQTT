@@ -132,7 +132,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 
 /* Property structure allocation array. Property type equal
    to zero indicates unused element. */
-static MqttProp clientPropStack[MQTT_MAX_PROPS] = {};
+static MqttProp clientPropStack[MQTT_MAX_PROPS];
 #ifdef WOLFMQTT_MULTITHREAD
 static wm_Sem clientPropStack_lock;
 #endif
@@ -344,7 +344,7 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
 {
     int len = MqttEncode_Num(buf, data_len);
 
-    if (buf != NULL) {
+    if ((buf != NULL) && (data != NULL)) {
         buf += len;
         XMEMCPY(buf, data, data_len);
     }
