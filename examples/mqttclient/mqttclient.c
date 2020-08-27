@@ -37,7 +37,6 @@ static int mStopRead = 0;
 /* Maximum size for network read/write callbacks. There is also a v5 define that
    describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
 #define MAX_BUFFER_SIZE 1024
-#define TEST_MESSAGE    "test"
 
 #ifdef WOLFMQTT_PROPERTY_CB
 #define MAX_CLIENT_ID_LEN 64
@@ -78,10 +77,10 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
             buf, msg->qos, msg->total_len);
 
-        /* for test mode: check if TEST_MESSAGE was received */
+        /* for test mode: check if DEFAULT_MESSAGE was received */
         if (mqttCtx->test_mode) {
-            if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
-                XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
+            if (XSTRLEN(DEFAULT_MESSAGE) == msg->buffer_len &&
+                XSTRNCMP(DEFAULT_MESSAGE, (char*)msg->buffer,
                          msg->buffer_len) == 0)
             {
                 mStopRead = 1;
@@ -435,8 +434,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     mqttCtx->publish.duplicate = 0;
     mqttCtx->publish.topic_name = mqttCtx->topic_name;
     mqttCtx->publish.packet_id = mqtt_get_packetid();
-    mqttCtx->publish.buffer = (byte*)TEST_MESSAGE;
-    mqttCtx->publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+    mqttCtx->publish.buffer = (byte*)mqttCtx->message;
+    mqttCtx->publish.total_len = (word16)XSTRLEN(mqttCtx->message);
 #ifdef WOLFMQTT_V5
     {
         /* Payload Format Indicator */

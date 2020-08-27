@@ -71,6 +71,7 @@
 #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
 #define DEFAULT_AUTH_METHOD    "EXTERNAL"
 #define PRINT_BUFFER_SIZE       80
+#define DEFAULT_MESSAGE         "test"
 
 #ifdef WOLFMQTT_V5
 #define DEFAULT_MAX_PKT_SZ      768 /* The max MQTT control packet size the
@@ -125,6 +126,7 @@ typedef struct _MQTTCtx {
     const char* username;
     const char* password;
     const char* topic_name;
+    const char* message;
     const char* pub_file;
     const char* client_id;
     byte *tx_buf, *rx_buf;
