@@ -260,10 +260,10 @@ int sn_test(MQTTCtx *mqttCtx)
         subscribe.topicNameId = SHORT_TOPIC_NAME;
         subscribe.packet_id = mqtt_get_packetid();
 
-        PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
+        PRINTF("MQTT-SN Subscribe Short Topic: topic name = %s", subscribe.topicNameId);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
-        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+        PRINTF("....MQTT-SN Subscribe Short Topic Ack: topic id = %d, rc = %d",
                 subscribe.subAck.topicId, subscribe.subAck.return_code);
 
         /* Short Topic Name Publish */
@@ -285,7 +285,7 @@ int sn_test(MQTTCtx *mqttCtx)
 
         rc = SN_Client_Publish(&mqttCtx->client, &publish);
 
-        PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
+        PRINTF("MQTT-SN Publish Short Topic: topic id = %d, rc = %d\r\nPayload = %s",
             (word16)*publish.topic_name,
             publish.return_code,
             publish.buffer);
@@ -293,6 +293,32 @@ int sn_test(MQTTCtx *mqttCtx)
             goto disconn;
         }
     }
+
+#if 0
+    /* Disabled because not currently supported by Paho MQTT-SN Gateway */
+    {
+        /* Will Topic and Message update */
+        SN_Will willUpdate;
+        XMEMSET(&willUpdate, 0, sizeof(SN_Will));
+        char willTopicName[] = WOLFMQTT_TOPIC_NAME"lastWishes";
+        char willTopicMsg[] = "I'LL BE BACK";
+
+        /* Set new topic */
+        willUpdate.willTopic = willTopicName;
+        PRINTF("MQTT-SN Will Topic Update: topic name = %s", willUpdate.willTopic);
+        rc = SN_Client_WillTopicUpdate(&mqttCtx->client, &willUpdate);
+        PRINTF("....MQTT-SN Will Topic Update: response = %d, rc = %d",
+                willUpdate.resp.topicResp.return_code, rc);
+
+        /* Set new message*/
+        willUpdate.willMsg = (byte*)willTopicMsg;
+        willUpdate.willMsgLen = XSTRLEN(willTopicMsg);
+        PRINTF("MQTT-SN Will Message Update: message = %s", willUpdate.willMsg);
+        rc = SN_Client_WillMsgUpdate(&mqttCtx->client, &willUpdate);
+        PRINTF("....MQTT-SN Will Message Update: response = %d, rc = %d",
+                willUpdate.resp.msgResp.return_code, rc);
+    }
+#endif
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");

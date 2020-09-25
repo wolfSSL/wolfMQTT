@@ -2317,6 +2317,34 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             rc = SN_Decode_Ping(client->rx_buf, client->packet.buf_len);
             break;
         }
+        case SN_MSG_TYPE_WILLTOPICRESP:
+        {
+            /* Decode Will Topic Response */
+            SN_WillTopicResp *resp;
+            if (packet_obj) {
+                resp = (SN_WillTopicResp*)packet_obj;
+            }
+            else {
+                XMEMSET(resp, 0, sizeof(SN_WillTopicResp));
+            }
+            rc = SN_Decode_WillTopicResponse(client->rx_buf,
+                    client->packet.buf_len, &resp->return_code);
+            break;
+        }
+        case SN_MSG_TYPE_WILLMSGRESP:
+        {
+            /* Decode Will Message Response */
+            SN_WillMsgResp *resp;
+            if (packet_obj) {
+                resp = (SN_WillMsgResp*)packet_obj;
+            }
+            else {
+                XMEMSET(resp, 0, sizeof(SN_WillMsgResp));
+            }
+            rc = SN_Decode_WillMsgResponse(client->rx_buf,
+                    client->packet.buf_len, &resp->return_code);
+            break;
+        }
         default:
         {
             /* Other types are server side only, ignore */
@@ -2591,7 +2619,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
             if (will != NULL) {
                 /* Wait for Will Topic Update Response packet */
                 rc = SN_Client_WaitType(client, &will->resp.topicResp,
-                        SN_MSG_TYPE_WILLTOPICREQ, 0, client->cmd_timeout_ms);
+                        SN_MSG_TYPE_WILLTOPICRESP, 0, client->cmd_timeout_ms);
             }
         }
     }
@@ -2617,7 +2645,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         rc = MqttPacket_Write(client, client->tx_buf, len);
         if (rc == len) {
             /* Wait for Will Message Update Response packet */
-            rc = SN_Client_WaitType(client, &will->resp.msgUpd,
+            rc = SN_Client_WaitType(client, &will->resp.msgResp,
                     SN_MSG_TYPE_WILLMSGRESP, 0, client->cmd_timeout_ms);
         }
     }

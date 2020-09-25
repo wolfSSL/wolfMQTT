@@ -2325,7 +2325,7 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
 
 }
 
-int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len)
+int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
 {
     int total_len;
     byte *rx_payload = rx_buf, type;
@@ -2337,7 +2337,7 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len)
 
     /* Decode fixed header */
     total_len = *rx_payload++;
-    if (total_len != 2) {
+    if (total_len != 3) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
 
@@ -2345,7 +2345,9 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len)
     if (type != SN_MSG_TYPE_WILLTOPICRESP) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
-    (void)rx_payload;
+
+    /* Return Code */
+    *ret_code = *rx_payload;
 
     /* Return total length of packet */
     return total_len;
@@ -2400,7 +2402,7 @@ int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
     return total_len;
 }
 
-int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len)
+int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
 {
     int total_len;
     byte *rx_payload = rx_buf, type;
@@ -2412,7 +2414,7 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len)
 
     /* Decode fixed header */
     total_len = *rx_payload++;
-    if (total_len != 2) {
+    if (total_len != 3) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
 
@@ -2420,7 +2422,9 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len)
     if (type != SN_MSG_TYPE_WILLMSGRESP) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
-    (void)rx_payload;
+
+    /* Return Code */
+    *ret_code = *rx_payload;
 
     /* Return total length of packet */
     return total_len;
