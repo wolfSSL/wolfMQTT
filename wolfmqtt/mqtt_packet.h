@@ -1108,6 +1108,7 @@ WOLFMQTT_LOCAL int SN_Decode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         SN_UnsubscribeAck *unsubscribe_ack);
 WOLFMQTT_LOCAL int SN_Encode_Disconnect(byte *tx_buf, int tx_buf_len,
         SN_Disconnect* disconnect);
+WOLFMQTT_LOCAL int SN_Decode_Disconnect(byte *rx_buf, int rx_buf_len);
 WOLFMQTT_LOCAL int SN_Encode_Ping(byte *tx_buf, int tx_buf_len,
         SN_PingReq *ping);
 WOLFMQTT_LOCAL int SN_Decode_Ping(byte *rx_buf, int rx_buf_len);

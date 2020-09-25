@@ -2345,6 +2345,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                     client->packet.buf_len, &resp->return_code);
             break;
         }
+        case SN_MSG_TYPE_DISCONNECT:
+        {
+            /* Decode Disconnect */
+            rc = SN_Decode_Disconnect(client->rx_buf, client->packet.buf_len);
+            break;
+        }
+
         default:
         {
             /* Other types are server side only, ignore */
@@ -2901,7 +2908,11 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     rc = MqttPacket_Write(client, client->tx_buf, len);
     if (rc != len) { return rc; }
 
-    /* No response for MQTT disconnect packet */
+    /* If sleep was set, wait for response disconnect packet */
+    if (disconnect->sleepTmr != 0) {
+        rc = SN_Client_WaitType(client, NULL,
+                SN_MSG_TYPE_DISCONNECT, 0, client->cmd_timeout_ms);
+    }
 
     return MQTT_CODE_SUCCESS;
 }

@@ -3021,6 +3021,33 @@ int SN_Encode_Disconnect(byte *tx_buf, int tx_buf_len,
     return total_len;
 }
 
+int SN_Decode_Disconnect(byte *rx_buf, int rx_buf_len)
+{
+    word16 total_len;
+    byte *rx_payload = rx_buf, type;
+
+    /* Validate required arguments */
+    if (rx_buf == NULL || rx_buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Decode fixed header */
+    total_len = *rx_payload++;
+    if (total_len != 2) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+
+    type = *rx_payload++;
+    if (type != SN_MSG_TYPE_DISCONNECT) {
+        return MQTT_CODE_ERROR_PACKET_TYPE;
+    }
+
+    (void)rx_payload;
+
+    /* Return total length of packet */
+    return total_len;
+}
+
 int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping)
 {
     int total_len = 2, clientId_len = 0;
