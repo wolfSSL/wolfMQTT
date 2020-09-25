@@ -176,7 +176,8 @@ typedef enum _MqttQoS {
     MQTT_QOS_0 = 0, /* At most once delivery */
     MQTT_QOS_1 = 1, /* At least once delivery */
     MQTT_QOS_2 = 2, /* Exactly once delivery */
-    MQTT_QOS_3 = 3, /* Reserved - must not be used */
+    MQTT_QOS_3 = 3, /* MQTT - Reserved - must not be used
+                       MQTT-SN - QoS -1 allows publish without connection */
 } MqttQoS;
 
 

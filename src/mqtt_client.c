@@ -2700,7 +2700,8 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             }
 
             /* if not expecting a reply, the reset state and exit */
-            if (publish->qos == MQTT_QOS_0) {
+            if ((publish->qos == MQTT_QOS_0) ||
+                (publish->qos == MQTT_QOS_3)) {
                 publish->stat = MQTT_MSG_BEGIN;
                 break;
             }
@@ -2713,7 +2714,8 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             publish->stat = MQTT_MSG_WAIT;
 
             /* Handle QoS */
-            if (publish->qos > MQTT_QOS_0) {
+            if ((publish->qos == MQTT_QOS_1) ||
+                (publish->qos == MQTT_QOS_2)) {
 
                 XMEMSET(&publish->resp, 0, sizeof(SN_PublishResp));
 

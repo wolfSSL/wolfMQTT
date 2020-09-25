@@ -15,6 +15,7 @@ noinst_PROGRAMS += examples/multithread/multithread
 endif
 if BUILD_SN
 noinst_PROGRAMS += examples/sn-client/sn-client
+noinst_PROGRAMS += examples/sn-client/sn-client_qos-1
 endif
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
@@ -109,6 +110,13 @@ examples_sn_client_sn_client_SOURCES        = examples/sn-client/sn-client.c \
 examples_sn_client_sn_client_LDADD          = src/libwolfmqtt.la
 examples_sn_client_sn_client_DEPENDENCIES   = src/libwolfmqtt.la
 examples_sn_client_sn_client_CPPFLAGS       = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+examples_sn_client_sn_client_qos_1_SOURCES      = examples/sn-client/sn-client_qos-1.c \
+                                                  examples/mqttnet.c \
+                                                  examples/mqttexample.c
+examples_sn_client_sn_client_qos_1_LDADD        = src/libwolfmqtt.la
+examples_sn_client_sn_client_qos_1_DEPENDENCIES = src/libwolfmqtt.la
+examples_sn_client_sn_client_qos_1_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 endif
 endif
 
@@ -128,6 +136,7 @@ dist_example_DATA+= examples/multithread/multithread.c
 endif
 if BUILD_SN
 dist_example_DATA+= examples/sn-client/sn-client.c
+dist_example_DATA+= examples/sn-client/sn-client_qos-1.c
 endif
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
@@ -142,6 +151,7 @@ DISTCLEANFILES+=   examples/multithread/.libs/multithread
 endif
 if BUILD_SN
 DISTCLEANFILES+=   examples/sn-client/.libs/sn-client
+DISTCLEANFILES+=   examples/sn-client/.libs/sn-client_qos-1
 endif
 
 EXTRA_DIST+=       examples/mqttuart.c \
