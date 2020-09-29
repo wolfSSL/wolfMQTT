@@ -378,14 +378,14 @@ int sn_test(MQTTCtx *mqttCtx)
 
             rc = SN_Client_Ping(&mqttCtx->client, NULL);
             if (rc != MQTT_CODE_SUCCESS) {
-                PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
+                PRINTF("MQTT Ping Keep Alive Error: %s (rc = %d)",
                     MqttClient_ReturnCodeToString(rc), rc);
                 break;
             }
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
-            PRINTF("MQTT-SN Message Wait Error: %s (%d)",
+            PRINTF("MQTT-SN Message Wait Error: %s (rc = %d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
@@ -411,7 +411,7 @@ int sn_test(MQTTCtx *mqttCtx)
         /* Unsubscribe Topics */
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
 
-        PRINTF("MQTT Unsubscribe: %s (%d)",
+        PRINTF("MQTT Unsubscribe: %s (rc = %d)",
             MqttClient_ReturnCodeToString(rc), rc);
         if (rc != MQTT_CODE_SUCCESS) {
             goto disconn;
@@ -419,11 +419,50 @@ int sn_test(MQTTCtx *mqttCtx)
         mqttCtx->return_code = rc;
     }
 
+    {
+        /* Demonstrate client sleep cycle using disconnect with a sleep timer */
+        SN_Disconnect disconnect;
+
+        XMEMSET(&disconnect, 0, sizeof(SN_Disconnect));
+
+        /* Set disconnect sleep timer */
+        disconnect.sleepTmr = 30;
+
+        /* Disconnect */
+        rc = SN_Client_Disconnect_ex(&mqttCtx->client, &disconnect);
+
+        PRINTF("MQTT Disconnect with sleep: %s (rc = %d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
+
+        /* Do low power state. Published messages from the broker will be
+           queued in the gateway.*/
+
+        /* Awake state: Send a ping req with client ID to retrieve buffered
+           messages. */
+        {
+            SN_PingReq ping;
+            XMEMSET(&ping, 0, sizeof(SN_PingReq));
+
+            ping.clientId = (char*)mqttCtx->client_id;
+
+            rc = SN_Client_Ping(&mqttCtx->client, &ping);
+            if (rc != MQTT_CODE_SUCCESS) {
+                PRINTF("MQTT Ping Keep Alive Error: %s (rc = %d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
+                goto disconn;
+            }
+        }
+    }
+
+
 disconn:
     /* Disconnect */
     rc = SN_Client_Disconnect(&mqttCtx->client);
 
-    PRINTF("MQTT Disconnect: %s (%d)",
+    PRINTF("MQTT Disconnect: %s (rc = %d)",
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         goto disconn;
@@ -431,7 +470,7 @@ disconn:
 
     rc = MqttClient_NetDisconnect(&mqttCtx->client);
 
-    PRINTF("MQTT Socket Disconnect: %s (%d)",
+    PRINTF("MQTT Socket Disconnect: %s (rc = %d)",
         MqttClient_ReturnCodeToString(rc), rc);
 
 exit:
@@ -484,6 +523,7 @@ int main(int argc, char** argv)
     /* init defaults */
     mqtt_init_ctx(&mqttCtx);
     mqttCtx.app_name = "sn-client";
+    mqttCtx.client_id = DEFAULT_CLIENT_ID"-SN";
 
     /* Settings for MQTT-SN gateway */
     mqttCtx.host = "localhost";

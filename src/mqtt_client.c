@@ -2909,7 +2909,7 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     if (rc != len) { return rc; }
 
     /* If sleep was set, wait for response disconnect packet */
-    if (disconnect->sleepTmr != 0) {
+    if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
         rc = SN_Client_WaitType(client, NULL,
                 SN_MSG_TYPE_DISCONNECT, 0, client->cmd_timeout_ms);
     }
