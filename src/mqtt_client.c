@@ -2317,6 +2317,26 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             rc = SN_Decode_Ping(client->rx_buf, client->packet.buf_len);
             break;
         }
+        case SN_MSG_TYPE_PING_REQ:
+        {
+            int len;
+
+            /* Decode ping */
+            rc = SN_Decode_Ping(client->rx_buf, client->packet.buf_len);
+            if (rc <= 0) { return rc; }
+
+            /* Encode the ping packet as a response */
+            rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, NULL,
+                    SN_MSG_TYPE_PING_RESP);
+            if (rc <= 0) { return rc; }
+            len = rc;
+
+            /* Send ping resp packet */
+            rc = MqttPacket_Write(client, client->tx_buf, len);
+            if (rc != len) { return rc; }
+
+            break;
+        }
         case SN_MSG_TYPE_WILLTOPICRESP:
         {
             /* Decode Will Topic Response */
@@ -2866,8 +2886,9 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     }
 
     if (ping->stat == MQTT_MSG_BEGIN) {
-        /* Encode the ping packet */
-        rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, ping);
+        /* Encode the ping packet as a request */
+        rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, ping,
+                SN_MSG_TYPE_PING_REQ);
         if (rc <= 0) { return rc; }
         len = rc;
 

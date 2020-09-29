@@ -3048,17 +3048,19 @@ int SN_Decode_Disconnect(byte *rx_buf, int rx_buf_len)
     return total_len;
 }
 
-int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping)
+int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping, byte type)
 {
     int total_len = 2, clientId_len = 0;
     byte *tx_payload = tx_buf;
 
     /* Validate required arguments */
-    if (tx_buf == NULL) {
+    if ((tx_buf == NULL) ||
+        ((type != SN_MSG_TYPE_PING_REQ) && (type != SN_MSG_TYPE_PING_RESP))) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (ping != NULL && ping->clientId != NULL) {
+    if ((type == SN_MSG_TYPE_PING_REQ) && (ping != NULL) &&
+        (ping->clientId != NULL)) {
         total_len += clientId_len = (int)XSTRLEN(ping->clientId);
     }
 
@@ -3068,7 +3070,7 @@ int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping)
 
     *tx_payload++ = (byte)total_len;
 
-    *tx_payload++ = SN_MSG_TYPE_PING_REQ;
+    *tx_payload++ = type;
 
     if (clientId_len > 0) {
         XMEMCPY(tx_payload, ping->clientId, clientId_len);
@@ -3096,7 +3098,8 @@ int SN_Decode_Ping(byte *rx_buf, int rx_buf_len)
     }
 
     type = *rx_payload++;
-    if (type != SN_MSG_TYPE_PING_RESP) {
+    if ((type != SN_MSG_TYPE_PING_REQ) &&
+        (type != SN_MSG_TYPE_PING_RESP)) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
 
