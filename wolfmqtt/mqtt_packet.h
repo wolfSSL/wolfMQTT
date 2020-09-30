@@ -1088,6 +1088,10 @@ WOLFMQTT_LOCAL int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len,
         byte *ret_code);
 WOLFMQTT_LOCAL int SN_Encode_Register(byte *tx_buf, int tx_buf_len,
         SN_Register *regist);
+WOLFMQTT_LOCAL int SN_Decode_Register(byte *rx_buf, int rx_buf_len,
+        SN_Register *regist);
+WOLFMQTT_LOCAL int SN_Encode_RegAck(byte *tx_buf, int tx_buf_len,
+        SN_RegAck *regack);
 WOLFMQTT_LOCAL int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len,
         SN_RegAck *regack);
 WOLFMQTT_LOCAL int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len,

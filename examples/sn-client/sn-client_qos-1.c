@@ -19,6 +19,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
+/* This example requires a gateway that supports and is configured
+   for Quality of Service level -1. The Paho gateway must be configured
+   as described in the wolfMQTT README.md */
+
 /* Include the autoconf generated config.h */
 #ifdef HAVE_CONFIG_H
     #include <config.h>

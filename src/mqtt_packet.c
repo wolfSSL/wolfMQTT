@@ -2518,6 +2518,93 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     return total_len;
 }
 
+int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
+{
+    int total_len;
+    byte *rx_payload = rx_buf, type;
+
+    /* Validate required arguments */
+    if (rx_buf == NULL || rx_buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Decode fixed header */
+    total_len = *rx_payload++;
+    if (total_len == SN_PACKET_LEN_IND) {
+        /* The length is stored in the next two bytes */
+        rx_payload += MqttDecode_Num(rx_payload, (word16*)&total_len);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+    if (total_len < 7) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+
+    /* Check message type */
+    type = *rx_payload++;
+    if (type != SN_MSG_TYPE_REGISTER) {
+        return MQTT_CODE_ERROR_PACKET_TYPE;
+    }
+
+    if (regist != NULL) {
+        /* Decode Topic ID assigned by GW */
+        rx_payload += MqttDecode_Num(rx_payload, &regist->topicId);
+
+        /* Decode packet ID */
+        rx_payload += MqttDecode_Num(rx_payload, &regist->packet_id);
+
+        /* Decode Topic Name */
+        regist->topicName = (char*)rx_payload;
+    }
+    (void)rx_payload;
+
+    /* Return total length of packet */
+    return total_len;
+}
+
+int SN_Encode_RegAck(byte *tx_buf, int tx_buf_len, SN_RegAck *regack)
+{
+    int total_len;
+    byte *tx_payload;
+
+    /* Validate required arguments */
+    if (tx_buf == NULL || regack == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Determine packet length */
+    /* Length, MsgType, TopicID (2), and MsgId (2), Return Code */
+    total_len = 7;
+
+    if (total_len > tx_buf_len) {
+        /* Buffer too small */
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
+    tx_payload = tx_buf;
+
+    /* Encode length */
+    *tx_payload++ = total_len;
+
+    /* Encode message type */
+    *tx_payload++ = SN_MSG_TYPE_REGACK;
+
+    /* Encode Topic ID */
+    tx_payload += MqttEncode_Num(tx_payload, regack->topicId);
+
+    /* Encode Message ID */
+    tx_payload += MqttEncode_Num(tx_payload, regack->packet_id);
+
+    /* Encode Return Code */
+    *tx_payload += regack->return_code;
+
+    (void)tx_payload;
+
+    return total_len;
+}
+
 int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len, SN_RegAck *regack)
 {
     int total_len;

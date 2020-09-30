@@ -91,6 +91,16 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
+/* The Register callback is used when the gateway
+   assigns a new topic ID to a topic name. */
+static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
+{
+    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId, topicName);
+    (void)ctx;
+
+    return(MQTT_CODE_SUCCESS);
+}
+
 int sn_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -138,25 +148,32 @@ int sn_test(MQTTCtx *mqttCtx)
         goto exit;
     }
 
+    /* Set the Register callback used when the gateway
+       assigns a new topic ID to a topic name. */
+    rc = SN_Client_SetRegisterCallback(&mqttCtx->client, sn_reg_callback, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        goto exit;
+    }
+
     {
         SN_Connect connect_s, *connect = &connect_s;
         /* Build connect packet */
         XMEMSET(connect, 0, sizeof(SN_Connect));
-        connect_s.keep_alive_sec = mqttCtx->keep_alive_sec;
-        connect_s.clean_session = mqttCtx->clean_session;
-        connect_s.client_id = mqttCtx->client_id;
+        connect->keep_alive_sec = mqttCtx->keep_alive_sec;
+        connect->clean_session = mqttCtx->clean_session;
+        connect->client_id = mqttCtx->client_id;
         connect->protocol_level = SN_PROTOCOL_ID;
 
         /* Last will and testament sent by broker to subscribers
             of topic when broker connection is lost */
-        connect_s.enable_lwt = mqttCtx->enable_lwt;
-        if (connect_s.enable_lwt) {
+        connect->enable_lwt = mqttCtx->enable_lwt;
+        if (connect->enable_lwt) {
             /* Send client id in LWT payload */
-            connect_s.will.qos = mqttCtx->qos;
-            connect_s.will.retain = 0;
-            connect_s.will.willTopic = WOLFMQTT_TOPIC_NAME"lwttopic";
-            connect_s.will.willMsg = (byte*)mqttCtx->client_id;
-            connect_s.will.willMsgLen =
+            connect->will.qos = mqttCtx->qos;
+            connect->will.retain = 0;
+            connect->will.willTopic = WOLFMQTT_TOPIC_NAME"lwttopic";
+            connect->will.willMsg = (byte*)mqttCtx->client_id;
+            connect->will.willMsgLen =
               (word16)XSTRLEN(mqttCtx->client_id);
         }
 
@@ -219,12 +236,36 @@ int sn_test(MQTTCtx *mqttCtx)
     }
 
     {
+        /* Subscribe Wildcard Topic - This allows the gateway to send a
+           REGISTER command when another client publishes to a topic that
+           matches this topic wildcard. This will trigger the register
+           callback. */
+        SN_Subscribe subscribe;
+
+        XMEMSET(&subscribe, 0, sizeof(SN_Subscribe));
+
+        subscribe.duplicate = 0;
+        subscribe.qos = MQTT_QOS_0;
+        subscribe.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+        subscribe.topicNameId = WOLFMQTT_TOPIC_NAME"#";
+        subscribe.packet_id = mqtt_get_packetid();
+
+        PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
+        rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+
+        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+                subscribe.subAck.topicId, subscribe.subAck.return_code);
+    }
+
+    {
         /* Publish Topic */
         XMEMSET(&mqttCtx->publishSN, 0, sizeof(SN_Publish));
         mqttCtx->publishSN.retain = 0;
         mqttCtx->publishSN.qos = mqttCtx->qos;
         mqttCtx->publishSN.duplicate = 0;
         mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+
+        /* Use the topic ID saved from the subscribe */
         mqttCtx->publishSN.topic_name = (char*)&topicID;
         if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
             mqttCtx->publishSN.packet_id = mqtt_get_packetid();
@@ -295,7 +336,8 @@ int sn_test(MQTTCtx *mqttCtx)
     }
 
 #if 0
-    /* Disabled because not currently supported by Paho MQTT-SN Gateway */
+    /* Disabled because will topic and message update are not currently
+       supported by Paho MQTT-SN Gateway */
     {
         /* Will Topic and Message update */
         SN_Will willUpdate;
