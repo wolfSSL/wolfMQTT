@@ -177,14 +177,14 @@ int sn_test(MQTTCtx *mqttCtx)
               (word16)XSTRLEN(mqttCtx->client_id);
         }
 
-        PRINTF("MQTT-SN Broker Connect: broker = %s : %d",
+        PRINTF("MQTT-SN Connect: gateway = %s : %d",
                 mqttCtx->host, mqttCtx->port);
         /* Send Connect and wait for Connect Ack */
         rc = SN_Client_Connect(&mqttCtx->client, connect);
 
         /* Validate Connect Ack info */
         PRINTF("....MQTT-SN Connect Ack: Return Code %u",
-                mqttCtx->connect.ack.return_code);
+                connect->ack.return_code);
         if (rc != MQTT_CODE_SUCCESS) {
             goto disconn;
         }
@@ -420,7 +420,7 @@ int sn_test(MQTTCtx *mqttCtx)
 
             rc = SN_Client_Ping(&mqttCtx->client, NULL);
             if (rc != MQTT_CODE_SUCCESS) {
-                PRINTF("MQTT Ping Keep Alive Error: %s (rc = %d)",
+                PRINTF("MQTT-SN Ping Keep Alive Error: %s (rc = %d)",
                     MqttClient_ReturnCodeToString(rc), rc);
                 break;
             }
@@ -439,18 +439,13 @@ int sn_test(MQTTCtx *mqttCtx)
     }
 
     {
-        /* Unsubscribe Topics */
+        /* Unsubscribe Topic */
         SN_Unsubscribe unsubscribe;
 
-        /* Build list of topics */
         XMEMSET(&unsubscribe, 0, sizeof(SN_Unsubscribe));
-
         unsubscribe.topicNameId = mqttCtx->topic_name;
-
-        /* Subscribe Topic */
         unsubscribe.packet_id = mqtt_get_packetid();
 
-        /* Unsubscribe Topics */
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
 
         PRINTF("MQTT Unsubscribe: %s (rc = %d)",

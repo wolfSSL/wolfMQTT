@@ -70,5 +70,6 @@ wolfmqtt/options.h
 /IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/dist/default/
 examples/sn-client/sn-client
 examples/sn-client/sn-client_qos-1
+examples/sn-client/sn-multithread
 examples/multithread/multithread
 examples/mqttsimple/mqttsimple

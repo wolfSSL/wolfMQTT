@@ -27,6 +27,8 @@
 
 /* Exposed functions */
 int sn_test(MQTTCtx *mqttCtx);
+int sn_testQoSn1(MQTTCtx *mqttCtx);
+int sn_multithread_test(MQTTCtx *mqttCtx);
 
 
 #endif /* WOLFMQTT_SNCLIENT_H */
