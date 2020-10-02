@@ -1881,11 +1881,79 @@ const char* MqttPacket_TypeDesc(MqttPacketType packet_type)
     }
     return "Unknown";
 }
+
 #endif
 
 #ifdef WOLFMQTT_SN
+const char* SN_Packet_TypeDesc(SN_MsgType packet_type)
+{
+    switch (packet_type) {
+        case SN_MSG_TYPE_ADVERTISE:
+            return "Advertise";
+        case SN_MSG_TYPE_SEARCHGW:
+            return "Search gateway";
+        case SN_MSG_TYPE_GWINFO:
+            return "Gateway info";
+        case SN_MSG_TYPE_CONNECT:
+            return "Connect";
+        case SN_MSG_TYPE_CONNACK:
+            return "Connect Ack";
+        case SN_MSG_TYPE_WILLTOPICREQ:
+            return "Will topic request";
+        case SN_MSG_TYPE_WILLTOPIC:
+            return "Will topic set";
+        case SN_MSG_TYPE_WILLMSGREQ:
+            return "Will message request";
+        case SN_MSG_TYPE_WILLMSG:
+            return "Will message set";
+        case SN_MSG_TYPE_REGISTER:
+            return "Register";
+        case SN_MSG_TYPE_REGACK:
+            return "Register Ack";
+        case SN_MSG_TYPE_PUBLISH:
+            return "Publish";
+        case SN_MSG_TYPE_PUBACK:
+            return "Publish Ack";
+        case SN_MSG_TYPE_PUBCOMP:
+            return "Publish complete";
+        case SN_MSG_TYPE_PUBREC:
+            return "Publish Received";
+        case SN_MSG_TYPE_PUBREL:
+            return "Publish Release";
+        case SN_MSG_TYPE_SUBSCRIBE:
+            return "Subscribe";
+        case SN_MSG_TYPE_SUBACK:
+            return "Subscribe Ack";
+        case SN_MSG_TYPE_UNSUBSCRIBE:
+            return "Unsubscribe";
+        case SN_MSG_TYPE_UNSUBACK:
+            return "Unsubscribe Ack";
+        case SN_MSG_TYPE_PING_REQ:
+            return "Ping Req";
+        case SN_MSG_TYPE_PING_RESP:
+            return "Ping Resp";
+        case SN_MSG_TYPE_DISCONNECT:
+            return "Disconnect";
+        case SN_MSG_TYPE_WILLTOPICUPD:
+            return "Will topic update";
+        case SN_MSG_TYPE_WILLTOPICRESP:
+            return "WIll topic response";
+        case SN_MSG_TYPE_WILLMSGUPD:
+            return "Will message update";
+        case SN_MSG_TYPE_WILLMSGRESP:
+            return "Will message response";
+        case SN_MSG_TYPE_ENCAPMSG:
+            return "Encapsulated message";
+        case SN_MSG_TYPE_RESERVED:
+            return "Reserved";
+        default:
+            break;
+    }
+    return "Unknown";
+}
+
 int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
-    SN_MsgType* p_packet_type)
+    SN_MsgType* p_packet_type, word16* p_packet_id)
 {
     SN_MsgType packet_type;
     word16 total_len;
@@ -1910,6 +1978,52 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
 
     if (p_packet_type)
         *p_packet_type = packet_type;
+
+    if (p_packet_id) {
+        switch(packet_type) {
+            case SN_MSG_TYPE_REGACK:
+            case SN_MSG_TYPE_PUBACK:
+                /* octet 4-5 */
+                MqttDecode_Num(rx_buf + 2, p_packet_id);
+                break;
+            case SN_MSG_TYPE_PUBCOMP:
+            case SN_MSG_TYPE_PUBREC:
+            case SN_MSG_TYPE_PUBREL:
+            case SN_MSG_TYPE_UNSUBACK:
+                /* octet 2-3 */
+                MqttDecode_Num(rx_buf, p_packet_id);
+                break;
+            case SN_MSG_TYPE_SUBACK:
+                /* octet 5-6 */
+                MqttDecode_Num(rx_buf + 3, p_packet_id);
+                break;
+            case SN_MSG_TYPE_ADVERTISE:
+            case SN_MSG_TYPE_SEARCHGW:
+            case SN_MSG_TYPE_GWINFO:
+            case SN_MSG_TYPE_CONNECT:
+            case SN_MSG_TYPE_CONNACK:
+            case SN_MSG_TYPE_WILLTOPICREQ:
+            case SN_MSG_TYPE_WILLTOPIC:
+            case SN_MSG_TYPE_WILLMSGREQ:
+            case SN_MSG_TYPE_WILLMSG:
+            case SN_MSG_TYPE_REGISTER:
+            case SN_MSG_TYPE_PUBLISH:
+            case SN_MSG_TYPE_SUBSCRIBE:
+            case SN_MSG_TYPE_UNSUBSCRIBE:
+            case SN_MSG_TYPE_PING_REQ:
+            case SN_MSG_TYPE_PING_RESP:
+            case SN_MSG_TYPE_DISCONNECT:
+            case SN_MSG_TYPE_WILLTOPICUPD:
+            case SN_MSG_TYPE_WILLTOPICRESP:
+            case SN_MSG_TYPE_WILLMSGUPD:
+            case SN_MSG_TYPE_WILLMSGRESP:
+            case SN_MSG_TYPE_ENCAPMSG:
+            case SN_MSG_TYPE_RESERVED:
+            default:
+                *p_packet_id = 0;
+                break;
+        }
+    }
 
     return (int)total_len;
 }
@@ -2703,15 +2817,15 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     tx_payload += MqttEncode_Num(tx_payload, subscribe->packet_id);
 
     /* Encode topic */
-    if ((subscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) !=
-            SN_TOPIC_ID_TYPE_PREDEF) {
+    if ((subscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
+            SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
         XMEMCPY(tx_payload, subscribe->topicNameId, XSTRLEN(subscribe->topicNameId));
     }
     else {
         /* Topic ID */
         tx_payload += MqttEncode_Num(tx_payload,
-                (word16)subscribe->topicNameId[0]);
+                (word16)*subscribe->topicNameId);
     }
     (void)tx_payload;
 
@@ -3194,22 +3308,6 @@ int SN_Decode_Ping(byte *rx_buf, int rx_buf_len)
     return total_len;
 }
 
-static int SN_Packet_HandleNetError(MqttClient *client, int rc)
-{
-    (void)client;
-#ifdef WOLFMQTT_DISCONNECT_CB
-    if (rc < 0 &&
-        rc != MQTT_CODE_CONTINUE &&
-        rc != MQTT_CODE_STDIN_WAKE)
-    {
-        /* don't use return code for now - future use */
-        if (client->disconnect_cb)
-            client->disconnect_cb(client, rc, client->disconnect_ctx);
-    }
-#endif
-    return rc;
-}
-
 /* Read return code is length when > 0 */
 int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     int timeout_ms)
@@ -3224,10 +3322,10 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
             /* Read first 2 bytes using MSG_PEEK */
             rc = MqttSocket_Peek(client, rx_buf, 2, timeout_ms);
             if (rc < 0) {
-                return SN_Packet_HandleNetError(client, rc);
+                return MqttPacket_HandleNetError(client, rc);
             }
             else if (rc != 2) {
-                return SN_Packet_HandleNetError(client,
+                return MqttPacket_HandleNetError(client,
                          MQTT_CODE_ERROR_NETWORK);
             }
 
@@ -3237,10 +3335,10 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 /* Read length stored in first three bytes, type in fourth */
                 rc = MqttSocket_Peek(client, rx_buf, 4, timeout_ms);
                 if (rc < 0) {
-                    return SN_Packet_HandleNetError(client, rc);
+                    return MqttPacket_HandleNetError(client, rc);
                 }
                 else if (rc != 4) {
-                    return SN_Packet_HandleNetError(client,
+                    return MqttPacket_HandleNetError(client,
                              MQTT_CODE_ERROR_NETWORK);
                 }
 
@@ -3291,7 +3389,7 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 rc = MqttSocket_Read(client, &rx_buf[0],
                         total_len, timeout_ms);
                 if (rc <= 0) {
-                    return SN_Packet_HandleNetError(client, rc);
+                    return MqttPacket_HandleNetError(client, rc);
                 }
                 remain_read = rc;
             }
