@@ -176,7 +176,8 @@ typedef enum _MqttQoS {
     MQTT_QOS_0 = 0, /* At most once delivery */
     MQTT_QOS_1 = 1, /* At least once delivery */
     MQTT_QOS_2 = 2, /* Exactly once delivery */
-    MQTT_QOS_3 = 3, /* Reserved - must not be used */
+    MQTT_QOS_3 = 3, /* MQTT - Reserved - must not be used
+                       MQTT-SN - QoS -1 allows publish without connection */
 } MqttQoS;
 
 
@@ -1079,12 +1080,18 @@ WOLFMQTT_LOCAL int SN_Encode_WillMsg(byte *tx_buf, int tx_buf_len,
         SN_Will *willMsg);
 WOLFMQTT_LOCAL int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len,
         SN_Will *willTopic);
-WOLFMQTT_LOCAL int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len);
+WOLFMQTT_LOCAL int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len,
+        byte *ret_code);
 WOLFMQTT_LOCAL int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len,
         SN_Will *willMsg);
-WOLFMQTT_LOCAL int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len);
+WOLFMQTT_LOCAL int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len,
+        byte *ret_code);
 WOLFMQTT_LOCAL int SN_Encode_Register(byte *tx_buf, int tx_buf_len,
         SN_Register *regist);
+WOLFMQTT_LOCAL int SN_Decode_Register(byte *rx_buf, int rx_buf_len,
+        SN_Register *regist);
+WOLFMQTT_LOCAL int SN_Encode_RegAck(byte *tx_buf, int tx_buf_len,
+        SN_RegAck *regack);
 WOLFMQTT_LOCAL int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len,
         SN_RegAck *regack);
 WOLFMQTT_LOCAL int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len,
@@ -1105,8 +1112,9 @@ WOLFMQTT_LOCAL int SN_Decode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         SN_UnsubscribeAck *unsubscribe_ack);
 WOLFMQTT_LOCAL int SN_Encode_Disconnect(byte *tx_buf, int tx_buf_len,
         SN_Disconnect* disconnect);
+WOLFMQTT_LOCAL int SN_Decode_Disconnect(byte *rx_buf, int rx_buf_len);
 WOLFMQTT_LOCAL int SN_Encode_Ping(byte *tx_buf, int tx_buf_len,
-        SN_PingReq *ping);
+        SN_PingReq *ping, byte type);
 WOLFMQTT_LOCAL int SN_Decode_Ping(byte *rx_buf, int rx_buf_len);
 WOLFMQTT_LOCAL int SN_Packet_Read(struct _MqttClient *client, byte* rx_buf,
         int rx_buf_len, int timeout_ms);

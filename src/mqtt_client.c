@@ -2160,6 +2160,46 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
 
             break;
         }
+        case SN_MSG_TYPE_REGISTER:
+        {
+            /* Decode register */
+            SN_Register reg_s;
+            int len;
+
+            XMEMSET(&reg_s, 0, sizeof(SN_Register));
+
+            rc = SN_Decode_Register(client->rx_buf, client->packet.buf_len,
+                    &reg_s);
+
+            if (rc > 0) {
+                /* Initialize the regack */
+                reg_s.regack.packet_id = reg_s.packet_id;
+                reg_s.regack.topicId = reg_s.topicId;
+                reg_s.regack.return_code = SN_RC_NOTSUPPORTED;
+
+                /* Call the register callback to allow app to
+                   handle new topic ID assignment. */
+                if (client->reg_cb != NULL) {
+                     rc = client->reg_cb(reg_s.topicId,
+                            reg_s.topicName, client->reg_ctx);
+                     /* Set the regack return code */
+                     reg_s.regack.return_code = (rc >= 0) ? SN_RC_ACCEPTED :
+                             SN_RC_INVTOPICNAME;
+                }
+
+                /* Encode the register acknowledgment */
+                rc = SN_Encode_RegAck(client->tx_buf, client->tx_buf_len,
+                        &reg_s.regack);
+                if (rc <= 0) { return rc; }
+                len = rc;
+
+                /* Send regack packet */
+                rc = MqttPacket_Write(client, client->tx_buf, len);
+                if (rc != len) { return rc; }
+            }
+
+            break;
+        }
         case SN_MSG_TYPE_REGACK:
         {
             /* Decode register ack */
@@ -2317,6 +2357,61 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             rc = SN_Decode_Ping(client->rx_buf, client->packet.buf_len);
             break;
         }
+        case SN_MSG_TYPE_PING_REQ:
+        {
+            int len;
+
+            /* Decode ping */
+            rc = SN_Decode_Ping(client->rx_buf, client->packet.buf_len);
+            if (rc <= 0) { return rc; }
+
+            /* Encode the ping packet as a response */
+            rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, NULL,
+                    SN_MSG_TYPE_PING_RESP);
+            if (rc <= 0) { return rc; }
+            len = rc;
+
+            /* Send ping resp packet */
+            rc = MqttPacket_Write(client, client->tx_buf, len);
+            if (rc != len) { return rc; }
+
+            break;
+        }
+        case SN_MSG_TYPE_WILLTOPICRESP:
+        {
+            /* Decode Will Topic Response */
+            SN_WillTopicResp resp_s, *resp = &resp_s;
+            if (packet_obj) {
+                resp = (SN_WillTopicResp*)packet_obj;
+            }
+            else {
+                XMEMSET(resp, 0, sizeof(SN_WillTopicResp));
+            }
+            rc = SN_Decode_WillTopicResponse(client->rx_buf,
+                    client->packet.buf_len, &resp->return_code);
+            break;
+        }
+        case SN_MSG_TYPE_WILLMSGRESP:
+        {
+            /* Decode Will Message Response */
+            SN_WillMsgResp resp_s, *resp = &resp_s;
+            if (packet_obj) {
+                resp = (SN_WillMsgResp*)packet_obj;
+            }
+            else {
+                XMEMSET(resp, 0, sizeof(SN_WillMsgResp));
+            }
+            rc = SN_Decode_WillMsgResponse(client->rx_buf,
+                    client->packet.buf_len, &resp->return_code);
+            break;
+        }
+        case SN_MSG_TYPE_DISCONNECT:
+        {
+            /* Decode Disconnect */
+            rc = SN_Decode_Disconnect(client->rx_buf, client->packet.buf_len);
+            break;
+        }
+
         default:
         {
             /* Other types are server side only, ignore */
@@ -2440,6 +2535,20 @@ wait_again:
 }
 
 /* Public Functions */
+
+int SN_Client_SetRegisterCallback(MqttClient *client,
+        SN_ClientRegisterCb regCb,
+        void* ctx)
+{
+    if (client == NULL)
+        return MQTT_CODE_ERROR_BAD_ARG;
+
+    client->reg_cb = regCb;
+    client->reg_ctx = ctx;
+
+    return MQTT_CODE_SUCCESS;
+}
+
 int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
 {
     int rc, len = 0;
@@ -2472,6 +2581,53 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
         client->cmd_timeout_ms);
 
     return rc;
+}
+
+static int SN_Client_Will(MqttClient *client, SN_Will *will)
+{
+    int rc, len;
+
+    /* Validate required arguments */
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Wait for Will Topic Request packet */
+    rc = SN_Client_WaitType(client, will,
+            SN_MSG_TYPE_WILLTOPICREQ, 0, client->cmd_timeout_ms);
+    if (rc == 0) {
+
+        /* Encode Will Topic */
+        len = rc = SN_Encode_WillTopic(client->tx_buf, client->tx_buf_len, will);
+        if (rc > 0) {
+
+            /* Send Will Topic packet */
+            rc = MqttPacket_Write(client, client->tx_buf, len);
+            if ((will != NULL) && (rc == len)) {
+
+                /* Wait for Will Message Request */
+                rc = SN_Client_WaitType(client, &will->resp.msgResp,
+                        SN_MSG_TYPE_WILLMSGREQ, 0, client->cmd_timeout_ms);
+
+                if (rc == 0) {
+
+                    /* Encode Will Message */
+                    len = rc = SN_Encode_WillMsg(client->tx_buf,
+                        client->tx_buf_len, will);
+                    if (rc > 0) {
+
+                        /* Send Will Topic packet */
+                        rc = MqttPacket_Write(client, client->tx_buf, len);
+                        if (rc == len)
+                            rc = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    return rc;
+
 }
 
 int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
@@ -2524,53 +2680,6 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
     return rc;
 }
 
-int SN_Client_Will(MqttClient *client, SN_Will *will)
-{
-    int rc, len;
-
-    /* Validate required arguments */
-    if (client == NULL) {
-        return MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-    /* Wait for Will Topic Request packet */
-    rc = SN_Client_WaitType(client, will,
-            SN_MSG_TYPE_WILLTOPICREQ, 0, client->cmd_timeout_ms);
-    if (rc == 0) {
-
-        /* Encode Will Topic */
-        len = rc = SN_Encode_WillTopic(client->tx_buf, client->tx_buf_len, will);
-        if (rc > 0) {
-
-            /* Send Will Topic packet */
-            rc = MqttPacket_Write(client, client->tx_buf, len);
-            if ((will != NULL) && (rc == len)) {
-
-                /* Wait for Will Message Request */
-                rc = SN_Client_WaitType(client, &will->resp.msgResp,
-                        SN_MSG_TYPE_WILLMSGREQ, 0, client->cmd_timeout_ms);
-
-                if (rc == 0) {
-
-                    /* Encode Will Message */
-                    len = rc = SN_Encode_WillMsg(client->tx_buf,
-                        client->tx_buf_len, will);
-                    if (rc > 0) {
-
-                        /* Send Will Topic packet */
-                        rc = MqttPacket_Write(client, client->tx_buf, len);
-                        if (rc == len)
-                            rc = 0;
-                    }
-                }
-            }
-        }
-    }
-
-    return rc;
-
-}
-
 int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
 {
     int rc = 0, len = 0;
@@ -2591,7 +2700,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
             if (will != NULL) {
                 /* Wait for Will Topic Update Response packet */
                 rc = SN_Client_WaitType(client, &will->resp.topicResp,
-                        SN_MSG_TYPE_WILLTOPICREQ, 0, client->cmd_timeout_ms);
+                        SN_MSG_TYPE_WILLTOPICRESP, 0, client->cmd_timeout_ms);
             }
         }
     }
@@ -2617,7 +2726,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         rc = MqttPacket_Write(client, client->tx_buf, len);
         if (rc == len) {
             /* Wait for Will Message Update Response packet */
-            rc = SN_Client_WaitType(client, &will->resp.msgUpd,
+            rc = SN_Client_WaitType(client, &will->resp.msgResp,
                     SN_MSG_TYPE_WILLMSGRESP, 0, client->cmd_timeout_ms);
         }
     }
@@ -2700,7 +2809,8 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             }
 
             /* if not expecting a reply, the reset state and exit */
-            if (publish->qos == MQTT_QOS_0) {
+            if ((publish->qos == MQTT_QOS_0) ||
+                (publish->qos == MQTT_QOS_3)) {
                 publish->stat = MQTT_MSG_BEGIN;
                 break;
             }
@@ -2713,7 +2823,8 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             publish->stat = MQTT_MSG_WAIT;
 
             /* Handle QoS */
-            if (publish->qos > MQTT_QOS_0) {
+            if ((publish->qos == MQTT_QOS_1) ||
+                (publish->qos == MQTT_QOS_2)) {
 
                 XMEMSET(&publish->resp, 0, sizeof(SN_PublishResp));
 
@@ -2829,8 +2940,9 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     }
 
     if (ping->stat == MQTT_MSG_BEGIN) {
-        /* Encode the ping packet */
-        rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, ping);
+        /* Encode the ping packet as a request */
+        rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, ping,
+                SN_MSG_TYPE_PING_REQ);
         if (rc <= 0) { return rc; }
         len = rc;
 
@@ -2871,7 +2983,11 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     rc = MqttPacket_Write(client, client->tx_buf, len);
     if (rc != len) { return rc; }
 
-    /* No response for MQTT disconnect packet */
+    /* If sleep was set, wait for response disconnect packet */
+    if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
+        rc = SN_Client_WaitType(client, NULL,
+                SN_MSG_TYPE_DISCONNECT, 0, client->cmd_timeout_ms);
+    }
 
     return MQTT_CODE_SUCCESS;
 }

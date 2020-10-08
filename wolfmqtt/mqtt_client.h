@@ -113,7 +113,21 @@ typedef struct _MqttSk {
 #ifdef WOLFMQTT_PROPERTY_CB
     typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
 #endif
-
+#ifdef WOLFMQTT_SN
+    /*! \brief      Mqtt-SN Register Callback
+     *  \discussion A GW sends a REGISTER message to a client if it wants to
+        inform that client about the topic name and the assigned topic id that
+        it will use later on when sending PUBLISH messages of the corresponding
+        topic name. This callback allows the client to accept and save the new
+        ID, or reject it if the ID is unknown. If the callback is not defined,
+        then the regack will contain the "unsupported" return code.
+     *  \param      topicId     New topic ID value
+     *  \param      topicName   Pointer to topic name
+     *  \param      reg_ctx     Pointer to user context
+     *  \return     >= 0        Indicates acceptance
+     */
+    typedef int (*SN_ClientRegisterCb)(word16 topicId, const char* topicName, void *reg_ctx);
+#endif
 
 /* Client structure */
 typedef struct _MqttClient {
@@ -138,6 +152,8 @@ typedef struct _MqttClient {
     MqttObject   msg;   /* generic incoming message used by MqttClient_WaitType */
 #ifdef WOLFMQTT_SN
     SN_Object    msgSN;
+    SN_ClientRegisterCb reg_cb;
+    void               *reg_ctx;
 #endif
     void*        ctx;   /* user supplied context for publish callbacks */
 
@@ -473,8 +489,10 @@ WOLFMQTT_API int SN_Client_SearchGW(
         SN_SearchGw *search);
 
 /*! \brief      Encodes and sends the Connect packet and waits for the
-                Connect Acknowledgment packet. If Will is enabled, then gateway
-                prompts for LWT Topic and Message.
+                Connect Acknowledgment packet. If Will is enabled, the gateway
+                prompts for LWT Topic and Message. Sending an empty will topic
+                indicates that the client wishes to delete the Will topic and
+                the Will message stored in the server.
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      connect     Pointer to SN_Connect structure initialized
@@ -485,22 +503,6 @@ WOLFMQTT_API int SN_Client_SearchGW(
 WOLFMQTT_API int SN_Client_Connect(
     MqttClient *client,
     SN_Connect *connect);
-
-/*! \brief      Encodes and sends the MQTT-SN Will Topic packet. If 'will' is
-                non-NULL, first waits for the WillTopicReq and WillMsgReq packet
-                before sending WillMsg. Sending a NULL 'will' indicates that
-                the client wishes to delete the Will topic and the Will message
-                stored in the server.
- *  \discussion This is a blocking function that will wait for MqttNet.read
- *  \param      client      Pointer to MqttClient structure
- *  \param      will        Pointer to SN_Will structure initialized
-                            with topic and message parameters. NULL is valid.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
- */
-WOLFMQTT_API int SN_Client_Will(
-    MqttClient *client,
-    SN_Will *will);
 
 /*! \brief      Encodes and sends the MQTT-SN Will Topic Update packet. Sending
                 a NULL 'will' indicates that the client wishes to delete the
@@ -515,8 +517,6 @@ WOLFMQTT_API int SN_Client_Will(
 WOLFMQTT_API int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will);
 
 /*! \brief      Encodes and sends the MQTT-SN Will Message Update packet.
-                Sending a NULL 'will' indicates that the client wishes to
-                delete the Will topic and the Will message stored in the server.
  *  \discussion This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      will        Pointer to SN_Will structure initialized
@@ -540,6 +540,20 @@ WOLFMQTT_API int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will);
 WOLFMQTT_API int SN_Client_Register(
     MqttClient *client,
     SN_Register *regist);
+
+
+/*! \brief      Sets a register callback with custom context
+ *  \param      client      Pointer to MqttClient structure
+                            (uninitialized is okay)
+ *  \param      regCb       Pointer to register callback function
+ *  \param      ctx         Pointer to your own context
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ */
+WOLFMQTT_API int SN_Client_SetRegisterCallback(
+    MqttClient *client,
+    SN_ClientRegisterCb regCb,
+    void* ctx);
+
 
 /*! \brief      Encodes and sends the MQTT-SN Publish packet and waits for the
                 Publish response (if QoS > 0).

@@ -91,6 +91,16 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
+/* The Register callback is used when the gateway
+   assigns a new topic ID to a topic name. */
+static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
+{
+    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId, topicName);
+    (void)ctx;
+
+    return(MQTT_CODE_SUCCESS);
+}
+
 int sn_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -138,25 +148,32 @@ int sn_test(MQTTCtx *mqttCtx)
         goto exit;
     }
 
+    /* Set the Register callback used when the gateway
+       assigns a new topic ID to a topic name. */
+    rc = SN_Client_SetRegisterCallback(&mqttCtx->client, sn_reg_callback, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        goto exit;
+    }
+
     {
         SN_Connect connect_s, *connect = &connect_s;
         /* Build connect packet */
         XMEMSET(connect, 0, sizeof(SN_Connect));
-        connect_s.keep_alive_sec = mqttCtx->keep_alive_sec;
-        connect_s.clean_session = mqttCtx->clean_session;
-        connect_s.client_id = mqttCtx->client_id;
+        connect->keep_alive_sec = mqttCtx->keep_alive_sec;
+        connect->clean_session = mqttCtx->clean_session;
+        connect->client_id = mqttCtx->client_id;
         connect->protocol_level = SN_PROTOCOL_ID;
 
         /* Last will and testament sent by broker to subscribers
             of topic when broker connection is lost */
-        connect_s.enable_lwt = mqttCtx->enable_lwt;
-        if (connect_s.enable_lwt) {
+        connect->enable_lwt = mqttCtx->enable_lwt;
+        if (connect->enable_lwt) {
             /* Send client id in LWT payload */
-            connect_s.will.qos = mqttCtx->qos;
-            connect_s.will.retain = 0;
-            connect_s.will.willTopic = WOLFMQTT_TOPIC_NAME"lwttopic";
-            connect_s.will.willMsg = (byte*)mqttCtx->client_id;
-            connect_s.will.willMsgLen =
+            connect->will.qos = mqttCtx->qos;
+            connect->will.retain = 0;
+            connect->will.willTopic = WOLFMQTT_TOPIC_NAME"lwttopic";
+            connect->will.willMsg = (byte*)mqttCtx->client_id;
+            connect->will.willMsgLen =
               (word16)XSTRLEN(mqttCtx->client_id);
         }
 
@@ -219,12 +236,36 @@ int sn_test(MQTTCtx *mqttCtx)
     }
 
     {
+        /* Subscribe Wildcard Topic - This allows the gateway to send a
+           REGISTER command when another client publishes to a topic that
+           matches this topic wildcard. This will trigger the register
+           callback. */
+        SN_Subscribe subscribe;
+
+        XMEMSET(&subscribe, 0, sizeof(SN_Subscribe));
+
+        subscribe.duplicate = 0;
+        subscribe.qos = MQTT_QOS_0;
+        subscribe.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+        subscribe.topicNameId = WOLFMQTT_TOPIC_NAME"#";
+        subscribe.packet_id = mqtt_get_packetid();
+
+        PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
+        rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+
+        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+                subscribe.subAck.topicId, subscribe.subAck.return_code);
+    }
+
+    {
         /* Publish Topic */
         XMEMSET(&mqttCtx->publishSN, 0, sizeof(SN_Publish));
         mqttCtx->publishSN.retain = 0;
         mqttCtx->publishSN.qos = mqttCtx->qos;
         mqttCtx->publishSN.duplicate = 0;
         mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+
+        /* Use the topic ID saved from the subscribe */
         mqttCtx->publishSN.topic_name = (char*)&topicID;
         if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
             mqttCtx->publishSN.packet_id = mqtt_get_packetid();
@@ -260,10 +301,10 @@ int sn_test(MQTTCtx *mqttCtx)
         subscribe.topicNameId = SHORT_TOPIC_NAME;
         subscribe.packet_id = mqtt_get_packetid();
 
-        PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
+        PRINTF("MQTT-SN Subscribe Short Topic: topic name = %s", subscribe.topicNameId);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
-        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+        PRINTF("....MQTT-SN Subscribe Short Topic Ack: topic id = %d, rc = %d",
                 subscribe.subAck.topicId, subscribe.subAck.return_code);
 
         /* Short Topic Name Publish */
@@ -285,7 +326,7 @@ int sn_test(MQTTCtx *mqttCtx)
 
         rc = SN_Client_Publish(&mqttCtx->client, &publish);
 
-        PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
+        PRINTF("MQTT-SN Publish Short Topic: topic id = %d, rc = %d\r\nPayload = %s",
             (word16)*publish.topic_name,
             publish.return_code,
             publish.buffer);
@@ -293,6 +334,34 @@ int sn_test(MQTTCtx *mqttCtx)
             goto disconn;
         }
     }
+
+#if 0
+    /* Disabled because will topic and message update are not currently
+       supported by Paho MQTT-SN Gateway */
+    {
+        /* Will Topic and Message update */
+        SN_Will willUpdate;
+        char willTopicName[] = WOLFMQTT_TOPIC_NAME"lastWishes";
+        char willTopicMsg[] = "I'LL BE BACK";
+
+        XMEMSET(&willUpdate, 0, sizeof(SN_Will));
+
+        /* Set new topic */
+        willUpdate.willTopic = willTopicName;
+        PRINTF("MQTT-SN Will Topic Update: topic name = %s", willUpdate.willTopic);
+        rc = SN_Client_WillTopicUpdate(&mqttCtx->client, &willUpdate);
+        PRINTF("....MQTT-SN Will Topic Update: response = %d, rc = %d",
+                willUpdate.resp.topicResp.return_code, rc);
+
+        /* Set new message*/
+        willUpdate.willMsg = (byte*)willTopicMsg;
+        willUpdate.willMsgLen = XSTRLEN(willTopicMsg);
+        PRINTF("MQTT-SN Will Message Update: message = %s", willUpdate.willMsg);
+        rc = SN_Client_WillMsgUpdate(&mqttCtx->client, &willUpdate);
+        PRINTF("....MQTT-SN Will Message Update: response = %d, rc = %d",
+                willUpdate.resp.msgResp.return_code, rc);
+    }
+#endif
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
@@ -352,14 +421,14 @@ int sn_test(MQTTCtx *mqttCtx)
 
             rc = SN_Client_Ping(&mqttCtx->client, NULL);
             if (rc != MQTT_CODE_SUCCESS) {
-                PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
+                PRINTF("MQTT Ping Keep Alive Error: %s (rc = %d)",
                     MqttClient_ReturnCodeToString(rc), rc);
                 break;
             }
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
-            PRINTF("MQTT-SN Message Wait Error: %s (%d)",
+            PRINTF("MQTT-SN Message Wait Error: %s (rc = %d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
@@ -385,7 +454,7 @@ int sn_test(MQTTCtx *mqttCtx)
         /* Unsubscribe Topics */
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
 
-        PRINTF("MQTT Unsubscribe: %s (%d)",
+        PRINTF("MQTT Unsubscribe: %s (rc = %d)",
             MqttClient_ReturnCodeToString(rc), rc);
         if (rc != MQTT_CODE_SUCCESS) {
             goto disconn;
@@ -393,11 +462,50 @@ int sn_test(MQTTCtx *mqttCtx)
         mqttCtx->return_code = rc;
     }
 
+    {
+        /* Demonstrate client sleep cycle using disconnect with a sleep timer */
+        SN_Disconnect disconnect;
+
+        XMEMSET(&disconnect, 0, sizeof(SN_Disconnect));
+
+        /* Set disconnect sleep timer */
+        disconnect.sleepTmr = 30;
+
+        /* Disconnect */
+        rc = SN_Client_Disconnect_ex(&mqttCtx->client, &disconnect);
+
+        PRINTF("MQTT Disconnect with sleep: %s (rc = %d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
+
+        /* Do low power state. Published messages from the broker will be
+           queued in the gateway.*/
+
+        /* Awake state: Send a ping req with client ID to retrieve buffered
+           messages. */
+        {
+            SN_PingReq ping;
+            XMEMSET(&ping, 0, sizeof(SN_PingReq));
+
+            ping.clientId = (char*)mqttCtx->client_id;
+
+            rc = SN_Client_Ping(&mqttCtx->client, &ping);
+            if (rc != MQTT_CODE_SUCCESS) {
+                PRINTF("MQTT Ping Keep Alive Error: %s (rc = %d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
+                goto disconn;
+            }
+        }
+    }
+
+
 disconn:
     /* Disconnect */
     rc = SN_Client_Disconnect(&mqttCtx->client);
 
-    PRINTF("MQTT Disconnect: %s (%d)",
+    PRINTF("MQTT Disconnect: %s (rc = %d)",
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         goto disconn;
@@ -405,7 +513,7 @@ disconn:
 
     rc = MqttClient_NetDisconnect(&mqttCtx->client);
 
-    PRINTF("MQTT Socket Disconnect: %s (%d)",
+    PRINTF("MQTT Socket Disconnect: %s (rc = %d)",
         MqttClient_ReturnCodeToString(rc), rc);
 
 exit:
@@ -458,6 +566,7 @@ int main(int argc, char** argv)
     /* init defaults */
     mqtt_init_ctx(&mqttCtx);
     mqttCtx.app_name = "sn-client";
+    mqttCtx.client_id = DEFAULT_CLIENT_ID"-SN";
 
     /* Settings for MQTT-SN gateway */
     mqttCtx.host = "localhost";
