@@ -134,7 +134,7 @@ This example enables the wolfMQTT client to connect to the IBM Watson Internet o
 ### MQTT-SN Example
 The Sensor Network client implements the MQTT-SN protocol for low-bandwidth networks. There are several differences from MQTT, including the ability to use a two byte Topic ID instead the full topic during subscribe and publish. The SN client requires an MQTT-SN gateway. The gateway acts as an intermediary between the SN clients and the broker. This client was tested with the Eclipse Paho MQTT-SN Gateway, which connects by default to the public Eclipse broker, much like our wolfMQTT Client example. The address of the gateway must be configured as the host. The example is located in `/examples/sn-client/`.
 
-A special feature of MQTT-SN is the ability to use QoS level -1 to publish to a predefined topic without connecting to the gateway. There is an example provided in `/examples/sn-client/sn-client_qos-1`. It requires some configuration changes of the gateway. 
+A special feature of MQTT-SN is the ability to use QoS level -1 (negative one) to publish to a predefined topic without first connecting to the gateway. There is no feedback in the application if there was an error, so confirmation of the test would involve running the `sn-client` first and watching for the publish from the `sn-client_qos-1`. There is an example provided in `/examples/sn-client/sn-client_qos-1`. It requires some configuration changes of the gateway.
 
 * Enable the the QoS-1 feature, predefined topics, and change the gateway name in `gateway.conf`:
 

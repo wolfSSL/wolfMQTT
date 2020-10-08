@@ -341,9 +341,10 @@ int sn_test(MQTTCtx *mqttCtx)
     {
         /* Will Topic and Message update */
         SN_Will willUpdate;
-        XMEMSET(&willUpdate, 0, sizeof(SN_Will));
         char willTopicName[] = WOLFMQTT_TOPIC_NAME"lastWishes";
         char willTopicMsg[] = "I'LL BE BACK";
+
+        XMEMSET(&willUpdate, 0, sizeof(SN_Will));
 
         /* Set new topic */
         willUpdate.willTopic = willTopicName;
