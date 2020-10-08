@@ -193,7 +193,10 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     PRINTF("-l          Enable LWT (Last Will and Testament)");
     PRINTF("-u <str>    Username");
     PRINTF("-w <str>    Password");
-    PRINTF("-m <str>    Message, default: %s", mqttCtx->message);
+    if (mqttCtx->message) {
+        /* Only mqttclient example can set message from CLI */
+        PRINTF("-m <str>    Message, default: %s", mqttCtx->message);
+    }
     PRINTF("-n <str>    Topic name, default: %s", mqttCtx->topic_name);
     PRINTF("-r          Set Retain flag on publish message");
     PRINTF("-C <num>    Command Timeout, default: %dms",
@@ -218,7 +221,6 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->keep_alive_sec = DEFAULT_KEEP_ALIVE_SEC;
     mqttCtx->client_id = kDefClientId;
     mqttCtx->topic_name = kDefTopicName;
-    mqttCtx->message = DEFAULT_MESSAGE;
     mqttCtx->cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
 #ifdef WOLFMQTT_V5
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
