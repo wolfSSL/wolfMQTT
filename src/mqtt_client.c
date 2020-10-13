@@ -2760,13 +2760,25 @@ int SN_Client_SetRegisterCallback(MqttClient *client,
         SN_ClientRegisterCb regCb,
         void* ctx)
 {
+    int rc = MQTT_CODE_SUCCESS;
+
     if (client == NULL)
         return MQTT_CODE_ERROR_BAD_ARG;
 
-    client->reg_cb = regCb;
-    client->reg_ctx = ctx;
+#ifdef WOLFMQTT_MULTITHREAD
+    rc = wm_SemLock(&client->lockClient);
+    if (rc == 0) {
+#endif
 
-    return MQTT_CODE_SUCCESS;
+        client->reg_cb = regCb;
+        client->reg_ctx = ctx;
+
+#ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockClient);
+    }
+#endif
+
+    return rc;
 }
 
 int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
@@ -2909,9 +2921,6 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
         if (rc > 0) {
             /* Send Will Topic packet */
             rc = MqttPacket_Write(client, client->tx_buf, len);
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
             if (rc == len) {
                 rc = 0;
             }
@@ -3294,8 +3303,8 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
         rc = wm_SemLock(&client->lockClient);
         if (rc == 0) {
             /* inform other threads of expected response */
-            rc = MqttClient_RespList_Add(client, SN_MSG_TYPE_SUBACK, 0,
-                &subscribe->pendResp, &subscribe->subAck);
+            rc = MqttClient_RespList_Add(client, SN_MSG_TYPE_SUBACK,
+                subscribe->packet_id, &subscribe->pendResp, &subscribe->subAck);
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
@@ -3627,8 +3636,8 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
         rc = wm_SemLock(&client->lockClient);
         if (rc == 0) {
             /* inform other threads of expected response */
-            rc = MqttClient_RespList_Add(client, SN_MSG_TYPE_REGACK, 0,
-                &regist->pendResp, &regist->regack);
+            rc = MqttClient_RespList_Add(client, SN_MSG_TYPE_REGACK,
+                    regist->packet_id, &regist->pendResp, &regist->regack);
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
