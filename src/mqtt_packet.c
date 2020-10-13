@@ -2824,8 +2824,7 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     }
     else {
         /* Topic ID */
-        tx_payload += MqttEncode_Num(tx_payload,
-                (word16)*subscribe->topicNameId);
+        XMEMCPY(tx_payload, subscribe->topicNameId, 2);
     }
     (void)tx_payload;
 
@@ -3147,8 +3146,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     }
     else {
         /* Topic ID or Short name */
-        tx_payload += MqttEncode_Num(tx_payload,
-                (word16)unsubscribe->topicNameId[0]);
+        XMEMCPY(tx_payload, unsubscribe->topicNameId, 2);
     }
 
     (void)tx_payload;

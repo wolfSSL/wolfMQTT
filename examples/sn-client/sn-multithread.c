@@ -354,7 +354,7 @@ static void *subscribe_task(void *param)
     rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
     PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
-            subscribe.subAck.topicId, subscribe.subAck.return_code);
+            subscribe.subAck.topicId, (rc != 0) ? rc : subscribe.subAck.return_code);
 
     if ((rc == 0) && (subscribe.subAck.return_code == SN_RC_ACCEPTED)) {
         /* Topic ID is returned in SubAck */
@@ -632,6 +632,8 @@ int main(int argc, char** argv)
     /* init defaults */
     mqtt_init_ctx(&gMqttCtx);
     gMqttCtx.app_name = "wolfMQTT-SN multithread client";
+    gMqttCtx.client_id = DEFAULT_CLIENT_ID"-SN-MT";
+
     /* Settings for MQTT-SN gateway */
     gMqttCtx.host = "localhost";
     gMqttCtx.port = 10000;
