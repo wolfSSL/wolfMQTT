@@ -355,7 +355,7 @@ static void *subscribe_task(void *param)
 
     XMEMSET(&subscribe, 0, sizeof(SN_Subscribe));
 
-    /* Subscribe Topic */
+    /* Subscribe to wildcard topic so register callback can be used */
     subscribe.duplicate = 0;
     subscribe.qos = MQTT_QOS_0;
     subscribe.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
@@ -367,11 +367,6 @@ static void *subscribe_task(void *param)
 
     PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
             subscribe.subAck.topicId, (rc != 0) ? rc : subscribe.subAck.return_code);
-
-    if ((rc == 0) && (subscribe.subAck.return_code == SN_RC_ACCEPTED)) {
-        /* Topic ID is returned in SubAck */
-        topicID = subscribe.subAck.topicId;
-    }
 
     THREAD_EXIT(0);
 }
