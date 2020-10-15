@@ -523,6 +523,7 @@ int mqtt_tls_cb(MqttClient* client)
             if (rc != WOLFSSL_SUCCESS) {
                 PRINTF("Error loading CA %s: %d (%s)", mTlsCaFile, 
                     rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
             }
         }
         if (mTlsCertFile && mTlsKeyFile) {
@@ -532,12 +533,14 @@ int mqtt_tls_cb(MqttClient* client)
             if (rc != WOLFSSL_SUCCESS) {
                 PRINTF("Error loading certificate %s: %d (%s)", mTlsCertFile, 
                     rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
             }
             rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
                 mTlsKeyFile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
                 PRINTF("Error loading key %s: %d (%s)", mTlsKeyFile, 
                     rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
             }
         }
     #else
