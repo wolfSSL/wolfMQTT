@@ -301,6 +301,13 @@ enum MqttPacketResponseCodes {
 #endif
 #endif
 
+/* No return macro */
+#if defined(__IAR_SYSTEMS_ICC__) || defined(__GNUC__)
+    #define WOLFMQTT_NORETURN __attribute__((noreturn))
+#else
+    #define WOLFMQTT_NORETURN
+#endif
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif
