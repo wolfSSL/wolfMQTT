@@ -2473,7 +2473,7 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
         case SN_MSG_TYPE_WILLTOPICRESP:
         {
             /* Decode Will Topic Response */
-            SN_WillTopicResp *resp;
+            SN_WillTopicResp resp_s, *resp = &resp_s;
             if (packet_obj) {
                 resp = (SN_WillTopicResp*)packet_obj;
             }
@@ -2487,7 +2487,7 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
         case SN_MSG_TYPE_WILLMSGRESP:
         {
             /* Decode Will Message Response */
-            SN_WillMsgResp *resp;
+            SN_WillMsgResp resp_s, *resp = &resp_s;
             if (packet_obj) {
                 resp = (SN_WillMsgResp*)packet_obj;
             }
