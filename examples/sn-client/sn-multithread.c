@@ -156,7 +156,7 @@ static void client_cleanup(MQTTCtx *mqttCtx)
     MqttClient_DeInit(&mqttCtx->client);
 }
 
-static void client_exit(MQTTCtx *mqttCtx)
+WOLFMQTT_NORETURN static void client_exit(MQTTCtx *mqttCtx)
 {
     client_cleanup(mqttCtx);
     exit(1);
