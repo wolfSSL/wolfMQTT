@@ -40,6 +40,8 @@ static char* myoptarg = NULL;
 
 #ifdef ENABLE_MQTT_TLS
 static const char* mTlsCaFile;
+static const char* mTlsCertFile;
+static const char* mTlsKeyFile;
 #endif
 
 static int mygetopt(int argc, char** argv, const char* optstring)
@@ -178,7 +180,9 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
             MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
     PRINTF("-t          Enable TLS");
-    PRINTF("-c <file>   Use provided certificate file");
+    PRINTF("-A <file>   Load CA (validate peer)");
+    PRINTF("-K <key>    Use private key (for TLS mutual auth)");
+    PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");
 #else
     PRINTF("-p <num>    Port to connect on, default: %d",
             MQTT_DEFAULT_PORT);
@@ -234,7 +238,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     int rc;
 
     #ifdef ENABLE_MQTT_TLS
-        #define MQTT_TLS_ARGS "c:"
+        #define MQTT_TLS_ARGS "c:A:K:"
     #else
         #define MQTT_TLS_ARGS ""
     #endif
@@ -323,8 +327,14 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             break;
 
     #ifdef ENABLE_MQTT_TLS
-        case 'c':
+        case 'A':
             mTlsCaFile = myoptarg;
+            break;
+        case 'c':
+            mTlsCertFile = myoptarg;
+            break;
+        case 'K':
+            mTlsKeyFile = myoptarg;
             break;
     #endif
 
@@ -507,49 +517,51 @@ int mqtt_tls_cb(MqttClient* client)
 #if !defined(NO_CERT)
     #if !defined(NO_FILESYSTEM)
         if (mTlsCaFile) {
-
             /* Load CA certificate file */
             rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx,
-                    mTlsCaFile, NULL);
-
-            /* If using a client certificate it can be loaded using: */
-            /*
+                mTlsCaFile, NULL);
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("Error loading CA %s: %d (%s)", mTlsCaFile, 
+                    rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
+            }
+        }
+        if (mTlsCertFile && mTlsKeyFile) {
+            /* Load If using a mutual authentication */
             rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
-                                    mTlsCaFile, WOLFSSL_FILETYPE_PEM);
-            */
+                mTlsCertFile, WOLFSSL_FILETYPE_PEM);
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("Error loading certificate %s: %d (%s)", mTlsCertFile, 
+                    rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
+            }
+            rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
+                mTlsKeyFile, WOLFSSL_FILETYPE_PEM);
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("Error loading key %s: %d (%s)", mTlsKeyFile, 
+                    rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
+            }
         }
     #else
-        if (mTlsCaFile) {
-        #if 0
-            /* As example, load file into buffer for testing */
-            long  caCertSize = 0;
-            byte  caCertBuf[10000];
-            FILE* file = fopen(mTlsCaFile, "rb");
+    #if 0
+        /* Examples for loading buffer directly */
+        /* Load CA certificate buffer */
+        rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx,
+            (const byte*)root_ca, (long)XSTRLEN(root_ca), WOLFSSL_FILETYPE_PEM);
 
-            if (!file) {
-                err_sys("can't open file for CA buffer load");
-            }
-
-            fseek(file, 0, SEEK_END);
-            caCertSize = ftell(file);
-            rewind(file);
-            fread(caCertBuf, sizeof(caCertBuf), 1, file);
-            fclose(file);
-
-            /* Load CA certificate buffer */
-            rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx, caCertBuf,
-                    caCertSize, WOLFSSL_FILETYPE_PEM);
-            /* If using a client certificate it can be loaded using: */
-            /*
+        /* Load Client Cert */
+        if (rc == WOLFSSL_SUCCESS)
             rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
-                        clientCertBuf, clientCertSize, WOLFSSL_FILETYPE_PEM);
-            */
-        #endif
-        }
+                (const byte*)device_cert, (long)XSTRLEN(device_cert),
+                WOLFSSL_FILETYPE_PEM);
 
-        /* If using a client certificate it can be loaded using: */
-        /* rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
-         *               clientCertBuf, clientCertSize, WOLFSSL_FILETYPE_PEM);*/
+        /* Load Private Key */
+        if (rc == WOLFSSL_SUCCESS)
+            rc = wolfSSL_CTX_use_PrivateKey_buffer(client->tls.ctx,
+                (const byte*)device_priv_key, (long)XSTRLEN(device_priv_key),
+                WOLFSSL_FILETYPE_PEM);
+    #endif
     #endif /* !NO_FILESYSTEM */
 #endif /* !NO_CERT */
     }
