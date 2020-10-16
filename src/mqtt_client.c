@@ -755,7 +755,7 @@ wait_again:
             /* Lock recv socket mutex */
             rc = wm_SemLock(&client->lockRecv);
             if (rc != 0) {
-                PRINTF("!!!!LOCK ERROR!!!!");
+                PRINTF("!!!!LOCK ERROR!!!!\n");
                 return rc;
             }
             readLocked = 1;
