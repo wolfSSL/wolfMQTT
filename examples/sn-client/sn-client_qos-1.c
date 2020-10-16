@@ -45,7 +45,7 @@ static int mStopRead = 0;
 char    SHORT_TOPIC_NAME[] = {1};
 
 
-int sn_test(MQTTCtx *mqttCtx)
+int sn_testQoSn1(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
 
@@ -195,7 +195,7 @@ int main(int argc, char** argv)
 #endif
 
 #ifdef WOLFMQTT_SN
-    rc = sn_test(&mqttCtx);
+    rc = sn_testQoSn1(&mqttCtx);
 #else
     (void)argc;
     (void)argv;

@@ -177,14 +177,14 @@ int sn_test(MQTTCtx *mqttCtx)
               (word16)XSTRLEN(mqttCtx->client_id);
         }
 
-        PRINTF("MQTT-SN Broker Connect: broker = %s : %d",
+        PRINTF("MQTT-SN Connect: gateway = %s : %d",
                 mqttCtx->host, mqttCtx->port);
         /* Send Connect and wait for Connect Ack */
         rc = SN_Client_Connect(&mqttCtx->client, connect);
 
         /* Validate Connect Ack info */
         PRINTF("....MQTT-SN Connect Ack: Return Code %u",
-                mqttCtx->connect.ack.return_code);
+                connect->ack.return_code);
         if (rc != MQTT_CODE_SUCCESS) {
             goto disconn;
         }
@@ -254,7 +254,8 @@ int sn_test(MQTTCtx *mqttCtx)
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
         PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
-                subscribe.subAck.topicId, subscribe.subAck.return_code);
+                subscribe.subAck.topicId,
+                (rc == 0) ? subscribe.subAck.return_code : rc);
     }
 
     {
@@ -289,9 +290,10 @@ int sn_test(MQTTCtx *mqttCtx)
     }
 
     {
-        /* Short Topic Name Subscribe */
+        /* Short topic name subscribe */
         SN_Subscribe subscribe;
         SN_Publish publish;
+        SN_Unsubscribe unsub;
 
         XMEMSET(&subscribe, 0, sizeof(SN_Subscribe));
 
@@ -301,13 +303,18 @@ int sn_test(MQTTCtx *mqttCtx)
         subscribe.topicNameId = SHORT_TOPIC_NAME;
         subscribe.packet_id = mqtt_get_packetid();
 
-        PRINTF("MQTT-SN Subscribe Short Topic: topic name = %s", subscribe.topicNameId);
+        PRINTF("MQTT-SN Subscribe Short Topic: topic ID = %s",
+                subscribe.topicNameId);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
+        PRINTF("....MQTT-SN Subscribe Short Topic Ack: topic id = %c%c, rc = %d",
+                ((byte*)&subscribe.subAck.topicId)[1],
+                ((byte*)&subscribe.subAck.topicId)[0],
+                subscribe.subAck.return_code);
 
-        PRINTF("....MQTT-SN Subscribe Short Topic Ack: topic id = %d, rc = %d",
-                subscribe.subAck.topicId, subscribe.subAck.return_code);
-
-        /* Short Topic Name Publish */
+        /* Short topic name publish */
         XMEMSET(&publish, 0, sizeof(SN_Publish));
         publish.retain = 0;
         publish.qos = mqttCtx->qos;
@@ -321,18 +328,30 @@ int sn_test(MQTTCtx *mqttCtx)
             publish.packet_id = 0x00;
         }
 
-        publish.buffer = (byte*)TEST_MESSAGE;
-        publish.total_len = (word16)XSTRLEN(TEST_MESSAGE);
+        publish.buffer = (byte*)TEST_MESSAGE" short";
+        publish.total_len = (word16)XSTRLEN(TEST_MESSAGE" short");
 
         rc = SN_Client_Publish(&mqttCtx->client, &publish);
 
-        PRINTF("MQTT-SN Publish Short Topic: topic id = %d, rc = %d\r\nPayload = %s",
-            (word16)*publish.topic_name,
+        PRINTF("MQTT-SN Publish Short Topic: topic id = %s, rc = %d\r\nPayload = %s",
+            publish.topic_name,
             publish.return_code,
             publish.buffer);
         if (rc != MQTT_CODE_SUCCESS) {
             goto disconn;
         }
+
+        /* Unsubscribe short topic name */
+        XMEMSET(&unsub, 0, sizeof(SN_Unsubscribe));
+
+        unsub.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+        unsub.topicNameId = SHORT_TOPIC_NAME;
+        unsub.packet_id = mqtt_get_packetid();
+
+        PRINTF("MQTT-SN Unsubscribe Short Topic: topic ID = %s",
+                unsub.topicNameId);
+        rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsub);
+        PRINTF("....MQTT-SN Unsubscribe Short Topic Ack: rc = %d", rc);
     }
 
 #if 0
@@ -421,7 +440,7 @@ int sn_test(MQTTCtx *mqttCtx)
 
             rc = SN_Client_Ping(&mqttCtx->client, NULL);
             if (rc != MQTT_CODE_SUCCESS) {
-                PRINTF("MQTT Ping Keep Alive Error: %s (rc = %d)",
+                PRINTF("MQTT-SN Ping Keep Alive Error: %s (rc = %d)",
                     MqttClient_ReturnCodeToString(rc), rc);
                 break;
             }
@@ -440,18 +459,13 @@ int sn_test(MQTTCtx *mqttCtx)
     }
 
     {
-        /* Unsubscribe Topics */
+        /* Unsubscribe Topic */
         SN_Unsubscribe unsubscribe;
 
-        /* Build list of topics */
         XMEMSET(&unsubscribe, 0, sizeof(SN_Unsubscribe));
-
         unsubscribe.topicNameId = mqttCtx->topic_name;
-
-        /* Subscribe Topic */
         unsubscribe.packet_id = mqtt_get_packetid();
 
-        /* Unsubscribe Topics */
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
 
         PRINTF("MQTT Unsubscribe: %s (rc = %d)",

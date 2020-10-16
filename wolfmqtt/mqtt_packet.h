@@ -767,7 +767,8 @@ typedef enum _SN_MsgType {
     /* 0x1E - 0xFD reserved */
     SN_MSG_TYPE_ENCAPMSG        = 0xFE,    /* Encapsulated message */
     /* 0xFF reserved */
-    SN_MSG_TYPE_RESERVED        = 0xFF
+    SN_MSG_TYPE_RESERVED        = 0xFF,
+    SN_MQTT_PACKET_TYPE_ANY     = 0xFF
 } SN_MsgType;
 
 /* Topic ID types */
@@ -814,6 +815,9 @@ typedef struct _SN_GwInfo {
 
 typedef struct _SN_SearchGw {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     byte radius; /* Broadcast radius (in hops) */
     SN_GwInfo gwInfo;
@@ -835,6 +839,9 @@ typedef struct _SN_ConnectAck {
 /* WILL TOPIC */
 typedef struct _SN_WillTopicUpd {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     byte flags;
     char* willTopic; /* contains the Will topic name */
@@ -842,6 +849,9 @@ typedef struct _SN_WillTopicUpd {
 
 typedef struct _SN_WillMsgUpd {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     char* willMsg;
 } SN_WillMsgUpd;
@@ -863,6 +873,9 @@ typedef union _SN_WillResp {
 
 typedef struct _SN_Will {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     byte qos;
     byte retain;
@@ -876,6 +889,9 @@ typedef struct _SN_Will {
 /* Connect */
 typedef struct _SN_Connect {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     word16 keep_alive_sec;
     byte clean_session;
@@ -903,6 +919,9 @@ typedef struct _SN_RegAck {
 
 typedef struct _SN_Register {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     word16 topicId;
     word16 packet_id;
@@ -930,6 +949,9 @@ typedef struct _SN_PublishResp {
 /* PUBLISH protocol */
 typedef struct _SN_Publish {
     MqttMsgStat stat; /* must be first member at top */
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     /* BEGIN: THIS SECTION NEEDS TO MATCH MqttMessage */
     word16      packet_id;
@@ -972,6 +994,9 @@ typedef struct _SN_SubAck {
 /* SUBSCRIBE */
 typedef struct _SN_Subscribe {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     byte duplicate;
     byte qos;
@@ -995,6 +1020,9 @@ typedef struct _SN_UnsubscribeAck {
 /* UNSUBSCRIBE */
 typedef struct _SN_Unsubscribe {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     byte duplicate;
     byte qos;
@@ -1008,9 +1036,12 @@ typedef struct _SN_Unsubscribe {
     SN_UnsubscribeAck ack;
 } SN_Unsubscribe;
 
-/* PING / PING RESPONSE */
+/* PING REQUEST / PING RESPONSE */
 typedef struct _SN_PingReq {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     /* clientId is optional and is included by a “sleeping” client when it
        goes to the “awake” state and is waiting for messages sent by the
@@ -1021,9 +1052,14 @@ typedef struct _SN_PingReq {
 /* DISCONNECT */
 typedef struct _SN_Disconnect {
     MqttMsgStat stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
 
     /* sleepTmr is optional and is included by a “sleeping” client
-       that wants to go the “asleep” state. */
+       that wants to go the “asleep” state. The receipt of this message
+       is also acknowledged by the gateway by means of a DISCONNECT message
+       (without a duration field).*/
     word16 sleepTmr;
 } SN_Disconnect;
 
@@ -1062,7 +1098,7 @@ typedef union _SN_Object {
 // TODO
 
 WOLFMQTT_LOCAL int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
-    SN_MsgType* p_packet_type);
+    SN_MsgType* p_packet_type, word16* p_packet_id);
 WOLFMQTT_LOCAL int SN_Decode_Advertise(byte *rx_buf, int rx_buf_len,
         SN_Advertise *gw_info);
 WOLFMQTT_LOCAL int SN_Encode_SearchGW(byte *tx_buf, int tx_buf_len, byte hops);
@@ -1118,7 +1154,13 @@ WOLFMQTT_LOCAL int SN_Encode_Ping(byte *tx_buf, int tx_buf_len,
 WOLFMQTT_LOCAL int SN_Decode_Ping(byte *rx_buf, int rx_buf_len);
 WOLFMQTT_LOCAL int SN_Packet_Read(struct _MqttClient *client, byte* rx_buf,
         int rx_buf_len, int timeout_ms);
+
+#ifndef WOLFMQTT_NO_ERROR_STRINGS
+    WOLFMQTT_LOCAL const char* SN_Packet_TypeDesc(SN_MsgType packet_type);
+#else
+    #define SN_Packet_TypeDesc(x) "not compiled in"
 #endif
+#endif /* WOLFMQTT_SN */
 
 #ifdef __cplusplus
     } /* extern "C" */
