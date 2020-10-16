@@ -254,7 +254,8 @@ int sn_test(MQTTCtx *mqttCtx)
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
         PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
-                subscribe.subAck.topicId, subscribe.subAck.return_code);
+                subscribe.subAck.topicId,
+                (rc == 0) ? subscribe.subAck.return_code : rc);
     }
 
     {

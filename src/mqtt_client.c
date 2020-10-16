@@ -732,7 +732,8 @@ wait_again:
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
     PRINTF("MqttClient_WaitType: Type %s (%d), ID %d",
-        MqttPacket_TypeDesc(wait_type), wait_type, wait_packet_id);
+        MqttPacket_TypeDesc((MqttPacketType)wait_type),
+            wait_type, wait_packet_id);
 #endif
 
     switch ((int)*mms_stat)
@@ -2556,7 +2557,8 @@ wait_again:
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
     PRINTF("SN_Client_WaitType: Type %s (%d), ID %d",
-            SN_Packet_TypeDesc(wait_type), wait_type, wait_packet_id);
+            SN_Packet_TypeDesc((SN_MsgType)wait_type),
+                wait_type, wait_packet_id);
 #endif
 
     switch ((int)*mms_stat)
@@ -3864,6 +3866,8 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     #ifdef WOLFMQTT_NONBLOCK
         if (rc == MQTT_CODE_CONTINUE)
             return rc;
+    #else
+        (void)rc;
     #endif
     #ifdef WOLFMQTT_MULTITHREAD
         if (wm_SemLock(&client->lockClient) == 0) {
