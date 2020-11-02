@@ -4,7 +4,7 @@
 #ifndef _WOLFMQTT_VS_SETTINGS_
 #define _WOLFMQTT_VS_SETTINGS_
 
-/* Don't include this is using autoconf cross-compile */
+/* Don't include this if using autoconf cross-compile */
 #ifndef HAVE_CONFIG_H
 
 /* TLS Support */
