@@ -31,7 +31,7 @@
 */
 
 #if defined(BUILDING_WOLFMQTT)
-    #if defined(_MSC_VER) || defined(__CYGWIN__)
+    #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
         #ifdef _WINDLL
             #define WOLFMQTT_API __declspec(dllexport)
         #else
@@ -49,8 +49,12 @@
         #define WOLFMQTT_LOCAL
     #endif /* HAVE_VISIBILITY */
 #else /* BUILDING_WOLFMQTT */
-    #if defined(_MSC_VER) || defined(__CYGWIN__)
-        #define WOLFMQTT_API __declspec(dllimport)
+    #if defined(_MSC_VER) || defined(__MINGW32__) || defined(__CYGWIN__)
+        #ifdef _WINDLL
+            #define WOLFMQTT_API __declspec(dllimport)
+        #else
+            #define WOLFMQTT_API
+        #endif
         #define WOLFMQTT_LOCAL
     #else
         #define WOLFMQTT_API

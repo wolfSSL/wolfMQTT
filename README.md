@@ -5,7 +5,7 @@ This is an implementation of the MQTT Client written in C for embedded use, whic
 
 ## Building
 
-### Mac/Linux/Unix/MinGW
+### Mac/Linux/Unix
 
 1. `./autogen.sh` (if cloned from GitHub)
 2. `./configure` (to see a list of build options use `./configure --help`)
@@ -41,6 +41,23 @@ For building wolfMQTT with TLS support in Visual Studio:
 
 See `README.md` at [IDE/ARDUINO.README.md](IDE/ARDUINO.README.md)
 
+### MinGW
+
+```sh
+export PATH="/opt/mingw-w32-bin_i686-darwin/bin:$PATH"
+export PREFIX=$PWD/build
+
+# wolfSSL
+cd wolfssl
+./configure --host=i686 CC=i686-w64-mingw32-gcc LD=i686-w64-mingw32-ld CFLAGS="-DWIN32 -DMINGW -D_WIN32_WINNT=0x0600" LIBS="-lws2_32 -L$PREFIX/lib -lwolfssl" --prefix=$PREFIX
+make
+make install
+
+# wolfMQTT
+cd ../wolfmqtt
+./configure --host=i686 CC=i686-w64-mingw32-gcc LD=i686-w64-mingw32-ld CFLAGS="-DWIN32 -DMINGW -D_WIN32_WINNT=0x0600 -DBUILDING_WOLFMQTT -I$PREFIX/include" LDFLAGS="-lws2_32 -L$PREFIX/lib -lwolfssl" --prefix=$PREFIX --disable-examples
+make
+```
 
 ## Architecture
 
