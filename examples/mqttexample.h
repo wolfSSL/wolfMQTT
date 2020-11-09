@@ -114,7 +114,7 @@ typedef struct _MQTTCtx {
     MqttTopic topics[1];
     MqttPublish publish;
     MqttDisconnect disconnect;
-
+    MqttPing ping;
 #ifdef WOLFMQTT_SN
     SN_Publish publishSN;
 #endif
