@@ -528,7 +528,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
                     /* Keep Alive */
                     PRINTF("Keep-alive timeout, sending ping");
 
-                    rc = MqttClient_Ping(&mqttCtx->client);
+                    rc = MqttClient_Ping_ex(&mqttCtx->client, &mqttCtx->ping);
                     if (rc == MQTT_CODE_CONTINUE) {
                         return rc;
                     }

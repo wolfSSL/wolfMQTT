@@ -336,10 +336,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     return rc;
                 }
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+
                     /* Keep Alive */
                     PRINTF("Keep-alive timeout, sending ping");
 
-                    rc = MqttClient_Ping(&mqttCtx->client);
+                    rc = MqttClient_Ping_ex(&mqttCtx->client, &mqttCtx->ping);
                     if (rc == MQTT_CODE_CONTINUE) {
                         return rc;
                     }
