@@ -29,9 +29,7 @@
 
 /* configuration for Arduino */
 #ifdef ARDUINO
-/* Uncomment this to enable TLS support */
-/* Make sure and include the wolfSSL library */
-    //#define ENABLE_MQTT_TLS
+    #include "wolfmqtt/options.h"
 
     /* make sure arduino can see the wolfssl library directory */
     #ifdef ENABLE_MQTT_TLS
