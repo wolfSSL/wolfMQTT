@@ -54,9 +54,9 @@ static int mNumMsgsRecvd;
 	#include <windows.h>
     #include <process.h>
     typedef HANDLE THREAD_T;
-    #define THREAD_CREATE(h, f, c) *h = CreateThread(NULL, 0, f, c, 0, NULL)
+    #define THREAD_CREATE(h, f, c) ((*h = CreateThread(NULL, 0, f, c, 0, NULL)) == NULL)
     #define THREAD_JOIN(h, c)      WaitForMultipleObjects(c, h, TRUE, INFINITE)
-    #define THREAD_EXIT(e)         return e;
+    #define THREAD_EXIT(e)         ExitThread(e)
 #else
     /* Posix (Linux/Mac) */
 	#include <pthread.h>
@@ -544,24 +544,34 @@ int multithread_test(MQTTCtx *mqttCtx)
 
     rc = multithread_test_init(mqttCtx);
     if (rc == 0) {
-        if (THREAD_CREATE(&threadList[threadCount++], subscribe_task, mqttCtx))
+        if (THREAD_CREATE(&threadList[threadCount++], subscribe_task, mqttCtx)) {
+            PRINTF("THREAD_CREATE failed: %d\n", errno);
             return -1;
+        }
         /* for test mode, we must complete subscribe to track number of pubs received */
         if (mqttCtx->test_mode) {
-            if (THREAD_JOIN(threadList, threadCount))
+            if (THREAD_JOIN(threadList, threadCount)) {
+                PRINTF("THREAD_JOIN failed: %d\n", errno);
                 return -1;
+            }
             threadCount = 0;
         }
         /* Create the thread that waits for messages */
-        if (THREAD_CREATE(&threadList[threadCount++], waitMessage_task, mqttCtx))
+        if (THREAD_CREATE(&threadList[threadCount++], waitMessage_task, mqttCtx)) {
+            PRINTF("THREAD_CREATE failed: %d\n", errno);
             return -1;
+        }
         /* Ping */
-        if (THREAD_CREATE(&threadList[threadCount++], ping_task, mqttCtx))
+        if (THREAD_CREATE(&threadList[threadCount++], ping_task, mqttCtx)) {
+            PRINTF("THREAD_CREATE failed: %d\n", errno);
             return -1;
+        }
         /* Create threads that publish unique messages */
         for (i = 0; i < NUM_PUB_TASKS; i++) {
-            if (THREAD_CREATE(&threadList[threadCount++], publish_task, mqttCtx))
+            if (THREAD_CREATE(&threadList[threadCount++], publish_task, mqttCtx)) {
+                PRINTF("THREAD_CREATE failed: %d\n", errno);
                 return -1;
+            }
         }
         
         /* Join threads - wait for completion */
