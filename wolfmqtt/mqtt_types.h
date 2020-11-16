@@ -90,15 +90,18 @@
         typedef dispatch_semaphore_t wm_Sem;
 
     #elif defined(__FreeBSD__) || defined(__linux__)
-        /* Posix Style Semaphore */
+        /* Posix Style Pthread Mutex and Conditional */
         #define WOLFMQTT_POSIX_SEMAPHORES
-        #include <semaphore.h>
-        typedef sem_t wm_Sem;
+        #include <pthread.h>
+        typedef struct {
+            int lockCount;
+            pthread_mutex_t mutex;
+            pthread_cond_t cond;
+        } wm_Sem;
 
     #elif defined(FREERTOS)
         /* FreeRTOS binary semaphore */
         #include <FreeRTOS.h>
-        
         #include <semphr.h>
         typedef SemaphoreHandle_t wm_Sem;
 
@@ -267,6 +270,9 @@ enum MqttPacketResponseCodes {
         #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_DEBUG_THREAD)
             #ifdef USE_WINDOWS_API
                 #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), GetCurrentThreadId(), ##__VA_ARGS__)
+            #elif defined(__MACH__)
+                #include <pthread.h>
+                #define PRINTF(_f_, ...)  printf( ("%p: "_f_ LINE_END), (void*)pthread_self(), ##__VA_ARGS__)
             #else
                 #include <pthread.h>
                 #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)

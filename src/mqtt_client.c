@@ -62,16 +62,30 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 #elif defined(WOLFMQTT_POSIX_SEMAPHORES)
     /* Posix style semaphore */
     int wm_SemInit(wm_Sem *s){
-        return sem_init(s, 0, 1);
+        s->lockCount = 0;
+        pthread_mutex_init(&s->mutex, NULL);
+        pthread_cond_init(&s->cond, NULL);
+        return 0;
     }
     int wm_SemFree(wm_Sem *s){
-        return sem_destroy(s);
+        pthread_mutex_destroy(&s->mutex);
+        pthread_cond_destroy(&s->cond);
+        return 0;
     }
     int wm_SemLock(wm_Sem *s){
-        return sem_wait(s);
+        pthread_mutex_lock(&s->mutex);
+        if (s->lockCount > 0)
+            pthread_cond_wait(&s->cond, &s->mutex);
+        s->lockCount++;
+        pthread_mutex_unlock(&s->mutex);
+        return 0;
     }
     int wm_SemUnlock(wm_Sem *s){
-        return sem_post(s);
+        pthread_mutex_lock(&s->mutex);
+        s->lockCount--;
+        pthread_cond_signal(&s->cond);
+        pthread_mutex_unlock(&s->mutex);
+        return 0;
     }
 #elif defined(FREERTOS)
     /* FreeRTOS binary semaphore */
