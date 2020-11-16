@@ -98,30 +98,30 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
 {
     byte buf[PRINT_BUFFER_SIZE+1];
     word32 len;
+    word16 topicId;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
     (void)mqttCtx;
 
     if (msg_new) {
-        /* Determine min size to dump */
-        len = msg->topic_name_len;
-        if (len > PRINT_BUFFER_SIZE) {
-            len = PRINT_BUFFER_SIZE;
-        }
-        XMEMCPY(buf, msg->topic_name, len);
-        buf[len] = '\0'; /* Make sure its null terminated */
+        /* Topic ID or short topic name */
+        topicId = (word16)(msg->topic_name[0] << 8 | msg->topic_name[1]);
 
         /* Print incoming message */
-        PRINTF("MQTT-SN Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+        PRINTF("MQTT-SN Message: Topic ID %d, Qos %d, Id %d, Len %u",
+                topicId, msg->qos, msg->packet_id, msg->total_len);
 
-        /* for test mode: check if TEST_MESSAGE was received */
+        /* for test mode: count the number of TEST_MESSAGE matches received */
         if (mqttCtx->test_mode) {
             if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
+                /* Only compare the "test" part */
                 XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
-                         msg->buffer_len) == 0)
+                         msg->buffer_len-2) == 0)
             {
-                mStopRead = 1;
+                mNumMsgsRecvd++;
+                if (mNumMsgsRecvd == NUM_PUB_TASKS) {
+                    mStopRead = 1;
+                }
             }
         }
     }
@@ -320,7 +320,8 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         rc = SN_Client_Connect(&mqttCtx->client, &connect);
     } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
-    PRINTF("MQTT Connect return code: %s (%d)", MqttClient_ReturnCodeToString(rc), rc);
+    PRINTF("MQTT-SN Connect return code: %s (%d)", 
+        MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         client_disconnect(mqttCtx);
     }
@@ -523,7 +524,7 @@ static void *ping_task(void *param)
 
         rc = SN_Client_Ping(&mqttCtx->client, &ping);
         if (rc != MQTT_CODE_SUCCESS) {
-            PRINTF("MQTT-SN Ping Keep Alive: %s (%d)",
+            PRINTF("MQTT-SN Ping Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }

@@ -1944,8 +1944,8 @@ const char* SN_Packet_TypeDesc(SN_MsgType packet_type)
             return "Will message response";
         case SN_MSG_TYPE_ENCAPMSG:
             return "Encapsulated message";
-        case SN_MSG_TYPE_RESERVED:
-            return "Reserved";
+        case SN_MSG_TYPE_ANY:
+            return "Any";
         default:
             break;
     }
@@ -2975,6 +2975,7 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
 
     publish->topic_name = (char*)rx_payload;
     rx_payload += MQTT_DATA_LEN_SIZE;
+    publish->topic_name_len = MQTT_DATA_LEN_SIZE;
 
     rx_payload += MqttDecode_Num(rx_payload, &publish->packet_id);
 

@@ -215,6 +215,11 @@ static void MqttClient_RespList_Remove(MqttClient *client, MqttPendResp *rmResp)
             tmpResp->prev->next = tmpResp->next;
         }
     }
+#ifdef WOLFMQTT_DEBUG_CLIENT
+    else {
+        PRINTF("\tPendResp Remove Failed");
+    }
+#endif
 }
 
 static int MqttClient_RespList_Find(MqttClient *client,
@@ -784,7 +789,7 @@ wait_again:
                         /* pending response is already done, so return */
                         rc = pendResp->packet_ret;
                     #ifdef WOLFMQTT_DEBUG_CLIENT
-                        PRINTF("PendResp Done %p: Rc %d", pendResp, rc);
+                        PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
                     #endif
                         MqttClient_RespList_Remove(client, pendResp);
                         wm_SemUnlock(&client->lockClient);
@@ -2141,7 +2146,7 @@ const char* MqttClient_ReturnCodeToString(int return_code)
 
 /* Private functions */
 static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
-    void* packet_obj, word16* ppacket_id, int timeout)
+    void* packet_obj, int timeout)
 {
     int rc = MQTT_CODE_SUCCESS;
     word16 packet_id = 0;
@@ -2531,10 +2536,6 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
         }
     } /* switch (packet_type) */
 
-    if (ppacket_id) {
-        *ppacket_id = packet_id;
-    }
-
     return rc;
 }
 
@@ -2542,13 +2543,13 @@ static int SN_Client_WaitType(MqttClient *client, void* packet_obj,
     byte wait_type, word16 wait_packet_id, int timeout_ms)
 {
     int rc;
-    SN_MsgType packet_type;
     word16 packet_id;
-    MqttMsgStat* mms_stat;
+    SN_MsgType packet_type;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp *pendResp;
     int readLocked;
 #endif
+    MqttMsgStat* mms_stat;
     int waitMatchFound;
 
     if (client == NULL || packet_obj == NULL) {
@@ -2579,9 +2580,20 @@ wait_again:
     {
         case MQTT_MSG_BEGIN:
         {
-            /* reset the packet state */
-            client->packet.stat = MQTT_PK_BEGIN;
-
+        #ifdef WOLFMQTT_MULTITHREAD
+            rc = wm_SemLock(&client->lockClient);
+            if (rc != 0) {
+                return rc;
+            }
+            else
+        #endif
+            {
+                /* reset the packet state */
+                client->packet.stat = MQTT_PK_BEGIN;
+            }
+        #ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockClient);
+        #endif
             FALL_THROUGH;
         }
         case MQTT_MSG_WAIT:
@@ -2605,7 +2617,7 @@ wait_again:
                         /* pending response is already done, so return */
                         rc = pendResp->packet_ret;
                     #ifdef WOLFMQTT_DEBUG_CLIENT
-                        PRINTF("PendResp Done %p: Rc %d", pendResp, rc);
+                        PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
                     #endif
                         MqttClient_RespList_Remove(client, pendResp);
                         wm_SemUnlock(&client->lockClient);
@@ -2633,7 +2645,8 @@ wait_again:
             client->packet.buf_len = rc;
 
             /* Decode header */
-            rc = SN_Decode_Header(client->rx_buf, rc, &packet_type, &packet_id);
+            rc = SN_Decode_Header(client->rx_buf, client->packet.buf_len,
+                    &packet_type, &packet_id);
             if (rc < 0) {
                 break;
             }
@@ -2663,8 +2676,7 @@ wait_again:
             }
 
             /* Determine if we received data for this request */
-            if (((wait_type == SN_MQTT_PACKET_TYPE_ANY) ||
-                 (wait_type == packet_type)) &&
+            if ((wait_type == SN_MSG_TYPE_ANY || wait_type == packet_type) &&
                 (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;
@@ -2672,7 +2684,7 @@ wait_again:
             }
             else {
                 /* use generic packet object */
-                use_packet_obj = &client->msg;
+                use_packet_obj = &client->msgSN;
             }
             use_packet_type = packet_type;
 
@@ -2697,7 +2709,7 @@ wait_again:
         #endif /* WOLFMQTT_MULTITHREAD */
 
             rc = SN_Client_HandlePacket(client, use_packet_type, use_packet_obj,
-                &packet_id, timeout_ms);
+                    timeout_ms);
 
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
@@ -2719,7 +2731,7 @@ wait_again:
                     pendResp->packetDone = 1;
                     pendResp->packet_ret = rc;
                 #ifdef WOLFMQTT_DEBUG_CLIENT
-                    PRINTF("PendResp Done %p", pendResp);
+                    PRINTF("PendResp Marked Done %p", pendResp);
                 #endif
                     pendResp = NULL;
                     wm_SemUnlock(&client->lockClient);
@@ -3897,7 +3909,7 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
 int SN_Client_WaitMessage_ex(MqttClient *client, SN_Object* packet_obj, int timeout_ms)
 {
     return SN_Client_WaitType(client, packet_obj,
-        SN_MQTT_PACKET_TYPE_ANY, 0, timeout_ms);
+        SN_MSG_TYPE_ANY, 0, timeout_ms);
 }
 
 int SN_Client_WaitMessage(MqttClient *client, int timeout_ms)

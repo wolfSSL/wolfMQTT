@@ -768,7 +768,7 @@ typedef enum _SN_MsgType {
     SN_MSG_TYPE_ENCAPMSG        = 0xFE,    /* Encapsulated message */
     /* 0xFF reserved */
     SN_MSG_TYPE_RESERVED        = 0xFF,
-    SN_MQTT_PACKET_TYPE_ANY     = 0xFF
+    SN_MSG_TYPE_ANY     = 0xFF
 } SN_MsgType;
 
 /* Topic ID types */
