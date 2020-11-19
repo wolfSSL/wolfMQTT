@@ -1453,7 +1453,7 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
 #ifdef WOLFMQTT_V5
 int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 {
-    int header_len, remain_len;
+    int header_len, remain_len, ret;
     byte *rx_payload;
     word32 props_len = 0;
 
@@ -1476,7 +1476,17 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
         if (remain_len > 1) {
             /* Decode Length of Properties */
-            rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
+            ret = MqttDecode_Vbi(rx_payload, &props_len);
+            if (ret < 0)
+                return ret;
+
+            rx_payload += ret;
+            remain_len -= ret;
+
+            /* sanity check length of properties against total length */
+            if (props_len > (word32)remain_len)
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+
             if (props_len > 0) {
                 /* Decode the AUTH Properties */
                 rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT,
