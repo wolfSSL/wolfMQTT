@@ -181,7 +181,7 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     MqttPacket* header = (MqttPacket*)rx_buf;
 
     /* Decode the length remaining */
-    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len);
+    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len, rx_buf_len);
     if (header_len < 0) {
         return header_len;
     }
@@ -211,30 +211,32 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     return header_len;
 }
 
-
-/* Returns positive number of buffer bytes decoded or negative error. "value"
-   is the decoded variable byte integer */
-int MqttDecode_Vbi(byte *buf, word32 *value)
+/* Returns positive number of buffer bytes decoded (max 4) or negative error.
+ * "value" is the decoded variable byte integer
+ * buf_len is the max number of bytes in buf */
+int MqttDecode_Vbi(byte *buf, word32 *value, word32 buf_len)
 {
-    int rc = 0;
+    word32 rc = 0;
     int multiplier = 1;
     byte encodedByte;
 
     *value = 0;
     do {
+        if (buf_len < rc + 1)
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
        encodedByte = *(buf++);
        *value += (encodedByte & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
+       multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
        if (multiplier > (MQTT_PACKET_LEN_ENCODE_MASK *
                          MQTT_PACKET_LEN_ENCODE_MASK *
                          MQTT_PACKET_LEN_ENCODE_MASK))
        {
           return MQTT_CODE_ERROR_MALFORMED_DATA;
        }
-       multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
        rc++;
     } while ((encodedByte & MQTT_PACKET_LEN_ENCODE_MASK) != 0);
 
-    return rc;
+    return (int)rc;
 }
 
 /* Encodes to buf a non-negative integer "x" in a Variable Byte Integer scheme.
@@ -473,14 +475,15 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
 /* Returns the (positive) number of bytes decoded, or a (negative) error code.
    Allocates MqttProp structures for all properties.
    Head of list is stored in props. */
-int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf,
-        word32 prop_len)
+int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
+        word32 buf_len, word32 prop_len)
 {
     /* TODO: Validate property type is allowed for packet type */
 
     int rc = 0;
-    word32 tmp;
+    int tmp;
     MqttProp* cur_prop;
+    byte* buf = pbuf;
 
     *props = NULL;
 
@@ -492,7 +495,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf,
             return MQTT_CODE_ERROR_MEMORY;
 
         /* Decode the Identifier */
-        tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type);
+        tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
+                buf_len - (buf - pbuf));
+        if (tmp < 0) {
+            return tmp;
+        }
         buf += tmp;
         rc += (int)tmp;
         prop_len -= tmp;
@@ -538,7 +545,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* buf,
             }
             case MQTT_DATA_TYPE_VAR_INT:
             {
-                tmp = MqttDecode_Vbi(buf, &cur_prop->data_int);
+                tmp = MqttDecode_Vbi(buf, &cur_prop->data_int,
+                        buf_len -(buf - pbuf));
+                if (tmp < 0) {
+                    return tmp;
+                }
                 buf += tmp;
                 rc += (int)tmp;
                 prop_len -= tmp;
@@ -774,12 +785,22 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
 #ifdef WOLFMQTT_V5
         if (connect_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             word32 props_len = 0;
+            int tmp;
             /* Decode Length of Properties */
-            rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
+            tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                    rx_buf_len - (rx_payload - rx_buf));
+            if (tmp < 0) {
+                return tmp;
+            }
+            rx_payload += tmp;
             if (props_len > 0) {
                 /* Decode the Properties */
-                rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT_ACK,
-                               &connect_ack->props, rx_payload, props_len);
+                tmp = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT_ACK,
+                               &connect_ack->props, rx_payload,
+                               rx_buf_len - (rx_payload - rx_buf), props_len);
+                if (tmp < 0)
+                    return tmp;
+                rx_payload += tmp;
             }
         }
 #endif
@@ -913,12 +934,24 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     /* Decode variable header */
     variable_len = MqttDecode_String(rx_payload, &publish->topic_name,
         &publish->topic_name_len);
-    rx_payload += variable_len;
+    if (variable_len + header_len <= rx_buf_len) {
+        rx_payload += variable_len;
+    }
+    else {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
 
     /* If QoS > 0 then get packet Id */
     if (publish->qos > MQTT_QOS_0) {
+        if (rx_payload - rx_buf + MQTT_DATA_LEN_SIZE > rx_buf_len)
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         variable_len += MqttDecode_Num(rx_payload, &publish->packet_id);
-        rx_payload += MQTT_DATA_LEN_SIZE;
+        if (variable_len + header_len <= rx_buf_len) {
+            rx_payload += MQTT_DATA_LEN_SIZE;
+        }
+        else {
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        }
     }
 
 #ifdef WOLFMQTT_V5
@@ -927,16 +960,25 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         int tmp;
 
         /* Decode Length of Properties */
-        tmp = MqttDecode_Vbi(rx_payload, &props_len);
-        rx_payload += tmp;
+        tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                rx_buf_len - (rx_payload - rx_buf));
+        if (tmp < 0)
+            return tmp;
         variable_len += tmp + props_len;
-        if (props_len > 0) {
-            /* Decode the Properties */
-            rx_payload += MqttDecode_Props((MqttPacketType)publish->type, 
-                &publish->props, rx_payload, props_len);
-            if (publish->props != NULL) {
-                /* Parse properties. */
+        if (variable_len + header_len <= rx_buf_len) {
+            rx_payload += tmp;
+            if (props_len > 0) {
+                /* Decode the Properties */
+                tmp = MqttDecode_Props((MqttPacketType)publish->type,
+                    &publish->props, rx_payload,
+                    rx_buf_len - (rx_payload - rx_buf), props_len);
+                if (tmp < 0)
+                    return tmp;
+                rx_payload += tmp;
             }
+        }
+        else {
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
     }
 #endif
@@ -1062,17 +1104,31 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         if ((publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) &&
             (remain_len > MQTT_DATA_LEN_SIZE)) {
             word32 props_len = 0;
+            int tmp;
 
             /* Decode the Reason Code */
             publish_resp->reason_code = *rx_payload++;
 
             /* Decode Length of Properties */
-            rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
-            if (props_len > 0) {
-                /* Decode the Properties */
-                rx_payload += MqttDecode_Props((MqttPacketType)type,
-                                &publish_resp->props, rx_payload, props_len);
+            tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                    rx_buf_len - (rx_payload - rx_buf));
+            if (tmp < 0)
+                return tmp;
+
+            if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+                rx_payload += tmp;
+                if (props_len > 0) {
+                    /* Decode the Properties */
+                    tmp = MqttDecode_Props((MqttPacketType)type,
+                                &publish_resp->props, rx_payload,
+                                rx_buf_len - (rx_payload - rx_buf), props_len);
+                    if (tmp < 0)
+                        return tmp;
+                    rx_payload += tmp;
+                }
             }
+            else
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
         else {
             publish_resp->reason_code = MQTT_REASON_SUCCESS;
@@ -1191,14 +1247,28 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
         if ((subscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) &&
             (remain_len > MQTT_DATA_LEN_SIZE)) {
             word32 props_len = 0;
+            int tmp;
 
             /* Decode Length of Properties */
-            rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
-            if (props_len > 0) {
-                /* Decode the Properties */
-                rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_SUBSCRIBE_ACK,
-                               &subscribe_ack->props, rx_payload, props_len);
+            tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                    rx_buf_len - (rx_payload - rx_buf));
+            if (tmp < 0)
+                return tmp;
+
+            if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+                rx_payload += tmp;
+                if (props_len > 0) {
+                    /* Decode the Properties */
+                    tmp = MqttDecode_Props(MQTT_PACKET_TYPE_SUBSCRIBE_ACK,
+                                &subscribe_ack->props, rx_payload,
+                                rx_buf_len - (rx_payload - rx_buf), props_len);
+                    if (tmp < 0)
+                        return tmp;
+                    rx_payload += tmp;
+                }
             }
+            else
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
 #endif
 
@@ -1310,14 +1380,28 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             if (remain_len > MQTT_DATA_LEN_SIZE) {
                 word32 props_len = 0;
+                int tmp;
+
                 /* Decode Length of Properties */
-                rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
-                if (props_len > 0) {
-                    /* Decode the Properties */
-                    rx_payload += MqttDecode_Props(
-                               MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK,
-                               &unsubscribe_ack->props, rx_payload, props_len);
+                tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                        rx_buf_len - (rx_payload - rx_buf));
+                if (tmp < 0)
+                    return tmp;
+
+                if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+                    rx_payload += tmp;
+                    if (props_len > 0) {
+                        /* Decode the Properties */
+                        tmp = MqttDecode_Props(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK,
+                                &unsubscribe_ack->props, rx_payload,
+                                rx_buf_len - (rx_payload - rx_buf), props_len);
+                        if (tmp < 0)
+                            return tmp;
+                        rx_payload += tmp;
+                    }
                 }
+                else
+                    return MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
 
             /* Reason codes are stored in the payload */
@@ -1453,7 +1537,7 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
 #ifdef WOLFMQTT_V5
 int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 {
-    int header_len, remain_len, ret;
+    int header_len, remain_len, tmp;
     byte *rx_payload;
     word32 props_len = 0;
 
@@ -1476,22 +1560,25 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
         if (remain_len > 1) {
             /* Decode Length of Properties */
-            ret = MqttDecode_Vbi(rx_payload, &props_len);
-            if (ret < 0)
-                return ret;
+            tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                    rx_buf_len - (rx_payload - rx_buf));
+            if (tmp < 0)
+                return tmp;
 
-            rx_payload += ret;
-            remain_len -= ret;
-
-            /* sanity check length of properties against total length */
-            if (props_len > (word32)remain_len)
-                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-
-            if (props_len > 0) {
-                /* Decode the AUTH Properties */
-                rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT,
-                                &disc->props, rx_payload, props_len);
+            if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+                rx_payload += tmp;
+                if (props_len > 0) {
+                    /* Decode the Properties */
+                    tmp = MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT,
+                            &disc->props, rx_payload,
+                            rx_buf_len - (rx_payload - rx_buf), props_len);
+                    if (tmp < 0)
+                        return tmp;
+                    rx_payload += tmp;
+                }
             }
+            else
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
     }
 
@@ -1560,7 +1647,7 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
 
 int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 {
-    int header_len, remain_len;
+    int header_len, remain_len, tmp;
     byte *rx_payload;
     word32 props_len = 0;
 
@@ -1584,11 +1671,28 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
         (auth->reason_code == MQTT_REASON_CONT_AUTH))
     {
         /* Decode Length of Properties */
-        rx_payload += MqttDecode_Vbi(rx_payload, &props_len);
-        if (props_len > 0) {
-            /* Decode the AUTH Properties */
-            rx_payload += MqttDecode_Props(MQTT_PACKET_TYPE_AUTH, &auth->props,
-                          rx_payload, props_len);
+        tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                rx_buf_len - (rx_payload - rx_buf));
+        if (tmp < 0)
+            return tmp;
+
+        if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+            rx_payload += tmp;
+            if (props_len > 0) {
+                /* Decode the Properties */
+                tmp = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH,
+                        &auth->props, rx_payload,
+                        rx_buf_len - (rx_payload - rx_buf), props_len);
+                if (tmp < 0)
+                    return tmp;
+                rx_payload += tmp;
+            }
+            else if (auth->reason_code != MQTT_REASON_SUCCESS) {
+                /* The Reason Code and Property Length can be omitted if the
+                   Reason Code is 0x00 (Success) and there are no Properties.
+                   In this case the AUTH has a Remaining Length of 0. */
+                return MQTT_CODE_ERROR_MALFORMED_DATA;
+            }
             if (auth->props != NULL) {
                 /* Must have Authentication Method */
 
@@ -1600,12 +1704,8 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
                 return MQTT_CODE_ERROR_MALFORMED_DATA;
             }
         }
-        else if (auth->reason_code != MQTT_REASON_SUCCESS) {
-            /* The Reason Code and Property Length can be omitted if the
-               Reason Code is 0x00 (Success) and there are no Properties.
-               In this case the AUTH has a Remaining Length of 0. */
-            return MQTT_CODE_ERROR_MALFORMED_DATA;
-        }
+        else
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
     else {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -1800,7 +1900,8 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
             /* Try and decode remaining length */
             rc = MqttDecode_Vbi(header->len,
-                    (word32*)&client->packet.remain_len);
+                    (word32*)&client->packet.remain_len,
+                    rx_buf_len - (client->packet.header_len - (i + 1)));
             if (rc < 0) { /* Indicates error */
                 return MqttPacket_HandleNetError(client, rc);
             }

@@ -651,7 +651,7 @@ WOLFMQTT_LOCAL int MqttEncode_String(byte *buf, const char *str);
 WOLFMQTT_LOCAL int MqttEncode_Data(byte *buf, const byte *data,
     word16 data_len);
 
-WOLFMQTT_LOCAL int MqttDecode_Vbi(byte *buf, word32 *value);
+WOLFMQTT_LOCAL int MqttDecode_Vbi(byte *buf, word32 *value, word32 buf_len);
 WOLFMQTT_LOCAL int MqttEncode_Vbi(byte *buf, word32 x);
 
 /* Packet Encoders/Decoders */
@@ -690,7 +690,7 @@ WOLFMQTT_LOCAL int MqttEncode_Auth(byte *tx_buf, int tx_buf_len,
 WOLFMQTT_LOCAL int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
     byte* buf);
 WOLFMQTT_LOCAL int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
-    byte* buf, word32 prop_len);
+    byte* buf, word32 buf_len, word32 prop_len);
 WOLFMQTT_LOCAL int MqttProps_Init(void);
 WOLFMQTT_LOCAL int MqttProps_ShutDown(void);
 WOLFMQTT_LOCAL MqttProp* MqttProps_Add(MqttProp **head);
