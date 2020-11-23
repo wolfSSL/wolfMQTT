@@ -838,11 +838,17 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     if (header_len < 0) {
         return header_len;
     }
+
     tx_payload = &tx_buf[header_len];
 
     if (use_cb == 1) {
         /* The callback will encode the payload */
         payload_len = 0;
+    }
+
+    /* Check for buffer room */
+    if (tx_buf_len < header_len + variable_len + payload_len) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
     /* Encode variable header */
