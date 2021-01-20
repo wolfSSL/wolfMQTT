@@ -507,6 +507,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         /* TODO: validate packet type */
         (void)packet;
 
+        if (cur_prop->type < 0 ||
+            cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
+            return MQTT_CODE_ERROR_PROPERTY;
+        }
+
         switch (gPropMatrix[cur_prop->type].data)
         {
             case MQTT_DATA_TYPE_BYTE:
