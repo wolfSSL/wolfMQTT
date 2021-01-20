@@ -41,7 +41,7 @@
 #endif
 
 /* Configuration */
-#define MQTT_HOST            "mqtt.eclipse.org" /* broker.hivemq.com */
+#define MQTT_HOST            "test.mosquitto.org" /* broker.hivemq.com */
 #define MQTT_QOS             MQTT_QOS_0
 #define MQTT_KEEP_ALIVE_SEC  60
 #define MQTT_CMD_TIMEOUT_MS  30000
