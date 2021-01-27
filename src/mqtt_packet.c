@@ -1127,7 +1127,7 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             if (tmp < 0)
                 return tmp;
 
-            if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+            if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                 rx_payload += tmp;
                 if (props_len > 0) {
                     /* Decode the Properties */
@@ -1268,7 +1268,7 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             if (tmp < 0)
                 return tmp;
 
-            if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+            if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                 rx_payload += tmp;
                 if (props_len > 0) {
                     /* Decode the Properties */
@@ -1402,7 +1402,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                 if (tmp < 0)
                     return tmp;
 
-                if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+                if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                     rx_payload += tmp;
                     if (props_len > 0) {
                         /* Decode the Properties */
@@ -1580,7 +1580,7 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
             if (tmp < 0)
                 return tmp;
 
-            if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+            if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                 rx_payload += tmp;
                 if (props_len > 0) {
                     /* Decode the Properties */
@@ -1692,7 +1692,7 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
         if (tmp < 0)
             return tmp;
 
-        if (props_len <= rx_buf_len - (rx_payload - rx_buf)) {
+        if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
             rx_payload += tmp;
             if (props_len > 0) {
                 /* Decode the Properties */
