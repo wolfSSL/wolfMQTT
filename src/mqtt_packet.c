@@ -496,7 +496,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
 
         /* Decode the Identifier */
         tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
-                buf_len - (buf - pbuf));
+                (word32)(buf_len - (buf - pbuf)));
         if (tmp < 0) {
             return tmp;
         }
@@ -551,7 +551,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             case MQTT_DATA_TYPE_VAR_INT:
             {
                 tmp = MqttDecode_Vbi(buf, &cur_prop->data_int,
-                        buf_len -(buf - pbuf));
+                        (word32)(buf_len -(buf - pbuf)));
                 if (tmp < 0) {
                     return tmp;
                 }
@@ -793,7 +793,7 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
             int tmp;
             /* Decode Length of Properties */
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                    rx_buf_len - (rx_payload - rx_buf));
+                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0) {
                 return tmp;
             }
@@ -802,7 +802,8 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
                 /* Decode the Properties */
                 tmp = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT_ACK,
                                &connect_ack->props, rx_payload,
-                               rx_buf_len - (rx_payload - rx_buf), props_len);
+                               (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                               props_len);
                 if (tmp < 0)
                     return tmp;
                 rx_payload += tmp;
@@ -972,7 +973,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 
         /* Decode Length of Properties */
         tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                rx_buf_len - (rx_payload - rx_buf));
+                (word32)(rx_buf_len - (rx_payload - rx_buf)));
         if (tmp < 0)
             return tmp;
         variable_len += tmp + props_len;
@@ -982,7 +983,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
                 /* Decode the Properties */
                 tmp = MqttDecode_Props((MqttPacketType)publish->type,
                     &publish->props, rx_payload,
-                    rx_buf_len - (rx_payload - rx_buf), props_len);
+                    (word32)(rx_buf_len - (rx_payload - rx_buf)), props_len);
                 if (tmp < 0)
                     return tmp;
                 rx_payload += tmp;
@@ -1122,7 +1123,7 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
 
             /* Decode Length of Properties */
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                    rx_buf_len - (rx_payload - rx_buf));
+                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0)
                 return tmp;
 
@@ -1132,7 +1133,8 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
                     /* Decode the Properties */
                     tmp = MqttDecode_Props((MqttPacketType)type,
                                 &publish_resp->props, rx_payload,
-                                rx_buf_len - (rx_payload - rx_buf), props_len);
+                                (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                                props_len);
                     if (tmp < 0)
                         return tmp;
                     rx_payload += tmp;
@@ -1262,7 +1264,7 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 
             /* Decode Length of Properties */
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                    rx_buf_len - (rx_payload - rx_buf));
+                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0)
                 return tmp;
 
@@ -1272,7 +1274,8 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
                     /* Decode the Properties */
                     tmp = MqttDecode_Props(MQTT_PACKET_TYPE_SUBSCRIBE_ACK,
                                 &subscribe_ack->props, rx_payload,
-                                rx_buf_len - (rx_payload - rx_buf), props_len);
+                                (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                                props_len);
                     if (tmp < 0)
                         return tmp;
                     rx_payload += tmp;
@@ -1395,7 +1398,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 
                 /* Decode Length of Properties */
                 tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                        rx_buf_len - (rx_payload - rx_buf));
+                        (word32)(rx_buf_len - (rx_payload - rx_buf)));
                 if (tmp < 0)
                     return tmp;
 
@@ -1405,7 +1408,8 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                         /* Decode the Properties */
                         tmp = MqttDecode_Props(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK,
                                 &unsubscribe_ack->props, rx_payload,
-                                rx_buf_len - (rx_payload - rx_buf), props_len);
+                                (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                                props_len);
                         if (tmp < 0)
                             return tmp;
                         rx_payload += tmp;
@@ -1572,7 +1576,7 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
         if (remain_len > 1) {
             /* Decode Length of Properties */
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                    rx_buf_len - (rx_payload - rx_buf));
+                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0)
                 return tmp;
 
@@ -1582,7 +1586,8 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
                     /* Decode the Properties */
                     tmp = MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT,
                             &disc->props, rx_payload,
-                            rx_buf_len - (rx_payload - rx_buf), props_len);
+                            (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                            props_len);
                     if (tmp < 0)
                         return tmp;
                     rx_payload += tmp;
@@ -1683,7 +1688,7 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     {
         /* Decode Length of Properties */
         tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                rx_buf_len - (rx_payload - rx_buf));
+                (word32)(rx_buf_len - (rx_payload - rx_buf)));
         if (tmp < 0)
             return tmp;
 
@@ -1693,7 +1698,8 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
                 /* Decode the Properties */
                 tmp = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH,
                         &auth->props, rx_payload,
-                        rx_buf_len - (rx_payload - rx_buf), props_len);
+                        (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                        props_len);
                 if (tmp < 0)
                     return tmp;
                 rx_payload += tmp;
