@@ -666,6 +666,9 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     if (mc_connect->username) {
         remain_len += (int)XSTRLEN(mc_connect->username) + MQTT_DATA_LEN_SIZE;
     }
+    else {
+        remain_len += MQTT_DATA_LEN_SIZE;
+    }
     if (mc_connect->password) {
         remain_len += (int)XSTRLEN(mc_connect->password) + MQTT_DATA_LEN_SIZE;
     }
