@@ -874,7 +874,7 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     }
 
     /* Check for buffer room */
-    if (tx_buf_len < header_len + variable_len + payload_len) {
+    if (tx_buf_len < header_len + variable_len) {
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
