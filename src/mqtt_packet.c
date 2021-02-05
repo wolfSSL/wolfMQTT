@@ -744,16 +744,6 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     if (mc_connect->username) {
         tx_payload += MqttEncode_String(tx_payload, mc_connect->username);
     }
-    else {
-        /* A Server MAY allow a Client to supply a ClientID that has a length
-         * of zero bytes, however if it does so the Server MUST treat this as a
-         * special case and assign a unique ClientID to that Client
-         * [MQTT-3.1.3-6]. It MUST then process the CONNECT packet as if the
-         * Client had provided that unique ClientID, and MUST return the
-         * Assigned Client Identifier in the CONNACK packet [MQTT-3.1.3-7].
-         */
-        tx_payload += MqttEncode_Num(tx_payload, (word16)0);
-    }
     if (mc_connect->password) {
         tx_payload += MqttEncode_String(tx_payload, mc_connect->password);
     }
