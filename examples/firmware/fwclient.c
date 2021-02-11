@@ -35,7 +35,7 @@
 
     /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
     #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
-    	    && defined(HAVE_ECC)
+    	    && defined(HAVE_ECC) && !defined(NO_SIG_WRAPPER)
         #undef ENABLE_FIRMWARE_EXAMPLE
         #define ENABLE_FIRMWARE_EXAMPLE
     #endif
