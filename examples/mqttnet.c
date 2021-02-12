@@ -559,7 +559,11 @@ static int NetConnect(void *context, const char* host, word16 port,
     SocketContext *sock = (SocketContext*)context;
     int type = SOCK_STREAM;
     int rc = -1;
+#ifdef _WIN32
+    int so_error = 0;
+#else
     SOERROR_T so_error = 0;
+#endif
     struct addrinfo *result = NULL;
     struct addrinfo hints;
     MQTTCtx* mqttCtx = sock->mqttCtx;
@@ -645,24 +649,30 @@ static int NetConnect(void *context, const char* host, word16 port,
             /* Start connect */
             rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
             if (rc < 0) {
+                /* set default error case */
+                rc = MQTT_CODE_ERROR_NETWORK;
+        #ifdef WOLFMQTT_NONBLOCK
                 /* Check for error */
+            #ifdef _WIN32
+                so_error = WSAGetLastError();
+                if ((so_error == WSAEWOULDBLOCK) || (so_error == WSAEINPROGRESS))
+            #else
                 socklen_t len = sizeof(so_error);
                 getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
 
-                /* set default error case */
-                rc = MQTT_CODE_ERROR_NETWORK;
-            #ifdef WOLFMQTT_NONBLOCK
-                if (errno == EINPROGRESS || so_error == EINPROGRESS) {
-                #ifndef WOLFMQTT_NO_TIMEOUT
+                if (errno == EINPROGRESS || so_error == EINPROGRESS)
+            #endif
+                {
+            #ifndef WOLFMQTT_NO_TIMEOUT
                     /* Wait for connect */
                     if (select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0) {
                         rc = MQTT_CODE_SUCCESS;
                     }
-                #else
+            #else
                     rc = MQTT_CODE_CONTINUE;
-                #endif
-                }
             #endif
+                }
+        #endif
             }
             break;
         }
@@ -778,7 +788,11 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 {
     SocketContext *sock = (SocketContext*)context;
     int rc;
+#ifdef _WIN32
+    int so_error = 0;
+#else
     SOERROR_T so_error = 0;
+#endif
 #ifndef WOLFMQTT_NO_TIMEOUT
     struct timeval tv;
 #endif
@@ -799,22 +813,30 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
     if (rc == -1) {
         /* Get error */
+    #ifdef _WIN32
+        so_error = WSAGetLastError();
+    #else
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+    #endif
         if (so_error == 0) {
-        #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
+    #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
             /* assume non-blocking case */
             rc = MQTT_CODE_CONTINUE;
-        #else
+    #else
             rc = 0; /* Handle signal */
-        #endif
+    #endif
         }
         else {
-        #ifdef WOLFMQTT_NONBLOCK
+    #ifdef WOLFMQTT_NONBLOCK
+        #ifdef _WIN32
+            if ((so_error == WSAEWOULDBLOCK) || (so_error == WSAEINPROGRESS)) {
+        #else
             if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
+        #endif
                 return MQTT_CODE_CONTINUE;
             }
-        #endif
+    #endif
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetWrite: Error %d", so_error);
         }
@@ -831,7 +853,11 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     SocketContext *sock = (SocketContext*)context;
     MQTTCtx* mqttCtx = sock->mqttCtx;
     int rc = -1, timeout = 0;
+#ifdef _WIN32
+    int so_error = 0;
+#else
     SOERROR_T so_error = 0;
+#endif
     int bytes = 0;
     int flags = 0;
 #ifndef WOLFMQTT_NO_TIMEOUT
@@ -951,18 +977,25 @@ exit:
     }
     else if (rc < 0) {
         /* Get error */
+    #ifdef _WIN32
+        so_error = WSAGetLastError();
+    #else
         socklen_t len = sizeof(so_error);
         getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-
+    #endif
         if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
         else {
-        #ifdef WOLFMQTT_NONBLOCK
+    #ifdef WOLFMQTT_NONBLOCK
+        #ifdef _WIN32
+            if ((so_error == WSAEWOULDBLOCK) || (so_error == WSAEINPROGRESS)) {
+        #else
             if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
+        #endif
                 return MQTT_CODE_CONTINUE;
             }
-        #endif
+    #endif
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetRead: Error %d", so_error);
         }
