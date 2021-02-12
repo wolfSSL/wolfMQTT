@@ -9,15 +9,15 @@
 
 /* TLS Support */
 #undef  ENABLE_MQTT_TLS
-//#define ENABLE_MQTT_TLS
+#define ENABLE_MQTT_TLS
 
 /* MQTT-SN Support */
 #undef  WOLFMQTT_SN
-//#define WOLFMQTT_SN
+#define WOLFMQTT_SN
 
 /* MQTT v5.0 support */
 #undef  WOLFMQTT_V5
-//#define WOLFMQTT_V5
+#define WOLFMQTT_V5
 
 /* Enable property callback support */
 #ifdef WOLFMQTT_V5
@@ -39,7 +39,7 @@
 
 /* Multi-threading */
 #undef  WOLFMQTT_MULTITHREAD
-//#define WOLFMQTT_MULTITHREAD
+#define WOLFMQTT_MULTITHREAD
 
 /* Debugging */
 #undef  DEBUG_WOLFMQTT

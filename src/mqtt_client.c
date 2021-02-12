@@ -1355,10 +1355,27 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
 
             XMEMCPY(client->tx_buf, &publish->buffer[publish->buffer_pos],
                 client->write.len);
+
+        #ifdef WOLFMQTT_NONBLOCK
+            publish->buffer_pos += client->write.len;    //After sending the message new position is going to be current + client->write.len
+        #else
             publish->intBuf_pos += client->write.len;
+        #endif
         }
 
         /* Send packet and payload */
+    #ifdef WOLFMQTT_NONBLOCK
+            rc = MqttPacket_Write(client, client->tx_buf,
+                    client->write.len);
+            if (rc < 0) {
+                return rc;
+            }
+
+            /* Check if we are done sending publish message */
+            if (publish->buffer_pos < publish->buffer_len) {
+                return MQTT_CODE_CONTINUE;
+            }
+    #else
         do {
             rc = MqttPacket_Write(client, client->tx_buf,
                     client->write.len);
@@ -1383,11 +1400,8 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
             publish->intBuf_len = client->write.len;
             XMEMCPY(client->tx_buf, &publish->buffer[publish->intBuf_pos],
                 client->write.len);
-
-        #ifdef WOLFMQTT_NONBLOCK
-            return MQTT_CODE_CONTINUE;
-        #endif
         } while (publish->intBuf_pos < publish->buffer_len);
+    #endif
 
         if (rc >= 0) {
             /* If transferring more chunks */
