@@ -60,7 +60,11 @@
     #include <ws2tcpip.h>
     #include <stdio.h>
     #define SOCKET_T        SOCKET
-    #define SOERROR_T       char
+    #ifdef _WIN32
+        #define SOERROR_T int
+    #else
+        #define SOERROR_T char
+    #endif
     #define SELECT_FD(fd)   (fd)
     #ifndef SOCKET_INVALID /* Do not redefine from wolfssl */
         #define SOCKET_INVALID  ((SOCKET_T)INVALID_SOCKET)
@@ -68,6 +72,8 @@
     #define SOCK_CLOSE      closesocket
     #define SOCK_SEND(s,b,l,f) send((s), (const char*)(b), (size_t)(l), (f))
     #define SOCK_RECV(s,b,l,f) recv((s), (char*)(b), (size_t)(l), (f))
+    #define GET_SOCK_ERROR(f,s,o,e) (e) = WSAGetLastError()
+    #define SOCK_EQ_ERROR(e) (((e) == WSAEWOULDBLOCK) || ((e) == WSAEINPROGRESS))
 
 /* Freescale MQX / RTCS */
 #elif defined(FREESCALE_MQX) || defined(FREESCALE_KSDK_MQX)
@@ -147,8 +153,14 @@
 #ifdef SOCK_ADDRINFO
     #define SOCK_ADDRINFO   struct addrinfo
 #endif
-
-
+#ifndef GET_SOCK_ERROR
+    #define GET_SOCK_ERROR(f,s,o,e) \
+        socklen_t len = sizeof(so_error); \
+        getsockopt((f), (s), (o), &(e), &len)
+#endif
+#ifndef SOCK_EQ_ERROR
+    #define SOCK_EQ_ERROR(e) (((e) == EWOULDBLOCK) || ((e) == EAGAIN))
+#endif
 /* Local context for Net callbacks */
 typedef enum {
     SOCK_BEGIN = 0,
@@ -157,9 +169,9 @@ typedef enum {
 
 
 #if 0 /* TODO: add multicast support */
-typedef struct MulticastContext {
+typedef struct MulticastCtx {
 
-} MulticastContext;
+} MulticastCtx;
 #endif
 
 
@@ -643,26 +655,31 @@ static int NetConnect(void *context, const char* host, word16 port,
         #endif
 
             /* Start connect */
-            rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
+            rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr,
+                    sizeof(sock->addr));
             if (rc < 0) {
-                /* Check for error */
-                socklen_t len = sizeof(so_error);
-                getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-
                 /* set default error case */
                 rc = MQTT_CODE_ERROR_NETWORK;
-            #ifdef WOLFMQTT_NONBLOCK
-                if (errno == EINPROGRESS || so_error == EINPROGRESS) {
-                #ifndef WOLFMQTT_NO_TIMEOUT
+        #ifdef WOLFMQTT_NONBLOCK
+                /* Check for error */
+                GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+                if (
+            #ifndef _WIN32
+                        (errno == EINPROGRESS) ||
+            #endif
+                        SOCK_EQ_ERROR(so_error))
+                {
+            #ifndef WOLFMQTT_NO_TIMEOUT
                     /* Wait for connect */
-                    if (select((int)SELECT_FD(sock->fd), NULL, &fdset, NULL, &tv) > 0) {
+                    if (select((int)SELECT_FD(sock->fd), NULL, &fdset,
+                                              NULL, &tv) > 0) {
                         rc = MQTT_CODE_SUCCESS;
                     }
-                #else
+            #else
                     rc = MQTT_CODE_CONTINUE;
-                #endif
-                }
             #endif
+                }
+        #endif
             }
             break;
         }
@@ -759,7 +776,8 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     #endif /* !WOLFMQTT_NO_TIMEOUT */
 
         /* Start connect */
-        rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr, sizeof(sock->addr));
+        rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr,
+                sizeof(sock->addr));
     }
 
   exit:
@@ -799,22 +817,21 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
     if (rc == -1) {
         /* Get error */
-        socklen_t len = sizeof(so_error);
-        getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+        GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
         if (so_error == 0) {
-        #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
+    #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
             /* assume non-blocking case */
             rc = MQTT_CODE_CONTINUE;
-        #else
+    #else
             rc = 0; /* Handle signal */
-        #endif
+    #endif
         }
         else {
-        #ifdef WOLFMQTT_NONBLOCK
-            if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
+    #ifdef WOLFMQTT_NONBLOCK
+            if (SOCK_EQ_ERROR(so_error)) {
                 return MQTT_CODE_CONTINUE;
             }
-        #endif
+    #endif
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetWrite: Error %d", so_error);
         }
@@ -951,18 +968,16 @@ exit:
     }
     else if (rc < 0) {
         /* Get error */
-        socklen_t len = sizeof(so_error);
-        getsockopt(sock->fd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-
+        GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
         if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
         else {
-        #ifdef WOLFMQTT_NONBLOCK
-            if (so_error == EWOULDBLOCK || so_error == EAGAIN) {
+    #ifdef WOLFMQTT_NONBLOCK
+            if (SOCK_EQ_ERROR(so_error)) {
                 return MQTT_CODE_CONTINUE;
             }
-        #endif
+    #endif
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetRead: Error %d", so_error);
         }
@@ -1036,7 +1051,8 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
             dwLastIP[i].Val = ipAddr.Val;
             PRINTF("%s", TCPIP_STACK_NetNameGet(netH));
             PRINTF(" IP Address: ");
-            PRINTF("%d.%d.%d.%d\n", ipAddr.v[0], ipAddr.v[1], ipAddr.v[2], ipAddr.v[3]);
+            PRINTF("%d.%d.%d.%d\n", ipAddr.v[0], ipAddr.v[1], ipAddr.v[2],
+                    ipAddr.v[3]);
         }
     }
 #endif /* MICROCHIP_MPLAB_HARMONY */
@@ -1095,13 +1111,13 @@ int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         sockCtx->mqttCtx = mqttCtx;
 
     #if 0 /* TODO: add multicast support */
-        MulticastContext* multi_ctx;
-        multi_ctx = (MulticastContext*)WOLFMQTT_MALLOC(sizeof(MulticastContext));
+        MulticastCtx* multi_ctx;
+        multi_ctx = (MulticastCtx*)WOLFMQTT_MALLOC(sizeof(MulticastCtx));
         if (multi_ctx == NULL) {
             return MQTT_CODE_ERROR_MEMORY;
         }
         net->multi_ctx = multi_ctx;
-        XMEMSET(multi_ctx, 0, sizeof(MulticastContext));
+        XMEMSET(multi_ctx, 0, sizeof(MulticastCtx));
         multi_ctx->stat = SOCK_BEGIN;
     #endif
 
