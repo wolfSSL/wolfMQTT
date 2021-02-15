@@ -60,7 +60,7 @@
     #include <ws2tcpip.h>
     #include <stdio.h>
     #define SOCKET_T        SOCKET
-    #ifdef (_WIN32)
+    #ifdef _WIN32
         #define SOERROR_T int
     #else
         #define SOERROR_T char
@@ -72,7 +72,7 @@
     #define SOCK_CLOSE      closesocket
     #define SOCK_SEND(s,b,l,f) send((s), (const char*)(b), (size_t)(l), (f))
     #define SOCK_RECV(s,b,l,f) recv((s), (char*)(b), (size_t)(l), (f))
-    #define GET_SOCK_ERROR(f,s,o,e) WSAGetLastError()
+    #define GET_SOCK_ERROR(f,s,o,e) (e) = WSAGetLastError()
     #define SOCK_EQ_ERROR(e) (((e) == WSAEWOULDBLOCK) || ((e) == WSAEINPROGRESS))
 
 /* Freescale MQX / RTCS */
