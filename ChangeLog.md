@@ -1,6 +1,22 @@
 
 ## Release Notes
 
+### v1.8 (02/19/2021)
+* Fixes for non-blocking in WIN32 and large payload (PR #202)
+* Make TLS IO callback functions public (PR #201)
+* Bug fixes (PR #186, 188, 189, 193, 196, 199, 200)
+* Update default test broker (PR #194)
+* MQTT-SN fixes for multithread and register topic name (PR #185, 190)
+* Fix multi-thread to use pthread mutex with condition (PR #183)
+* Fix for WIN thread create macro (PR #182)
+* Use options.h with Arduino build (PR #181)
+* Use MqttClient_Ping_ex instead of MqttClient_Ping in examples (PR #179)
+* Fixes for building with MinGW (PR #178)
+* MQTT-SN support for multithread (PR #176)
+* TLS mutual auth in client examples (PR #175)
+* MQTT-SN feature enhancements (PR #173)
+* Add runtime message option to client (PR #171)
+
 ### v1.7 (08/21/2020)
 
 * Fix for publish with short topic name and example. (PR #169)
