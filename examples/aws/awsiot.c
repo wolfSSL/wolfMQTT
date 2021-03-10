@@ -592,6 +592,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
         }
 
         case WMQ_UNSUB: /* not used */
+        case WMQ_PING:
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;

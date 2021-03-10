@@ -88,6 +88,7 @@ typedef enum _MQTTCtxState {
     WMQ_SUB,
     WMQ_PUB,
     WMQ_WAIT_MSG,
+    WMQ_PING,
     WMQ_UNSUB,
     WMQ_DISCONNECT,
     WMQ_NET_DISCONNECT,

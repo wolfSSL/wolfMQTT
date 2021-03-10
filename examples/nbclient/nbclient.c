@@ -318,7 +318,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             do {
                 /* Try and read packet */
                 rc = MqttClient_WaitMessage(&mqttCtx->client,
-                                                    mqttCtx->cmd_timeout_ms);
+                                                mqttCtx->cmd_timeout_ms);
 
                 /* check for test mode */
                 if (mStopRead) {
@@ -336,19 +336,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     return rc;
                 }
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
-
-                    /* Keep Alive */
+                    /* Need to send keep-alive ping */
+                    rc = MQTT_CODE_CONTINUE;
                     PRINTF("Keep-alive timeout, sending ping");
-
-                    rc = MqttClient_Ping_ex(&mqttCtx->client, &mqttCtx->ping);
-                    if (rc == MQTT_CODE_CONTINUE) {
-                        return rc;
-                    }
-                    else if (rc != MQTT_CODE_SUCCESS) {
-                        PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
-                            MqttClient_ReturnCodeToString(rc), rc);
-                        break;
-                    }
+                    mqttCtx->stat = WMQ_PING;
+                    return rc;
                 }
                 else if (rc != MQTT_CODE_SUCCESS) {
                     /* There was an error */
@@ -374,6 +366,24 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->start_sec = 0;
 
             FALL_THROUGH;
+        }
+
+        case WMQ_PING:
+        {
+            rc = MqttClient_Ping_ex(&mqttCtx->client, &mqttCtx->ping);
+            if (rc == MQTT_CODE_CONTINUE) {
+                return rc;
+            }
+            else if (rc != MQTT_CODE_SUCCESS) {
+                PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
+                break;
+            }
+
+            /* Go back to waiting for message */
+            mqttCtx->stat = WMQ_WAIT_MSG;
+            rc = MQTT_CODE_CONTINUE;
+            return rc;
         }
 
         case WMQ_UNSUB:
