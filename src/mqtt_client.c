@@ -3921,16 +3921,17 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     #endif
         return rc;
     }
+    else {
+        rc = MQTT_CODE_SUCCESS;
+    }
 
     /* If sleep was set, wait for response disconnect packet */
     if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
-        rc = SN_Client_WaitType(client, NULL,
+        rc = SN_Client_WaitType(client, disconnect,
                 SN_MSG_TYPE_DISCONNECT, 0, client->cmd_timeout_ms);
     #ifdef WOLFMQTT_NONBLOCK
         if (rc == MQTT_CODE_CONTINUE)
             return rc;
-    #else
-        (void)rc;
     #endif
     #ifdef WOLFMQTT_MULTITHREAD
         if (wm_SemLock(&client->lockClient) == 0) {
@@ -3940,7 +3941,7 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     #endif
     }
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 int SN_Client_WaitMessage_ex(MqttClient *client, SN_Object* packet_obj,
