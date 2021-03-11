@@ -560,6 +560,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
         case WMQ_SUB:
         case WMQ_WAIT_MSG:
         case WMQ_UNSUB:
+        case WMQ_PING:
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;

@@ -462,6 +462,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
 
         case WMQ_PUB:
         case WMQ_UNSUB:
+        case WMQ_PING:
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;
