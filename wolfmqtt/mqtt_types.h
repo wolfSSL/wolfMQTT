@@ -89,7 +89,7 @@
         #include <dispatch/dispatch.h>
         typedef dispatch_semaphore_t wm_Sem;
 
-    #elif defined(__FreeBSD__) || defined(__linux__)
+    #elif defined(__FreeBSD__) || defined(__linux__) || defined(__QNX__)
         /* Posix Style Pthread Mutex and Conditional */
         #define WOLFMQTT_POSIX_SEMAPHORES
         #include <pthread.h>
