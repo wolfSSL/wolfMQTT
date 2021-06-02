@@ -766,6 +766,24 @@ wait_again:
     {
         case MQTT_MSG_BEGIN:
         {
+        #ifdef WOLFMQTT_MULTITHREAD
+            /* Lock recv socket mutex */
+            rc = wm_SemLock(&client->lockRecv);
+            if (rc != 0) {
+                PRINTF("MqttClient_WaitType: recv lock error!\n");
+                return rc;
+            }
+            readLocked = 1;
+
+            /* Lock client */
+            rc = wm_SemLock(&client->lockClient);
+            if (rc != 0) {
+                PRINTF("MqttClient_WaitType: click lock error!\n");
+                wm_SemUnlock(&client->lockRecv);
+                return rc;
+            }
+        #endif
+
             /* reset the packet state */
             client->packet.stat = MQTT_PK_BEGIN;
             client->read.pos = 0;
@@ -778,38 +796,23 @@ wait_again:
         case MQTT_MSG_WAIT:
         {
         #ifdef WOLFMQTT_MULTITHREAD
-            /* Lock recv socket mutex */
-            rc = wm_SemLock(&client->lockRecv);
-            if (rc != 0) {
-                PRINTF("!!!!LOCK ERROR!!!!\n");
-                return rc;
-            }
-            readLocked = 1;
-
             /* Check to see if packet type and id have already completed */
             pendResp = NULL;
-            rc = wm_SemLock(&client->lockClient);
-            if (rc == 0) {
-                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type, 
-                        wait_packet_id, &pendResp)) {
-                    if (pendResp->packetDone) {
-                        /* pending response is already done, so return */
-                        rc = pendResp->packet_ret;
-                    #ifdef WOLFMQTT_DEBUG_CLIENT
-                        PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
-                    #endif
-                        MqttClient_RespList_Remove(client, pendResp);
-                        wm_SemUnlock(&client->lockClient);
-                        wm_SemUnlock(&client->lockRecv);
-                        return rc;
-                    }
+            if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type, 
+                    wait_packet_id, &pendResp)) {
+                if (pendResp->packetDone) {
+                    /* pending response is already done, so return */
+                    rc = pendResp->packet_ret;
+                #ifdef WOLFMQTT_DEBUG_CLIENT
+                    PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
+                #endif
+                    MqttClient_RespList_Remove(client, pendResp);
+                    wm_SemUnlock(&client->lockClient);
+                    wm_SemUnlock(&client->lockRecv);
+                    return rc;
                 }
-                wm_SemUnlock(&client->lockClient);
             }
-            else {
-                wm_SemUnlock(&client->lockRecv);
-                return rc;
-            }
+            wm_SemUnlock(&client->lockClient);
         #endif /* WOLFMQTT_MULTITHREAD */
 
             *mms_stat = MQTT_MSG_WAIT;
@@ -821,6 +824,7 @@ wait_again:
             if (rc <= 0) {
                 break;
             }
+
             /* capture length read */
             client->packet.buf_len = rc;
 
@@ -1711,11 +1715,9 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
 
     /* Populate return codes */
     if (rc == MQTT_CODE_SUCCESS) {
-        for (i = 0; i < subscribe->topic_count; i++) {
+        for (i = 0; i < subscribe->topic_count && i < MAX_MQTT_TOPICS; i++) {
             topic = &subscribe->topics[i];
-            if (subscribe->ack.return_codes) {
-                topic->return_code = subscribe->ack.return_codes[i];
-            }
+            topic->return_code = subscribe->ack.return_codes[i];
         }
     }
 
