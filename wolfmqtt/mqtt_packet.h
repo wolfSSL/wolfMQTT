@@ -40,7 +40,12 @@
 #define MQTT_DATA_INT_SIZE   4
 
 #ifndef MAX_PACKET_ID
-#define MAX_PACKET_ID           ((1 << 16) - 1)
+#define MAX_PACKET_ID        ((1 << 16) - 1)
+#endif
+
+/* maximum list of topics to subscribe at once */
+#ifndef MAX_MQTT_TOPICS
+#define MAX_MQTT_TOPICS      12
 #endif
 
 #ifdef WOLFMQTT_V5
@@ -509,7 +514,7 @@ typedef struct _MqttSubscribeAck {
     MqttMsgStat stat; /* must be first member at top */
 
     word16      packet_id;
-    byte       *return_codes; /* MqttSubscribeAckReturnCodes */
+    byte        return_codes[MAX_MQTT_TOPICS];
 #ifdef WOLFMQTT_V5
     MqttProp* props;
     byte protocol_level;
