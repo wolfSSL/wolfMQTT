@@ -24,14 +24,6 @@
     #include <config.h>
 #endif
 
-#ifdef WOLFMQTT_NONBLOCK
-    /* need EWOULDBLOCK and EAGAIN */
-    #ifdef MICROCHIP_MPLAB_HARMONY
-        #include <sys/errno.h>
-    #endif
-    #include <errno.h>
-#endif
-
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_socket.h"
 
@@ -164,29 +156,22 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
-#ifdef WOLFMQTT_NONBLOCK
-    rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
-        buf_len - client->write.pos, timeout_ms);
-    if (rc >= 0) {
-        client->write.pos += rc;
-        if (client->write.pos < buf_len) {
-            rc = MQTT_CODE_CONTINUE;
-        }
-    }
-    else if (rc == EWOULDBLOCK || rc == EAGAIN) {
-        rc = MQTT_CODE_CONTINUE;
-    }
-
-#else
-    do {
+    for (;;) {
         rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
             buf_len - client->write.pos, timeout_ms);
         if (rc <= 0) {
             break;
         }
         client->write.pos += rc;
-    } while (client->write.pos < buf_len);
-#endif /* WOLFMQTT_NONBLOCK */
+        if (client->write.pos < buf_len) {
+            if (client->useNonBlockMode) {
+                rc = MQTT_CODE_CONTINUE;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
 
     /* handle return code */
     if (rc > 0) {
@@ -249,29 +234,22 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 
-#ifdef WOLFMQTT_NONBLOCK
-    rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
-        buf_len - client->read.pos, timeout_ms);
-    if (rc >= 0) {
-        client->read.pos += rc;
-        if (client->read.pos < buf_len) {
-            rc = MQTT_CODE_CONTINUE;
-        }
-    }
-    else if (rc == EWOULDBLOCK || rc == EAGAIN) {
-        rc = MQTT_CODE_CONTINUE;
-    }
-
-#else
-    do {
+    for (;;) {
         rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
             buf_len - client->read.pos, timeout_ms);
         if (rc <= 0) {
             break;
         }
         client->read.pos += rc;
-    } while (client->read.pos < buf_len);
-#endif /* WOLFMQTT_NONBLOCK */
+        if (client->read.pos < buf_len) {
+            if (client->useNonBlockMode) {
+                rc = MQTT_CODE_CONTINUE;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
 
     /* handle return code */
     if (rc > 0) {
