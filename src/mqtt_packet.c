@@ -1279,7 +1279,7 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
         /* payload is list of return codes (MqttSubscribeAckReturnCodes) */
         if (remain_len > MAX_MQTT_TOPICS)
             remain_len = MAX_MQTT_TOPICS;
-        XMEMCMP(subscribe_ack->return_codes, rx_payload, remain_len);
+        XMEMCPY(subscribe_ack->return_codes, rx_payload, remain_len);
     }
 
     /* Return total length of packet */
