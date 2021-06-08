@@ -482,7 +482,7 @@ int MqttSocket_Disconnect(MqttClient *client)
         client->flags &= ~MQTT_CLIENT_FLAG_IS_CONNECTED;
     }
 #ifdef WOLFMQTT_DEBUG_SOCKET
-    PRINTF("MqttSocket_Disconnect: Rc=%d\n", rc);
+    PRINTF("MqttSocket_Disconnect: Rc=%d", rc);
 #endif
 
     /* Check for error */

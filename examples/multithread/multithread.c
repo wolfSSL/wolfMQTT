@@ -561,31 +561,31 @@ int multithread_test(MQTTCtx *mqttCtx)
     rc = multithread_test_init(mqttCtx);
     if (rc == 0) {
         if (THREAD_CREATE(&threadList[threadCount++], subscribe_task, mqttCtx)) {
-            PRINTF("THREAD_CREATE failed: %d\n", errno);
+            PRINTF("THREAD_CREATE failed: %d", errno);
             return -1;
         }
         /* for test mode, we must complete subscribe to track number of pubs received */
         if (mqttCtx->test_mode) {
             if (THREAD_JOIN(threadList, threadCount)) {
-                PRINTF("THREAD_JOIN failed: %d\n", errno);
+                PRINTF("THREAD_JOIN failed: %d", errno);
                 return -1;
             }
             threadCount = 0;
         }
         /* Create the thread that waits for messages */
         if (THREAD_CREATE(&threadList[threadCount++], waitMessage_task, mqttCtx)) {
-            PRINTF("THREAD_CREATE failed: %d\n", errno);
+            PRINTF("THREAD_CREATE failed: %d", errno);
             return -1;
         }
         /* Ping */
         if (THREAD_CREATE(&threadList[threadCount++], ping_task, mqttCtx)) {
-            PRINTF("THREAD_CREATE failed: %d\n", errno);
+            PRINTF("THREAD_CREATE failed: %d", errno);
             return -1;
         }
         /* Create threads that publish unique messages */
         for (i = 0; i < NUM_PUB_TASKS; i++) {
             if (THREAD_CREATE(&threadList[threadCount++], publish_task, mqttCtx)) {
-                PRINTF("THREAD_CREATE failed: %d\n", errno);
+                PRINTF("THREAD_CREATE failed: %d", errno);
                 return -1;
             }
         }
@@ -593,9 +593,9 @@ int multithread_test(MQTTCtx *mqttCtx)
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__
-            PRINTF("THREAD_JOIN failed: %m\n"); /* %m is specific to glibc/uclibc/musl, and recently (2018) added to FreeBSD */
+            PRINTF("THREAD_JOIN failed: %m"); /* %m is specific to glibc/uclibc/musl, and recently (2018) added to FreeBSD */
 #else
-            PRINTF("THREAD_JOIN failed: %d\n",errno);
+            PRINTF("THREAD_JOIN failed: %d",errno);
 #endif
         }
 

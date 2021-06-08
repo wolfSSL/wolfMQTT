@@ -1860,6 +1860,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     {
         case MQTT_PK_BEGIN:
         {
+            client->read.pos = 0;
             client->packet.header_len = 2;
             client->packet.remain_len = 0;
 
