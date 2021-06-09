@@ -711,7 +711,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     struct addrinfo hints;
     MQTTCtx* mqttCtx = sock->mqttCtx;
 
-    PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d\n",
+    PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
         host, port, timeout_ms, mqttCtx->use_tls);
 
     /* Get address information for host and locate IPv4 */
@@ -1050,9 +1050,8 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         if (dwLastIP[i].Val != ipAddr.Val) {
             dwLastIP[i].Val = ipAddr.Val;
             PRINTF("%s", TCPIP_STACK_NetNameGet(netH));
-            PRINTF(" IP Address: ");
-            PRINTF("%d.%d.%d.%d\n", ipAddr.v[0], ipAddr.v[1], ipAddr.v[2],
-                    ipAddr.v[3]);
+            PRINTF(" IP Address: %d.%d.%d.%d",
+                ipAddr.v[0], ipAddr.v[1], ipAddr.v[2], ipAddr.v[3]);
         }
     }
 #endif /* MICROCHIP_MPLAB_HARMONY */

@@ -94,7 +94,7 @@
         #define WOLFMQTT_POSIX_SEMAPHORES
         #include <pthread.h>
         typedef struct {
-            int lockCount;
+            volatile int lockCount;
             pthread_mutex_t mutex;
             pthread_cond_t cond;
         } wm_Sem;

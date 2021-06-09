@@ -74,7 +74,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
     }
     int wm_SemLock(wm_Sem *s){
         pthread_mutex_lock(&s->mutex);
-        if (s->lockCount > 0)
+        while (s->lockCount > 0)
             pthread_cond_wait(&s->cond, &s->mutex);
         s->lockCount++;
         pthread_mutex_unlock(&s->mutex);
@@ -770,23 +770,14 @@ wait_again:
             /* Lock recv socket mutex */
             rc = wm_SemLock(&client->lockRecv);
             if (rc != 0) {
-                PRINTF("MqttClient_WaitType: recv lock error!\n");
+                PRINTF("MqttClient_WaitType: recv lock error!");
                 return rc;
             }
             readLocked = 1;
-
-            /* Lock client */
-            rc = wm_SemLock(&client->lockClient);
-            if (rc != 0) {
-                PRINTF("MqttClient_WaitType: click lock error!\n");
-                wm_SemUnlock(&client->lockRecv);
-                return rc;
-            }
         #endif
 
             /* reset the packet state */
             client->packet.stat = MQTT_PK_BEGIN;
-            client->read.pos = 0;
 
             FALL_THROUGH;
         }
@@ -798,21 +789,27 @@ wait_again:
         #ifdef WOLFMQTT_MULTITHREAD
             /* Check to see if packet type and id have already completed */
             pendResp = NULL;
-            if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type, 
+            rc = wm_SemLock(&client->lockClient);
+            if (rc == 0) {
+                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type, 
                     wait_packet_id, &pendResp)) {
-                if (pendResp->packetDone) {
-                    /* pending response is already done, so return */
-                    rc = pendResp->packet_ret;
-                #ifdef WOLFMQTT_DEBUG_CLIENT
-                    PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
-                #endif
-                    MqttClient_RespList_Remove(client, pendResp);
-                    wm_SemUnlock(&client->lockClient);
-                    wm_SemUnlock(&client->lockRecv);
-                    return rc;
+                    if (pendResp->packetDone) {
+                        /* pending response is already done, so return */
+                        rc = pendResp->packet_ret;
+                    #ifdef WOLFMQTT_DEBUG_CLIENT
+                        PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
+                    #endif
+                        MqttClient_RespList_Remove(client, pendResp);
+                        wm_SemUnlock(&client->lockClient);
+                        wm_SemUnlock(&client->lockRecv);
+                        return rc;
+                    }
                 }
+                wm_SemUnlock(&client->lockClient);
             }
-            wm_SemUnlock(&client->lockClient);
+            else {
+                break; /* error */
+            }
         #endif /* WOLFMQTT_MULTITHREAD */
 
             *mms_stat = MQTT_MSG_WAIT;
@@ -941,12 +938,6 @@ wait_again:
         }
     } /* switch (*mms_stat) */
 
-#ifdef WOLFMQTT_MULTITHREAD
-    if (readLocked) {
-        wm_SemUnlock(&client->lockRecv);
-    }
-#endif
-
 #ifdef WOLFMQTT_NONBLOCK
     if (rc != MQTT_CODE_CONTINUE)
 #endif
@@ -955,6 +946,11 @@ wait_again:
         *mms_stat = MQTT_MSG_BEGIN;
     }
 
+#ifdef WOLFMQTT_MULTITHREAD
+    if (readLocked) {
+        wm_SemUnlock(&client->lockRecv);
+    }
+#endif
     if (rc < 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_WaitType: Failure: %s (%d)",
@@ -2615,32 +2611,23 @@ wait_again:
         case MQTT_MSG_BEGIN:
         {
         #ifdef WOLFMQTT_MULTITHREAD
-            rc = wm_SemLock(&client->lockClient);
+            /* Lock recv socket mutex */
+            rc = wm_SemLock(&client->lockRecv);
             if (rc != 0) {
+                PRINTF("SN_Client_WaitType recv lock error");
                 return rc;
             }
-            else
+            readLocked = 1;
         #endif
-            {
-                /* reset the packet state */
-                client->packet.stat = MQTT_PK_BEGIN;
-            }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockClient);
-        #endif
+
+            /* reset the packet state */
+            client->packet.stat = MQTT_PK_BEGIN;
+
             FALL_THROUGH;
         }
         case MQTT_MSG_WAIT:
         {
         #ifdef WOLFMQTT_MULTITHREAD
-            /* Lock recv socket mutex */
-            rc = wm_SemLock(&client->lockRecv);
-            if (rc != 0) {
-                PRINTF("!!!!LOCK ERROR!!!!");
-                return rc;
-            }
-            readLocked = 1;
-
             /* Check to see if packet type and id have already completed */
             pendResp = NULL;
             rc = wm_SemLock(&client->lockClient);
@@ -2787,12 +2774,6 @@ wait_again:
         }
     } /* switch (msg->stat) */
 
-#ifdef WOLFMQTT_MULTITHREAD
-    if (readLocked) {
-        wm_SemUnlock(&client->lockRecv);
-    }
-#endif
-
 #ifdef WOLFMQTT_NONBLOCK
     if (rc != MQTT_CODE_CONTINUE)
 #endif
@@ -2800,6 +2781,12 @@ wait_again:
         /* reset state */
         *mms_stat = MQTT_MSG_BEGIN;
     }
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (readLocked) {
+        wm_SemUnlock(&client->lockRecv);
+    }
+#endif
 
     if (rc < 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT

@@ -588,9 +588,9 @@ int sn_multithread_test(MQTTCtx *mqttCtx)
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__
-            PRINTF("THREAD_JOIN failed: %m\n"); /* %m is specific to glibc/uclibc/musl, and recently (2018) added to FreeBSD */
+            PRINTF("THREAD_JOIN failed: %m"); /* %m is specific to glibc/uclibc/musl, and recently (2018) added to FreeBSD */
 #else
-            PRINTF("THREAD_JOIN failed: %d\n",errno);
+            PRINTF("THREAD_JOIN failed: %d",errno);
 #endif
         }
 
