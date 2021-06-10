@@ -780,7 +780,6 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     MqttPacketType packet_type;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp *pendResp;
-    int readLocked;
 #endif
     MqttMsgStatFull* mms_stat;
     int waitMatchFound;
@@ -799,7 +798,6 @@ wait_again:
     packet_type = MQTT_PACKET_TYPE_RESERVED;
 #ifdef WOLFMQTT_MULTITHREAD
     pendResp = NULL;
-    readLocked = 0;
 #endif
     waitMatchFound = 0;
 
@@ -820,8 +818,8 @@ wait_again:
                 PRINTF("MqttClient_WaitType: recv lock error!");
                 return rc;
             }
-            readLocked = 1;
         #endif
+            mms_stat->read_locked = 1;
 
             /* reset the packet state */
             client->packet.stat = MQTT_PK_BEGIN;
@@ -841,15 +839,15 @@ wait_again:
                 if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
                     wait_packet_id, &pendResp)) {
                     if (pendResp->packetDone) {
-                        /* pending response is already done, so return */
+                        /* pending response is already done, so break */
                         rc = pendResp->packet_ret;
                     #ifdef WOLFMQTT_DEBUG_CLIENT
                         PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
                     #endif
                         MqttClient_RespList_Remove(client, pendResp);
                         wm_SemUnlock(&client->lockClient);
-                        wm_SemUnlock(&client->lockRecv);
-                        return rc;
+                        waitMatchFound = 1;
+                        break;
                     }
                 }
                 wm_SemUnlock(&client->lockClient);
@@ -894,10 +892,6 @@ wait_again:
             MqttPacketType use_packet_type;
             void* use_packet_obj;
 
-        #ifdef WOLFMQTT_MULTITHREAD
-            readLocked = 1; /* if in this state read is locked */
-        #endif
-
             /* read payload state only happens for publish messages */
             if (mms_stat->read == MQTT_MSG_READ_PAYLOAD) {
                 packet_type = MQTT_PACKET_TYPE_PUBLISH;
@@ -929,7 +923,8 @@ wait_again:
                     pendResp->packetProcessing = 1;
                     use_packet_obj = pendResp->packet_obj;
                     use_packet_type = pendResp->packet_type;
-                    /* req from another thread... not a match */
+                    /* req are already in resp list, may from other thread or
+                       current thread, not a match */
                     waitMatchFound = 0;
                 }
                 wm_SemUnlock(&client->lockClient);
@@ -946,8 +941,8 @@ wait_again:
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
                 /* we have received some data, so keep the recv
-                    mutex lock active and return */
-                return rc;
+                    mutex lock active and break */
+                break;
             }
         #endif
 
@@ -993,11 +988,12 @@ wait_again:
         mms_stat->read = MQTT_MSG_BEGIN;
     }
 
+    if (mms_stat->read_locked) {
+        mms_stat->read_locked = 0;
 #ifdef WOLFMQTT_MULTITHREAD
-    if (readLocked) {
         wm_SemUnlock(&client->lockRecv);
-    }
 #endif
+    }
     if (rc < 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_WaitType: Failure: %s (%d)",
