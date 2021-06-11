@@ -285,6 +285,84 @@ int sn_test(MQTTCtx *mqttCtx)
         }
     }
 
+    /* The predefined topic examples require modification of the gateway
+       configuration. To add a predefined topic to a Paho MQTTSN-Embedded-C
+       Gateway, open the gateway config file and enable the following:
+
+           PredefinedTopic=YES
+           PredefinedTopicList=./predefinedTopic.conf
+
+       Then in the "predefinedTopic.conf" file, add a topic:
+
+           *, wolfMQTT/example/predefTopic7, 7
+
+       Then restart the gateway.
+     */
+#if 0
+    {
+        SN_Publish publish;
+        SN_Subscribe subscribe;
+        SN_Unsubscribe unsub;
+        char pd_topic_id[] = {0,7}; /* Same ID as set above */
+
+        /* Subscribe Predefined Topic */
+        XMEMSET(&subscribe, 0, sizeof(SN_Subscribe));
+
+        subscribe.duplicate = 0;
+        subscribe.qos = MQTT_QOS_0;
+        subscribe.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
+        subscribe.topicNameId = pd_topic_id;
+        subscribe.packet_id = mqtt_get_packetid();
+
+        PRINTF("MQTT-SN Predefined Subscribe: topic id = %d",
+                subscribe.topicNameId[1]);
+        rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+
+        PRINTF("....MQTT-SN Predefined Subscribe Ack: topic id = %d, rc = %d",
+                subscribe.subAck.topicId, subscribe.subAck.return_code);
+
+        /* Publish Predefined Topic */
+        XMEMSET(&publish, 0, sizeof(SN_Publish));
+        publish.retain = 0;
+        publish.qos = MQTT_QOS_0;
+        publish.duplicate = 0;
+        publish.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
+
+        /* Use the topic ID saved from the subscribe */
+        publish.topic_name = pd_topic_id;
+
+        if (publish.qos > MQTT_QOS_0) {
+            publish.packet_id = mqtt_get_packetid();
+        }
+
+        publish.buffer = (byte*)TEST_MESSAGE" predefined";
+        publish.total_len = (word16)XSTRLEN(TEST_MESSAGE" predefined");
+
+        rc = SN_Client_Publish(&mqttCtx->client, &publish);
+
+        PRINTF("MQTT-SN Predefined Publish: topic id = %d, rc = %d\r\nPayload = %s",
+                publish.topic_name[1],
+                publish.return_code,
+                publish.buffer);
+
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
+
+        /* Unsubscribe from Predefined Topic */
+        XMEMSET(&unsub, 0, sizeof(SN_Unsubscribe));
+
+        unsub.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
+        unsub.topicNameId = pd_topic_id;
+        unsub.packet_id = mqtt_get_packetid();
+
+        PRINTF("MQTT-SN Unsubscribe Predefined Topic: topic ID = %d",
+                unsub.topicNameId[1]);
+        rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsub);
+        PRINTF("....MQTT-SN Unsubscribe Predefined Topic Ack: rc = %d", rc);
+    }
+#endif
+
     {
         /* Short topic name subscribe */
         SN_Subscribe subscribe;

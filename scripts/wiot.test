@@ -2,6 +2,8 @@
 
 # Watson IoT Client test
 
+# NOTE: 31MAY2021 Quickstart broker was disabled
+
 # Check for application
 [ ! -x ./examples/wiot/wiot ] && echo -e "\n\nWatson IoT MQTT Client doesn't exist" && exit 1
 
