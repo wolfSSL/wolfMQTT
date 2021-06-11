@@ -2892,8 +2892,7 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     }
 
     /* Determine packet length */
-    if ((subscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
-            SN_TOPIC_ID_TYPE_NORMAL) {
+    if (subscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
         total_len = (int)XSTRLEN(subscribe->topicNameId);
     }
@@ -2942,8 +2941,7 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     tx_payload += MqttEncode_Num(tx_payload, subscribe->packet_id);
 
     /* Encode topic */
-    if ((subscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
-            SN_TOPIC_ID_TYPE_NORMAL) {
+    if (subscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
         XMEMCPY(tx_payload, subscribe->topicNameId, XSTRLEN(subscribe->topicNameId));
     }
@@ -3042,8 +3040,9 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     *tx_payload++ = flags;
 
     /* Encode topic */
-    if (publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) {
-        /* Short topic name is 2 chars */
+    if ((publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) ||
+        (publish->topic_type == SN_TOPIC_ID_TYPE_PREDEF)) {
+        /* Short and predefined topic names are 2 chars */
         XMEMCPY(tx_payload, publish->topic_name, 2);
         tx_payload += 2;
     }
@@ -3216,8 +3215,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     }
 
     /* Determine packet length */
-    if ((unsubscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
-            SN_TOPIC_ID_TYPE_NORMAL) {
+    if (unsubscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
         total_len = (int)XSTRLEN(unsubscribe->topicNameId);
     }
@@ -3264,8 +3262,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     tx_payload += MqttEncode_Num(tx_payload, unsubscribe->packet_id);
 
     /* Encode topic */
-    if ((unsubscribe->topic_type & SN_PACKET_FLAG_TOPICIDTYPE_MASK) ==
-            SN_TOPIC_ID_TYPE_NORMAL) {
+    if (unsubscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
         XMEMCPY(tx_payload, unsubscribe->topicNameId,
                 XSTRLEN(unsubscribe->topicNameId));
