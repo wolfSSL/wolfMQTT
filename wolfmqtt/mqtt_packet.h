@@ -1048,8 +1048,8 @@ typedef struct _SN_PingReq {
     MqttPendResp pendResp;
 #endif
 
-    /* clientId is optional and is included by a “sleeping” client when it
-       goes to the “awake” state and is waiting for messages sent by the
+    /* clientId is optional and is included by a "sleeping" client when it
+       goes to the "awake" state and is waiting for messages sent by the
        server/gateway. */
     char *clientId;
 } SN_PingReq;
@@ -1061,8 +1061,8 @@ typedef struct _SN_Disconnect {
     MqttPendResp pendResp;
 #endif
 
-    /* sleepTmr is optional and is included by a “sleeping” client
-       that wants to go the “asleep” state. The receipt of this message
+    /* sleepTmr is optional and is included by a "sleeping" client
+       that wants to go the "asleep" state. The receipt of this message
        is also acknowledged by the gateway by means of a DISCONNECT message
        (without a duration field).*/
     word16 sleepTmr;
