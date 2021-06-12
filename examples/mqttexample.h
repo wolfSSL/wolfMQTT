@@ -148,7 +148,7 @@ typedef struct _MQTTCtx {
     int retain;
     int enable_lwt;
 #ifdef WOLFMQTT_V5
-    int      max_packet_size;
+    word32 max_packet_size;
 #endif
     word32 cmd_timeout_ms;
 #if defined(WOLFMQTT_NONBLOCK)
