@@ -134,7 +134,7 @@ static int socket_get_error(int sockFd)
 {
     int so_error = 0;
     socklen_t len = sizeof(so_error);
-    getsockopt(sockFd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+    getsockopt(sockFd, SOL_SOCKET, SO_ERROR, (void*)&so_error, &len);
     return so_error;
 }
 
