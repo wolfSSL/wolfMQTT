@@ -589,11 +589,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
             #endif
                 return rc;
             }
-            client->packet.buf_len = rc;
+            client->write.len = rc;
 
             /* Send publish response packet */
             rc = MqttPacket_Write(client, client->tx_buf,
-                client->packet.buf_len);
+                client->write.len);
 
         #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockSend);
@@ -646,11 +646,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
             #endif
                 return rc;
             }
-            client->packet.buf_len = rc;
+            client->write.len = rc;
 
             /* Send publish response packet */
             rc = MqttPacket_Write(client, client->tx_buf,
-                client->packet.buf_len);
+                client->write.len);
 
         #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockSend);
@@ -2366,11 +2366,11 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                 #endif
                     return rc;
                 }
-                client->packet.buf_len = rc;
+                client->write.len = rc;
 
                 /* Send packet */
                 rc = MqttPacket_Write(client, client->tx_buf,
-                                                    client->packet.buf_len);
+                                                    client->write.len);
             #ifdef WOLFMQTT_MULTITHREAD
                 wm_SemUnlock(&client->lockSend);
             #endif
@@ -2422,11 +2422,11 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                 #endif
                     return rc;
                 }
-                client->packet.buf_len = rc;
+                client->write.len = rc;
 
                 /* Send packet */
                 rc = MqttPacket_Write(client, client->tx_buf,
-                        client->packet.buf_len);
+                        client->write.len);
             #ifdef WOLFMQTT_MULTITHREAD
                 wm_SemUnlock(&client->lockSend);
             #endif
