@@ -88,9 +88,9 @@ static int mStopRead = 0;
 
 #define AZURE_DEVICE_NAME       AZURE_HOST "/devices/" AZURE_DEVICE_ID
 #define AZURE_USERNAME          AZURE_HOST "/" AZURE_DEVICE_ID "/" AZURE_API_VERSION
-#define AZURE_SIG_FMT           "%s\n%ld"
+#define AZURE_SIG_FMT           "%s\n%lld"
     /* [device name (URL Encoded)]\n[Expiration sec UTC] */
-#define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%ld"
+#define AZURE_PASSWORD_FMT      "SharedAccessSignature sr=%s&sig=%s&se=%lld"
     /* sr=[device name (URL Encoded)]
        sig=[HMAC-SHA256 of AZURE_SIG_FMT using AZURE_KEY (URL Encoded)]
        se=[Expiration sec UTC] */
@@ -178,7 +178,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     byte base64Sig[WC_SHA256_DIGEST_SIZE*2];
     word32 base64SigLen = (word32)sizeof(base64Sig);
     byte encodedSig[WC_SHA256_DIGEST_SIZE*4];
-    long lTime;
+    time_t lTime;
     Hmac hmac;
 
     if (sasToken == NULL) {
@@ -204,7 +204,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     url_encode(mRfc3986, (byte*)AZURE_DEVICE_NAME, deviceName);
 
     /* Build signature sting "uri \n expiration" */
-    XSNPRINTF(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
+    XSNPRINTF(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, (long long)lTime);
 
     /* HMAC-SHA256 Hash sigData using decoded key */
     rc = wc_HmacSetKey(&hmac, WC_SHA256, decodedKey, decodedKeyLen);
@@ -235,7 +235,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     url_encode(mRfc3986, base64Sig, (char*)encodedSig);
 
     /* Build sasToken */
-    XSNPRINTF(sasToken, sasTokenLen, AZURE_PASSWORD_FMT, deviceName, encodedSig, lTime);
+    XSNPRINTF(sasToken, sasTokenLen, AZURE_PASSWORD_FMT, deviceName, encodedSig, (long long)lTime);
     PRINTF("%s", sasToken);
 
     return 0;
