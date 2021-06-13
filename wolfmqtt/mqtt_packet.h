@@ -404,6 +404,20 @@ enum MqttConnectAckReturnCodes {
     MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH = 5,
 };
 
+#ifdef WOLFMQTT_V5
+/* AUTH */
+typedef struct _MqttAuth {
+    /* stat and pendResp must be first members at top */
+    MqttMsgStatFull stat;
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp pendResp;
+#endif
+
+    byte        reason_code;
+    MqttProp*   props;
+} MqttAuth;
+#endif
+
 /* Connect Ack packet structure */
 typedef struct _MqttConnectAck {
     MqttMsgStatFull stat; /* must be first member at top */
@@ -447,6 +461,7 @@ typedef struct _MqttConnect {
     MqttConnectAck ack;
 
 #ifdef WOLFMQTT_V5
+    MqttAuth auth;
     MqttProp* props;
 #endif
 } MqttConnect;
@@ -619,21 +634,6 @@ typedef struct _MqttDisconnect {
     byte protocol_level;
 #endif
 } MqttDisconnect;
-
-
-#ifdef WOLFMQTT_V5
-/* AUTH */
-typedef struct _MqttAuth {
-    /* stat and pendResp must be first members at top */
-    MqttMsgStatFull stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
-
-    byte        reason_code;
-    MqttProp*   props;
-} MqttAuth;
-#endif
 
 /* Generic MQTT struct for packet types */
 typedef union _MqttObject {
