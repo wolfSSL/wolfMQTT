@@ -280,9 +280,6 @@ typedef struct _MqttPacket {
 /* Generic Message */
 typedef enum _MqttMsgStat {
     MQTT_MSG_BEGIN = 0, /* must be zero, so memset will setup state */
-#ifdef WOLFMQTT_V5
-    MQTT_MSG_AUTH,
-#endif
     MQTT_MSG_WAIT,
     MQTT_MSG_WRITE,
     MQTT_MSG_WRITE_PAYLOAD,
@@ -463,6 +460,7 @@ typedef struct _MqttConnect {
 #ifdef WOLFMQTT_V5
     MqttAuth auth;
     MqttProp* props;
+    byte auth_started;
 #endif
 } MqttConnect;
 
