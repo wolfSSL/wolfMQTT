@@ -553,8 +553,8 @@ static int MqttClient_HandlePacket(MqttClient* client,
             MqttPublish *publish = (MqttPublish*)packet_obj;
             MqttPacketType resp_type;
 
-            if (publish->stat == MQTT_MSG_BEGIN ||
-                publish->stat == MQTT_MSG_READ) {
+            if (publish->stat.read == MQTT_MSG_BEGIN ||
+                publish->stat.read == MQTT_MSG_READ) {
                 rc = MqttClient_DecodePacket(client, client->rx_buf,
                     client->packet.buf_len, packet_obj, &packet_type,
                     &packet_qos, &packet_id);
@@ -777,15 +777,15 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     MqttPendResp *pendResp;
     int readLocked;
 #endif
-    MqttMsgStat* mms_stat;
+    MqttMsgStatFull* mms_stat;
     int waitMatchFound;
 
     if (client == NULL || packet_obj == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* all packet type structures must have MqttMsgStat at top */
-    mms_stat = (MqttMsgStat*)packet_obj;
+    /* all packet type structures must have MqttMsgStatFull at top */
+    mms_stat = (MqttMsgStatFull*)packet_obj;
 
 wait_again:
 
@@ -804,7 +804,7 @@ wait_again:
             wait_type, wait_packet_id);
 #endif
 
-    switch ((int)*mms_stat)
+    switch (mms_stat->read)
     {
         case MQTT_MSG_BEGIN:
         {
@@ -854,7 +854,7 @@ wait_again:
             }
         #endif /* WOLFMQTT_MULTITHREAD */
 
-            *mms_stat = MQTT_MSG_WAIT;
+            mms_stat->read = MQTT_MSG_WAIT;
 
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len,
@@ -879,7 +879,7 @@ wait_again:
                 client->packet.buf_len, packet_type, packet_id);
         #endif
 
-            *mms_stat = MQTT_MSG_READ;
+            mms_stat->read = MQTT_MSG_READ;
         }
         FALL_THROUGH;
 
@@ -894,7 +894,7 @@ wait_again:
         #endif
 
             /* read payload state only happens for publish messages */
-            if (*mms_stat == MQTT_MSG_READ_PAYLOAD) {
+            if (mms_stat->read == MQTT_MSG_READ_PAYLOAD) {
                 packet_type = MQTT_PACKET_TYPE_PUBLISH;
             }
 
@@ -973,19 +973,19 @@ wait_again:
         default:
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("MqttClient_WaitType: Invalid state %d!", *mms_stat);
+            PRINTF("MqttClient_WaitType: Invalid state %d!", mms_stat->read);
         #endif
             rc = MQTT_CODE_ERROR_STAT;
             break;
         }
-    } /* switch (*mms_stat) */
+    } /* switch (mms_stat->read) */
 
 #ifdef WOLFMQTT_NONBLOCK
     if (rc != MQTT_CODE_CONTINUE)
 #endif
     {
         /* reset state */
-        *mms_stat = MQTT_MSG_BEGIN;
+        mms_stat->read = MQTT_MSG_BEGIN;
     }
 
 #ifdef WOLFMQTT_MULTITHREAD
@@ -1304,7 +1304,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             publish->buffer_len = 0;
 
             /* set state to reading payload */
-            publish->stat = MQTT_MSG_READ_PAYLOAD;
+            publish->stat.read = MQTT_MSG_READ_PAYLOAD;
 
             msg_len = (publish->total_len - publish->buffer_pos);
             if (msg_len > client->rx_buf_len) {
@@ -2620,15 +2620,15 @@ static int SN_Client_WaitType(MqttClient *client, void* packet_obj,
     MqttPendResp *pendResp;
     int readLocked;
 #endif
-    MqttMsgStat* mms_stat;
+    MqttMsgStatFull* mms_stat;
     int waitMatchFound;
 
     if (client == NULL || packet_obj == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* all packet type structures must have MqttMsgStat at top */
-    mms_stat = (MqttMsgStat*)packet_obj;
+    /* all packet type structures must have MqttMsgStatFull at top */
+    mms_stat = (MqttMsgStatFull*)packet_obj;
 
 wait_again:
 
@@ -2647,7 +2647,7 @@ wait_again:
                 wait_type, wait_packet_id);
 #endif
 
-    switch ((int)*mms_stat)
+    switch (mms_stat->read)
     {
         case MQTT_MSG_BEGIN:
         {
@@ -2695,7 +2695,7 @@ wait_again:
             }
         #endif /* WOLFMQTT_MULTITHREAD */
 
-            *mms_stat = MQTT_MSG_WAIT;
+            mms_stat->read = MQTT_MSG_WAIT;
 
             /* Wait for packet */
             rc = SN_Packet_Read(client, client->rx_buf, client->rx_buf_len,
@@ -2718,7 +2718,7 @@ wait_again:
                 client->packet.buf_len, packet_type, packet_id);
         #endif
 
-            *mms_stat = MQTT_MSG_READ;
+            mms_stat->read = MQTT_MSG_READ;
         }
         FALL_THROUGH;
 
@@ -2732,7 +2732,7 @@ wait_again:
             readLocked = 1; /* if in this state read is locked */
         #endif
 
-            if (*mms_stat == MQTT_MSG_READ_PAYLOAD) {
+            if (mms_stat->read == MQTT_MSG_READ_PAYLOAD) {
                 packet_type = SN_MSG_TYPE_PUBLISH;
             }
 
@@ -2807,19 +2807,19 @@ wait_again:
         default:
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("SN_Client_WaitType: Invalid state %d!", *mms_stat);
+            PRINTF("SN_Client_WaitType: Invalid state %d!", mms_stat->read);
         #endif
             rc = MQTT_CODE_ERROR_STAT;
             break;
         }
-    } /* switch (msg->stat) */
+    } /* switch (mms_stat->read) */
 
 #ifdef WOLFMQTT_NONBLOCK
     if (rc != MQTT_CODE_CONTINUE)
 #endif
     {
         /* reset state */
-        *mms_stat = MQTT_MSG_BEGIN;
+        mms_stat->read = MQTT_MSG_BEGIN;
     }
 
 #ifdef WOLFMQTT_MULTITHREAD
