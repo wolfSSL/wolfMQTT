@@ -1854,13 +1854,6 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     }
 #endif
 
-#ifdef WOLFMQTT_V5
-    if (unsubscribe->ack.props != NULL) {
-        /* Release the allocated properties */
-        MqttClient_PropsFree(unsubscribe->ack.props);
-    }
-#endif
-
     /* reset state */
     unsubscribe->stat = MQTT_MSG_BEGIN;
 
