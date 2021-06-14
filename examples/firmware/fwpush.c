@@ -336,7 +336,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.client_id = mqttCtx->client_id;
             if (mqttCtx->enable_lwt) {
                 /* Send client id in LWT payload */
-                mqttCtx->lwt_msg.qos = mqttCtx->qos;
+                mqttCtx->lwt_msg.header.packet.qos = mqttCtx->qos;
                 mqttCtx->lwt_msg.retain = 0;
                 mqttCtx->lwt_msg.topic_name = FIRMWARE_TOPIC_NAME"lwttopic";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
@@ -379,10 +379,10 @@ int fwpush_test(MQTTCtx *mqttCtx)
             /* setup publish message */
             XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
             mqttCtx->publish.retain = mqttCtx->retain;
-            mqttCtx->publish.qos = mqttCtx->qos;
+            mqttCtx->publish.header.packet.qos = mqttCtx->qos;
             mqttCtx->publish.duplicate = 0;
             mqttCtx->publish.topic_name = mqttCtx->topic_name;
-            mqttCtx->publish.packet_id = mqtt_get_packetid();
+            mqttCtx->publish.header.packet.id = mqtt_get_packetid();
             mqttCtx->publish.buffer_len = FIRMWARE_MAX_BUFFER;
             mqttCtx->publish.buffer = (byte*)WOLFMQTT_MALLOC(FIRMWARE_MAX_BUFFER);
             if (mqttCtx->publish.buffer == NULL) {

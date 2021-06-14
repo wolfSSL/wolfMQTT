@@ -72,7 +72,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            buf, msg->header.packet.qos, msg->total_len);
 
         /* for test mode: check if TEST_MESSAGE was received */
         if (mqttCtx->test_mode) {
@@ -183,7 +183,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.enable_lwt = mqttCtx->enable_lwt;
             if (mqttCtx->enable_lwt) {
                 /* Send client id in LWT payload */
-                mqttCtx->lwt_msg.qos = mqttCtx->qos;
+                mqttCtx->lwt_msg.header.packet.qos = mqttCtx->qos;
                 mqttCtx->lwt_msg.retain = 0;
                 mqttCtx->lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
@@ -228,7 +228,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->topics[i].qos = mqttCtx->qos;
 
             /* Subscribe Topic */
-            mqttCtx->subscribe.packet_id = mqtt_get_packetid();
+            mqttCtx->subscribe.header.packet.id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count =
                     sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
@@ -261,10 +261,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* Publish Topic */
             XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
             mqttCtx->publish.retain = 0;
-            mqttCtx->publish.qos = mqttCtx->qos;
+            mqttCtx->publish.header.packet.qos = mqttCtx->qos;
             mqttCtx->publish.duplicate = 0;
             mqttCtx->publish.topic_name = mqttCtx->topic_name;
-            mqttCtx->publish.packet_id = mqtt_get_packetid();
+            mqttCtx->publish.header.packet.id = mqtt_get_packetid();
 
             if (mqttCtx->pub_file) {
                 rc = mqtt_file_load(mqttCtx->pub_file, &mqttCtx->publish.buffer,
@@ -355,7 +355,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
             /* Unsubscribe Topics */
             XMEMSET(&mqttCtx->unsubscribe, 0, sizeof(MqttUnsubscribe));
-            mqttCtx->unsubscribe.packet_id = mqtt_get_packetid();
+            mqttCtx->unsubscribe.header.packet.id = mqtt_get_packetid();
             mqttCtx->unsubscribe.topic_count =
                 sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->unsubscribe.topics = mqttCtx->topics;

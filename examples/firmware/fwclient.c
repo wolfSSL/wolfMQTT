@@ -177,7 +177,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Firmware Message: Qos %d, Len %u",
-            msg->qos, msg->total_len);
+            msg->header.packet.qos, msg->total_len);
     }
 
     if (mFwBuf) {
@@ -267,7 +267,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.client_id = mqttCtx->client_id;
             if (mqttCtx->enable_lwt) {
                 /* Send client id in LWT payload */
-                mqttCtx->lwt_msg.qos = mqttCtx->qos;
+                mqttCtx->lwt_msg.header.packet.qos = mqttCtx->qos;
                 mqttCtx->lwt_msg.retain = 0;
                 mqttCtx->lwt_msg.topic_name = FIRMWARE_TOPIC_NAME"lwttopic";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
@@ -309,7 +309,7 @@ int fwclient_test(MQTTCtx *mqttCtx)
 
             /* Subscribe Topic */
             XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
-            mqttCtx->subscribe.packet_id = mqtt_get_packetid();
+            mqttCtx->subscribe.header.packet.id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = 1;
             mqttCtx->subscribe.topics = mqttCtx->topics;
             mqttCtx->topics[0].topic_filter = FIRMWARE_TOPIC_NAME;

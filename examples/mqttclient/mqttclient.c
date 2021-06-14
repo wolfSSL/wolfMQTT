@@ -75,7 +75,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            buf, msg->header.packet.qos, msg->total_len);
 
         /* for test mode: check if DEFAULT_MESSAGE was received */
         if (mqttCtx->test_mode) {
@@ -278,7 +278,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     mqttCtx->connect.enable_lwt = mqttCtx->enable_lwt;
     if (mqttCtx->enable_lwt) {
         /* Send client id in LWT payload */
-        mqttCtx->lwt_msg.qos = mqttCtx->qos;
+        mqttCtx->lwt_msg.header.packet.qos = mqttCtx->qos;
         mqttCtx->lwt_msg.retain = 0;
         mqttCtx->lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
         mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
@@ -287,7 +287,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 #ifdef WOLFMQTT_V5
         {
             /* Add a 5 second delay to sending the LWT */
-            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->lwt_msg.props);
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->lwt_msg.header.props);
             prop->type = MQTT_PROP_WILL_DELAY_INTERVAL;
             prop->data_int = 5;
         }
@@ -303,38 +303,38 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     if (mqttCtx->client.enable_eauth == 1) {
         /* Enhanced authentication */
         /* Add property: Authentication Method */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.header.props);
         prop->type = MQTT_PROP_AUTH_METHOD;
         prop->data_str.str = (char*)DEFAULT_AUTH_METHOD;
         prop->data_str.len = (word16)XSTRLEN(prop->data_str.str);
     }
     {
         /* Request Response Information */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.header.props);
         prop->type = MQTT_PROP_REQ_RESP_INFO;
         prop->data_byte = 1;
     }
     {
         /* Request Problem Information */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.header.props);
         prop->type = MQTT_PROP_REQ_PROB_INFO;
         prop->data_byte = 1;
     }
     {
         /* Maximum Packet Size */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.header.props);
         prop->type = MQTT_PROP_MAX_PACKET_SZ;
         prop->data_int = (word32)mqttCtx->max_packet_size;
     }
     {
         /* Topic Alias Maximum */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.header.props);
         prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
         prop->data_short = mqttCtx->topic_alias_max;
     }
     if (mqttCtx->clean_session == 0) {
         /* Session expiry interval */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.header.props);
         prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
         prop->data_int = DEFAULT_SESS_EXP_INT; /* Session does not expire */
     }
@@ -353,13 +353,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     }
 
 #ifdef WOLFMQTT_V5
-    if (mqttCtx->connect.props != NULL) {
+    if (mqttCtx->connect.header.props != NULL) {
         /* Release the allocated properties */
-        MqttClient_PropsFree(mqttCtx->connect.props);
+        MqttClient_PropsFree(mqttCtx->connect.header.props);
     }
-    if (mqttCtx->lwt_msg.props != NULL) {
+    if (mqttCtx->lwt_msg.header.props != NULL) {
         /* Release the allocated properties */
-        MqttClient_PropsFree(mqttCtx->lwt_msg.props);
+        MqttClient_PropsFree(mqttCtx->lwt_msg.header.props);
     }
 #endif
 
@@ -388,14 +388,14 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     if (mqttCtx->subId_not_avail != 1) {
         /* Subscription Identifier */
         MqttProp* prop;
-        prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
+        prop = MqttClient_PropsAdd(&mqttCtx->subscribe.header.props);
         prop->type = MQTT_PROP_SUBSCRIPTION_ID;
         prop->data_int = DEFAULT_SUB_ID;
     }
 #endif
 
     /* Subscribe Topic */
-    mqttCtx->subscribe.packet_id = mqtt_get_packetid();
+    mqttCtx->subscribe.header.packet.id = mqtt_get_packetid();
     mqttCtx->subscribe.topic_count =
             sizeof(mqttCtx->topics) / sizeof(MqttTopic);
     mqttCtx->subscribe.topics = mqttCtx->topics;
@@ -403,9 +403,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
 
 #ifdef WOLFMQTT_V5
-    if (mqttCtx->subscribe.props != NULL) {
+    if (mqttCtx->subscribe.header.props != NULL) {
         /* Release the allocated properties */
-        MqttClient_PropsFree(mqttCtx->subscribe.props);
+        MqttClient_PropsFree(mqttCtx->subscribe.header.props);
     }
 #endif
 
@@ -426,10 +426,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     /* Publish Topic */
     XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
     mqttCtx->publish.retain = 0;
-    mqttCtx->publish.qos = mqttCtx->qos;
+    mqttCtx->publish.header.packet.qos = mqttCtx->qos;
     mqttCtx->publish.duplicate = 0;
     mqttCtx->publish.topic_name = mqttCtx->topic_name;
-    mqttCtx->publish.packet_id = mqtt_get_packetid();
+    mqttCtx->publish.header.packet.id = mqtt_get_packetid();
 
     if (mqttCtx->pub_file) {
         /* If a file is specified, then read into the allocated buffer */
@@ -449,13 +449,13 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     #ifdef WOLFMQTT_V5
         {
             /* Payload Format Indicator */
-            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.header.props);
             prop->type = MQTT_PROP_PAYLOAD_FORMAT_IND;
             prop->data_byte = 1;
         }
         {
             /* Content Type */
-            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.header.props);
             prop->type = MQTT_PROP_CONTENT_TYPE;
             prop->data_str.str = (char*)"wolf_type";
             prop->data_str.len = (word16)XSTRLEN(prop->data_str.str);
@@ -464,7 +464,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             (mqttCtx->topic_alias > 0) &&
             (mqttCtx->topic_alias < mqttCtx->topic_alias_max)) {
             /* Topic Alias */
-            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.header.props);
             prop->type = MQTT_PROP_TOPIC_ALIAS;
             prop->data_short = mqttCtx->topic_alias;
         }
@@ -493,9 +493,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             goto disconn;
         }
     #ifdef WOLFMQTT_V5
-        if (mqttCtx->publish.props != NULL) {
+        if (mqttCtx->publish.header.props != NULL) {
             /* Release the allocated properties */
-            MqttClient_PropsFree(mqttCtx->publish.props);
+            MqttClient_PropsFree(mqttCtx->publish.header.props);
         }
     #endif
     }
@@ -528,10 +528,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 mqttCtx->stat = WMQ_PUB;
                 XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
                 mqttCtx->publish.retain = 0;
-                mqttCtx->publish.qos = mqttCtx->qos;
+                mqttCtx->publish.header.packet.qos = mqttCtx->qos;
                 mqttCtx->publish.duplicate = 0;
                 mqttCtx->publish.topic_name = mqttCtx->topic_name;
-                mqttCtx->publish.packet_id = mqtt_get_packetid();
+                mqttCtx->publish.header.packet.id = mqtt_get_packetid();
                 mqttCtx->publish.buffer = mqttCtx->rx_buf;
                 mqttCtx->publish.total_len = (word16)rc;
                 rc = MqttClient_Publish(&mqttCtx->client,
@@ -568,7 +568,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
     /* Unsubscribe Topics */
     XMEMSET(&mqttCtx->unsubscribe, 0, sizeof(MqttUnsubscribe));
-    mqttCtx->unsubscribe.packet_id = mqtt_get_packetid();
+    mqttCtx->unsubscribe.header.packet.id = mqtt_get_packetid();
     mqttCtx->unsubscribe.topic_count =
         sizeof(mqttCtx->topics) / sizeof(MqttTopic);
     mqttCtx->unsubscribe.topics = mqttCtx->topics;

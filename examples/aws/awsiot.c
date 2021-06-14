@@ -246,7 +246,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            buf, msg->header.packet.qos, msg->total_len);
     }
 
     /* Print message payload */
@@ -348,7 +348,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->connect.enable_lwt = mqttCtx->enable_lwt;
             if (mqttCtx->enable_lwt) {
                 /* Send client id in LWT payload */
-                mqttCtx->lwt_msg.qos = mqttCtx->qos;
+                mqttCtx->lwt_msg.header.packet.qos = mqttCtx->qos;
                 mqttCtx->lwt_msg.retain = 0;
                 mqttCtx->lwt_msg.topic_name = AWSIOT_PUBLISH_TOPIC"lwt";
                 mqttCtx->lwt_msg.buffer = (byte*)mqttCtx->client_id;
@@ -390,7 +390,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
 
             /* Subscribe Topic */
             XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
-            mqttCtx->subscribe.packet_id = mqtt_get_packetid();
+            mqttCtx->subscribe.header.packet.id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = sizeof(mqttCtx->topics)/sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
         }
@@ -425,10 +425,10 @@ int awsiot_test(MQTTCtx *mqttCtx)
 
             XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
             mqttCtx->publish.retain = 0;
-            mqttCtx->publish.qos = mqttCtx->qos;
+            mqttCtx->publish.header.packet.qos = mqttCtx->qos;
             mqttCtx->publish.duplicate = 0;
             mqttCtx->publish.topic_name = AWSIOT_PUBLISH_TOPIC;
-            mqttCtx->publish.packet_id = mqtt_get_packetid();
+            mqttCtx->publish.header.packet.id = mqtt_get_packetid();
             mqttCtx->publish.buffer = (byte*)mqttCtx->app_ctx;
             mqttCtx->publish.total_len = (word32)XSTRLEN((char*)mqttCtx->app_ctx);
         }
@@ -486,10 +486,10 @@ int awsiot_test(MQTTCtx *mqttCtx)
                         mqttCtx->stat = WMQ_PUB;
                         XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
                         mqttCtx->publish.retain = 0;
-                        mqttCtx->publish.qos = mqttCtx->qos;
+                        mqttCtx->publish.header.packet.qos = mqttCtx->qos;
                         mqttCtx->publish.duplicate = 0;
                         mqttCtx->publish.topic_name = AWSIOT_PUBLISH_TOPIC;
-                        mqttCtx->publish.packet_id = mqtt_get_packetid();
+                        mqttCtx->publish.header.packet.id = mqtt_get_packetid();
                         mqttCtx->publish.buffer = (byte*)mqttCtx->app_ctx;
                         mqttCtx->publish.total_len = (word32)XSTRLEN((char*)mqttCtx->app_ctx);
                         rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);

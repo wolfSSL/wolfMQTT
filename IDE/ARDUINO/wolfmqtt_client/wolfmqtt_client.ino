@@ -253,7 +253,7 @@ void loop() {
     connect.enable_lwt = enable_lwt;
     if (enable_lwt) {
       /* Send client id in LWT payload */
-      lwt_msg.qos = qos;
+      lwt_msg.header.packet.qos = qos;
       lwt_msg.retain = 0;
       lwt_msg.topic_name = WOLFMQTT_TOPIC_NAME"lwttopic";
       lwt_msg.buffer = (byte*)DEFAULT_CLIENT_ID;
@@ -286,7 +286,7 @@ void loop() {
 
       /* Subscribe Topic */
       memset(&subscribe, 0, sizeof(MqttSubscribe));
-      subscribe.packet_id = mqttclient_get_packetid();
+      subscribe.header.packet.id = mqttclient_get_packetid();
       subscribe.topic_count = sizeof(topics)/sizeof(MqttTopic);
       subscribe.topics = topics;
       rc = MqttClient_Subscribe(&client, &subscribe);
@@ -307,10 +307,10 @@ void loop() {
       /* Publish Topic */
       memset(&publish, 0, sizeof(MqttPublish));
       publish.retain = 0;
-      publish.qos = qos;
+      publish.header.packet.qos = qos;
       publish.duplicate = 0;
       publish.topic_name = DEFAULT_TOPIC_NAME;
-      publish.packet_id = mqttclient_get_packetid();
+      publish.header.packet.id = mqttclient_get_packetid();
       publish.buffer = (byte*)TEST_MESSAGE;
       publish.total_len = (word16)strlen(TEST_MESSAGE);
       rc = MqttClient_Publish(&client, &publish);
@@ -348,7 +348,7 @@ void loop() {
 
       /* Unsubscribe Topics */
       memset(&unsubscribe, 0, sizeof(MqttUnsubscribe));
-      unsubscribe.packet_id = mqttclient_get_packetid();
+      unsubscribe.header.packet.id = mqttclient_get_packetid();
       unsubscribe.topic_count = sizeof(topics)/sizeof(MqttTopic);
       unsubscribe.topics = topics;
       rc = MqttClient_Unsubscribe(&client, &unsubscribe);

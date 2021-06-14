@@ -72,18 +72,6 @@ struct _MqttClient;
 typedef int (*MqttMsgCb)(struct _MqttClient *client, MqttMessage *message,
     byte msg_new, byte msg_done);
 
-/*! \brief      Mqtt Publish Callback
- *  \discussion If the publish payload is larger than the maximum TX buffer
-    then this callback is called multiple times. This callback is executed from
-    within a call to MqttPublish. It is expected to provide a buffer and it's
-    size and return >=0 for success.
-    Each callback populates the payload in MqttPublish.buffer.
-    The MqttPublish.buffer_len is the size of the buffer payload.
-    The MqttPublish.total_len is the length of the complete payload message.
- *  \param      publish     Pointer to MqttPublish structure
- *  \return     >= 0        Indicates success
- */
-typedef int (*MqttPublishCb)(MqttPublish* publish);
 
 /* Client flags */
 enum MqttClientFlags {
@@ -145,7 +133,11 @@ typedef struct _MqttClient {
 
     MqttNet      net;   /* Pointer to network callbacks and context */
 
-    byte         useNonBlockMode: 1; /* set to use non-blocking mode. network callbacks can return MQTT_CODE_CONTINUE to indicate "would block" */
+    /* set to use non-blocking mode.
+     * network callbacks can return MQTT_CODE_CONTINUE
+     *  to indicate "would block"
+     */
+    byte         useNonBlockMode: 1;
     byte         use_tls: 1;
     byte         test_mode: 1;
 
@@ -157,10 +149,18 @@ typedef struct _MqttClient {
     MqttSk       read;   /* read socket state - protected by read lock */
     MqttSk       write;  /* write socket state - protected by write lock */
 
+    MqttMsgState readState: 4;
+    byte readLocked:1;
+
     MqttMsgCb    msg_cb;
-    MqttObject   msg;   /* generic incoming message used by MqttClient_WaitType */
+    union {
+        MqttMsgHeader msg_header;
+        MqttObject    msg;   /* generic incoming message used by MqttClient_WaitType */
+    #ifdef WOLFMQTT_SN
+        SN_Object     msgSN;
+    #endif
+    };
 #ifdef WOLFMQTT_SN
-    SN_Object    msgSN;
     SN_ClientRegisterCb reg_cb;
     void               *reg_ctx;
 #endif
@@ -186,9 +186,14 @@ typedef struct _MqttClient {
     wm_Sem lockSend;
     wm_Sem lockRecv;
     wm_Sem lockClient;
-    struct _MqttPendResp* firstPendResp; /* protected with client lock */
-    struct _MqttPendResp* lastPendResp;  /* protected with client lock */
 #endif
+    MqttPendResp* firstPendResp; /* protected with client lock for WOLFMQTT_MULTITHREAD */
+    MqttPendResp* lastPendResp;  /* protected with client lock for WOLFMQTT_MULTITHREAD */
+    MqttMsgHeader anyMsgHeader;
+    MqttMsgPacketHeader recvPacketHeader;
+    MqttPendResp *usedPendResp;
+    MqttMsgPacketHeaderQueue ackQueue;
+    MqttPublishResp currrent_ack;
 } MqttClient;
 
 
@@ -223,6 +228,12 @@ WOLFMQTT_API int MqttClient_Init(
  *  \return     none
  */
 WOLFMQTT_API void MqttClient_DeInit(MqttClient *client);
+
+WOLFMQTT_API void MqttClient_RespList_Remove(MqttClient *client, MqttPendResp *rmResp);
+WOLFMQTT_API int MqttClient_SendLock(MqttClient *client, MqttMsgHeader *stat);
+WOLFMQTT_API void MqttClient_SendUnlock(MqttClient *client, MqttMsgHeader *stat);
+
+WOLFMQTT_API int MqttClient_RespList_Reset(MqttClient *client);
 
 #ifdef WOLFMQTT_DISCONNECT_CB
 /*! \brief      Sets a disconnect callback with custom context

@@ -100,7 +100,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            buf, msg->header.packet.qos, msg->total_len);
     }
 
     /* Print message payload */
@@ -407,7 +407,7 @@ int mqttsimple_test(void)
     XMEMSET(&mqttObj, 0, sizeof(mqttObj));
     topics[0].topic_filter = MQTT_TOPIC_NAME;
     topics[0].qos = MQTT_QOS;
-    mqttObj.subscribe.packet_id = mqtt_get_packetid();
+    mqttObj.subscribe.header.packet.id = mqtt_get_packetid();
     mqttObj.subscribe.topic_count = sizeof(topics) / sizeof(MqttTopic);
     mqttObj.subscribe.topics = topics;
     rc = MqttClient_Subscribe(&mClient, &mqttObj.subscribe);
@@ -419,9 +419,9 @@ int mqttsimple_test(void)
 
     /* Publish */
     XMEMSET(&mqttObj, 0, sizeof(mqttObj));
-    mqttObj.publish.qos = MQTT_QOS;
+    mqttObj.publish.header.packet.qos = MQTT_QOS;
     mqttObj.publish.topic_name = MQTT_TOPIC_NAME;
-    mqttObj.publish.packet_id = mqtt_get_packetid();
+    mqttObj.publish.header.packet.id = mqtt_get_packetid();
     mqttObj.publish.buffer = (byte*)MQTT_PUBLISH_MSG;
     mqttObj.publish.total_len = XSTRLEN(MQTT_PUBLISH_MSG);
     rc = MqttClient_Publish(&mClient, &mqttObj.publish);
@@ -429,7 +429,7 @@ int mqttsimple_test(void)
         goto exit;
     }
     PRINTF("MQTT Publish: Topic %s, Qos %d, Message %s",
-        mqttObj.publish.topic_name, mqttObj.publish.qos, mqttObj.publish.buffer);
+        mqttObj.publish.topic_name, mqttObj.publish.header.packet.qos, mqttObj.publish.buffer);
 
     /* Wait for messages */
     while (1) {
