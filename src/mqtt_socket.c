@@ -46,7 +46,7 @@ int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
         client->tls.timeout_ms);
 
     /* save network read response */
-    client->tls.sockRc = rc;
+    client->tls.sockReadRc = rc;
 
     if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_STDIN_WAKE
                                                  || rc == MQTT_CODE_CONTINUE) {
@@ -69,7 +69,7 @@ int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
         client->tls.timeout_ms);
 
     /* save network write response */
-    client->tls.sockRc = rc;
+    client->tls.sockWriteRc = rc;
 
     if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_CONTINUE) {
         rc = WOLFSSL_CBIO_ERR_WANT_WRITE;
@@ -110,18 +110,19 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 #ifdef ENABLE_MQTT_TLS
     if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;
+        client->tls.sockWriteRc = MQTT_CODE_ERROR_NETWORK;
         rc = wolfSSL_write(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
             if (error != WOLFSSL_ERROR_WANT_WRITE) {
                 PRINTF("MqttSocket_Write: SSL Error=%d (rc %d, sockrc %d)",
-                    error, rc, client->tls.sockRc);
+                    error, rc, client->tls.sockWriteRc);
             }
         #endif
 
             /* return code from net callback */
-            rc = client->tls.sockRc;
+            rc = client->tls.sockWriteRc;
         }
     }
     else
@@ -191,17 +192,19 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 #ifdef ENABLE_MQTT_TLS
     if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;
+        client->tls.sockReadRc = MQTT_CODE_ERROR_NETWORK;
         rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
             if (error != WOLFSSL_ERROR_WANT_READ) {
-                PRINTF("MqttSocket_Read: SSL Error=%d", error);
+                PRINTF("MqttSocket_Read: SSL Error=%d sockReadRc=%d",
+                    error, client->tls.sockReadRc);
             }
         #endif
 
             /* return code from net callback */
-            rc = client->tls.sockRc;
+            rc = client->tls.sockReadRc;
         }
     }
     else
