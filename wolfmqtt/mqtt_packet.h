@@ -637,6 +637,7 @@ typedef struct _MqttAuth {
 
 /* Generic MQTT struct for packet types */
 typedef union _MqttObject {
+    MqttMsgStatFull    stat;
     MqttConnect        connect;
     MqttConnectAck     connect_ack;
     MqttPublish        publish;

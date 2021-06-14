@@ -149,13 +149,14 @@ static int MqttClient_RespList_Add(MqttClient *client,
     void *packet_obj)
 {
     MqttPendResp *tmpResp;
+    MqttMsgStatFull *pend_stat;
 
-    if (client == NULL)
+    if (client == NULL || packet_obj == NULL)
         return MQTT_CODE_ERROR_BAD_ARG;
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
-    PRINTF("PendResp Add: %p, Type %s (%d), ID %d",
-        newResp, MqttPacket_TypeDesc(packet_type), packet_type, packet_id);
+    PRINTF("PendResp Add: %p packet_obj:%p, Type %s (%d), ID %d",
+        newResp, packet_obj, MqttPacket_TypeDesc(packet_type), packet_type, packet_id);
 #endif
 
     /* verify newResp is not already in the list */
@@ -177,6 +178,8 @@ static int MqttClient_RespList_Add(MqttClient *client,
     newResp->packet_type = packet_type;
     /* opaque pointer to struct based on type */
     newResp->packet_obj = packet_obj;
+    pend_stat = &((MqttObject*)packet_obj)->stat;
+    pend_stat->in_resp_list = 1;
 
     if (client->lastPendResp == NULL) {
         /* This is the only list item */
@@ -200,7 +203,7 @@ static void MqttClient_RespList_Remove(MqttClient *client, MqttPendResp *rmResp)
         return;
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
-    PRINTF("PendResp Remove: %p", rmResp);
+    PRINTF("PendResp Remove: %p packet %d:%d", rmResp, rmResp->packet_type, rmResp->packet_id);
 #endif
 
     /* Find the response entry */
@@ -213,6 +216,8 @@ static void MqttClient_RespList_Remove(MqttClient *client, MqttPendResp *rmResp)
         }
     }
     if (tmpResp) {
+        MqttMsgStatFull *pend_stat = &((MqttObject*)(tmpResp->packet_obj))->stat;
+        pend_stat->in_resp_list = 0;
         /* Fix up the first and last pointers */
         if (client->firstPendResp == tmpResp) {
             client->firstPendResp = tmpResp->next;
