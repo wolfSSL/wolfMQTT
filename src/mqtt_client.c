@@ -59,7 +59,8 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         return 0;
     }
     int wm_SemFree(wm_Sem *s){
-        if (*s == NULL)
+        if ((s == NULL) ||
+            (*s == NULL))
             return MQTT_CODE_ERROR_BAD_ARG;
         dispatch_release(*s);
         *s = NULL;
