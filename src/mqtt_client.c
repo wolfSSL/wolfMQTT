@@ -43,12 +43,27 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 #ifdef __MACH__
     /* Apple style dispatch semaphore */
     int wm_SemInit(wm_Sem *s){
-        *s = dispatch_semaphore_create(1);
+        /* dispatch_release() fails hard, with Trace/BPT trap signal, if the
+         * sem's internal count is less than the value passed in with
+         * dispatch_semaphore_create().  work around this by initing
+         * with 0, then incrementing it afterwards.
+         */
+        *s = dispatch_semaphore_create(0);
+        if (*s == NULL)
+            return MQTT_CODE_ERROR_MEMORY;
+        if (dispatch_semaphore_signal(*s) < 0) {
+            dispatch_release(*s);
+            return MQTT_CODE_ERROR_SYSTEM;
+        }
+
         return 0;
     }
     int wm_SemFree(wm_Sem *s){
-        /* no free */
-        (void)s;
+        if ((s == NULL) ||
+            (*s == NULL))
+            return MQTT_CODE_ERROR_BAD_ARG;
+        dispatch_release(*s);
+        *s = NULL;
         return 0;
     }
     int wm_SemLock(wm_Sem *s){
@@ -2161,6 +2176,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Server Property)";
         case MQTT_CODE_ERROR_CALLBACK:
             return "Error (Error in Callback)";
+        case MQTT_CODE_ERROR_SYSTEM:
+            return "Error (System resource failed)";
 
     }
     return "Unknown";
