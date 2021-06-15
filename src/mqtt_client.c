@@ -2804,6 +2804,7 @@ wait_again:
         }
 
         case MQTT_MSG_WRITE:
+        case MQTT_MSG_WRITE_PAYLOAD:
         default:
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
