@@ -280,6 +280,34 @@ static int MqttClient_RespList_Find(MqttClient *client,
     }
     return rc;
 }
+
+static int MqttClient_RespListUpdate(MqttClient *client,
+    MqttPacketType wait_type, word16 wait_packet_id, int *wait_match_found)
+{
+    int rc = MQTT_CODE_SUCCESS;
+    if (wait_type == MQTT_PACKET_TYPE_RESERVED
+        || wait_type == MQTT_PACKET_TYPE_ANY) {
+        return rc;
+    }
+
+    rc = wm_SemLock(&client->lockClient);
+    if (rc == MQTT_CODE_SUCCESS) {
+        /* Check to see if packet type and id have already completed */
+        MqttPendResp *pendResp = NULL;
+        if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
+            wait_packet_id, &pendResp)) {
+            if (pendResp->packetDone) {
+                /* pending response is already done, so break */
+                rc = pendResp->packet_ret;
+                MqttClient_RespList_Remove(client, pendResp);
+                wm_SemUnlock(&client->lockClient);
+                *wait_match_found = 1;
+            }
+        }
+        wm_SemUnlock(&client->lockClient);
+    }
+    return rc;
+}
 #endif /* WOLFMQTT_MULTITHREAD */
 
 /* Returns length decoded or error (as negative) */
@@ -778,9 +806,6 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     int rc;
     word16 packet_id;
     MqttPacketType packet_type;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp *pendResp;
-#endif
     MqttMsgStatFull* mms_stat;
     int waitMatchFound;
 
@@ -796,9 +821,6 @@ wait_again:
     /* initialize variables */
     packet_id = 0;
     packet_type = MQTT_PACKET_TYPE_RESERVED;
-#ifdef WOLFMQTT_MULTITHREAD
-    pendResp = NULL;
-#endif
     waitMatchFound = 0;
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -832,28 +854,9 @@ wait_again:
         case MQTT_MSG_WAIT:
         {
         #ifdef WOLFMQTT_MULTITHREAD
-            /* Check to see if packet type and id have already completed */
-            pendResp = NULL;
-            rc = wm_SemLock(&client->lockClient);
-            if (rc == 0) {
-                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
-                    wait_packet_id, &pendResp)) {
-                    if (pendResp->packetDone) {
-                        /* pending response is already done, so break */
-                        rc = pendResp->packet_ret;
-                    #ifdef WOLFMQTT_DEBUG_CLIENT
-                        PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
-                    #endif
-                        MqttClient_RespList_Remove(client, pendResp);
-                        wm_SemUnlock(&client->lockClient);
-                        waitMatchFound = 1;
-                        break;
-                    }
-                }
-                wm_SemUnlock(&client->lockClient);
-            }
-            else {
-                break; /* error */
+            rc = MqttClient_RespListUpdate(client, wait_type, wait_packet_id, &waitMatchFound);
+            if (rc < 0 || waitMatchFound == 1) {
+                break;
             }
         #endif /* WOLFMQTT_MULTITHREAD */
 
@@ -891,6 +894,9 @@ wait_again:
         {
             MqttPacketType use_packet_type;
             void* use_packet_obj;
+        #ifdef WOLFMQTT_MULTITHREAD
+            MqttPendResp *pendResp = NULL;
+        #endif
 
             /* read payload state only happens for publish messages */
             if (mms_stat->read == MQTT_MSG_READ_PAYLOAD) {
@@ -914,7 +920,6 @@ wait_again:
 
         #ifdef WOLFMQTT_MULTITHREAD
             /* Check to see if we have a pending response for this packet */
-            pendResp = NULL;
             rc = wm_SemLock(&client->lockClient);
             if (rc == 0) {
                 if (MqttClient_RespList_Find(client, packet_type, packet_id,
@@ -963,6 +968,10 @@ wait_again:
                     pendResp = NULL;
                     wm_SemUnlock(&client->lockClient);
                 }
+            }
+            rc = MqttClient_RespListUpdate(client, wait_type, wait_packet_id, &waitMatchFound);
+            if (rc < 0 || waitMatchFound == 1) {
+                break;
             }
         #endif /* WOLFMQTT_MULTITHREAD */
             break;
