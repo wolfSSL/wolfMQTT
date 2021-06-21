@@ -537,7 +537,7 @@ int sn_test(MQTTCtx *mqttCtx)
         SN_Unsubscribe unsubscribe;
 
         XMEMSET(&unsubscribe, 0, sizeof(SN_Unsubscribe));
-        unsubscribe.topicNameId = mqttCtx->topic_name;
+        unsubscribe.topicNameId = DEFAULT_TOPIC_NAME;
         unsubscribe.packet_id = mqtt_get_packetid();
 
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
