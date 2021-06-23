@@ -981,12 +981,21 @@ wait_again:
     } /* switch (mms_stat->read) */
 
 #ifdef WOLFMQTT_NONBLOCK
-    if (rc != MQTT_CODE_CONTINUE)
-#endif
-    {
-        /* reset state */
-        mms_stat->read = MQTT_MSG_BEGIN;
+    if (rc == MQTT_CODE_CONTINUE) {
+        /* If we are waiting message, and we received no data, means success */
+        if (wait_type == MQTT_PACKET_TYPE_ANY
+            && mms_stat->read == MQTT_MSG_WAIT
+            && client->read.pos == 0
+            && client->packet.stat == MQTT_PK_BEGIN) {
+            rc= MQTT_CODE_SUCCESS;
+        } else {
+            return rc;
+        }
     }
+#endif
+
+    /* reset state */
+    mms_stat->read = MQTT_MSG_BEGIN;
 
     if (mms_stat->read_locked) {
         mms_stat->read_locked = 0;
@@ -1003,6 +1012,15 @@ wait_again:
     }
 
     if (!waitMatchFound) {
+        /* If we are waiting message, then we have no need wait again */
+        if (wait_type == MQTT_PACKET_TYPE_ANY)
+        {
+            return rc;
+        }
+#ifdef WOLFMQTT_NONBLOCK
+        /* Should not dead loop in nonblock mode */
+        return rc;
+#endif
         /* if we get here, then the we are still waiting for a packet */
         goto wait_again;
     }
