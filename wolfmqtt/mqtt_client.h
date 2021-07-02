@@ -136,6 +136,8 @@ typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
     int          cmd_timeout_ms;
 
+    word32       time_socket_write_ms; /* The latest time when data written to socket */
+    word32       time_socket_read_ms; /* The latest time when data read from socket */
     byte        *tx_buf;
     int          tx_buf_len;
     byte        *rx_buf;
@@ -251,6 +253,17 @@ WOLFMQTT_API int MqttClient_SetPropertyCallback(
     MqttPropertyCb propCb,
     void* ctx);
 #endif
+
+/*! \brief      Check if timeout according current return code
+ *  \param      rc          Return code when not timeout
+ *  \param      timeout_rc  Return code when timeout
+ *  \param      start_ms    Start time in ms of the command,
+                            0 means the start time not assigned yet
+ *  \param      timeout_ms  Timeout parameter, -1 means INFINITE
+ *  \param      now_ms      Current time in ms
+ *  \return     rc or MQTT_CODE_ERROR_TIMEOUT
+ */
+WOLFMQTT_API int MqttClient_CheckTimeout(int rc, int timeout_rc, word32* start_ms, word32 timeout_ms, word32 now_ms);
 
 /*! \brief      Encodes and sends the MQTT Connect packet and waits for the
                 Connect Acknowledgment packet

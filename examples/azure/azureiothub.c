@@ -447,12 +447,6 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 /* Try and read packet */
                 rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
 
-            #ifdef WOLFMQTT_NONBLOCK
-                /* Track elapsed time with no activity and trigger timeout */
-                rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
-                    mqttCtx->cmd_timeout_ms/1000);
-            #endif
-
                 /* check return code */
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;

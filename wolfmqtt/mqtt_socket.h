@@ -56,6 +56,7 @@ typedef int (*MqttTlsCb)(struct _MqttClient* client);
 
 typedef int (*MqttNetConnectCb)(void *context,
     const char* host, word16 port, int timeout_ms);
+typedef word32 (*MqttNetGetTimeMsCb)(void);
 typedef int (*MqttNetWriteCb)(void *context,
     const byte* buf, int buf_len, int timeout_ms);
 typedef int (*MqttNetReadCb)(void *context,
@@ -81,6 +82,7 @@ typedef struct _MqttTls {
 typedef struct _MqttNet {
     void                *context;
     MqttNetConnectCb    connect;
+    MqttNetGetTimeMsCb  get_time_ms;
     MqttNetReadCb       read;
     MqttNetWriteCb      write;
     MqttNetDisconnectCb disconnect;

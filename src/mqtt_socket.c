@@ -133,6 +133,10 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
             timeout_ms);
     }
 
+    if (rc > 0 && client->net.get_time_ms) {
+        client->time_socket_write_ms = client->net.get_time_ms();
+    }
+
 #ifdef WOLFMQTT_DEBUG_SOCKET
     if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
         PRINTF("MqttSocket_Write: Len=%d, Rc=%d Er=%d", buf_len, rc, errno);
@@ -217,6 +221,10 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 #endif /* ENABLE_MQTT_TLS */
     {
         rc = client->net.read(client->net.context, buf, buf_len, timeout_ms);
+    }
+
+    if (rc > 0 && client->net.get_time_ms) {
+        client->time_socket_read_ms = client->net.get_time_ms();
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET

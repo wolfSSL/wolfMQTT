@@ -122,19 +122,6 @@ static int check_response(MQTTCtx* mqttCtx, int rc)
         return MQTT_CODE_SUCCESS;
     }
 
-#ifdef WOLFMQTT_NONBLOCK
-    /* Track elapsed time with no activity and trigger timeout */
-    rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
-        mqttCtx->cmd_timeout_ms/1000);
-
-    /* check return code */
-    if (rc == MQTT_CODE_CONTINUE) {
-    #if 0
-        /* optionally add delay when debugging */
-        usleep(100*1000);
-    #endif
-    }
-#endif
     return rc;
 }
 
@@ -302,7 +289,6 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
             mqttCtx->port,
             DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
-        rc = check_response(mqttCtx, rc);
     } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
     PRINTF("MQTT Socket Connect: %s (%d)",
