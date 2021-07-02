@@ -52,6 +52,7 @@ struct _MqttClient;
 /* Function callbacks */
 typedef int (*MqttTlsCb)(struct _MqttClient* client);
 
+typedef word32 (*MqttNetGetTimerMsCb)(void);
 typedef int (*MqttNetConnectCb)(void *context,
     const char* host, word16 port, int timeout_ms);
 typedef int (*MqttNetWriteCb)(void *context,
@@ -77,6 +78,7 @@ typedef struct _MqttTls {
 /* Structure for Network callbacks */
 typedef struct _MqttNet {
     void                *context;
+    MqttNetGetTimerMsCb get_timer_ms;
     MqttNetConnectCb    connect;
     MqttNetReadCb       read;
     MqttNetWriteCb      write;
