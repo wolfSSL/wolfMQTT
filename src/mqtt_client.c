@@ -341,6 +341,13 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    if (packet_obj == &client->msg) {
+        byte *msg_ptr = (byte*)&client->msg;
+        size_t offset = sizeof(client->msg.stat);
+        /* XMEMSET the body first */
+        XMEMSET(msg_ptr + offset, 0, sizeof(client->msg) - offset);
+    }
+
     /* Decode header */
     header = (MqttPacket*)rx_buf;
     packet_type = (MqttPacketType)MQTT_PACKET_TYPE_GET(header->type_flags);
