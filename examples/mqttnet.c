@@ -28,6 +28,12 @@
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
 
+#if defined(MICROCHIP_MPLAB_HARMONY)
+    #include <system/tmr/sys_tmr.h>
+#else
+    #include <time.h>
+#endif
+
 /* FreeRTOS TCP */
 #ifdef FREERTOS_TCP
     #include "FreeRTOS.h"
@@ -1017,6 +1023,32 @@ static int NetDisconnect(void *context)
 
 #endif
 
+/* Always return value other than 0ms,
+   if 0ms appeared, use 1ms instead */
+static word32 NetGetTimerMs(void)
+{
+    word32 timer_ms = 0;
+
+#if defined(WOLFSSL_LWIP)
+    timer_ms = sys_now();
+#elif defined(MICROCHIP_MPLAB_HARMONY)
+    timer_ms = (word32)(SYS_TMR_TickCountGet() * 1000llu /
+            SYS_TMR_TickCounterFrequencyGet());
+#elif defined(_WIN32)
+#define WINDOWS_TICK 10000000
+#define SEC_TO_UNIX_EPOCH 11644473600LL
+    FILETIME st;
+    ULARGE_INTEGER ul;
+    GetSystemTimeAsFileTime(&st);
+    ul.LowPart = st.dwLowDateTime;
+    ul.HighPart = st.dwHighDateTime;
+    timer_ms = ul.QuadPart / 10000.0 - 11644473600000LL;
+#else
+    /* Posix style time */
+    timer_ms = (word32)(time(0) * 1000llu);
+#endif
+    return timer_ms == 0 ? 1 : timer_ms;
+}
 
 /* Public Functions */
 int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
@@ -1060,6 +1092,7 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         SocketContext* sockCtx;
 
         XMEMSET(net, 0, sizeof(MqttNet));
+        net->get_timer_ms = NetGetTimerMs;
         net->connect = NetConnect;
         net->read = NetRead;
         net->write = NetWrite;

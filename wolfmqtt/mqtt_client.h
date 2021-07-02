@@ -144,6 +144,8 @@ typedef struct _MqttClient {
     MqttTls      tls;   /* WolfSSL context for TLS */
 #endif
 
+    word32       start_time_ms;    /* Used for keep-alive */
+    word32       network_time_ms;  /* Used to monitor if data received or sent */
     MqttPkRead   packet;
     MqttSk       read;
     MqttSk       write;
@@ -243,6 +245,17 @@ WOLFMQTT_API int MqttClient_SetPropertyCallback(
     MqttPropertyCb propCb,
     void* ctx);
 #endif
+
+/*! \brief      Check if timeout according current return code
+ *  \param      rc          Return code
+ *  \param      start_ms    Start time in ms of the command,
+                            0 means the start time not assigned yet
+ *  \param      timeout_ms  Timeout parameter, -1 means INFINITE
+ *  \param      now_ms      Current time in ms
+ *  \return     rc or MQTT_CODE_ERROR_TIMEOUT
+ */
+WOLFMQTT_API int MqttClient_CheckTimeout(int rc, word32* start_ms,
+    word32 timeout_ms, word32 now_ms);
 
 /*! \brief      Encodes and sends the MQTT Connect packet and waits for the
                 Connect Acknowledgment packet
