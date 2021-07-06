@@ -153,6 +153,11 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    /* check the network is connected */
+    if ((client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) == 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
     /* check for buffer position overflow */
     if (client->write.pos >= buf_len) {
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
@@ -231,6 +236,11 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     if (client == NULL || client->net.read == NULL ||
         buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* check the network is connected */
+    if ((client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) == 0) {
+        return MQTT_CODE_ERROR_NETWORK;
     }
 
     /* check for buffer position overflow */
@@ -454,7 +464,6 @@ int MqttSocket_Disconnect(MqttClient *client)
         if (client->net.disconnect) {
             rc = client->net.disconnect(client->net.context);
         }
-        client->flags &= ~MQTT_CLIENT_FLAG_IS_CONNECTED;
     }
 #ifdef WOLFMQTT_DEBUG_SOCKET
     PRINTF("MqttSocket_Disconnect: Rc=%d", rc);
