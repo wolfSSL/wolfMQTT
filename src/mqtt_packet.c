@@ -1105,11 +1105,18 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
 #ifdef WOLFMQTT_V5
         if ((publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) &&
             (remain_len > MQTT_DATA_LEN_SIZE)) {
-            word32 props_len = 0;
-            int tmp;
 
             /* Decode the Reason Code */
             publish_resp->reason_code = *rx_payload++;
+        }
+        else {
+            publish_resp->reason_code = MQTT_REASON_SUCCESS;
+        }
+
+        if ((publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) &&
+            (remain_len > MQTT_DATA_LEN_SIZE+1)) {
+            word32 props_len = 0;
+            int tmp;
 
             /* Decode Length of Properties */
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
@@ -1132,9 +1139,6 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             }
             else
                 return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-        }
-        else {
-            publish_resp->reason_code = MQTT_REASON_SUCCESS;
         }
 #endif
     }
