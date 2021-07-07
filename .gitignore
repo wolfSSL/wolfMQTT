@@ -36,7 +36,7 @@ Makefile.in
 *.libs
 stamp-h
 src/stamp-h1
-build-aux/
+build*/
 wolfmqtt-config
 aminclude.am
 

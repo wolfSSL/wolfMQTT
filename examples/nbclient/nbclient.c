@@ -320,13 +320,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 rc = MqttClient_WaitMessage(&mqttCtx->client,
                                                 mqttCtx->cmd_timeout_ms);
 
-                /* check for test mode */
-                if (mStopRead) {
-                    rc = MQTT_CODE_SUCCESS;
-                    PRINTF("MQTT Exiting...");
-                    break;
-                }
-
                 /* Track elapsed time with no activity and trigger timeout */
                 rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
                     mqttCtx->cmd_timeout_ms/1000);
@@ -335,19 +328,31 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
-                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+
+                /* check for test mode */
+                if (mStopRead) {
+                    rc = MQTT_CODE_SUCCESS;
+                    PRINTF("MQTT Exiting...");
+                    break;
+                }
+
+                if (rc == MQTT_CODE_SUCCESS) {
+                    rc = MQTT_CODE_CONTINUE;
+                    return rc;
+                }
+
+                if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Need to send keep-alive ping */
                     rc = MQTT_CODE_CONTINUE;
                     PRINTF("Keep-alive timeout, sending ping");
                     mqttCtx->stat = WMQ_PING;
                     return rc;
                 }
-                else if (rc != MQTT_CODE_SUCCESS) {
-                    /* There was an error */
-                    PRINTF("MQTT Message Wait: %s (%d)",
-                        MqttClient_ReturnCodeToString(rc), rc);
-                    break;
-                }
+
+                /* There was an error */
+                PRINTF("MQTT Message Wait: %s (%d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
+                break;
             } while (1);
 
             /* Check for error */
@@ -365,7 +370,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_UNSUB;
             mqttCtx->start_sec = 0;
 
-            FALL_THROUGH;
+            return MQTT_CODE_CONTINUE;
         }
 
         case WMQ_PING:
