@@ -181,7 +181,7 @@ wolfMQTT client library has been tested with the following brokers:
 * AWS by Amazon
 * Azure by Microsoft
 * flespi by Gurtam
-* HiveMQ by dc-square GmbH
+* HiveMQ and HiveMQ Cloud by HiveMQ GmbH
 * IBM WIoTP Message Gateway by IBM
 * Mosquitto by Eclipse
 * Paho MQTT-SN Gateway by Eclipse
@@ -223,6 +223,8 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 * HiveMQ 4.0.0 EAP
 ** Runs locally.
 ** `./examples/mqttclient/mqttclient -h localhost`
+* HiveMQ Cloud
+** `./examples/mqttclient/mqttclient -h 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud -t -S -u wolf1 -w NEZjcm7i8eRjFKF -p 8883`
 * Watson IoT Quickserver
 ** `./examples/wiot/wiot`
 
