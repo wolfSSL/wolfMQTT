@@ -224,7 +224,7 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 ** Runs locally.
 ** `./examples/mqttclient/mqttclient -h localhost`
 * HiveMQ Cloud
-** `./examples/mqttclient/mqttclient -h 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud -t -u wolf1 -w NEZjcm7i8eRjFKF -p 8883 -S 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud`
+** `./examples/mqttclient/mqttclient -h 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud -t -S -u wolf1 -w NEZjcm7i8eRjFKF -p 8883`
 * Watson IoT Quickserver
 ** `./examples/wiot/wiot`
 

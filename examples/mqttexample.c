@@ -43,6 +43,7 @@ static const char* mTlsCaFile;
 static const char* mTlsCertFile;
 static const char* mTlsKeyFile;
 #ifdef HAVE_SNI
+static int useSNI = 0;
 static const char* mTlsSniHostName;
 #endif
 #endif
@@ -105,6 +106,20 @@ static int mygetopt(int argc, char** argv, const char* optstring)
         }
         else
             return '?';
+    }
+    else if (*cp == ';') {
+        myoptarg = (char*)"";
+        if (*next != '\0') {
+            myoptarg = next;
+            next     = NULL;
+        }
+        else if (myoptind < argc) {
+            /* Check if next argument is not a parameter argument */
+            if (argv[myoptind] && argv[myoptind][0] != '-') {
+                myoptarg = argv[myoptind];
+                myoptind++;
+            }
+        }
     }
 
     return c;
@@ -187,7 +202,7 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     PRINTF("-K <key>    Use private key (for TLS mutual auth)");
     PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");
 #ifdef HAVE_SNI
-    PRINTF("-S <str>    Use Host Name Indication");
+    PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
 #endif
 #else
     PRINTF("-p <num>    Port to connect on, default: %d",
@@ -244,11 +259,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     int rc;
 
     #ifdef ENABLE_MQTT_TLS
-        #ifdef HAVE_SNI
-            #define MQTT_TLS_ARGS "c:A:K:S:"
-        #else
-            #define MQTT_TLS_ARGS "c:A:K:"
-        #endif
+        #define MQTT_TLS_ARGS "c:A:K:S;"
     #else
         #define MQTT_TLS_ARGS ""
     #endif
@@ -346,11 +357,14 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         case 'K':
             mTlsKeyFile = myoptarg;
             break;
-        #ifdef HAVE_SNI
         case 'S':
+        #ifdef HAVE_SNI
+            useSNI = 1;
             mTlsSniHostName = myoptarg;
-            break;
+        #else
+            PRINTF("To use '-S', enable SNI in wolfSSL");
         #endif
+            break;
     #endif
 
     #ifdef WOLFMQTT_V5
@@ -376,6 +390,13 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         if (mqttCtx->test_mode) {
             return MY_EX_USAGE;
         }
+    }
+#endif
+
+#ifdef HAVE_SNI
+    if ((useSNI == 1) && (XSTRLEN(mTlsSniHostName) == 0)) {
+        /* Set SNI host name to host if -S was blank */
+        mTlsSniHostName = mqttCtx->host;
     }
 #endif
 
@@ -584,8 +605,9 @@ int mqtt_tls_cb(MqttClient* client)
     if ((rc == WOLFSSL_SUCCESS) && (mTlsSniHostName != NULL)) {
         rc = wolfSSL_CTX_UseSNI(client->tls.ctx, WOLFSSL_SNI_HOST_NAME,
                 mTlsSniHostName, (word16) XSTRLEN(mTlsSniHostName));
-        if (rc != WOLFSSL_SUCCESS)
+        if (rc != WOLFSSL_SUCCESS) {
             PRINTF("UseSNI failed");
+        }
     }
 #endif /* HAVE_SNI */
 
