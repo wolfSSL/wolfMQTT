@@ -2181,6 +2181,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Continue"; /* would block */
         case MQTT_CODE_STDIN_WAKE:
             return "STDIN Wake";
+        case MQTT_CODE_PUB_CONTINUE:
+            return "Continue calling publish"; /* Chunked publish */
         case MQTT_CODE_ERROR_BAD_ARG:
             return "Error (Bad argument)";
         case MQTT_CODE_ERROR_OUT_OF_BUFFER:
@@ -2209,7 +2211,6 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Error in Callback)";
         case MQTT_CODE_ERROR_SYSTEM:
             return "Error (System resource failed)";
-
     }
     return "Unknown";
 }
