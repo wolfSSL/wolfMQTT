@@ -434,8 +434,17 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     mqttCtx->publish.duplicate = 0;
     mqttCtx->publish.topic_name = mqttCtx->topic_name;
     mqttCtx->publish.packet_id = mqtt_get_packetid();
-    mqttCtx->publish.buffer = (byte*)mqttCtx->message;
-    mqttCtx->publish.total_len = (word16)XSTRLEN(mqttCtx->message);
+
+    if (mqttCtx->pub_file) {
+        /* If a file is specified, then read into the allocated buffer */
+        rc = mqtt_file_load(mqttCtx->pub_file, &mqttCtx->publish.buffer,
+                (int*)&mqttCtx->publish.total_len);
+    }
+    else {
+        mqttCtx->publish.buffer = (byte*)mqttCtx->message;
+        mqttCtx->publish.total_len = (word16)XSTRLEN(mqttCtx->message);
+    }
+
 #ifdef WOLFMQTT_V5
     {
         /* Payload Format Indicator */
@@ -460,7 +469,16 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     }
 #endif
 
-    rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+    /* This loop allows payloads larger than the buffer to be sent by
+       repeatedly calling publish.
+    */
+    do {
+        rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+    } while(rc == MQTT_CODE_PUB_CONTINUE);
+
+    if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
+        WOLFMQTT_FREE(mqttCtx->publish.buffer);
+    }
 
     PRINTF("MQTT Publish: Topic %s, %s (%d)",
         mqttCtx->publish.topic_name,

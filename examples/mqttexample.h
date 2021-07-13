@@ -176,6 +176,8 @@ word16 mqtt_get_packetid(void);
 int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec);
 #endif
 
+int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen);
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif

@@ -622,3 +622,86 @@ int mqtt_tls_cb(MqttClient* client)
     return 0;
 }
 #endif /* ENABLE_MQTT_TLS */
+
+int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
+{
+#if !defined(NO_FILESYSTEM)
+    int rc = 0;
+    FILE* file = NULL;
+    long int pos = -1L;
+
+    /* Check arguments */
+    if (filePath == NULL || XSTRLEN(filePath) == 0 || fileLen == NULL ||
+        fileBuf == NULL) {
+        return EXIT_FAILURE;
+    }
+
+    /* Open file */
+    file = fopen(filePath, "rb");
+    if (file == NULL) {
+        PRINTF("File %s does not exist!", filePath);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+
+    /* Determine length of file */
+    if (fseek(file, 0, SEEK_END) != 0) {
+        PRINTF("fseek() failed");
+        rc = EXIT_FAILURE;
+        goto exit;
+     }
+
+    pos = (int) ftell(file);
+    if (pos == -1L) {
+       PRINTF("ftell() failed");
+       rc = EXIT_FAILURE;
+       goto exit;
+    }
+
+    *fileLen = (int)pos;
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        PRINTF("fseek() failed");
+        rc = EXIT_FAILURE;
+        goto exit;
+     }
+#ifdef DEBUG_WOLFMQTT
+    PRINTF("File %s is %d bytes", filePath, *fileLen);
+#endif
+
+    /* Allocate buffer for image */
+    *fileBuf = (byte*)WOLFMQTT_MALLOC(*fileLen);
+    if (*fileBuf == NULL) {
+        PRINTF("File buffer malloc failed!");
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+
+    /* Load file into buffer */
+    rc = (int)fread(*fileBuf, 1, *fileLen, file);
+    if (rc != *fileLen) {
+        PRINTF("Error reading file! %d", rc);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
+    rc = 0; /* Success */
+
+exit:
+    if (file) {
+        fclose(file);
+    }
+    if (rc != 0) {
+        if (*fileBuf) {
+            WOLFMQTT_FREE(*fileBuf);
+            *fileBuf = NULL;
+        }
+    }
+    return rc;
+
+#else
+    (void)filePath;
+    (void)fileBuf;
+    (void)fileLen;
+    #warning No filesystem, so need way to load example firmware file to publish
+    return 0;
+#endif
+}
