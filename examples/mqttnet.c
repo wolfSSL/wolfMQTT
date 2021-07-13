@@ -912,7 +912,7 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                 }
                 /* Check if rx or error */
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if ((!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds)) 
+                else if ((!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds))
                 #ifdef WOLFMQTT_MULTITHREAD
                     || FD_ISSET(sock->pfd[0], &recvfds)
                 #endif
@@ -1074,7 +1074,7 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
         sockCtx->fd = SOCKET_INVALID;
         sockCtx->stat = SOCK_BEGIN;
         sockCtx->mqttCtx = mqttCtx;
-    
+
     #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
         /* setup the pipe for waking select() */
         if (pipe(sockCtx->pfd) != 0) {
