@@ -36,7 +36,6 @@
 #include "wolfmqtt/mqtt_socket.h"
 
 /* Options */
-//#define WOLFMQTT_DEBUG_SOCKET
 #ifdef WOLFMQTT_NO_STDIO
     #undef WOLFMQTT_DEBUG_SOCKET
 #endif

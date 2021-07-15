@@ -1219,7 +1219,10 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
     for (i = 0; i < subscribe->topic_count; i++) {
         topic = &subscribe->topics[i];
         tx_payload += MqttEncode_String(tx_payload, topic->topic_filter);
-        *tx_payload = topic->qos;
+        /* Sanity check for compilers */
+        if (tx_payload != NULL) {
+            *tx_payload = topic->qos;
+        }
         tx_payload++;
     }
 
