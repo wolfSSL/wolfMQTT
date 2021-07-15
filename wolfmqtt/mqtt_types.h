@@ -302,7 +302,7 @@ enum MqttPacketResponseCodes {
 #if defined(__GNUC__)
     #if ((__GNUC__ > 7) || ((__GNUC__ == 7) && (__GNUC_MINOR__ >= 1)))
         #undef  FALL_THROUGH
-        #define FALL_THROUGH __attribute__ ((fallthrough));
+        #define FALL_THROUGH __attribute__ ((fallthrough))
     #endif
 #endif
 #endif

@@ -279,9 +279,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
         {
             PRINTF("MQTT Firmware Push Client: QoS %d, Use TLS %d",
                     mqttCtx->qos, mqttCtx->use_tls);
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_NET_INIT:
         {
@@ -301,9 +300,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_INIT:
         {
@@ -324,9 +322,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_TCP_CONN:
         {
@@ -363,9 +360,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_MQTT_CONN:
         {
@@ -429,9 +425,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 PRINTF("Firmware message build failed! %d", rc);
                 exit(rc);
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_PUB:
         {
@@ -454,9 +449,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_DISCONNECT:
         {
@@ -470,9 +464,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_NET_DISCONNECT:
         {
@@ -484,9 +477,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_DONE:
         {

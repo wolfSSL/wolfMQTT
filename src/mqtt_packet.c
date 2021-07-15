@@ -1880,9 +1880,8 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 return MqttPacket_HandleNetError(client,
                          MQTT_CODE_ERROR_NETWORK);
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_PK_READ_HEAD:
         {
@@ -1928,9 +1927,8 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 rc += sizeof(header->type_flags);
                 client->packet.header_len = rc;
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_PK_READ:
         {
@@ -3478,16 +3476,14 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 total_len = rx_buf[0];
                 client->packet.header_len = len;
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_PK_READ_HEAD:
         {
             client->packet.stat = MQTT_PK_READ_HEAD;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_PK_READ:
         {

@@ -114,9 +114,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                     mqttCtx->use_tls);
 
             mqttCtx->useNonBlockMode = 1;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_NET_INIT:
         {
@@ -136,9 +135,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_INIT:
         {
@@ -168,8 +166,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
         #endif
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_TCP_CONN:
         {
@@ -211,8 +209,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_MQTT_CONN:
         {
@@ -250,9 +248,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.topic_count =
                     sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->subscribe.topics = mqttCtx->topics;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_SUB:
         {
@@ -297,9 +294,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 mqttCtx->publish.buffer = (byte*)mqttCtx->message;
                 mqttCtx->publish.total_len = (word16)XSTRLEN(mqttCtx->message);
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_PUB:
         {
@@ -330,9 +326,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
             /* Read Loop */
             PRINTF("MQTT Waiting for message...");
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_WAIT_MSG:
         {
@@ -387,9 +382,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
             mqttCtx->stat = WMQ_UNSUB;
             mqttCtx->start_sec = 0;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_PING:
         {
@@ -425,9 +419,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto disconn;
             }
             mqttCtx->return_code = rc;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_DISCONNECT:
         {
@@ -442,9 +435,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_NET_DISCONNECT:
         {
@@ -456,9 +448,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             }
             PRINTF("MQTT Socket Disconnect: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case WMQ_DONE:
         {

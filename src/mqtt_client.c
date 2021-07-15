@@ -821,9 +821,9 @@ wait_again:
 
             /* reset the packet state */
             client->packet.stat = MQTT_PK_BEGIN;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
+
     #ifdef WOLFMQTT_V5
         case MQTT_MSG_AUTH:
     #endif
@@ -881,9 +881,8 @@ wait_again:
         #endif
 
             *mms_stat = MQTT_MSG_READ;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
@@ -1553,9 +1552,9 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
         #endif
 
             publish->stat = MQTT_MSG_WRITE;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
+
         case MQTT_MSG_WRITE:
         {
             /* Send packet */
@@ -1579,9 +1578,9 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
 
             /* advance state */
             publish->stat = MQTT_MSG_WRITE_PAYLOAD;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
+
         case MQTT_MSG_WRITE_PAYLOAD:
         {
             rc = MqttClient_Publish_WritePayload(client, publish, pubCb);
@@ -1608,9 +1607,8 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
                 break;
             }
             publish->stat = MQTT_MSG_WAIT;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_MSG_WAIT:
         {
@@ -2671,9 +2669,9 @@ wait_again:
 
             /* reset the packet state */
             client->packet.stat = MQTT_PK_BEGIN;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
+
         case MQTT_MSG_WAIT:
         {
         #ifdef WOLFMQTT_MULTITHREAD
@@ -2727,9 +2725,8 @@ wait_again:
         #endif
 
             *mms_stat = MQTT_MSG_READ;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_MSG_READ:
         case MQTT_MSG_READ_PAYLOAD:
@@ -3526,9 +3523,9 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
         #endif
 
             publish->stat = MQTT_MSG_WRITE;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
+
         case MQTT_MSG_WRITE:
         {
             /* Send packet and payload */
@@ -3566,9 +3563,8 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             }
 
             publish->stat = MQTT_MSG_WAIT;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case MQTT_MSG_WAIT:
         {
