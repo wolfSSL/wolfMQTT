@@ -620,11 +620,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
         case MQTT_PACKET_TYPE_PUBLISH_REL:
         case MQTT_PACKET_TYPE_PUBLISH_COMP:
         {
-            MqttPublishResp publish_resp;
-            XMEMSET(&publish_resp, 0, sizeof(publish_resp));
+            MqttPublishResp pubRespObj, *publish_resp = &pubRespObj;
+            XMEMSET(publish_resp, 0, sizeof(MqttPublishResp));
 
             rc = MqttClient_DecodePacket(client, client->rx_buf,
-                client->packet.buf_len, &publish_resp, &packet_type,
+                client->packet.buf_len, publish_resp, &packet_type,
                 &packet_qos, &packet_id);
             if (rc <= 0) {
                 return rc;
@@ -645,10 +645,30 @@ static int MqttClient_HandlePacket(MqttClient* client,
         #endif
 
             /* Encode publish response */
-            publish_resp.packet_id = packet_id;
+            publish_resp->packet_id = packet_id;
             packet_type = (MqttPacketType)((int)packet_type+1); /* next ack */
+        #ifdef WOLFMQTT_V5
+            #ifdef WOLFMQTT_DEBUG_CLIENT
+                PRINTF("\tPublish response: reason code %d, Type %s (%d),"
+                        " ID %d, QoS %d",
+                        publish_resp->reason_code,
+                        MqttPacket_TypeDesc(packet_type),
+                        packet_type, packet_id, packet_qos);
+            #endif
+
+            /* return reason code to caller */
+            if (packet_obj != NULL) {
+                MqttPublishResp* caller_rsp = (MqttPublishResp*)packet_obj;
+                caller_rsp->reason_code = publish_resp->reason_code;
+            }
+
+            /* Publish QoS response needs success reason code,
+             * otherwise will cause disconnect at broker */
+            publish_resp->reason_code = MQTT_REASON_SUCCESS;
+        #endif
+
             rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len,
-                packet_type, &publish_resp);
+                packet_type, publish_resp);
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d,"
                     " QoS %d",
@@ -738,6 +758,14 @@ static int MqttClient_HandlePacket(MqttClient* client,
 #endif
 
     return rc;
+}
+
+static inline int MqttIsPubRespPacket(int packet_type)
+{
+    return (packet_type == MQTT_PACKET_TYPE_PUBLISH_ACK /* Acknowledgment */ ||
+            packet_type == MQTT_PACKET_TYPE_PUBLISH_REC /* Received */ ||
+            packet_type == MQTT_PACKET_TYPE_PUBLISH_REL /* Release */ ||
+            packet_type == MQTT_PACKET_TYPE_PUBLISH_COMP /* Complete */);
 }
 
 static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
@@ -874,7 +902,8 @@ wait_again:
 
             /* Determine if we received data for this request */
             if ((wait_type == MQTT_PACKET_TYPE_ANY ||
-                 wait_type == packet_type) &&
+                 wait_type == packet_type ||
+                 MqttIsPubRespPacket(packet_type) == MqttIsPubRespPacket(wait_type)) &&
                (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;
