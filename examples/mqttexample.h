@@ -74,8 +74,8 @@
 #define DEFAULT_MESSAGE         "test"
 
 #ifdef WOLFMQTT_V5
-#define DEFAULT_MAX_PKT_SZ      768 /* The max MQTT control packet size the
-                                       client is willing to accept. */
+#define DEFAULT_MAX_PKT_SZ      1024*1024 /* The max MQTT control packet size
+                                             the client is willing to accept. */
 #endif
 
 /* MQTT Client state */

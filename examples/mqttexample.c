@@ -231,10 +231,7 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
             DEFAULT_MAX_PKT_SZ);
 #endif
     PRINTF("-T          Test mode");
-    if (mqttCtx->pub_file) {
-        PRINTF("-f <file>   Use file for publish, default: %s",
-                mqttCtx->pub_file);
-    }
+    PRINTF("-f <file>   Use file contents for publish");
 }
 
 void mqtt_init_ctx(MQTTCtx* mqttCtx)
@@ -633,13 +630,13 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
     /* Check arguments */
     if (filePath == NULL || XSTRLEN(filePath) == 0 || fileLen == NULL ||
         fileBuf == NULL) {
-        return EXIT_FAILURE;
+        return MQTT_CODE_ERROR_BAD_ARG;
     }
 
     /* Open file */
     file = fopen(filePath, "rb");
     if (file == NULL) {
-        PRINTF("File %s does not exist!", filePath);
+        PRINTF("File '%s' does not exist!", filePath);
         rc = EXIT_FAILURE;
         goto exit;
     }
@@ -672,7 +669,7 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
     *fileBuf = (byte*)WOLFMQTT_MALLOC(*fileLen);
     if (*fileBuf == NULL) {
         PRINTF("File buffer malloc failed!");
-        rc = EXIT_FAILURE;
+        rc = MQTT_CODE_ERROR_MEMORY;
         goto exit;
     }
 
@@ -701,7 +698,7 @@ exit:
     (void)filePath;
     (void)fileBuf;
     (void)fileLen;
-    #warning No filesystem, so need way to load example firmware file to publish
-    return 0;
+    PRINTF("File system support is not configured.");
+    return EXIT_FAILURE;
 #endif
 }

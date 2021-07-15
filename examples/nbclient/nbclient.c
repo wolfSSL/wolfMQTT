@@ -288,6 +288,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             if (mqttCtx->pub_file) {
                 rc = mqtt_file_load(mqttCtx->pub_file, &mqttCtx->publish.buffer,
                         (int*)&mqttCtx->publish.total_len);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    /* There was an error loading the file */
+                    PRINTF("MQTT Publish file error: %d", rc);
+                }
             }
             else {
                 mqttCtx->publish.buffer = (byte*)mqttCtx->message;
@@ -301,25 +305,27 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         {
             mqttCtx->stat = WMQ_PUB;
 
-            /* This loop allows payloads larger than the buffer to be sent by
-               repeatedly calling publish.
-            */
-            do {
-                rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
-                if (rc == MQTT_CODE_CONTINUE) {
-                    return rc;
+            if ((rc == MQTT_CODE_SUCCESS) || (rc == MQTT_CODE_CONTINUE)) {
+                /* This loop allows payloads larger than the buffer to be sent by
+                   repeatedly calling publish.
+                */
+                do {
+                    rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+                    if (rc == MQTT_CODE_CONTINUE) {
+                        return rc;
+                    }
+                } while(rc == MQTT_CODE_PUB_CONTINUE);
+
+                if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
+                    WOLFMQTT_FREE(mqttCtx->publish.buffer);
                 }
-            } while(rc == MQTT_CODE_PUB_CONTINUE);
 
-            if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
-                WOLFMQTT_FREE(mqttCtx->publish.buffer);
-            }
-
-            PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name,
-                MqttClient_ReturnCodeToString(rc), rc);
-            if (rc != MQTT_CODE_SUCCESS) {
-                goto disconn;
+                PRINTF("MQTT Publish: Topic %s, %s (%d)",
+                    mqttCtx->publish.topic_name,
+                    MqttClient_ReturnCodeToString(rc), rc);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    goto disconn;
+                }
             }
 
             /* Read Loop */

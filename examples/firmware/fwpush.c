@@ -130,6 +130,8 @@ static int mqtt_publish_cb(MqttPublish *publish) {
             }
         }
     }
+#else
+    (void)publish;
 #endif
     return ret;
 }
