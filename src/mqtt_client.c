@@ -656,7 +656,14 @@ static int MqttClient_HandlePacket(MqttClient* client,
                         packet_type, packet_id, packet_qos);
             #endif
 
-            /* Clear the reason code in the response */
+            /* return reason code to caller */
+            if (packet_obj != NULL) {
+                MqttPublishResp* caller_rsp = (MqttPublishResp*)packet_obj;
+                caller_rsp->reason_code = publish_resp->reason_code;
+            }
+
+            /* Publish QoS response needs success reason code,
+             * otherwise will cause disconnect at broker */
             publish_resp->reason_code = MQTT_REASON_SUCCESS;
         #endif
 
@@ -751,6 +758,14 @@ static int MqttClient_HandlePacket(MqttClient* client,
 #endif
 
     return rc;
+}
+
+static inline int MqttIsPubRespPacket(int packet_type)
+{
+    return (packet_type == MQTT_PACKET_TYPE_PUBLISH_ACK /* Acknowledgment */ ||
+            packet_type == MQTT_PACKET_TYPE_PUBLISH_REC /* Received */ ||
+            packet_type == MQTT_PACKET_TYPE_PUBLISH_REL /* Release */ ||
+            packet_type == MQTT_PACKET_TYPE_PUBLISH_COMP /* Complete */);
 }
 
 static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
@@ -887,7 +902,8 @@ wait_again:
 
             /* Determine if we received data for this request */
             if ((wait_type == MQTT_PACKET_TYPE_ANY ||
-                 wait_type == packet_type) &&
+                 wait_type == packet_type ||
+                 MqttIsPubRespPacket(packet_type) == MqttIsPubRespPacket(wait_type)) &&
                (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;

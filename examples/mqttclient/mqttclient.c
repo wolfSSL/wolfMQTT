@@ -465,6 +465,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT Publish: Topic %s, %s (%d)",
         mqttCtx->publish.topic_name,
         MqttClient_ReturnCodeToString(rc), rc);
+#ifdef WOLFMQTT_V5
+    if (mqttCtx->qos > 0) {
+        PRINTF("\tResponse Reason Code %d", mqttCtx->publish.resp.reason_code);
+    }
+#endif
     if (rc != MQTT_CODE_SUCCESS) {
         goto disconn;
     }
