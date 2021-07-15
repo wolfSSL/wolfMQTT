@@ -416,9 +416,8 @@ static int NetConnect(void *context, const char* host, word16 port,
                 goto exit;
 
             sock->stat = SOCK_CONN;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case SOCK_CONN:
         {
@@ -631,9 +630,8 @@ static int NetConnect(void *context, const char* host, word16 port,
                 goto exit;
 
             sock->stat = SOCK_CONN;
-
-            FALL_THROUGH;
         }
+        FALL_THROUGH;
 
         case SOCK_CONN:
         {
