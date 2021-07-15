@@ -175,6 +175,38 @@ WolfGatewayQoS-1,wolfMQTT/example/testTopic, 1
 ### Multithread Example
 This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (10 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
 
+## Example Options
+The command line examples can be executed with optional parameters. To see a list of the available parameters, add the `-?`
+
+```
+ ./examples/mqttclient/mqttclient -?
+mqttclient:
+-?          Help, print this usage
+-h <host>   Host to connect to, default: test.mosquitto.org
+-p <num>    Port to connect on, default: Normal 1883, TLS 8883
+-t          Enable TLS
+-A <file>   Load CA (validate peer)
+-K <key>    Use private key (for TLS mutual auth)
+-c <cert>   Use certificate (for TLS mutual auth)
+-S <str>    Use Host Name Indication, blank defaults to host
+-q <num>    Qos Level 0-2, default: 0
+-s          Disable clean session connect flag
+-k <num>    Keep alive seconds, default: 60
+-i <id>     Client Id, default: WolfMQTTClient
+-l          Enable LWT (Last Will and Testament)
+-u <str>    Username
+-w <str>    Password
+-m <str>    Message, default: test
+-n <str>    Topic name, default: wolfMQTT/example/testTopic
+-r          Set Retain flag on publish message
+-C <num>    Command Timeout, default: 30000ms
+-P <num>    Max packet size the client will accept, default: 1048576
+-T          Test mode
+-f <file>   Use file contents for publish
+```
+The available options vary depending on the library configuration.
+
+
 ## Broker compatibility
 wolfMQTT client library has been tested with the following brokers:
 * Adafruit IO by Adafruit

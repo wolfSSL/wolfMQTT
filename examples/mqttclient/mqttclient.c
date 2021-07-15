@@ -434,51 +434,75 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     mqttCtx->publish.duplicate = 0;
     mqttCtx->publish.topic_name = mqttCtx->topic_name;
     mqttCtx->publish.packet_id = mqtt_get_packetid();
-    mqttCtx->publish.buffer = (byte*)mqttCtx->message;
-    mqttCtx->publish.total_len = (word16)XSTRLEN(mqttCtx->message);
-#ifdef WOLFMQTT_V5
-    {
-        /* Payload Format Indicator */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
-        prop->type = MQTT_PROP_PAYLOAD_FORMAT_IND;
-        prop->data_int = 1;
-    }
-    {
-        /* Content Type */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
-        prop->type = MQTT_PROP_CONTENT_TYPE;
-        prop->data_str.str = (char*)"wolf_type";
-        prop->data_str.len = (word16)XSTRLEN(prop->data_str.str);
-    }
-    if ((mqttCtx->topic_alias_max > 0) &&
-        (mqttCtx->topic_alias > 0) &&
-        (mqttCtx->topic_alias < mqttCtx->topic_alias_max)) {
-        /* Topic Alias */
-        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
-        prop->type = MQTT_PROP_TOPIC_ALIAS;
-        prop->data_short = mqttCtx->topic_alias;
-    }
-#endif
 
-    rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+    if (mqttCtx->pub_file) {
+        /* If a file is specified, then read into the allocated buffer */
+        rc = mqtt_file_load(mqttCtx->pub_file, &mqttCtx->publish.buffer,
+                (int*)&mqttCtx->publish.total_len);
+        if (rc != MQTT_CODE_SUCCESS) {
+            /* There was an error loading the file */
+            PRINTF("MQTT Publish file error: %d", rc);
+        }
+    }
+    else {
+        mqttCtx->publish.buffer = (byte*)mqttCtx->message;
+        mqttCtx->publish.total_len = (word16)XSTRLEN(mqttCtx->message);
+    }
 
-    PRINTF("MQTT Publish: Topic %s, %s (%d)",
-        mqttCtx->publish.topic_name,
-        MqttClient_ReturnCodeToString(rc), rc);
-#ifdef WOLFMQTT_V5
-    if (mqttCtx->qos > 0) {
-        PRINTF("\tResponse Reason Code %d", mqttCtx->publish.resp.reason_code);
+    if (rc == MQTT_CODE_SUCCESS) {
+    #ifdef WOLFMQTT_V5
+        {
+            /* Payload Format Indicator */
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+            prop->type = MQTT_PROP_PAYLOAD_FORMAT_IND;
+            prop->data_int = 1;
+        }
+        {
+            /* Content Type */
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+            prop->type = MQTT_PROP_CONTENT_TYPE;
+            prop->data_str.str = (char*)"wolf_type";
+            prop->data_str.len = (word16)XSTRLEN(prop->data_str.str);
+        }
+        if ((mqttCtx->topic_alias_max > 0) &&
+            (mqttCtx->topic_alias > 0) &&
+            (mqttCtx->topic_alias < mqttCtx->topic_alias_max)) {
+            /* Topic Alias */
+            MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
+            prop->type = MQTT_PROP_TOPIC_ALIAS;
+            prop->data_short = mqttCtx->topic_alias;
+        }
+    #endif
+
+        /* This loop allows payloads larger than the buffer to be sent by
+           repeatedly calling publish.
+        */
+        do {
+            rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
+        } while(rc == MQTT_CODE_PUB_CONTINUE);
+
+        if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
+            WOLFMQTT_FREE(mqttCtx->publish.buffer);
+        }
+
+        PRINTF("MQTT Publish: Topic %s, %s (%d)",
+            mqttCtx->publish.topic_name,
+            MqttClient_ReturnCodeToString(rc), rc);
+    #ifdef WOLFMQTT_V5
+        if (mqttCtx->qos > 0) {
+            PRINTF("\tResponse Reason Code %d", mqttCtx->publish.resp.reason_code);
+        }
+    #endif
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
+    #ifdef WOLFMQTT_V5
+        if (mqttCtx->publish.props != NULL) {
+            /* Release the allocated properties */
+            MqttClient_PropsFree(mqttCtx->publish.props);
+        }
+    #endif
     }
-#endif
-    if (rc != MQTT_CODE_SUCCESS) {
-        goto disconn;
-    }
-#ifdef WOLFMQTT_V5
-    if (mqttCtx->publish.props != NULL) {
-        /* Release the allocated properties */
-        MqttClient_PropsFree(mqttCtx->publish.props);
-    }
-#endif
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");

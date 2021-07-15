@@ -130,72 +130,10 @@ static int mqtt_publish_cb(MqttPublish *publish) {
             }
         }
     }
+#else
+    (void)publish;
 #endif
     return ret;
-}
-
-static int fwfile_load(const char* filePath, byte** fileBuf, int *fileLen)
-{
-#if !defined(NO_FILESYSTEM)
-    int rc = 0;
-    FILE* file = NULL;
-
-    /* Check arguments */
-    if (filePath == NULL || XSTRLEN(filePath) == 0 || fileLen == NULL ||
-        fileBuf == NULL) {
-        return EXIT_FAILURE;
-    }
-
-    /* Open file */
-    file = fopen(filePath, "rb");
-    if (file == NULL) {
-        PRINTF("File %s does not exist!", filePath);
-        rc = EXIT_FAILURE;
-        goto exit;
-    }
-
-    /* Determine length of file */
-    fseek(file, 0, SEEK_END);
-    *fileLen = (int) ftell(file);
-    fseek(file, 0, SEEK_SET);
-    //PRINTF("File %s is %d bytes", filePath, *fileLen);
-
-    /* Allocate buffer for image */
-    *fileBuf = (byte*)WOLFMQTT_MALLOC(*fileLen);
-    if (*fileBuf == NULL) {
-        PRINTF("File buffer malloc failed!");
-        rc = EXIT_FAILURE;
-        goto exit;
-    }
-
-    /* Load file into buffer */
-    rc = (int)fread(*fileBuf, 1, *fileLen, file);
-    if (rc != *fileLen) {
-        PRINTF("Error reading file! %d", rc);
-        rc = EXIT_FAILURE;
-        goto exit;
-    }
-    rc = 0; /* Success */
-
-exit:
-    if (file) {
-        fclose(file);
-    }
-    if (rc != 0) {
-        if (*fileBuf) {
-            WOLFMQTT_FREE(*fileBuf);
-            *fileBuf = NULL;
-        }
-    }
-    return rc;
-
-#else
-    (void)filePath;
-    (void)fileBuf;
-    (void)fileLen;
-    #warning No filesystem, so need way to load example firmware file to publish
-    return 0;
-#endif
 }
 
 static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
@@ -212,7 +150,7 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     wc_InitRng(&rng);
 
     /* Verify file can be loaded */
-    rc = fwfile_load(fwFile, &fwBuf, &fwLen);
+    rc = mqtt_file_load(fwFile, &fwBuf, &fwLen);
     if (rc < 0 || fwLen == 0 || fwBuf == NULL) {
         PRINTF("Firmware File %s Load Error!", fwFile);
         mqtt_show_usage(mqttCtx);

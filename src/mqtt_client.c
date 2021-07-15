@@ -1428,7 +1428,7 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
 
             /* Check if we are done sending publish message */
             if (publish->buffer_pos < publish->buffer_len) {
-                return MQTT_CODE_CONTINUE;
+                return MQTT_CODE_PUB_CONTINUE;
             }
     #else
         do {
@@ -1467,7 +1467,7 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
                 if (client->write.len > client->tx_buf_len) {
                     client->write.len = client->tx_buf_len;
                 }
-                rc = MQTT_CODE_CONTINUE;
+                rc = MQTT_CODE_PUB_CONTINUE;
             }
         }
     }
@@ -1652,9 +1652,11 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
     } /* switch (publish->stat) */
 
     /* reset state */
+    if ((rc != MQTT_CODE_PUB_CONTINUE)
 #ifdef WOLFMQTT_NONBLOCK
-    if (rc != MQTT_CODE_CONTINUE)
+         && (rc != MQTT_CODE_CONTINUE)
 #endif
+        )
     {
         publish->stat = MQTT_MSG_BEGIN;
     }
@@ -2179,6 +2181,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Continue"; /* would block */
         case MQTT_CODE_STDIN_WAKE:
             return "STDIN Wake";
+        case MQTT_CODE_PUB_CONTINUE:
+            return "Continue calling publish"; /* Chunked publish */
         case MQTT_CODE_ERROR_BAD_ARG:
             return "Error (Bad argument)";
         case MQTT_CODE_ERROR_OUT_OF_BUFFER:
@@ -2207,7 +2211,6 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Error in Callback)";
         case MQTT_CODE_ERROR_SYSTEM:
             return "Error (System resource failed)";
-
     }
     return "Unknown";
 }
