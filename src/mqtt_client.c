@@ -27,7 +27,6 @@
 #include "wolfmqtt/mqtt_client.h"
 
 /* Options */
-//#define WOLFMQTT_DEBUG_CLIENT
 #ifdef WOLFMQTT_NO_STDIO
     #undef WOLFMQTT_DEBUG_CLIENT
 #endif
@@ -2612,6 +2611,8 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             break;
         }
     } /* switch (packet_type) */
+
+    (void)packet_id;
 
     return rc;
 }

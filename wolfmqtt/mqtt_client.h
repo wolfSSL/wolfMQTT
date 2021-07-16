@@ -50,7 +50,7 @@ struct _MqttClient;
  *  \discussion If the message payload is larger than the maximum RX buffer
     then this callback is called multiple times.
     If msg_new = 1 its a new message.
-    The topc_name and topic_name length are only valid when msg_new = 1.
+    The topic_name and topic_name length are only valid when msg_new = 1.
     If msg_new = 0 then we are receiving additional payload.
     Each callback populates the payload in MqttMessage.buffer.
     The MqttMessage.buffer_len is the size of the buffer payload.

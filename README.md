@@ -1,6 +1,6 @@
 # wolfMQTT
 
-This is an implementation of the MQTT Client written in C for embedded use, which supports SSL/TLS via the wolfSSL library. This library was built from the ground up to be multi-platform, space conscience and extensible. Integrates with wolfSSL to provide TLS support.
+This is an implementation of the MQTT Client written in C for embedded use, which supports SSL/TLS via the wolfSSL library. This library was built from the ground up to be multi-platform, space conscious and extensible. Integrates with wolfSSL to provide TLS support.
 
 
 ## Building
@@ -13,7 +13,7 @@ This is an implementation of the MQTT Client written in C for embedded use, whic
 4. `sudo make install`
 
 Notes:
-* If `wolfssl` was recently installed run `sudo ldconfig` to update the linker cache.
+* If `wolfssl` was recently installed, run `sudo ldconfig` to update the linker cache.
 * Debug messages can be enabled using `--enable-debug` or `--enable-debug=verbose` (for extra logging).
 * For a list of build options run `./configure --help`.
 * The build options are generated in a file here: `wolfmqtt/options.h`.

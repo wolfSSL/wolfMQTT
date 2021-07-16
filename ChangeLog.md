@@ -1,5 +1,14 @@
 
 ## Release Notes
+### v1.9 (07/16/2021)
+* Fixes for Sensor Network client (PR #204, 214, 219)
+* Fixes for non-blocking (PR #205)
+* Fixes for multithread (PR #207, 209, 211, 218)
+* Fix for MQTTv5 publish response handling (PR #224, 220)
+* Fix subscribe return code list (PR #210)
+* Fix switch statement fallthrough on other toolchains (PR #225)
+* Add HiveMQ Cloud capability with SNI feature (PR #222)
+* Add ability to publish files from example client, fix chunked publish (PR# 223)
 
 ### v1.8 (02/19/2021)
 * Fixes for non-blocking in WIN32 and large payload (PR #202)
