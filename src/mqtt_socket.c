@@ -416,7 +416,7 @@ exit:
     /* Handle error case */
     if (rc) {
     #ifdef WOLFMQTT_DEBUG_SOCKET
-    	const char* errstr = NULL;
+        const char* errstr = "";
     #endif
         int errnum = 0;
         if (client->tls.ssl) {
