@@ -1407,11 +1407,7 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
             XMEMCPY(client->tx_buf, &publish->buffer[publish->buffer_pos],
                 client->write.len);
 
-        #ifdef WOLFMQTT_NONBLOCK
-            /* After sending the message new position is going to be
-               current + client->write.len */
-            publish->buffer_pos += client->write.len;
-        #else
+        #ifndef WOLFMQTT_NONBLOCK
             publish->intBuf_pos += client->write.len;
         #endif
         }
@@ -1423,6 +1419,10 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
             if (rc < 0) {
                 return rc;
             }
+
+            /* ONLY if send was successful, update buffer position.
+             * Otherwise, MqttPacket_Write() will resume where it left off. */
+            publish->buffer_pos += client->write.len;
 
             /* Check if we are done sending publish message */
             if (publish->buffer_pos < publish->buffer_len) {
