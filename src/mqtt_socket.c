@@ -26,6 +26,7 @@
 
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_socket.h"
+#include <errno.h>
 
 /* Options */
 #ifdef WOLFMQTT_NO_STDIO
@@ -116,8 +117,8 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
             if (error != WOLFSSL_ERROR_WANT_WRITE) {
-                PRINTF("MqttSocket_Write: SSL Error=%d (rc %d, sockrc %d)",
-                    error, rc, client->tls.sockWriteRc);
+                PRINTF("MqttSocket_Write: SSL Error=%d (rc %d, sockrc %d er %d)",
+                    error, rc, client->tls.sockWriteRc, errno);
             }
         #endif
 
@@ -134,7 +135,7 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
     if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
-        PRINTF("MqttSocket_Write: Len=%d, Rc=%d", buf_len, rc);
+        PRINTF("MqttSocket_Write: Len=%d, Rc=%d Er=%d", buf_len, rc, errno);
     }
 #endif
 
@@ -198,8 +199,8 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         #ifdef WOLFMQTT_DEBUG_SOCKET
             int error = wolfSSL_get_error(client->tls.ssl, 0);
             if (error != WOLFSSL_ERROR_WANT_READ) {
-                PRINTF("MqttSocket_Read: SSL Error=%d sockReadRc=%d",
-                    error, client->tls.sockReadRc);
+                PRINTF("MqttSocket_Read: SSL Error=%d sockReadRc=%d Er=%d",
+                    error, client->tls.sockReadRc, errno);
             }
         #endif
 
@@ -215,7 +216,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
     if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
-        PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
+        PRINTF("MqttSocket_Read: Len=%d, Rc=%d Er=%d", buf_len, rc, errno);
     }
 #endif
 
@@ -283,7 +284,7 @@ int MqttSocket_Peek(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     rc = client->net->peek(client->net->context, buf, buf_len, timeout_ms);
     if (rc > 0) {
     #ifdef WOLFMQTT_DEBUG_SOCKET
-        PRINTF("MqttSocket_Peek: Len=%d, Rc=%d", buf_len, rc);
+        PRINTF("MqttSocket_Peek: Len=%d, Rc=%d Er=%d", buf_len, rc, errno);
     #endif
 
         /* return length read and reset position */
