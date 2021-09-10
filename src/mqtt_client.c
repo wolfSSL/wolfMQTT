@@ -562,6 +562,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
                     return rc;
                 }
             }
+            else {
+                /* packet ID and QoS were already established */
+                packet_id = client->msg.publish.packet_id;
+                packet_qos = client->msg.publish.qos;
+            }
 
             rc = MqttClient_Publish_ReadPayload(client, publish, timeout_ms);
             if (rc < 0) {
@@ -1168,6 +1173,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         wm_SemUnlock(&client->lockSend);
     #endif
         if (rc != len) {
+    #ifdef WOLFMQTT_MULTITHREAD
+            if ((rc != MQTT_CODE_CONTINUE) &&
+                (wm_SemLock(&client->lockClient)) == 0) {
+                MqttClient_RespList_Remove(client, &mc_connect->pendResp);
+                wm_SemUnlock(&client->lockClient);
+            }
+    #endif
             return rc;
         }
     #ifdef WOLFMQTT_V5
