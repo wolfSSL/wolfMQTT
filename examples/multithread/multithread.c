@@ -61,6 +61,7 @@ static int mNumMsgsRecvd;
     /* Posix (Linux/Mac) */
 	#include <pthread.h>
 	#include <sched.h>
+    #include <errno.h>
     typedef pthread_t THREAD_T;
     #define THREAD_CREATE(h, f, c) ({ int ret = pthread_create(h, NULL, f, c); if (ret) { errno = ret; } ret; })
     #define THREAD_JOIN(h, c)      ({ int ret, x; for(x=0;x<c;x++) { ret = pthread_join(h[x], NULL); if (ret) { errno = ret; break; }} ret; })
