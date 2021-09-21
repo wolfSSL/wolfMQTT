@@ -906,8 +906,9 @@ wait_again:
             /* Determine if we received data for this request */
             if ((wait_type == MQTT_PACKET_TYPE_ANY ||
                  wait_type == packet_type ||
-                 MqttIsPubRespPacket(packet_type) == MqttIsPubRespPacket(wait_type)) &&
-               (wait_packet_id == 0 || wait_packet_id == packet_id))
+                 (MqttIsPubRespPacket(packet_type) &&
+                  MqttIsPubRespPacket(wait_type))) &&
+                (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;
                 waitMatchFound = 1;
