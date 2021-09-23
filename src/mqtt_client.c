@@ -278,7 +278,7 @@ static int MqttClient_RespList_Find(MqttClient *client,
 #endif /* WOLFMQTT_MULTITHREAD */
 
 #ifdef WOLFMQTT_V5
-static int Handle_Props(MqttProp* props)
+static int Handle_Props(MqttClient* client, MqttProp* props)
 {
     int rc = MQTT_CODE_SUCCESS;
 
@@ -286,7 +286,7 @@ static int Handle_Props(MqttProp* props)
     if (props != NULL) {
     #ifdef WOLFMQTT_PROPERTY_CB
         /* Check for properties set by the server */
-        if (packet_obj && client->property_cb) {
+        if (client->property_cb != NULL) {
             /* capture error if returned */
             int rc_err = client->property_cb(client, props,
                     client->property_ctx);
@@ -360,7 +360,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_ConnectAck(rx_buf, rx_len, p_connect_ack);
         #ifdef WOLFMQTT_V5
             if (rc >= 0) {
-                rc = Handle_Props(p_connect_ack->props);
+                rc = Handle_Props(client, p_connect_ack->props);
             }
         #endif
             break;
@@ -381,7 +381,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(p_publish->props);
+                rc = Handle_Props(client, p_publish->props);
             #endif
             }
             break;
@@ -406,7 +406,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish_resp->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(p_publish_resp->props);
+                rc = Handle_Props(client, p_publish_resp->props);
             #endif
             }
             break;
@@ -427,7 +427,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_subscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(p_subscribe_ack->props);
+                rc = Handle_Props(client, p_subscribe_ack->props);
             #endif
             }
             break;
@@ -449,7 +449,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_unsubscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(p_unsubscribe_ack->props);
+                rc = Handle_Props(client, p_unsubscribe_ack->props);
             #endif
             }
             break;
@@ -478,7 +478,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             }
             rc = MqttDecode_Auth(rx_buf, rx_len, p_auth);
             if (rc >= 0) {
-                rc = Handle_Props(p_auth->props);
+                rc = Handle_Props(client, p_auth->props);
             }
         #else
             rc = MQTT_CODE_ERROR_PACKET_TYPE;
@@ -497,7 +497,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             }
             rc = MqttDecode_Disconnect(rx_buf, rx_len, p_disc);
             if (rc >= 0) {
-                rc = Handle_Props(p_disc->props);
+                rc = Handle_Props(client, p_disc->props);
             }
         #else
             rc = MQTT_CODE_ERROR_PACKET_TYPE;
@@ -956,6 +956,11 @@ wait_again:
                 return rc;
             }
         #endif
+
+            /* Clear shared union for next call */
+            if ((MqttObject*)use_packet_obj == &client->msg) {
+                XMEMSET(&client->msg, 0, sizeof(client->msg));
+            }
 
             /* handle success case */
             if (rc >= 0) {
@@ -2141,19 +2146,11 @@ int MqttClient_WaitMessage_ex(MqttClient *client, MqttObject* msg,
     return MqttClient_WaitType(client, msg, MQTT_PACKET_TYPE_ANY, 0,
         timeout_ms);
 }
-
 int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
 {
-    int rc = MQTT_CODE_ERROR_BAD_ARG;
-    if (client != NULL) {
-        rc = MqttClient_WaitMessage_ex(client, &client->msg, timeout_ms);
-        if (rc != MQTT_CODE_CONTINUE) {
-            /* Clear the union for the next call to MqttClient_WaitMessage */
-            XMEMSET(&client->msg, 0, sizeof(MqttObject));
-        }
-    }
-
-    return rc;
+    if (client == NULL)
+        return MQTT_CODE_ERROR_BAD_ARG;
+    return MqttClient_WaitMessage_ex(client, &client->msg, timeout_ms);
 }
 
 int MqttClient_NetConnect(MqttClient *client, const char* host,
