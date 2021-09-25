@@ -294,6 +294,8 @@ static int Handle_Props(MqttClient* client, MqttProp* props)
                 rc = rc_err;
             }
         }
+    #else
+        (void)client;
     #endif
         /* Free the properties */
         MqttProps_Free(props);
