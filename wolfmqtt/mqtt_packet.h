@@ -719,6 +719,15 @@ WOLFMQTT_LOCAL MqttProp* MqttProps_FindType(MqttProp *head,
     #define MqttPacket_TypeDesc(x) "not compiled in"
 #endif
 
+#ifdef WOLFMQTT_BROKER
+WOLFMQTT_LOCAL int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect);
+WOLFMQTT_LOCAL int MqttEncode_ConnectAck(byte *tx_buf, int tx_buf_len MqttConnectAck *connect_ack);
+WOLFMQTT_LOCAL int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe);
+WOLFMQTT_LOCAL int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubscribe);
+WOLFMQTT_LOCAL int MqttEncode_UnsubscribeAck(byte *tx_buf, int tx_buf_len, MqttUnsubscribeAck *unsubscribe_ack);
+WOLFMQTT_LOCAL int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect* disc);
+#endif
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif

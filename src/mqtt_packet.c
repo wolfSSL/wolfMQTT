@@ -852,6 +852,13 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     return header_len + remain_len;
 }
 
+#ifdef WOLFMQTT_BROKER
+int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
+{
+
+}
+#endif /* WOLFMQTT_BROKER */
+
 int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack)
 {
@@ -910,6 +917,13 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     /* Return total length of packet */
     return header_len + remain_len;
 }
+
+#ifdef WOLFMQTT_BROKER
+int MqttEncode_ConnectAck(byte *tx_buf, int tx_buf_len MqttConnectAck *connect_ack)
+{
+
+}
+#endif /* WOLFMQTT_BROKER */
 
 int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
                         byte use_cb)
@@ -1370,6 +1384,13 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
     return header_len + remain_len;
 }
 
+#ifdef WOLFMQTT_BROKER
+int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
+{
+
+}
+#endif /* WOLFMQTT_BROKER */
+
 int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     MqttSubscribeAck *subscribe_ack)
 {
@@ -1523,6 +1544,13 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     return header_len + remain_len;
 }
 
+#ifdef WOLFMQTT_BROKER
+int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubscribe)
+{
+
+}
+#endif /* WOLFMQTT_BROKER */
+
 int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
     MqttUnsubscribeAck *unsubscribe_ack)
 {
@@ -1595,6 +1623,13 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
     /* Return total length of packet */
     return header_len + remain_len;
 }
+
+#ifdef WOLFMQTT_BROKER
+int MqttEncode_UnsubscribeAck(byte *tx_buf, int tx_buf_len, MqttUnsubscribeAck *unsubscribe_ack)
+{
+
+}
+#endif /* WOLFMQTT_BROKER */
 
 int MqttEncode_Ping(byte *tx_buf, int tx_buf_len, MqttPing* ping)
 {
@@ -1720,6 +1755,14 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
     /* Return total length of packet */
     return header_len + remain_len;
 }
+
+#ifdef WOLFMQTT_BROKER
+int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect* disc)
+{
+
+}
+#endif /* WOLFMQTT_BROKER */
+
 
 #ifdef WOLFMQTT_V5
 int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)

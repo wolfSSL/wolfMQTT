@@ -304,7 +304,7 @@ then
         [ ENABLED_PROPCB=$enableval ],
         [ ENABLED_PROPCB=yes ]
         )
-    
+
     if test "x$ENABLED_PROPCB" = "xyes"
     then
         AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_PROPERTY_CB"
@@ -405,6 +405,19 @@ then
         [AC_MSG_ERROR([libwebsockets not found. Install libwebsockets or use --disable-websocket])])
 fi
 
+# Broker
+AC_ARG_ENABLE([broker],
+[AS_HELP_STRING([--enable-broker],[Enable lightweight broker support (default: disabled)])],
+[ ENABLED_BROKER=$enableval ],
+[ ENABLED_BROKER=no ]
+)
+
+if test "x$ENABLED_BROKER" = "xyes"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER"
+fi
+
+
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
 AM_CONDITIONAL([BUILD_STRESS], [test "x$ENABLED_STRESS" != "xno"])
@@ -415,6 +428,8 @@ AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
 AM_CONDITIONAL([BUILD_NONBLOCK], [test "x$ENABLED_NONBLOCK" = "xyes"])
 AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
 AM_CONDITIONAL([BUILD_WEBSOCKET], [test "x$ENABLED_WEBSOCKET" = "xyes"])
+AM_CONDITIONAL([BUILD_BROKER], [test "x$ENABLED_BROKER" = "xyes"])
+
 
 
 # HARDEN FLAGS
