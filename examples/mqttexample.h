@@ -62,6 +62,16 @@
 
 
 /* Default Configurations */
+
+#ifndef DEFAULT_MQTT_HOST
+    /* Default MQTT host broker to use,
+     * when none is specified in the examples */
+    #define DEFAULT_MQTT_HOST   "test.mosquitto.org"
+    /* "iot.eclipse.org" */
+    /* "broker.emqx.io" */
+    /* "broker.hivemq.com" */
+#endif
+
 #define DEFAULT_CMD_TIMEOUT_MS  30000
 #define DEFAULT_CON_TIMEOUT_MS  5000
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0

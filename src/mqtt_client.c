@@ -362,7 +362,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_ConnectAck(rx_buf, rx_len, p_connect_ack);
         #ifdef WOLFMQTT_V5
             if (rc >= 0) {
-                rc = Handle_Props(client, p_connect_ack->props);
+                int tmp = Handle_Props(client, p_connect_ack->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             }
         #endif
             break;
@@ -383,7 +386,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(client, p_publish->props);
+                int tmp = Handle_Props(client, p_publish->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             #endif
             }
             break;
