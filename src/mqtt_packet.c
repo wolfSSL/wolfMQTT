@@ -267,8 +267,8 @@ int MqttEncode_Vbi(byte *buf, word32 x)
 int MqttDecode_Num(byte* buf, word16 *len)
 {
     if (len) {
-        *len = buf[0];
-        *len = (*len << 8) | buf[1];
+        *len =  (word32)buf[0] << 8;
+        *len += buf[1];
     }
     return MQTT_DATA_LEN_SIZE;
 }
@@ -288,10 +288,10 @@ int MqttEncode_Num(byte *buf, word16 len)
 int MqttDecode_Int(byte* buf, word32* len)
 {
     if (len) {
-        *len = buf[0];
-        *len = (*len <<  8) | buf[1];
-        *len = (*len << 16) | buf[2];
-        *len = (*len << 24) | buf[3];
+        *len =  (word32)buf[0] << 24;
+        *len += (word32)buf[1] << 16;
+        *len += (word32)buf[2] << 8;
+        *len += buf[3];
     }
     return MQTT_DATA_INT_SIZE;
 }
@@ -487,7 +487,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
 
     *props = NULL;
 
-    while (prop_len > 0)
+    while ((prop_len > 0) && (rc >= 0))
     {
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
@@ -508,7 +508,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         (void)packet;
 
         if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
-            return MQTT_CODE_ERROR_PROPERTY;
+            rc = MQTT_CODE_ERROR_PROPERTY;
+            break;
         }
 
         switch (gPropMatrix[cur_prop->type].data)
@@ -542,9 +543,15 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp = MqttDecode_String(buf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len);
-                buf += tmp;
-                rc += (int)tmp;
-                prop_len -= tmp;
+                if (cur_prop->data_str.len <= (buf_len - (buf - pbuf))) {
+                    buf += tmp;
+                    rc += (int)tmp;
+                    prop_len -= tmp;
+                }
+                else {
+                    /* Invalid length */
+                    rc = MQTT_CODE_ERROR_PROPERTY;
+                }
                 break;
             }
             case MQTT_DATA_TYPE_VAR_INT:
@@ -568,10 +575,16 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 rc += (int)tmp;
                 prop_len -= tmp;
 
-                cur_prop->data_bin.data = buf;
-                buf += cur_prop->data_bin.len;
-                rc += (int)cur_prop->data_bin.len;
-                prop_len -= cur_prop->data_bin.len;
+                if (cur_prop->data_bin.len <= (buf_len - (buf - pbuf))) {
+                    cur_prop->data_bin.data = buf;
+                    buf += cur_prop->data_bin.len;
+                    rc += (int)cur_prop->data_bin.len;
+                    prop_len -= cur_prop->data_bin.len;
+                }
+                else {
+                    /* Invalid length */
+                    rc = MQTT_CODE_ERROR_PROPERTY;
+                }
                 break;
             }
             case MQTT_DATA_TYPE_STRING_PAIR:
@@ -585,12 +598,18 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 rc += (int)tmp;
                 prop_len -= tmp;
 
-                tmp = MqttDecode_String(buf,
-                        (const char**)&cur_prop->data_str2.str,
-                        &cur_prop->data_str2.len);
-                buf += tmp;
-                rc += (int)tmp;
-                prop_len -= tmp;
+                if (cur_prop->data_str.len <= (buf_len - (buf - pbuf))) {
+                    tmp = MqttDecode_String(buf,
+                            (const char**)&cur_prop->data_str2.str,
+                            &cur_prop->data_str2.len);
+                    buf += tmp;
+                    rc += (int)tmp;
+                    prop_len -= tmp;
+                }
+                else {
+                    /* Invalid length */
+                    rc = MQTT_CODE_ERROR_PROPERTY;
+                }
                 break;
             }
             case MQTT_DATA_TYPE_NONE:
@@ -601,6 +620,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
         }
     };
+
+    if (rc < 0) {
+        /* Free the properties */
+        MqttProps_Free(*props);
+    }
 
     return rc;
 }
