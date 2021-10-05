@@ -100,9 +100,28 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_DEBUG_CLIENT -DWOLFMQTT_DEBUG_SOCKET"
 fi
 
+# ALL FEATURES
+AC_ARG_ENABLE([all],
+    [AS_HELP_STRING([--enable-all],[Enable all wolfMQTT features (default: disabled)])],
+    [ ENABLED_ALL=$enableval ],
+    [ ENABLED_ALL=no ]
+    )
+if test "$ENABLED_ALL" = "yes"
+then
+    test "$enable_tls" = "" && enable_tls=yes
+    test "$enable_nonblock" = "" && enable_nonblock=yes
+    test "$enable_timeout" = "" && enable_timeout=yes
+    test "$enable_examples" = "" && enable_examples=yes
+    test "$enable_errorstrings" = "" && enable_errorstrings=yes
+    test "$enable_stdincap" = "" && enable_stdincap=yes
+    test "$enable_sn" = "" && enable_sn=yes
+    test "$enable_v5" = "" && enable_v5=yes
+    test "$enable_discb" = "" && enable_discb=yes
+    test "$enable_mt" = "" && enable_mt=yes
+    test "$enable_" = "" && enable_=yes
+fi
 
 # TLS Support with wolfSSL
-# Examples, used to disable examples
 AC_ARG_ENABLE([tls],
     [AS_HELP_STRING([--enable-tls],[Enable TLS support with wolfSSL  (default: enabled)])],
     [ ENABLED_TLS=$enableval ],
@@ -143,7 +162,7 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_NO_TIMEOUT"
 fi
 
-# Examples
+# Examples, used to disable examples
 AC_ARG_ENABLE([examples],
     [AS_HELP_STRING([--enable-examples],[Enable examples (default: enabled)])],
     [ ENABLED_EXAMPLES=$enableval ],
@@ -196,35 +215,46 @@ fi
 AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
 
 # MQTT v5.0
-AC_ARG_ENABLE([mqtt5],
-    [AS_HELP_STRING([--enable-mqtt5],[Enable MQTT v5.0 support (default: disabled)])],
+AC_ARG_ENABLE([v5],
+    [AS_HELP_STRING([--enable-v5],[Enable MQTT v5.0 support (default: disabled)])],
     [ ENABLED_MQTTV50=$enableval ],
     [ ENABLED_MQTTV50=no ]
     )
-
+# Keep old config option for backward compatibility
+AC_ARG_ENABLE([mqtt5],
+    ,
+    [ ENABLED_MQTTV50_old=$enableval ],
+    [ ENABLED_MQTTV50_old=no ]
+    )
+if test "x$ENABLED_MQTTV50_old" = "xyes"
+then
+    ENABLED_MQTTV50=yes
+fi
 if test "x$ENABLED_MQTTV50" = "xyes"
 then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_V5"
+    if test "x$ENABLED_PROPCB" = "xyes"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_PROPERTY_CB"
+    fi
 fi
 
 AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
 
-# Property callback
-AC_ARG_ENABLE([propcb],
-    [AS_HELP_STRING([--enable-propcb],[Enable property callback (v5 only) (default: disabled)])],
-    [ ENABLED_PROPCB=$enableval ],
-    [ ENABLED_PROPCB=no ]
-    )
-
-if test "x$ENABLED_PROPCB" = "xyes"
+if test "x$ENABLED_MQTTV50" = "xyes"
 then
-    if test "x$ENABLED_MQTTV50" = "xno"
+    # Property callback, only available when v5 is configured
+    AC_ARG_ENABLE([propcb],
+        [AS_HELP_STRING([--enable-propcb],[Enable property callback (v5 only) (default: enabled)])],
+        [ ENABLED_PROPCB=$enableval ],
+        [ ENABLED_PROPCB=yes ]
+        )
+    
+    if test "x$ENABLED_PROPCB" = "xyes"
     then
-        AC_MSG_ERROR([cannot enable propcb without enabling mqtt5.])
+        AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_PROPERTY_CB"
     fi
-    AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_PROPERTY_CB"
 fi
-
 
 # Disconnect callback
 AC_ARG_ENABLE([discb],
@@ -365,7 +395,10 @@ echo "   * Disconnect Callback:       $ENABLED_DISCB"
 echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
 echo "   * Enable MQTT-SN:            $ENABLED_SN"
 echo "   * Enable MQTT v5.0:          $ENABLED_MQTTV50"
-echo "   * Property Callback:         $ENABLED_PROPCB"
+if test "x$ENABLED_MQTTV50" = "xyes"
+then
+    echo "   * Property Callback:         $ENABLED_PROPCB"
+fi
 echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"
