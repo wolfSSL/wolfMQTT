@@ -414,7 +414,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish_resp->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(client, p_publish_resp->props);
+                int tmp = Handle_Props(client, p_publish_resp->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             #endif
             }
             break;
@@ -435,7 +438,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_subscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(client, p_subscribe_ack->props);
+                int tmp = Handle_Props(client, p_subscribe_ack->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             #endif
             }
             break;
@@ -457,7 +463,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_unsubscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                rc = Handle_Props(client, p_unsubscribe_ack->props);
+                int tmp = Handle_Props(client, p_unsubscribe_ack->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             #endif
             }
             break;
@@ -486,7 +495,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             }
             rc = MqttDecode_Auth(rx_buf, rx_len, p_auth);
             if (rc >= 0) {
-                rc = Handle_Props(client, p_auth->props);
+                int tmp = Handle_Props(client, p_auth->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             }
         #else
             rc = MQTT_CODE_ERROR_PACKET_TYPE;
@@ -505,7 +517,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             }
             rc = MqttDecode_Disconnect(rx_buf, rx_len, p_disc);
             if (rc >= 0) {
-                rc = Handle_Props(client, p_disc->props);
+                int tmp = Handle_Props(client, p_disc->props);
+                if (tmp != MQTT_CODE_SUCCESS) {
+                    rc = tmp;
+                }
             }
         #else
             rc = MQTT_CODE_ERROR_PACKET_TYPE;
