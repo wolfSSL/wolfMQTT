@@ -939,7 +939,10 @@ wait_again:
                 (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;
-                waitMatchFound = 1;
+                if (packet_type == wait_type) {
+                    /* Only stop waiting when matched */
+                    waitMatchFound = 1;
+                }
             }
             else {
                 /* use generic packet object */
