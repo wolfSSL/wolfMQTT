@@ -127,7 +127,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 };
 
 #ifndef MQTT_MAX_PROPS
-#define MQTT_MAX_PROPS 10
+#define MQTT_MAX_PROPS 30
 #endif
 
 /* Property structure allocation array. Property type equal
@@ -1805,6 +1805,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
             /* Found one */
             new_prop = &clientPropStack[i];
             XMEMSET(new_prop, 0, sizeof(MqttProp));
+            break;
         }
     }
 
