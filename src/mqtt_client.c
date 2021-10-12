@@ -880,7 +880,7 @@ wait_again:
             pendResp = NULL;
             rc = wm_SemLock(&client->lockClient);
             if (rc == 0) {
-                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type, 
+                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
                     wait_packet_id, &pendResp)) {
                     if (pendResp->packetDone) {
                         /* pending response is already done, so return */
@@ -1255,7 +1255,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 
 #ifdef WOLFMQTT_V5
     /* Enhanced authentication */
-    if (mc_connect->protocol_level > MQTT_CONNECT_PROTOCOL_LEVEL_4 && 
+    if (mc_connect->protocol_level > MQTT_CONNECT_PROTOCOL_LEVEL_4 &&
             mc_connect->stat == MQTT_MSG_AUTH)
     {
         MqttAuth auth, *p_auth = &auth;

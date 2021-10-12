@@ -51,7 +51,7 @@ static int mNumMsgsRecvd;
 
 #ifdef USE_WINDOWS_API
     /* Windows Threading */
-	#include <windows.h>
+    #include <windows.h>
     #include <process.h>
     typedef HANDLE THREAD_T;
     #define THREAD_CREATE(h, f, c) ((*h = CreateThread(NULL, 0, f, c, 0, NULL)) == NULL)
@@ -59,8 +59,8 @@ static int mNumMsgsRecvd;
     #define THREAD_EXIT(e)         ExitThread(e)
 #else
     /* Posix (Linux/Mac) */
-	#include <pthread.h>
-	#include <sched.h>
+    #include <pthread.h>
+    #include <sched.h>
     #include <errno.h>
     typedef pthread_t THREAD_T;
     #define THREAD_CREATE(h, f, c) ({ int ret = pthread_create(h, NULL, f, c); if (ret) { errno = ret; } ret; })
@@ -333,7 +333,7 @@ static int multithread_test_finish(MQTTCtx *mqttCtx)
 
 /* this task subscribes to topic */
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI subscribe_task( LPVOID param ) 
+static DWORD WINAPI subscribe_task( LPVOID param )
 #else
 static void *subscribe_task(void *param)
 #endif
@@ -390,7 +390,7 @@ static void *subscribe_task(void *param)
 
 /* This task waits for messages */
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI waitMessage_task( LPVOID param ) 
+static DWORD WINAPI waitMessage_task( LPVOID param )
 #else
 static void *waitMessage_task(void *param)
 #endif
@@ -467,7 +467,7 @@ static void *waitMessage_task(void *param)
 /* This task publishes a message to the broker. The task will be created
    NUM_PUB_TASKS times, sending a unique message each time. */
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI publish_task( LPVOID param ) 
+static DWORD WINAPI publish_task( LPVOID param )
 #else
 static void *publish_task(void *param)
 #endif
@@ -500,7 +500,7 @@ static void *publish_task(void *param)
 }
 
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI ping_task( LPVOID param ) 
+static DWORD WINAPI ping_task( LPVOID param )
 #else
 static void *ping_task(void *param)
 #endif
@@ -589,7 +589,7 @@ int multithread_test(MQTTCtx *mqttCtx)
                 return -1;
             }
         }
-        
+
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__

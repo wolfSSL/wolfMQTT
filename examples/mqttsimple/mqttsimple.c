@@ -311,12 +311,12 @@ static int mqtt_tls_cb(MqttClient* client)
         wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
                                mqtt_tls_verify_cb);
 
-		/* default to success */
+        /* default to success */
         rc = WOLFSSL_SUCCESS;
 
-	#if !defined(NO_CERT)
+    #if !defined(NO_CERT)
     #if 0
-    	/* Load CA certificate buffer */
+        /* Load CA certificate buffer */
         rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx, caCertBuf,
                                           caCertSize, WOLFSSL_FILETYPE_PEM);
     #endif
@@ -368,7 +368,7 @@ int mqttsimple_test(void)
         mSendBuf, sizeof(mSendBuf), mReadBuf, sizeof(mReadBuf),
         MQTT_CON_TIMEOUT_MS);
     if (rc != MQTT_CODE_SUCCESS) {
-		goto exit;
+        goto exit;
     }
     PRINTF("MQTT Init Success");
 
@@ -376,21 +376,21 @@ int mqttsimple_test(void)
     rc = MqttClient_NetConnect(&mClient, MQTT_HOST, MQTT_PORT,
         MQTT_CON_TIMEOUT_MS, MQTT_USE_TLS, mqtt_tls_cb);
     if (rc != MQTT_CODE_SUCCESS) {
-		goto exit;
-	}
+        goto exit;
+    }
     PRINTF("MQTT Network Connect Success: Host %s, Port %d, UseTLS %d",
         MQTT_HOST, MQTT_PORT, MQTT_USE_TLS);
 
     /* Send Connect and wait for Ack */
     XMEMSET(&mqttObj, 0, sizeof(mqttObj));
     mqttObj.connect.keep_alive_sec = MQTT_KEEP_ALIVE_SEC;
-	mqttObj.connect.client_id = MQTT_CLIENT_ID;
-	mqttObj.connect.username = MQTT_USERNAME;
-	mqttObj.connect.password = MQTT_PASSWORD;
+    mqttObj.connect.client_id = MQTT_CLIENT_ID;
+    mqttObj.connect.username = MQTT_USERNAME;
+    mqttObj.connect.password = MQTT_PASSWORD;
     rc = MqttClient_Connect(&mClient, &mqttObj.connect);
     if (rc != MQTT_CODE_SUCCESS) {
-		goto exit;
-	}
+        goto exit;
+    }
     PRINTF("MQTT Broker Connect Success: ClientID %s, Username %s, Password %s",
         MQTT_CLIENT_ID,
         (MQTT_USERNAME == NULL) ? "Null" : MQTT_USERNAME,

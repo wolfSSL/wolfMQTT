@@ -51,7 +51,7 @@ static word16 topicID;
 
 #ifdef USE_WINDOWS_API
     /* Windows Threading */
-	#include <windows.h>
+    #include <windows.h>
     #include <process.h>
     typedef HANDLE THREAD_T;
     #define THREAD_CREATE(h, f, c) *h = CreateThread(NULL, 0, f, c, 0, NULL)
@@ -59,8 +59,8 @@ static word16 topicID;
     #define THREAD_EXIT(e)         return e;
 #else
     /* Posix (Linux/Mac) */
-	#include <pthread.h>
-	#include <sched.h>
+    #include <pthread.h>
+    #include <sched.h>
     typedef pthread_t THREAD_T;
     #define THREAD_CREATE(h, f, c) ({ int ret = pthread_create(h, NULL, f, c); if (ret) { errno = ret; } ret; })
     #define THREAD_JOIN(h, c)      ({ int ret, x; for(x=0;x<c;x++) { ret = pthread_join(h[x], NULL); if (ret) { errno = ret; break; }} ret; })
@@ -320,7 +320,7 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         rc = SN_Client_Connect(&mqttCtx->client, &connect);
     } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
-    PRINTF("MQTT-SN Connect return code: %s (%d)", 
+    PRINTF("MQTT-SN Connect return code: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         client_disconnect(mqttCtx);
@@ -345,7 +345,7 @@ static int multithread_test_finish(MQTTCtx *mqttCtx)
 
 /* this task subscribes to topic */
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI subscribe_task( LPVOID param ) 
+static DWORD WINAPI subscribe_task( LPVOID param )
 #else
 static void *subscribe_task(void *param)
 #endif
@@ -374,7 +374,7 @@ static void *subscribe_task(void *param)
 
 /* This task waits for messages */
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI waitMessage_task( LPVOID param ) 
+static DWORD WINAPI waitMessage_task( LPVOID param )
 #else
 static void *waitMessage_task(void *param)
 #endif
@@ -459,7 +459,7 @@ static void *waitMessage_task(void *param)
 /* This task publishes a message to the broker. The task will be created
    NUM_PUB_TASKS times, sending a unique message each time. */
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI publish_task( LPVOID param ) 
+static DWORD WINAPI publish_task( LPVOID param )
 #else
 static void *publish_task(void *param)
 #endif
@@ -503,7 +503,7 @@ static void *publish_task(void *param)
 }
 
 #ifdef USE_WINDOWS_API
-static DWORD WINAPI ping_task( LPVOID param ) 
+static DWORD WINAPI ping_task( LPVOID param )
 #else
 static void *ping_task(void *param)
 #endif

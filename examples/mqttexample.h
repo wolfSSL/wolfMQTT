@@ -28,8 +28,8 @@
 
 /* Compatibility Options */
 #ifdef NO_EXIT
-	#undef exit
-	#define exit(rc) return rc
+    #undef exit
+    #define exit(rc) return rc
 #endif
 
 #ifndef MY_EX_USAGE

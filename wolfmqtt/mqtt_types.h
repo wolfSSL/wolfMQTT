@@ -111,7 +111,7 @@
         #include <ws2tcpip.h>
         #include <windows.h>
         typedef HANDLE wm_Sem;
-    
+
     #elif defined(WOLFMQTT_USER_THREADING)
         /* User provides API's and wm_Sem type */
 
