@@ -491,8 +491,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     {
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
-        if (cur_prop == NULL)
-            return MQTT_CODE_ERROR_MEMORY;
+        if (cur_prop == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+            break;
+        }
 
         /* Decode the Identifier */
         tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
