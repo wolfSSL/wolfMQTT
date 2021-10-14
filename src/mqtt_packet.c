@@ -127,7 +127,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 };
 
 #ifndef MQTT_MAX_PROPS
-#define MQTT_MAX_PROPS 10
+#define MQTT_MAX_PROPS 30
 #endif
 
 /* Property structure allocation array. Property type equal
@@ -491,8 +491,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     {
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
-        if (cur_prop == NULL)
-            return MQTT_CODE_ERROR_MEMORY;
+        if (cur_prop == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+            break;
+        }
 
         /* Decode the Identifier */
         tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
@@ -1805,6 +1807,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
             /* Found one */
             new_prop = &clientPropStack[i];
             XMEMSET(new_prop, 0, sizeof(MqttProp));
+            break;
         }
     }
 
