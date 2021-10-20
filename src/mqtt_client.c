@@ -296,6 +296,7 @@ static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb)
         }
     #else
         (void)client;
+        (void)use_cb;
     #endif
         /* Free the properties */
         MqttProps_Free(props);

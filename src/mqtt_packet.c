@@ -368,7 +368,7 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
     // TODO: Validate property type is allowed for packet type
 
     /* loop through the list properties */
-    while (cur_prop != NULL)
+    while ((cur_prop != NULL) && (rc >= 0))
     {
         /* TODO: validate packet type */
         (void)packet;
@@ -459,7 +459,8 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             case MQTT_DATA_TYPE_NONE:
             default:
             {
-                /* Do nothing */
+                /* Invalid property data type */
+                rc = MQTT_CODE_ERROR_PROPERTY;
                 break;
             }
         }
@@ -596,17 +597,25 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp = MqttDecode_String(buf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len);
-                buf += tmp;
-                rc += (int)tmp;
-                prop_len -= tmp;
-
-                if (cur_prop->data_str.len <= (buf_len - (buf - pbuf))) {
-                    tmp = MqttDecode_String(buf,
-                            (const char**)&cur_prop->data_str2.str,
-                            &cur_prop->data_str2.len);
+                if (cur_prop->data_str.len <=
+                    (buf_len - (buf + tmp - pbuf))) {
                     buf += tmp;
                     rc += (int)tmp;
                     prop_len -= tmp;
+
+                    tmp = MqttDecode_String(buf,
+                            (const char**)&cur_prop->data_str2.str,
+                            &cur_prop->data_str2.len);
+                    if (cur_prop->data_str2.len <=
+                        (buf_len - (buf + tmp - pbuf))) {
+                        buf += tmp;
+                        rc += (int)tmp;
+                        prop_len -= tmp;
+                    }
+                    else {
+                        /* Invalid length */
+                        rc = MQTT_CODE_ERROR_PROPERTY;
+                    }
                 }
                 else {
                     /* Invalid length */
@@ -617,7 +626,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             case MQTT_DATA_TYPE_NONE:
             default:
             {
-                /* Do nothing */
+                /* Invalid property data type */
+                rc = MQTT_CODE_ERROR_PROPERTY;
                 break;
             }
         }
@@ -1722,6 +1732,9 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 
         if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
             rx_payload += tmp;
+            if ((rx_payload - rx_buf) > rx_buf_len) {
+                return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
             if (props_len > 0) {
                 /* Decode the Properties */
                 tmp = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH,
