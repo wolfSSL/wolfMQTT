@@ -1,5 +1,13 @@
 
 ## Release Notes
+### v1.10 (11/2/2021)
+* Improve FALL_THROUGH macro logic for XC32. (PR #227)
+* Fix potential NULL printf in MqttSocket_Connect with verbose debug enabled. (PR #229)
+* Fix non-block chunked transfer. (PR #230)
+* Fix QoS responses (PR #231, 240)
+* Fix MQTTv5 property handling (PR #232, 233, 234, 236, 238, 241)
+* Fix fuzzing test issues (PR #242)
+
 ### v1.9 (07/16/2021)
 * Fixes for Sensor Network client (PR #204, 214, 219)
 * Fixes for non-blocking (PR #205)
