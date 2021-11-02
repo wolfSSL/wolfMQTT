@@ -563,6 +563,7 @@ exit:
         PRINTF("Example not compiled in!");
         rc = 0; /* return success, so make check passes with TLS disabled */
 #endif
+        mqtt_free_ctx(&mqttCtx);
 
         return (rc == 0) ? 0 : EXIT_FAILURE;
     }
