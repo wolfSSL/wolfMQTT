@@ -554,6 +554,8 @@ exit:
         do {
             rc = mqttclient_test(&mqttCtx);
         } while (rc == MQTT_CODE_CONTINUE);
+
+        mqtt_free_ctx(&mqttCtx);
 #else
         (void)argc;
         (void)argv;
@@ -563,7 +565,6 @@ exit:
         PRINTF("Example not compiled in!");
         rc = 0; /* return success, so make check passes with TLS disabled */
 #endif
-        mqtt_free_ctx(&mqttCtx);
 
         return (rc == 0) ? 0 : EXIT_FAILURE;
     }
