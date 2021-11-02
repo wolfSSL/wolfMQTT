@@ -35,7 +35,7 @@ extern "C" {
 #endif
 
 #define LIBWOLFMQTT_VERSION_STRING "1.10.0"
-#define LIBWOLFMQTT_VERSION_HEX 0x0100A000
+#define LIBWOLFMQTT_VERSION_HEX 0x01010000
 
 #ifdef __cplusplus
 }
