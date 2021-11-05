@@ -292,7 +292,8 @@ static int MqttClient_RespList_Find(MqttClient *client,
 #endif /* WOLFMQTT_MULTITHREAD */
 
 #ifdef WOLFMQTT_V5
-static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb)
+static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb,
+                        byte free_props)
 {
     int rc = MQTT_CODE_SUCCESS;
 
@@ -312,8 +313,10 @@ static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb)
         (void)client;
         (void)use_cb;
     #endif
-        /* Free the properties */
-        MqttProps_Free(props);
+        if (free_props) {
+            /* Free the properties */
+            MqttProps_Free(props);
+        }
     }
     return rc;
 }
@@ -378,7 +381,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         #ifdef WOLFMQTT_V5
             if (rc >= 0){
                 int tmp = Handle_Props(client, p_connect_ack->props,
-                                       (packet_obj != NULL));
+                                       (packet_obj != NULL), 1);
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -403,8 +406,10 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
                 {
+                    /* Do not free property list here. It will be freed
+                       after the message callback. */
                     int tmp = Handle_Props(client, p_publish->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 0);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -435,7 +440,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             #ifdef WOLFMQTT_V5
                 {
                     int tmp = Handle_Props(client, p_publish_resp->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 1);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -462,7 +467,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             #ifdef WOLFMQTT_V5
                 {
                     int tmp = Handle_Props(client, p_subscribe_ack->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 1);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -490,7 +495,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             #ifdef WOLFMQTT_V5
                 {
                     int tmp = Handle_Props(client, p_unsubscribe_ack->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 1);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -524,7 +529,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_Auth(rx_buf, rx_len, p_auth);
             if (rc >= 0) {
                 int tmp = Handle_Props(client, p_auth->props,
-                                       (packet_obj != NULL));
+                                       (packet_obj != NULL), 1);
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -547,7 +552,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_Disconnect(rx_buf, rx_len, p_disc);
             if (rc >= 0) {
                 int tmp = Handle_Props(client, p_disc->props,
-                                       (packet_obj != NULL));
+                                       (packet_obj != NULL), 1);
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -632,6 +637,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 break;
             }
             /* Note: Getting here means the Publish Read is done */
+
+        #ifdef WOLFMQTT_V5
+            /* Free the properties */
+            MqttProps_Free(publish->props);
+        #endif
 
             /* Handle QoS */
             if (packet_qos == MQTT_QOS_0) {
