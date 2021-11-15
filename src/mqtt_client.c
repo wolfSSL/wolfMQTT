@@ -581,8 +581,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
             MqttPublish *publish = (MqttPublish*)packet_obj;
             MqttPacketType resp_type;
 
-            if (publish->stat == MQTT_MSG_BEGIN ||
-                publish->stat == MQTT_MSG_READ) {
+            if (publish->stat != MQTT_MSG_READ_PAYLOAD) {
                 rc = MqttClient_DecodePacket(client, client->rx_buf,
                     client->packet.buf_len, packet_obj, &packet_type,
                     &packet_qos, &packet_id);
