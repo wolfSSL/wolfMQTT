@@ -1053,6 +1053,9 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    /* Init the msg state */
+    publish_resp->stat = MQTT_MSG_BEGIN;
+
     /* Determine packet length */
     remain_len = MQTT_DATA_LEN_SIZE; /* For packet_id */
 
