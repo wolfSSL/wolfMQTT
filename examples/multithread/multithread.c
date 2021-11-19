@@ -352,10 +352,9 @@ static void *subscribe_task(void *param)
     if (mqttCtx->subId_not_avail != 1) {
         /* Subscription Identifier */
         MqttProp* prop;
-        mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
         prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
         prop->type = MQTT_PROP_SUBSCRIPTION_ID;
-        prop->data_int = mqttCtx->topics[i].sub_id;
+        prop->data_int = DEFAULT_SUB_ID;
     }
 #endif
 

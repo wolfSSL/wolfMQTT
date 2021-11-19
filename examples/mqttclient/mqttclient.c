@@ -310,8 +310,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     mqttCtx->client.packet_sz_max = mqttCtx->max_packet_size;
     mqttCtx->client.enable_eauth = mqttCtx->enable_eauth;
 
-    if (mqttCtx->client.enable_eauth == 1)
-    {
+    if (mqttCtx->client.enable_eauth == 1) {
         /* Enhanced authentication */
         /* Add property: Authentication Method */
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
@@ -342,6 +341,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
         prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
         prop->data_short = mqttCtx->topic_alias_max;
+    }
+    if (mqttCtx->clean_session == 0) {
+        /* Session expiry interval */
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+        prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+        prop->data_int = DEFAULT_SESS_EXP_INT; /* Session does not expire */
     }
 #endif
 
@@ -391,10 +396,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     if (mqttCtx->subId_not_avail != 1) {
         /* Subscription Identifier */
         MqttProp* prop;
-        mqttCtx->topics[i].sub_id = i + 1; /* Sub ID starts at 1 */
         prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
         prop->type = MQTT_PROP_SUBSCRIPTION_ID;
-        prop->data_int = mqttCtx->topics[i].sub_id;
+        prop->data_int = DEFAULT_SUB_ID;
     }
 #endif
 
@@ -455,7 +459,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             /* Payload Format Indicator */
             MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->publish.props);
             prop->type = MQTT_PROP_PAYLOAD_FORMAT_IND;
-            prop->data_int = 1;
+            prop->data_byte = 1;
         }
         {
             /* Content Type */
