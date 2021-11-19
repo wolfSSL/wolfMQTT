@@ -819,8 +819,9 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     byte wait_type, word16 wait_packet_id, int timeout_ms)
 {
     int rc;
-    word16 packet_id;
+    word16         packet_id;
     MqttPacketType packet_type;
+    MqttQoS        packet_qos;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp *pendResp;
     int readLocked;
@@ -915,9 +916,10 @@ wait_again:
             /* capture length read */
             client->packet.buf_len = rc;
 
-            /* Decode Packet - get type and id */
+            /* Decode Packet - get type, qos and id */
             rc = MqttClient_DecodePacket(client, client->rx_buf,
-                client->packet.buf_len, NULL, &packet_type, NULL, &packet_id);
+                client->packet.buf_len, NULL, &packet_type, &packet_qos,
+                &packet_id);
             if (rc < 0) {
                 break;
             }
@@ -954,14 +956,21 @@ wait_again:
                 (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;
-                if (packet_type == wait_type) {
-                    /* Only stop waiting when matched */
+                if (packet_type == wait_type || wait_type == MQTT_PACKET_TYPE_ANY) {
+                    /* Only stop waiting when matched or waiting for "any" */
                     waitMatchFound = 1;
                 }
             }
             else {
                 /* use generic packet object */
                 use_packet_obj = &client->msg;
+                if (client->msg.publish.stat == MQTT_MSG_READ_PAYLOAD) {
+                    packet_type = MQTT_PACKET_TYPE_PUBLISH;
+                }
+                else {
+                    client->msg.publish.qos = packet_qos;
+                    client->msg.publish.packet_id = packet_id;
+                }
             }
             use_packet_type = packet_type;
 
