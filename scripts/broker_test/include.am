@@ -1,0 +1,8 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= scripts/broker_test/mosquitto.conf
+EXTRA_DIST+= scripts/broker_test/ca-cert.pem
+EXTRA_DIST+= scripts/broker_test/server-cert.pem
+EXTRA_DIST+= scripts/broker_test/server-key.pem

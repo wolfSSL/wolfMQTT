@@ -1,38 +1,62 @@
-#!/bin/sh
+#!/bin/bash
 
 # MQTT Client test
+
+no_pid=-1
+broker_pid=$no_pid
+
+do_cleanup() {
+    if  [ $broker_pid != $no_pid ]
+    then
+        kill -6 $broker_pid
+    fi
+}
 
 # Check for application
 [ ! -x ./examples/multithread/multithread ] && echo -e "\n\nMultithread Client doesn't exist" && exit 1
 
-def_args="-T -C 5000"
+def_args="-T -C 2000 -h localhost"
+
+# Wait 1 secs for other tests to conclude
+sleep 1
+
+# Run mosquitto broker
+mosquitto -c scripts/broker_test/mosquitto.conf &
+broker_pid=$!
+if  [ $broker_pid != $no_pid ]
+then
+    def_args="${def_args} -h localhost"
+fi
 
 # Run with and without TLS and QoS 0-2
 
 ./examples/multithread/multithread $def_args -q 0 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=0" && do_cleanup && exit 1
 
 ./examples/multithread/multithread $def_args -q 1 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=1" && do_cleanup && exit 1
 
 ./examples/multithread/multithread $def_args -q 2 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=2" && do_cleanup && exit 1
 
 ./examples/multithread/multithread $def_args -t -q 0 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=0" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=0" && do_cleanup && exit 1
 
 ./examples/multithread/multithread $def_args -t -q 1 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=1" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=1" && do_cleanup && exit 1
 
 ./examples/multithread/multithread $def_args -t -q 2 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=2" && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=2" && do_cleanup && exit 1
 
+# End broker
+do_cleanup
+ 
 echo -e "\n\nMultithread MQTT Client Tests Passed"
 
 exit 0
