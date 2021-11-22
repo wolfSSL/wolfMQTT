@@ -1295,7 +1295,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         if (rc == MQTT_CODE_CONTINUE)
             return rc;
     #endif
-        if (rc != len) {
+        if (rc < 0) {
         #ifdef WOLFMQTT_MULTITHREAD
             if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &mc_connect->pendResp);
