@@ -224,16 +224,15 @@ int MqttDecode_Vbi(byte *buf, word32 *value, word32 buf_len)
     do {
         if (buf_len < rc + 1)
             return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-       encodedByte = *(buf++);
-       *value += (encodedByte & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
-       multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
-       if (multiplier > (MQTT_PACKET_LEN_ENCODE_MASK *
-                         MQTT_PACKET_LEN_ENCODE_MASK *
-                         MQTT_PACKET_LEN_ENCODE_MASK))
-       {
-          return MQTT_CODE_ERROR_MALFORMED_DATA;
-       }
-       rc++;
+        encodedByte = *(buf++);
+        *value += (encodedByte & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
+        multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
+        if (multiplier > (MQTT_PACKET_LEN_ENCODE_MASK *
+                          MQTT_PACKET_LEN_ENCODE_MASK *
+                          MQTT_PACKET_LEN_ENCODE_MASK)) {
+            return MQTT_CODE_ERROR_MALFORMED_DATA;
+        }
+        rc++;
     } while ((encodedByte & MQTT_PACKET_LEN_ENCODE_MASK) != 0);
 
     return (int)rc;
@@ -248,16 +247,16 @@ int MqttEncode_Vbi(byte *buf, word32 x)
     byte encodedByte;
 
     do {
-       encodedByte = x % MQTT_PACKET_LEN_ENCODE_MASK;
-       x /= MQTT_PACKET_LEN_ENCODE_MASK;
-       // if there are more data to encode, set the top bit of this byte
-       if (x > 0) {
-          encodedByte |= MQTT_PACKET_LEN_ENCODE_MASK;
-       }
-       if (buf != NULL) {
-           *(buf++) = encodedByte;
-       }
-       rc++;
+        encodedByte = x % MQTT_PACKET_LEN_ENCODE_MASK;
+        x /= MQTT_PACKET_LEN_ENCODE_MASK;
+        // if there are more data to encode, set the top bit of this byte
+        if (x > 0) {
+            encodedByte |= MQTT_PACKET_LEN_ENCODE_MASK;
+        }
+        if (buf != NULL) {
+            *(buf++) = encodedByte;
+        }
+        rc++;
     } while (x > 0);
 
     return rc;
@@ -915,7 +914,7 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         tx_payload += MqttEncode_Vbi(tx_payload, props_len);
 
         /* Encode properties */
-        tx_payload += MqttEncode_Props((MqttPacketType)publish->type, 
+        tx_payload += MqttEncode_Props((MqttPacketType)publish->type,
             publish->props, tx_payload);
     }
 #endif

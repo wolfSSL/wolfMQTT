@@ -357,7 +357,7 @@ WOLFMQTT_API int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping);
  */
 WOLFMQTT_API int MqttClient_Auth(
     MqttClient *client,
-	MqttAuth *auth);
+    MqttAuth *auth);
 
 
 /*! \brief      Add a new property
