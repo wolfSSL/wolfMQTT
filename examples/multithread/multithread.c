@@ -98,6 +98,28 @@ static int mqtt_stop_get(void)
     return rc;
 }
 
+static int check_response(MQTTCtx* mqttCtx, int rc)
+{
+    /* check for test mode */
+    if (mqtt_stop_get()) {
+        PRINTF("MQTT Exiting...");
+        return MQTT_CODE_SUCCESS;
+    }
+
+#ifdef WOLFMQTT_NONBLOCK
+    /* Track elapsed time with no activity and trigger timeout */
+    rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
+        mqttCtx->cmd_timeout_ms/1000);
+
+    /* check return code */
+    if (rc == MQTT_CODE_CONTINUE) {
+        //usleep(25000);
+    }
+#endif
+    return rc;
+}
+
+
 #ifdef WOLFMQTT_DISCONNECT_CB
 /* callback indicates a network error occurred */
 static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
@@ -253,6 +275,9 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     /* The client.ctx will be stored in the cert callback ctx during
        MqttSocket_Connect for use by mqtt_tls_verify_cb */
     mqttCtx->client.ctx = mqttCtx;
+#ifdef WOLFMQTT_NONBLOCK
+    mqttCtx->useNonBlockMode = 1;
+#endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB
     /* setup disconnect callback */
@@ -301,6 +326,7 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     /* Send Connect and wait for Connect Ack */
     do {
         rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
+        rc = check_response(mqttCtx, rc);
     } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
     PRINTF("MQTT Connect: Proto (%s), %s (%d)",
@@ -364,8 +390,11 @@ static void *subscribe_task(void *param)
             sizeof(mqttCtx->topics) / sizeof(MqttTopic);
     mqttCtx->subscribe.topics = mqttCtx->topics;
 
-    rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
-
+    do {
+        rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
+        rc = check_response(mqttCtx, rc);
+    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+    
     PRINTF("MQTT Subscribe: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
 
@@ -404,15 +433,12 @@ static void *waitMessage_task(void *param)
     do {
         /* Try and read packet */
         rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
-
-        /* check for test mode */
-        if (mqtt_stop_get()) {
-            rc = MQTT_CODE_SUCCESS;
-            PRINTF("MQTT Exiting...");
-            break;
-        }
+        rc = check_response(mqttCtx, rc);
 
         /* check return code */
+        if (rc == MQTT_CODE_CONTINUE) {
+            continue;
+        }
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
         else if (rc == MQTT_CODE_STDIN_WAKE) {
             XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
@@ -490,7 +516,10 @@ static void *publish_task(void *param)
     publish.buffer = (byte*)buf;
     publish.total_len = (word16)XSTRLEN(buf);
 
-    rc = MqttClient_Publish(&mqttCtx->client, &publish);
+    do {
+        rc = MqttClient_Publish(&mqttCtx->client, &publish);
+        rc = check_response(mqttCtx, rc);
+    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
     PRINTF("MQTT Publish: Topic %s, %s (%d)",
         publish.topic_name,
@@ -509,8 +538,6 @@ static void *ping_task(void *param)
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     MqttPing ping;
 
-    XMEMSET(&ping, 0, sizeof(ping));
-
     do {
         wm_SemLock(&pingSignal);
         if (mqtt_stop_get())
@@ -519,7 +546,11 @@ static void *ping_task(void *param)
         /* Keep Alive Ping */
         PRINTF("Sending ping keep-alive");
 
-        rc = MqttClient_Ping_ex(&mqttCtx->client, &ping);
+        XMEMSET(&ping, 0, sizeof(ping));
+        do {
+            rc = MqttClient_Ping_ex(&mqttCtx->client, &ping);
+            rc = check_response(mqttCtx, rc);
+        } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
         if (rc != MQTT_CODE_SUCCESS) {
             PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
@@ -553,10 +584,8 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
 
 int multithread_test(MQTTCtx *mqttCtx)
 {
-    int rc = 0;
-    int i;
+    int rc = 0, i, threadCount = 0;
     THREAD_T threadList[NUM_PUB_TASKS+3];
-    int threadCount = 0;
 
     rc = multithread_test_init(mqttCtx);
     if (rc == 0) {
@@ -593,7 +622,9 @@ int multithread_test(MQTTCtx *mqttCtx)
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__
-            PRINTF("THREAD_JOIN failed: %m"); /* %m is specific to glibc/uclibc/musl, and recently (2018) added to FreeBSD */
+            /* %m is specific to glibc/uclibc/musl, and recently (2018) 
+             * added to FreeBSD */
+            PRINTF("THREAD_JOIN failed: %m");
 #else
             PRINTF("THREAD_JOIN failed: %d",errno);
 #endif

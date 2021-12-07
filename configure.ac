@@ -134,7 +134,6 @@ then
 
     TAO_REQUIRE_LIBWOLFSSL
 fi
-AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 
 
 # Non-Blocking support
@@ -169,8 +168,6 @@ AC_ARG_ENABLE([examples],
     [ ENABLED_EXAMPLES=yes ]
     )
 
-AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
-
 
 # Error strings
 AC_ARG_ENABLE([errorstrings],
@@ -197,8 +194,6 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_NO_STDIN_CAP"
 fi
 
-AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
-
 
 # MQTT-SN Sensor Network
 AC_ARG_ENABLE([sn],
@@ -212,7 +207,6 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_SN"
 fi
 
-AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
 
 # MQTT v5.0
 AC_ARG_ENABLE([v5],
@@ -239,7 +233,6 @@ then
     fi
 fi
 
-AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
 
 if test "x$ENABLED_MQTTV50" = "xyes"
 then
@@ -280,7 +273,17 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_MULTITHREAD"
 fi
 
+
+
+AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
+AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
+AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
+AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
+AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
+AM_CONDITIONAL([BUILD_NONBLOCK], [test "x$ENABLED_NONBLOCK" = "xyes"])
 AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
+
+
 
 # HARDEN FLAGS
 AX_HARDEN_CC_COMPILER_FLAGS
