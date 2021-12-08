@@ -934,11 +934,6 @@ wait_again:
         {
             MqttPacketType use_packet_type;
 
-            /* read payload state only happens for publish messages */
-            if (mms_stat->read == MQTT_MSG_PAYLOAD) {
-                packet_type = MQTT_PACKET_TYPE_PUBLISH;
-            }
-
             /* Determine if we received data for this request */
             if ((wait_type == MQTT_PACKET_TYPE_ANY ||
                  wait_type == packet_type ||
@@ -974,10 +969,12 @@ wait_again:
                                                                &pendResp)) {
                     /* we found packet match this incoming read packet */
                     pendResp->packetProcessing = 1;
-                    use_packet_obj = pendResp->packet_obj;
-                    use_packet_type = pendResp->packet_type;
-                    /* req from another thread... not a match */
-                    waitMatchFound = 0;
+                    if (pendResp->packet_obj != packet_obj) {
+                        use_packet_obj = pendResp->packet_obj;
+                        use_packet_type = pendResp->packet_type;
+                        /* req from another thread... not a match */
+                        waitMatchFound = 0;
+                    }
                 }
                 wm_SemUnlock(&client->lockClient);
             }
@@ -992,9 +989,7 @@ wait_again:
 
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
-                /* we have received some data, so keep the recv
-                    mutex lock active and return */
-                return rc;
+                break;
             }
         #endif
 
@@ -1381,7 +1376,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             publish->buffer_len = 0;
 
             /* set state to reading payload */
-            publish->stat.write = MQTT_MSG_PAYLOAD;
+            publish->stat.read = MQTT_MSG_PAYLOAD;
 
             msg_len = (publish->total_len - publish->buffer_pos);
             if (msg_len > client->rx_buf_len) {
@@ -3670,7 +3665,7 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
         default:
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("SN_Client_Publish: Invalid state %d!",
-                publish->stat);
+                publish->stat.write);
         #endif
             rc = MQTT_CODE_ERROR_STAT;
             break;
