@@ -283,6 +283,7 @@ typedef enum _MqttMsgState {
     MQTT_MSG_AUTH,
     MQTT_MSG_HEADER,
     MQTT_MSG_PAYLOAD,
+    MQTT_MSG_ACK,
 } MqttMsgState;
 
 /* Generic message status tracking */
@@ -455,8 +456,9 @@ typedef struct _MqttPublishResp {
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp pendResp;
 #endif
-
     word16      packet_id;
+    byte        packet_type; /* type to send */
+    
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;

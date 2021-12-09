@@ -113,7 +113,10 @@ static int check_response(MQTTCtx* mqttCtx, int rc)
 
     /* check return code */
     if (rc == MQTT_CODE_CONTINUE) {
-        //usleep(25000);
+    #if 0
+        /* optionally add delay when debugging */
+        usleep(100*1000);
+    #endif
     }
 #endif
     return rc;
