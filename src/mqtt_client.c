@@ -945,6 +945,10 @@ wait_again:
             if (rc != MQTT_CODE_SUCCESS) {
                 break;
             }
+            /* if not sending an ACK, we are done */
+            if (!MqttIsPubRespPacket(resp.packet_type)) {
+                break;
+            }
             mms_stat->read = MQTT_MSG_ACK;
 
         #ifdef WOLFMQTT_MULTITHREAD
@@ -960,39 +964,40 @@ wait_again:
         case MQTT_MSG_ACK:
         {
             /* send ack */
-            if (MqttIsPubRespPacket(resp.packet_type)) {
-            #ifdef WOLFMQTT_MULTITHREAD
-                /* Lock send socket mutex */
-                rc = wm_SemLock(&client->lockSend);
-                if (rc != 0) {
-                    return rc;
-                }
-            #endif
-
-            #ifdef WOLFMQTT_V5
-                /* Publish QoS response needs success reason code,
-                 * otherwise will cause disconnect at broker */
-                resp.reason_code = MQTT_REASON_SUCCESS;
-            #endif
-
-                rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len,
-                    resp.packet_type, &resp);
-            #ifdef WOLFMQTT_DEBUG_CLIENT
-                PRINTF("MqttEncode_PublishResp: Len %d, Type %s (%d), ID %d",
-                    rc, MqttPacket_TypeDesc(resp.packet_type), resp.packet_type,
-                        resp.packet_id);
-            #endif
-                if (rc > 0) {
-                    client->write.len = rc;
-
-                    /* Send publish response packet */
-                    rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-                }
-
-            #ifdef WOLFMQTT_MULTITHREAD
-                wm_SemUnlock(&client->lockSend);
-            #endif
+        #ifdef WOLFMQTT_MULTITHREAD
+            /* Lock send socket mutex */
+            rc = wm_SemLock(&client->lockSend);
+            if (rc != 0) {
+                break;
             }
+        #endif
+
+        #ifdef WOLFMQTT_V5
+            /* Publish QoS response needs success reason code,
+                * otherwise will cause disconnect at broker */
+            resp.reason_code = MQTT_REASON_SUCCESS;
+        #endif
+
+            rc = MqttEncode_PublishResp(client->tx_buf, client->tx_buf_len,
+                resp.packet_type, &resp);
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("MqttEncode_PublishResp: Len %d, Type %s (%d), ID %d",
+                rc, MqttPacket_TypeDesc(resp.packet_type), resp.packet_type,
+                    resp.packet_id);
+        #endif
+            if (rc > 0) {
+                client->write.len = rc;
+
+                /* Send publish response packet */
+                rc = MqttPacket_Write(client, client->tx_buf,
+                    client->write.len);
+                if (rc == client->write.len) {
+                    rc = 0; /* success */
+                }
+            }
+        #ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockSend);
+        #endif
             break;
         }
 
