@@ -638,7 +638,9 @@ static int MqttClient_HandlePacket(MqttClient* client,
         case MQTT_PACKET_TYPE_PUBLISH_REL:
         case MQTT_PACKET_TYPE_PUBLISH_COMP:
         {
+        #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_DEBUG_CLIENT)
             MqttPublishResp* publish_resp = (MqttPublishResp*)packet_obj;
+        #endif
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type,
                 &packet_qos, &packet_id);
@@ -2841,6 +2843,7 @@ wait_again:
             break;
         }
 
+        case MQTT_MSG_ACK: /* ack handled in SN_Client_HandlePacket */
         case MQTT_MSG_AUTH:
         default:
         {
@@ -3650,6 +3653,7 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             break;
         }
 
+        case MQTT_MSG_ACK:
         case MQTT_MSG_AUTH:
         default:
         #ifdef WOLFMQTT_DEBUG_CLIENT
