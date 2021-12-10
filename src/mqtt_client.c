@@ -2881,7 +2881,6 @@ wait_again:
     #ifdef WOLFMQTT_MULTITHREAD
         if (mms_stat->isReadLocked) {
             mms_stat->isReadLocked = 0;
-            MQTT_TRACE_MSG("SN unlockRecv");
             wm_SemUnlock(&client->lockRecv);
         }
     #endif
