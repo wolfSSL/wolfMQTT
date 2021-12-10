@@ -39,7 +39,17 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 
 #ifdef WOLFMQTT_MULTITHREAD
 
-#ifdef __MACH__
+#ifdef WOLFMQTT_USER_THREADING
+
+    /* User will supply their own semaphore functions.
+     * int wm_SemInit(wm_Sem *s)
+     * int wm_SemFree(wm_Sem *s)
+     * int wm_SemLock(wm_Sem *s)
+     * int wm_SemUnlock(wm_Sem *s)
+     */
+
+#elif defined(__MACH__)
+
     /* Apple style dispatch semaphore */
     int wm_SemInit(wm_Sem *s){
         /* dispatch_release() fails hard, with Trace/BPT trap signal, if the
@@ -2009,9 +2019,7 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
 
 int MqttClient_Ping(MqttClient *client)
 {
-    MqttPing ping;
-    XMEMSET(&ping, 0, sizeof(ping));
-    return MqttClient_Ping_ex(client, &ping);
+    return MqttClient_Ping_ex(client, &client->msg.ping);
 }
 
 int MqttClient_Disconnect(MqttClient *client)
