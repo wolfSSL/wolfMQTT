@@ -1,0 +1,42 @@
+name: macOS Build Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: brew
+      run: brew install automake libtool  
+    - name: wolfssl autogen
+      working-directory: ./wolfssl        
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl 
+      run: ./configure
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: make install
+    - uses: actions/checkout@master
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+    - name: make distcheck
+      run: make distcheck
