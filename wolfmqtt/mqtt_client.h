@@ -31,7 +31,9 @@
     extern "C" {
 #endif
 
-#if !defined(WOLFMQTT_USER_SETTINGS) && !defined(USE_WINDOWS_API)
+/* Windows uses the vs_settings.h file included vis mqtt_types.h */
+#if !defined(WOLFMQTT_USER_SETTINGS) && \
+    !defined(_WIN32) && !defined(USE_WINDOWS_API)
     /* If options.h is missing use the "./configure" script. Otherwise, copy
      * the template "wolfmqtt/options.h.in" into "wolfmqtt/options.h" */
     #include <wolfmqtt/options.h>

@@ -124,7 +124,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 #elif defined(USE_WINDOWS_API)
     /* Windows semaphore object */
     int wm_SemInit(wm_Sem *s) {
-        *s = CreateSemaphore( NULL, 0, 1, NULL);
+        *s = CreateSemaphoreW( NULL, 0, 1, NULL);
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
@@ -133,7 +133,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         return 0;
     }
     int wm_SemLock(wm_Sem *s) {
-        WaitForSingleObject(*s, 0);
+        WaitForSingleObject(*s, INFINITE);
         return 0;
     }
     int wm_SemUnlock(wm_Sem *s) {
