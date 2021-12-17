@@ -28,6 +28,12 @@
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
 
+#if defined(MICROCHIP_MPLAB_HARMONY)
+    #include <system/tmr/sys_tmr.h>
+#else
+    #include <time.h>
+#endif
+
 /* FreeRTOS TCP */
 #ifdef FREERTOS_TCP
     #include "FreeRTOS.h"
@@ -40,12 +46,13 @@
     #define SOCK_ADDR_IN                 struct freertos_sockaddr
 
 /* FreeRTOS and LWIP */
-#elif defined(FREERTOS) && defined(WOLFSSL_LWIP)
+#elif defined(WOLFSSL_LWIP)
+#if defined(FREERTOS)
     /* Scheduler includes. */
     #include "FreeRTOS.h"
     #include "task.h"
     #include "semphr.h"
-
+#endif
     /* lwIP includes. */
     #include "lwip/api.h"
     #include "lwip/tcpip.h"
@@ -54,17 +61,25 @@
     #include "lwip/sockets.h"
     #include "lwip/netdb.h"
 
+    #define SOCK_OPEN lwip_socket
+    #define SOCK_CONNECT lwip_connect
+    #define SOCK_SEND lwip_send
+    #define SOCK_RECV lwip_recv
+    #define SOCK_FCNTL lwip_fcntl
+    #define SOCK_GETSOCKOPT lwip_getsockopt
+    #define SOCK_CLOSE lwip_close
+    #define SOCK_SETSOCKOPT lwip_setsockopt
+    #define SOCK_GETADDRINFO lwip_getaddrinfo
+    #define SOCK_FREEADDRINFO lwip_freeaddrinfo
+    #define SOCK_SELECT lwip_select
+
 /* Windows */
 #elif defined(USE_WINDOWS_API)
     #include <winsock2.h>
     #include <ws2tcpip.h>
-    #include <stdio.h>
+    #include <errno.h>
     #define SOCKET_T        SOCKET
-    #ifdef _WIN32
-        #define SOERROR_T int
-    #else
-        #define SOERROR_T char
-    #endif
+    #define SOERROR_T int
     #define SELECT_FD(fd)   (fd)
     #ifndef SOCKET_INVALID /* Do not redefine from wolfssl */
         #define SOCKET_INVALID  ((SOCKET_T)INVALID_SOCKET)
@@ -72,8 +87,201 @@
     #define SOCK_CLOSE      closesocket
     #define SOCK_SEND(s,b,l,f) send((s), (const char*)(b), (size_t)(l), (f))
     #define SOCK_RECV(s,b,l,f) recv((s), (char*)(b), (size_t)(l), (f))
-    #define GET_SOCK_ERROR(f,s,o,e) (e) = WSAGetLastError()
-    #define SOCK_EQ_ERROR(e) (((e) == WSAEWOULDBLOCK) || ((e) == WSAEINPROGRESS))
+
+    #ifndef ESOCKTNOSUPPORT
+        #define ESOCKTNOSUPPORT 10000
+    #endif
+    #ifndef EPFNOSUPPORT
+        #define EPFNOSUPPORT  10001
+    #endif
+    #ifndef ESHUTDOWN
+        #define ESHUTDOWN  10002
+    #endif
+    #ifndef ETOOMANYREFS
+        #define ETOOMANYREFS 10003
+    #endif
+    #ifndef EHOSTDOWN
+        #define EHOSTDOWN 10004
+    #endif
+    #ifndef EPROCLIM
+        #define EPROCLIM 10005
+    #endif
+    #ifndef EUSERS
+        #define EUSERS 10006
+    #endif
+    #ifndef EDQUOT
+        #define EDQUOT 10007
+    #endif
+    #ifndef ESTALE
+        #define ESTALE 10008
+    #endif
+    #define EREMOTE 10009
+    #define ESYSNOTREADY 10010
+    #define ERNOTSUPPORTED 10011
+    #define ENOTINITIALISED 10012
+    #define EDISCON 10013
+    #define ENOMORE 10014
+    #define ECANCELLED 10015
+    #define EINVALIDPROCTABLE 10016
+    #define EINVALIDPROVIDER 10017
+    #define EPROVIDERFAILEDINIT 10018
+    #define ESYSCALLFAILURE 10019
+    #define ESERVICE_NOT_FOUND 10020
+    #define ETYPE_NOT_FOUND 10021
+    #define E_NO_MORE 10022
+    #define E_CANCELLED 10023
+    #define EREFUSED 10024
+    #define EHOSTNOTFOUND 10025
+    #define ETRY_AGAIN 10029
+    #define ENO_RECOVERY 10030
+
+    #define GET_SOCK_ERROR GET_SOCK_ERROR
+
+static SOERROR_T win32_wsa_error_to_errno(int e) {
+    /* https://docs.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2 */
+    switch (e) {
+    case 0:
+        return 0;
+    case WSAEINTR:
+        return EINTR;
+    case WSAEBADF:
+        return EBADF;
+    case WSAEACCES:
+        return EACCES;
+    case WSAEFAULT:
+        return EFAULT;
+    case WSAEINVAL:
+        return EINVAL;
+    case WSAEMFILE:
+        return EMFILE;
+    case WSAEWOULDBLOCK:
+        return EWOULDBLOCK;
+    case WSAEINPROGRESS:
+        return EINPROGRESS;
+    case WSAEALREADY:
+        return EALREADY;
+    case WSAENOTSOCK:
+        return ENOTSOCK;
+    case WSAEDESTADDRREQ:
+        return EDESTADDRREQ;
+    case WSAEMSGSIZE:
+        return EMSGSIZE;
+    case WSAEPROTOTYPE:
+        return EPROTOTYPE;
+    case WSAENOPROTOOPT:
+        return ENOPROTOOPT;
+    case WSAEPROTONOSUPPORT:
+        return EPROTONOSUPPORT;
+    case WSAESOCKTNOSUPPORT:
+        return ESOCKTNOSUPPORT;
+    case WSAEOPNOTSUPP:
+        return EOPNOTSUPP;
+    case WSAEPFNOSUPPORT:
+        return EPFNOSUPPORT;
+    case WSAEAFNOSUPPORT:
+        return EAFNOSUPPORT;
+    case WSAEADDRINUSE:
+        return EADDRINUSE;
+    case WSAEADDRNOTAVAIL:
+        return EADDRNOTAVAIL;
+    case WSAENETDOWN:
+        return ENETDOWN;
+    case WSAENETUNREACH:
+        return ENETUNREACH;
+    case WSAENETRESET:
+        return ENETRESET;
+    case WSAECONNABORTED:
+        return ECONNABORTED;
+    case WSAECONNRESET:
+        return ECONNRESET;
+    case WSAENOBUFS:
+        return ENOBUFS;
+    case WSAEISCONN:
+        return EISCONN;
+    case WSAENOTCONN:
+        return ENOTCONN;
+    case WSAESHUTDOWN:
+        return ESHUTDOWN;
+    case WSAETOOMANYREFS:
+        return ETOOMANYREFS;
+    case WSAETIMEDOUT:
+        return ETIMEDOUT;
+    case WSAECONNREFUSED:
+        return ECONNREFUSED;
+    case WSAELOOP:
+        return ELOOP;
+    case WSAENAMETOOLONG:
+        return ENAMETOOLONG;
+    case WSAEHOSTDOWN:
+        return EHOSTDOWN;
+    case WSAEHOSTUNREACH:
+        return EHOSTUNREACH;
+    case WSAENOTEMPTY:
+        return ENOTEMPTY;
+    case WSAEPROCLIM:
+        return EPROCLIM;
+    case WSAEUSERS:
+        return EUSERS;
+    case WSAEDQUOT:
+        return EDQUOT;
+    case WSAESTALE:
+        return ESTALE;
+    case WSAEREMOTE:
+        return EREMOTE;
+    case WSASYSNOTREADY:
+        return ESYSNOTREADY;
+    case WSAVERNOTSUPPORTED:
+        return ERNOTSUPPORTED;
+    case WSANOTINITIALISED:
+        return ENOTINITIALISED;
+    case WSAEDISCON:
+        return EDISCON;
+    case WSAENOMORE:
+        return ENOMORE;
+    case WSAECANCELLED:
+        return ECANCELLED;
+    case WSAEINVALIDPROCTABLE:
+        return EINVALIDPROCTABLE;
+    case WSAEINVALIDPROVIDER:
+        return EINVALIDPROVIDER;
+    case WSAEPROVIDERFAILEDINIT:
+        return EPROVIDERFAILEDINIT;
+    case WSASYSCALLFAILURE:
+        return ESYSCALLFAILURE;
+    case WSASERVICE_NOT_FOUND:
+        return ESERVICE_NOT_FOUND;
+    case WSATYPE_NOT_FOUND:
+        return ETYPE_NOT_FOUND;
+    case WSA_E_NO_MORE:
+        return E_NO_MORE;
+    case WSA_E_CANCELLED:
+        return E_CANCELLED;
+    case WSAEREFUSED:
+        return EREFUSED;
+    case WSAHOST_NOT_FOUND:
+        return EHOSTNOTFOUND;
+    case WSATRY_AGAIN:
+        return ETRY_AGAIN;
+    case WSANO_RECOVERY:
+        return ENO_RECOVERY;
+    default:
+        return ENOTSUP;
+    }
+}
+
+static SOERROR_T GET_SOCK_ERROR(int fd)
+{
+    int wsa_err_saved = WSAGetLastError();
+    int win_err = 0;
+    socklen_t len = sizeof(win_err);
+    if (fd != SOCKET_INVALID) {
+        getsockopt(fd, SOL_SOCKET, SO_ERROR, (char *)&(win_err), &len);
+    }
+    if (win_err == 0) {
+        win_err = wsa_err_saved;
+    }
+    return win32_wsa_error_to_errno(win_err);
+}
 
 /* Freescale MQX / RTCS */
 #elif defined(FREESCALE_MQX) || defined(FREESCALE_KSDK_MQX)
@@ -119,6 +327,10 @@
     #include <signal.h>
 #endif
 
+#ifndef EHOSTNOTFOUND
+#define EHOSTNOTFOUND 10000
+#endif
+
 /* Setup defaults */
 #ifndef SOCK_OPEN
     #define SOCK_OPEN       socket
@@ -153,13 +365,42 @@
 #ifdef SOCK_ADDRINFO
     #define SOCK_ADDRINFO   struct addrinfo
 #endif
+#ifndef SOCK_FCNTL
+#define SOCK_FCNTL fcntl
+#endif
+#ifndef SOCK_GETSOCKOPT
+#define SOCK_GETSOCKOPT getsockopt
+#endif
+#ifndef SOCK_SETSOCKOPT
+#define SOCK_SETSOCKOPT setsockopt
+#endif
+#ifndef SOCK_GETADDRINFO
+#define SOCK_GETADDRINFO getaddrinfo
+#endif
+#ifndef SOCK_FREEADDRINFO
+#define SOCK_FREEADDRINFO freeaddrinfo
+#endif
+#ifndef SOCK_SELECT
+#define SOCK_SELECT select
+#endif
 #ifndef GET_SOCK_ERROR
-    #define GET_SOCK_ERROR(f,s,o,e) \
-        socklen_t len = sizeof(so_error); \
-        getsockopt((f), (s), (o), &(e), &len)
+static SOERROR_T GET_SOCK_ERROR(int fd)
+{
+    SOERROR_T __saved_errno = errno;
+    SOERROR_T e = 0;
+    socklen_t len = sizeof(e);
+    if (fd != SOCKET_INVALID) {
+        SOCK_GETSOCKOPT(fd, SOL_SOCKET, SO_ERROR, &e, &len);
+    }
+    if (e == 0) {
+        e = __saved_errno;
+    }
+    return e;
+}
 #endif
 #ifndef SOCK_EQ_ERROR
-    #define SOCK_EQ_ERROR(e) (((e) == EWOULDBLOCK) || ((e) == EAGAIN))
+    #define SOCK_EQ_ERROR(e) \
+        (((e) == EWOULDBLOCK) || ((e) == EAGAIN) || ((e) == EINPROGRESS) || ((e) == EALREADY))
 #endif
 /* Local context for Net callbacks */
 typedef enum {
@@ -543,26 +784,60 @@ static void setup_timeout(struct timeval* tv, int timeout_ms)
         tv->tv_usec = 100;
     }
 }
+#endif /* !WOLFMQTT_NO_TIMEOUT */
 
-#ifdef WOLFMQTT_NONBLOCK
 static void tcp_set_nonblocking(SOCKET_T* sockfd)
 {
-#ifdef USE_WINDOWS_API
+#if defined(USE_WINDOWS_API) && !defined(WOLFSSL_LWIP)
     unsigned long blocking = 1;
     int ret = ioctlsocket(*sockfd, FIONBIO, &blocking);
     if (ret == SOCKET_ERROR)
         PRINTF("ioctlsocket failed!");
 #else
-    int flags = fcntl(*sockfd, F_GETFL, 0);
+    int flags = SOCK_FCNTL(*sockfd, F_GETFL, 0);
     if (flags < 0)
         PRINTF("fcntl get failed!");
-    flags = fcntl(*sockfd, F_SETFL, flags | O_NONBLOCK);
+    flags = SOCK_FCNTL(*sockfd, F_SETFL, flags | O_NONBLOCK);
     if (flags < 0)
         PRINTF("fcntl set failed!");
 #endif
 }
-#endif /* WOLFMQTT_NONBLOCK */
-#endif /* !WOLFMQTT_NO_TIMEOUT */
+
+static int NetTranslateError(SOERROR_T so_error) {
+    int rc = MQTT_CODE_ERROR_NETWORK;
+    if (SOCK_EQ_ERROR(so_error)) {
+        rc = MQTT_CODE_CONTINUE;
+    } else if (so_error == EHOSTUNREACH) {
+        rc = MQTT_CODE_ERROR_ROUTE_TO_HOST;
+    } else if (so_error == EISCONN) {
+        rc = MQTT_CODE_SUCCESS;
+    } else if (so_error == ETIMEDOUT) {
+        rc = MQTT_CODE_ERROR_TIMEOUT;
+    } else if (so_error == EHOSTNOTFOUND) {
+        rc = MQTT_CODE_ERROR_DNS_RESOLVE;
+    } else if (so_error == 0) {
+        rc = MQTT_CODE_SUCCESS;
+    }
+    return rc;
+}
+
+static int NetGetError(SocketContext *sock) {
+    /* Get error */
+    SOERROR_T so_error = GET_SOCK_ERROR(sock->fd);
+    int rc = NetTranslateError(so_error);
+    if (!sock->mqttCtx->useNonBlockMode && rc == MQTT_CODE_CONTINUE) {
+        rc = MQTT_CODE_ERROR_NETWORK;
+    }
+    if (sock->fd == SOCKET_INVALID && rc == MQTT_CODE_SUCCESS) {
+        rc = MQTT_CODE_ERROR_NETWORK;
+    }
+#ifdef WOLFMQTT_DEBUG_SOCKET
+    if (rc != MQTT_CODE_CONTINUE && rc != MQTT_CODE_SUCCESS) {
+        PRINTF("NetGetError: rc:%d so_error:%d", rc, so_error);
+    }
+#endif
+    return rc;
+}
 
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
@@ -570,7 +845,6 @@ static int NetConnect(void *context, const char* host, word16 port,
     SocketContext *sock = (SocketContext*)context;
     int type = SOCK_STREAM;
     int rc = -1;
-    SOERROR_T so_error = 0;
     struct addrinfo *result = NULL;
     struct addrinfo hints;
     MQTTCtx* mqttCtx = sock->mqttCtx;
@@ -589,14 +863,15 @@ static int NetConnect(void *context, const char* host, word16 port,
 
             XMEMSET(&sock->addr, 0, sizeof(sock->addr));
             sock->addr.sin_family = AF_INET;
+            sock->fd = SOCKET_INVALID;
 
-            rc = getaddrinfo(host, NULL, &hints, &result);
+            rc = SOCK_GETADDRINFO(host, NULL, &hints, &result);
             if (rc == 0) {
                 struct addrinfo* result_i = result;
 
-                if (! result) {
-                    rc = -1;
-                    goto exit;
+                if (!result) {
+                    rc = NetGetError(sock);
+                    break;
                 }
 
                 /* prefer ip4 addresses */
@@ -616,10 +891,12 @@ static int NetConnect(void *context, const char* host, word16 port,
                     rc = -1;
                 }
 
-                freeaddrinfo(result);
+                SOCK_FREEADDRINFO(result);
             }
-            if (rc != 0)
-                goto exit;
+            if (rc != 0) {
+                rc = NetGetError(sock);
+                break;
+            }
 
             /* Default to error */
             rc = -1;
@@ -627,72 +904,59 @@ static int NetConnect(void *context, const char* host, word16 port,
             /* Create socket */
             sock->fd = SOCK_OPEN(sock->addr.sin_family, type, 0);
             if (sock->fd == SOCKET_INVALID)
-                goto exit;
+            {
+                rc = NetGetError(sock);
+                break;
+            }
 
+            if (mqttCtx->useNonBlockMode) {
+                /* Set socket as non-blocking */
+                tcp_set_nonblocking(&sock->fd);
+            }
             sock->stat = SOCK_CONN;
         }
         FALL_THROUGH;
 
         case SOCK_CONN:
         {
-        #ifndef WOLFMQTT_NO_TIMEOUT
-            fd_set fdset;
-            struct timeval tv;
-
-            /* Setup timeout and FD's */
-            setup_timeout(&tv, timeout_ms);
-            FD_ZERO(&fdset);
-            FD_SET(sock->fd, &fdset);
-        #endif /* !WOLFMQTT_NO_TIMEOUT */
-
-        #if !defined(WOLFMQTT_NO_TIMEOUT) && defined(WOLFMQTT_NONBLOCK)
-            if (mqttCtx->useNonBlockMode) {
-                /* Set socket as non-blocking */
-                tcp_set_nonblocking(&sock->fd);
-            }
-        #endif
-
             /* Start connect */
             rc = SOCK_CONNECT(sock->fd, (struct sockaddr*)&sock->addr,
                     sizeof(sock->addr));
-            if (rc < 0) {
-                /* set default error case */
-                rc = MQTT_CODE_ERROR_NETWORK;
-        #ifdef WOLFMQTT_NONBLOCK
-                /* Check for error */
-                GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
-                if (
-            #ifndef _WIN32
-                        (errno == EINPROGRESS) ||
-            #endif
-                        SOCK_EQ_ERROR(so_error))
-                {
-            #ifndef WOLFMQTT_NO_TIMEOUT
-                    /* Wait for connect */
-                    if (select((int)SELECT_FD(sock->fd), NULL, &fdset,
-                                              NULL, &tv) > 0) {
-                        rc = MQTT_CODE_SUCCESS;
-                    }
-            #else
-                    rc = MQTT_CODE_CONTINUE;
-            #endif
+            if (rc >= 0) {
+                rc = MQTT_CODE_SUCCESS;
+                break;
+            }
+            /* set default error case */
+            rc = MQTT_CODE_ERROR_NETWORK;
+        #ifndef WOLFMQTT_NO_TIMEOUT
+            {
+                fd_set fdset;
+                struct timeval tv;
+
+                /* Setup timeout and FD's */
+                setup_timeout(&tv, timeout_ms);
+                FD_ZERO(&fdset);
+                FD_SET(sock->fd, &fdset);
+                /* Wait for connect */
+                if (SOCK_SELECT((int)SELECT_FD(sock->fd), NULL, &fdset,
+                                            NULL, &tv) > 0) {
+                    rc = MQTT_CODE_SUCCESS;
                 }
-        #endif
+            }
+        #endif /* !WOLFMQTT_NO_TIMEOUT */
+            if (rc != MQTT_CODE_SUCCESS) {
+                /* Check for error */
+                rc = NetGetError(sock);
             }
             break;
         }
 
         default:
-            rc = -1;
+            rc = MQTT_CODE_ERROR_STAT;
+            break;
     } /* switch */
 
     (void)timeout_ms;
-
-exit:
-    /* Show error */
-    if (rc != 0) {
-        PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error);
-    }
 
     return rc;
 }
@@ -720,7 +984,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     XMEMSET(&sock->addr, 0, sizeof(sock->addr));
     sock->addr.sin_family = AF_INET;
 
-    rc = getaddrinfo(host, NULL, &hints, &result);
+    rc = SOCK_GETADDRINFO(host, NULL, &hints, &result);
     if (rc == 0) {
         struct addrinfo* result_i = result;
 
@@ -746,7 +1010,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
             rc = -1;
         }
 
-        freeaddrinfo(result);
+        SOCK_FREEADDRINFO(result);
     }
     if (rc != 0)
         goto exit;
@@ -794,7 +1058,6 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 {
     SocketContext *sock = (SocketContext*)context;
     int rc;
-    SOERROR_T so_error = 0;
 #ifndef WOLFMQTT_NO_TIMEOUT
     struct timeval tv;
 #endif
@@ -809,30 +1072,12 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
-    setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    SOCK_SETSOCKOPT(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
 #endif
 
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
-    if (rc == -1) {
-        /* Get error */
-        GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
-        if (so_error == 0) {
-    #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
-            /* assume non-blocking case */
-            rc = MQTT_CODE_CONTINUE;
-    #else
-            rc = 0; /* Handle signal */
-    #endif
-        }
-        else {
-    #ifdef WOLFMQTT_NONBLOCK
-            if (SOCK_EQ_ERROR(so_error)) {
-                return MQTT_CODE_CONTINUE;
-            }
-    #endif
-            rc = MQTT_CODE_ERROR_NETWORK;
-            PRINTF("NetWrite: Error %d", so_error);
-        }
+    if (rc < 0) {
+        rc = NetGetError(sock);
     }
 
     (void)timeout_ms;
@@ -846,7 +1091,6 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     SocketContext *sock = (SocketContext*)context;
     MQTTCtx* mqttCtx = sock->mqttCtx;
     int rc = -1, timeout = 0;
-    SOERROR_T so_error = 0;
     int bytes = 0;
     int flags = 0;
 #ifndef WOLFMQTT_NO_TIMEOUT
@@ -894,15 +1138,13 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
         int do_read = 0;
 
     #ifndef WOLFMQTT_NO_TIMEOUT
-        #ifdef WOLFMQTT_NONBLOCK
         if (mqttCtx->useNonBlockMode) {
             do_read = 1;
         }
         else
-        #endif
         {
             /* Wait for rx data to be available */
-            rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
+            rc = SOCK_SELECT((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
             if (rc > 0)
             {
                 if (FD_ISSET(sock->fd, &recvfds)) {
@@ -939,21 +1181,24 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                            &buf[bytes],
                            buf_len - bytes,
                            flags);
-            if (rc <= 0) {
+            if (rc < 0) {
                 rc = -1;
                 goto exit; /* Error */
-            }
-            else {
+            } else if (rc == 0) {
+                if (mqttCtx->useNonBlockMode) {
+                    return MQTT_CODE_CONTINUE;
+                } else {
+                    continue;
+                }
+            } else {
                 bytes += rc; /* Data */
             }
         }
 
         /* no timeout and non-block should always exit loop */
-    #ifdef WOLFMQTT_NONBLOCK
         if (mqttCtx->useNonBlockMode) {
             break;
         }
-    #endif
     #ifdef WOLFMQTT_NO_TIMEOUT
         break;
     #endif
@@ -965,20 +1210,7 @@ exit:
         rc = MQTT_CODE_ERROR_TIMEOUT;
     }
     else if (rc < 0) {
-        /* Get error */
-        GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
-        if (so_error == 0) {
-            rc = 0; /* Handle signal */
-        }
-        else {
-    #ifdef WOLFMQTT_NONBLOCK
-            if (SOCK_EQ_ERROR(so_error)) {
-                return MQTT_CODE_CONTINUE;
-            }
-    #endif
-            rc = MQTT_CODE_ERROR_NETWORK;
-            PRINTF("NetRead: Error %d", so_error);
-        }
+        rc = NetGetError(sock);
     }
     else {
         rc = bytes;
@@ -1019,7 +1251,7 @@ static int NetDisconnect(void *context)
 /* Public Functions */
 int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
 {
-#if defined(USE_WINDOWS_API) && !defined(FREERTOS_TCP)
+#if defined(USE_WINDOWS_API) && !defined(FREERTOS_TCP) && !defined(WOLFSSL_LWIP)
     WSADATA wsd;
     WSAStartup(0x0002, &wsd);
 #endif

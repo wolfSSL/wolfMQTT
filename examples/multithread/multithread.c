@@ -316,10 +316,13 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     }
 #endif
 
-    /* Connect to broker */
-    rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
-           mqttCtx->port,
-        DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
+    do {
+        /* Connect to broker */
+        rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
+            mqttCtx->port,
+            DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
+        rc = check_response(mqttCtx, rc);
+    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
     PRINTF("MQTT Socket Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
@@ -605,9 +608,12 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
         sizeof(mqttCtx->topics) / sizeof(MqttTopic);
     mqttCtx->unsubscribe.topics = mqttCtx->topics;
 
-    /* Unsubscribe Topics */
-    rc = MqttClient_Unsubscribe(&mqttCtx->client,
-           &mqttCtx->unsubscribe);
+    do {
+        /* Unsubscribe Topics */
+        rc = MqttClient_Unsubscribe(&mqttCtx->client,
+            &mqttCtx->unsubscribe);
+        rc = check_response(mqttCtx, rc);
+    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
 
     PRINTF("MQTT Unsubscribe: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);

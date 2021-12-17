@@ -264,10 +264,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     }
 #endif
 
-    /* Connect to broker */
-    rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
-           mqttCtx->port,
-        DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
+    do {
+        /* Connect to broker */
+        rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
+            mqttCtx->port,
+            DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
+    } while (rc == MQTT_CODE_CONTINUE);
 
     PRINTF("MQTT Socket Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
@@ -350,8 +352,10 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     }
 #endif
 
-    /* Send Connect and wait for Connect Ack */
-    rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
+    do {
+        /* Send Connect and wait for Connect Ack */
+        rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
+    } while (rc == MQTT_CODE_CONTINUE);
 
     PRINTF("MQTT Connect: Proto (%s), %s (%d)",
         MqttClient_GetProtocolVersionString(&mqttCtx->client),
@@ -567,7 +571,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 break;
             }
         }
-        else if (rc != MQTT_CODE_SUCCESS) {
+        else if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
             /* There was an error */
             PRINTF("MQTT Message Wait: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);

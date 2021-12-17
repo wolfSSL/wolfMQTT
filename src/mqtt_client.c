@@ -2279,6 +2279,10 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Error in Callback)";
         case MQTT_CODE_ERROR_SYSTEM:
             return "Error (System resource failed)";
+        case MQTT_CODE_ERROR_DNS_RESOLVE:
+            return "Error (DNS Resolve Failed)";
+        case MQTT_CODE_ERROR_ROUTE_TO_HOST:
+            return "Error (No route to host)";
     }
     return "Unknown";
 }
