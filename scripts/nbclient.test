@@ -22,11 +22,12 @@ sleep 1
 # The check timout will sometimes incorrectly trigger if 1 second is used
 def_args="-T -C 2000"
 
-# Run mosquitto broker
-mosquitto -c scripts/broker_test/mosquitto.conf &
-broker_pid=$!
-if  [ $broker_pid != $no_pid ]
+# Check for mosquitto
+if command -v mosquitto
 then
+    # Run mosquitto broker
+    mosquitto -c scripts/broker_test/mosquitto.conf &
+    broker_pid=$!
     def_args="${def_args} -h localhost"
 fi
 
