@@ -23,11 +23,12 @@ fileout=./README.md.trs
 # Wait 1 secs for other tests to conclude
 sleep 1
 
-# Run mosquitto broker
-mosquitto -c scripts/broker_test/mosquitto.conf &
-broker_pid=$!
-if  [ $broker_pid != $no_pid ]
+# Check for mosquitto
+if command -v mosquitto
 then
+    # Run mosquitto broker
+    mosquitto -c scripts/broker_test/mosquitto.conf &
+    broker_pid=$!
     def_args="${def_args} -h localhost"
 fi
 
