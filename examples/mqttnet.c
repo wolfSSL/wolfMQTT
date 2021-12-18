@@ -427,6 +427,7 @@ typedef struct _SocketContext {
     SOCKET_T pfd[2];
 #endif
     MqttClient* mqttCtx;
+    int shown;
 } SocketContext;
 
 /* Private functions */
@@ -852,9 +853,11 @@ static int NetConnect(void *context, const char* host, word16 port,
     switch(sock->stat) {
         case SOCK_BEGIN:
         {
-            PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
-                host, port, timeout_ms, mqttCtx->use_tls);
-
+            if (!sock->shown) {
+                sock->shown = 1;
+                PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
+                    host, port, timeout_ms, mqttCtx->use_tls);
+            }
             XMEMSET(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
             hints.ai_socktype = SOCK_STREAM;
@@ -1250,7 +1253,7 @@ static int NetDisconnect(void *context)
 int MqttClientNet_DeInit(MqttClient* client);
 int MqttClientNet_Wake(MqttClient* client);
 
-int MqttClientNet_InitShared(MqttClient* client)
+static int MqttClientNet_InitShared(MqttClient* client)
 {
     SocketContext* sockCtx;
     if (client == NULL) {
