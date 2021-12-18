@@ -382,6 +382,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
             mqttCtx->stat = WMQ_UNSUB;
             mqttCtx->start_sec = 0;
+            rc = MQTT_CODE_CONTINUE;
+            return rc;
         }
         FALL_THROUGH;
 
