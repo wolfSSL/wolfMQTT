@@ -264,9 +264,9 @@ static int MqttClient_RespList_Find(MqttClient *client,
         *retResp = NULL; /* clear */
 
     /* Find pending response entry */
-    for (tmpResp = client->firstPendResp;
+    for (tmpResp = client->lastPendResp;
          tmpResp != NULL;
-         tmpResp = tmpResp->next)
+         tmpResp = tmpResp->prev)
     {
         if (packet_type == tmpResp->packet_type &&
            (packet_id == tmpResp->packet_id))
