@@ -37,7 +37,11 @@
 static int MqttClient_Publish_ReadPayload(MqttClient* client,
     MqttPublish* publish, int timeout_ms);
 
-#ifdef WOLFMQTT_MULTITHREAD
+#if !defined(WOLFMQTT_MULTITHREAD)
+    void* wm_CurrentThreadId(void) {
+        return NULL;
+    }
+#else /* defined(WOLFMQTT_MULTITHREAD) */
 
 #ifdef WOLFMQTT_USER_THREADING
 
@@ -46,6 +50,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
      * int wm_SemFree(wm_Sem *s)
      * int wm_SemLock(wm_Sem *s)
      * int wm_SemUnlock(wm_Sem *s)
+     * void* wm_CurrentThreadId(void)
      */
 
 #elif defined(__MACH__)
@@ -83,6 +88,9 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         dispatch_semaphore_signal(*s);
         return 0;
     }
+    void* wm_CurrentThreadId(void) {
+        return (void*)(intptr_t)pthread_self();
+    }
 #elif defined(WOLFMQTT_POSIX_SEMAPHORES)
     /* Posix style semaphore */
     int wm_SemInit(wm_Sem *s){
@@ -111,6 +119,9 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         pthread_mutex_unlock(&s->mutex);
         return 0;
     }
+    void* wm_CurrentThreadId(void) {
+        return (void*)(intptr_t)pthread_self();
+    }
 #elif defined(FREERTOS)
     /* FreeRTOS binary semaphore */
     int wm_SemInit(wm_Sem *s) {
@@ -131,6 +142,9 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         xSemaphoreGive(*s);
         return 0;
     }
+    void* wm_CurrentThreadId(void) {
+        return (void*)(intptr_t)xTaskGetCurrentTaskHandle();
+    }
 #elif defined(USE_WINDOWS_API)
     /* Windows semaphore object */
     int wm_SemInit(wm_Sem *s) {
@@ -150,7 +164,9 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         ReleaseSemaphore(*s, 1, NULL);
         return 0;
     }
-
+    void* wm_CurrentThreadId(void) {
+        return (void*)(intptr_t)GetCurrentThreadId();
+    }
 #endif
 
 /* These RespList functions assume caller has locked client->lockClient mutex */

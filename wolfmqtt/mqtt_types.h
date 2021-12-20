@@ -90,6 +90,7 @@
 
     #elif defined(__MACH__)
         /* Apple Style Dispatch Semaphore */
+        #include <pthread.h>
         #include <dispatch/dispatch.h>
         typedef dispatch_semaphore_t wm_Sem;
 
@@ -132,6 +133,8 @@
     WOLFMQTT_API int wm_SemLock(wm_Sem* s);
     WOLFMQTT_API int wm_SemUnlock(wm_Sem* s);
 #endif
+
+WOLFMQTT_API void* wm_CurrentThreadId(void);
 
 /* configuration for Harmony */
 #ifdef MICROCHIP_MPLAB_HARMONY
@@ -278,15 +281,7 @@ enum MqttPacketResponseCodes {
     #endif
     #ifndef PRINTF
         #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_DEBUG_THREAD)
-            #ifdef USE_WINDOWS_API
-                #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), GetCurrentThreadId(), ##__VA_ARGS__)
-            #elif defined(__MACH__)
-                #include <pthread.h>
-                #define PRINTF(_f_, ...)  printf( ("%p: "_f_ LINE_END), (void*)pthread_self(), ##__VA_ARGS__)
-            #else
-                #include <pthread.h>
-                #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
-            #endif
+            #define PRINTF(_f_, ...)  printf( ("%p: "_f_ LINE_END), wm_CurrentThreadId(), ##__VA_ARGS__)
         #else
             #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
         #endif
