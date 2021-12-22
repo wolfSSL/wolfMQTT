@@ -339,7 +339,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
         /* Connect to host */
         rc = client->net->connect(client->net->context, host, port, timeout_ms);
-        if (rc < 0) {
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
         client->flags |= MQTT_CLIENT_FLAG_IS_CONNECTED;
@@ -353,12 +353,11 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         #endif
 
             /* Setup the WolfSSL library */
-            wolfSSL_Init();
+            rc = wolfSSL_Init();
 
             /* Issue callback to allow setup of the wolfSSL_CTX and cert
                verification settings */
-            rc = WOLFSSL_SUCCESS;
-            if (cb) {
+            if ((rc == WOLFSSL_SUCCESS) && (cb != NULL)) {
                 rc = cb(client);
             }
             if (rc != WOLFSSL_SUCCESS) {
@@ -372,7 +371,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             /* Use defaults */
             client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
             if (client->tls.ctx == NULL) {
-                rc = -1;
+                rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
             }
             wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_NONE, 0);
@@ -390,7 +389,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             client->tls.ssl = wolfSSL_new(client->tls.ctx);
 
             if (client->tls.ssl == NULL) {
-                rc = -1;
+                rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
             }
         }
@@ -405,6 +404,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
         rc = wolfSSL_connect(client->tls.ssl);
         if (rc != WOLFSSL_SUCCESS) {
+            rc = MQTT_CODE_ERROR_TLS_CONNECT;
             goto exit;
         }
 
@@ -414,7 +414,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
 exit:
     /* Handle error case */
-    if (rc) {
+    if (rc != MQTT_CODE_SUCCESS) {
     #ifdef WOLFMQTT_DEBUG_SOCKET
         const char* errstr = "";
     #endif
@@ -437,8 +437,6 @@ exit:
 
         /* Make sure we cleanup on error */
         MqttSocket_Disconnect(client);
-
-        rc = MQTT_CODE_ERROR_TLS_CONNECT;
     }
 
 #else
@@ -448,11 +446,6 @@ exit:
 #ifdef WOLFMQTT_DEBUG_SOCKET
     PRINTF("MqttSocket_Connect: Rc=%d", rc);
 #endif
-
-    /* Check for error */
-    if (rc < 0) {
-        rc = MQTT_CODE_ERROR_NETWORK;
-    }
 
     return rc;
 }
