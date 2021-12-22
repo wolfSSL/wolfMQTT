@@ -124,7 +124,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 #elif defined(USE_WINDOWS_API)
     /* Windows semaphore object */
     int wm_SemInit(wm_Sem *s) {
-        *s = CreateSemaphoreW( NULL, 0, 1, NULL);
+        *s = CreateSemaphoreW( NULL, 1, 1, NULL);
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
