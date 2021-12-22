@@ -109,7 +109,7 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT-SN Message: Topic ID %d, Qos %d, Id %d, Len %u",
-                topicId, msg->qos, msg->packet_id, msg->total_len);
+                topicId, msg->header.packet.qos, msg->header.packet.id, msg->total_len);
 
         /* for test mode: count the number of TEST_MESSAGE matches received */
         if (mqttCtx->test_mode) {
@@ -202,7 +202,7 @@ static int client_register(MQTTCtx *mqttCtx)
     PRINTF("MQTT-SN Set Register Callback: rc = %d", rc);
     if (rc == MQTT_CODE_SUCCESS) {
         XMEMSET(&regist, 0, sizeof(SN_Register));
-        regist.packet_id = mqtt_get_packetid_threadsafe();
+        regist.header.packet.id = mqtt_get_packetid_threadsafe();
         regist.topicName = DEFAULT_TOPIC_NAME;
 
         PRINTF("MQTT-SN Register: topic = %s", regist.topicName);
@@ -285,14 +285,14 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     connect.keep_alive_sec = mqttCtx->keep_alive_sec;
     connect.clean_session = mqttCtx->clean_session;
     connect.client_id = mqttCtx->client_id;
-    connect.protocol_level = SN_PROTOCOL_ID;
+    connect.header.protocol_level = SN_PROTOCOL_ID;
 
     /* Last will and testament sent by broker to subscribers
         of topic when broker connection is lost */
     connect.enable_lwt = mqttCtx->enable_lwt;
     if (connect.enable_lwt) {
         /* Send client id in LWT payload */
-        connect.will.qos = mqttCtx->qos;
+        connect.will.header.packet.qos = mqttCtx->qos;
         connect.will.retain = 0;
         connect.will.willTopic = WOLFMQTT_TOPIC_NAME"lwttopic";
         connect.will.willMsg = (byte*)mqttCtx->client_id;
@@ -343,10 +343,10 @@ static void *subscribe_task(void *param)
 
     /* Subscribe to wildcard topic so register callback can be used */
     subscribe.duplicate = 0;
-    subscribe.qos = MQTT_QOS_0;
+    subscribe.header.packet.qos = MQTT_QOS_0;
     subscribe.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
     subscribe.topicNameId = WOLFMQTT_TOPIC_NAME"#";
-    subscribe.packet_id = mqtt_get_packetid_threadsafe();
+    subscribe.header.packet.id = mqtt_get_packetid_threadsafe();
 
     PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
     rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
@@ -457,23 +457,23 @@ static void *publish_task(void *param)
     /* Publish Topic */
     XMEMSET(&publish, 0, sizeof(SN_Publish));
     publish.retain = 0;
-    publish.qos = mqttCtx->qos;
+    publish.header.packet.qos = mqttCtx->qos;
     publish.duplicate = 0;
     publish.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
 
     /* Use the topic ID saved from the subscribe */
     publish.topic_name = (char*)&topicID;
-    if ((publish.qos == MQTT_QOS_1) ||
-        (publish.qos == MQTT_QOS_2)) {
-        publish.packet_id = mqtt_get_packetid_threadsafe();
+    if ((publish.header.packet.qos == MQTT_QOS_1) ||
+        (publish.header.packet.qos == MQTT_QOS_2)) {
+        publish.header.packet.id = mqtt_get_packetid_threadsafe();
     }
     else {
-        publish.packet_id = 0x00;
+        publish.header.packet.id = 0x00;
     }
 
     XSTRNCPY(buf, TEST_MESSAGE, sizeof(buf));
-    buf[4] = '0' + ((publish.packet_id / 10) % 10);
-    buf[5] = '0' + (publish.packet_id % 10);
+    buf[4] = '0' + ((publish.header.packet.id / 10) % 10);
+    buf[5] = '0' + (publish.header.packet.id % 10);
     publish.buffer = (byte*)buf;
     publish.total_len = (word16)XSTRLEN(buf);
 
@@ -527,7 +527,7 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
     /* Unsubscribe Topic */
     XMEMSET(&unsubscribe, 0, sizeof(SN_Unsubscribe));
     unsubscribe.topicNameId = mqttCtx->topic_name;
-    unsubscribe.packet_id = mqtt_get_packetid_threadsafe();
+    unsubscribe.header.packet.id = mqtt_get_packetid_threadsafe();
 
     rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
 

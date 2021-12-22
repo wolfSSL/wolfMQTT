@@ -804,7 +804,7 @@ enum SN_PacketFlags {
 /* Gateway (GW) messages */
 /* Advertise message */
 typedef struct _SN_AdvertiseMsg {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte gwId; /* ID of the gateway that sent this message */
     word16 duration; /* Seconds until next Advertise
@@ -812,17 +812,14 @@ typedef struct _SN_AdvertiseMsg {
 } SN_Advertise;
 
 typedef struct _SN_GwInfo {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte gwId; /* ID of the gateway that sent this message */
     SN_GwAddr* gwAddr; /* Address of the indicated gateway */
 } SN_GwInfo;
 
 typedef struct _SN_SearchGw {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte radius; /* Broadcast radius (in hops) */
     SN_GwInfo gwInfo;
@@ -836,33 +833,27 @@ typedef struct _SN_SearchGw {
 
 /* Connect Ack message structure */
 typedef struct _SN_ConnectAck {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte       return_code;
 } SN_ConnectAck;
 
 /* WILL TOPIC */
 typedef struct _SN_WillTopicUpd {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte flags;
     char* willTopic; /* contains the Will topic name */
 } SN_WillTopicUpd;
 
 typedef struct _SN_WillMsgUpd {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     char* willMsg;
 } SN_WillMsgUpd;
 
 typedef struct _SN_WillTopicResp {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte return_code;
 } SN_WillTopicResp;
@@ -877,12 +868,8 @@ typedef union _SN_WillResp {
 } SN_WillResp;
 
 typedef struct _SN_Will {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
-    byte qos;
     byte retain;
     const char* willTopic;
     byte* willMsg;
@@ -893,17 +880,11 @@ typedef struct _SN_Will {
 
 /* Connect */
 typedef struct _SN_Connect {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     word16 keep_alive_sec;
     byte clean_session;
     const char *client_id;
-
-    /* Protocol version: 1=v1.2 (default) */
-    byte protocol_level;
 
     /* Optional Last will and testament */
     byte  enable_lwt;
@@ -915,21 +896,16 @@ typedef struct _SN_Connect {
 
 /* REGISTER protocol */
 typedef struct _SN_RegAck {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     word16 topicId;
-    word16 packet_id;
     byte return_code;
 } SN_RegAck;
 
 typedef struct _SN_Register {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     word16 topicId;
-    word16 packet_id;
     const char* topicName;
     SN_RegAck regack;
 } SN_Register;
@@ -944,24 +920,17 @@ typedef struct _SN_Register {
     QoS2 protocol exchange */
 /* Expect response packet with type = SN_MSG_TYPE_PUBCOMP */
 typedef struct _SN_PublishResp {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
-    word16 packet_id;
     word16 topicId; /* PUBACK Only */
     byte return_code; /* PUBACK Only */
 } SN_PublishResp;
 
 /* PUBLISH protocol */
 typedef struct _SN_Publish {
-    MqttMsgStat stat; /* must be first member at top */
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     /* BEGIN: THIS SECTION NEEDS TO MATCH MqttMessage */
-    word16      packet_id;
-    byte        type;
-    MqttQoS     qos;
     byte        retain;
     byte        duplicate;
     byte        topic_type;
@@ -988,24 +957,18 @@ typedef struct _SN_Publish {
 
 /* SUBSCRIBE ACK */
 typedef struct _SN_SubAck {
-    MqttMsgStat stat;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte flags;
     word16 topicId;
-    word16 packet_id;
     byte return_code;
 } SN_SubAck;
 
 /* SUBSCRIBE */
 typedef struct _SN_Subscribe {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte duplicate;
-    byte qos;
-    word16 packet_id;
     byte topic_type;
     /* 5.3.12 TopicName
        The TopicName field has a variable length and contains an UTF8-encoded
@@ -1017,21 +980,14 @@ typedef struct _SN_Subscribe {
 
 /* UNSUBSCRIBE RESPONSE ACK */
 typedef struct _SN_UnsubscribeAck {
-    MqttMsgStat stat; /* must be first member at top */
-
-    word16      packet_id;
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 } SN_UnsubscribeAck;
 
 /* UNSUBSCRIBE */
 typedef struct _SN_Unsubscribe {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     byte duplicate;
-    byte qos;
-    word16 packet_id;
     byte topic_type;
     /* 5.3.12 TopicName
        The TopicName field has a variable length and contains an UTF8-encoded
@@ -1043,10 +999,7 @@ typedef struct _SN_Unsubscribe {
 
 /* PING REQUEST / PING RESPONSE */
 typedef struct _SN_PingReq {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     /* clientId is optional and is included by a "sleeping" client when it
        goes to the "awake" state and is waiting for messages sent by the
@@ -1056,10 +1009,7 @@ typedef struct _SN_PingReq {
 
 /* DISCONNECT */
 typedef struct _SN_Disconnect {
-    MqttMsgStat stat;
-#ifdef WOLFMQTT_MULTITHREAD
-    MqttPendResp pendResp;
-#endif
+    MqttMsgHeader header; /* all objects types have this at top of struct */
 
     /* sleepTmr is optional and is included by a "sleeping" client
        that wants to go the "asleep" state. The receipt of this message
@@ -1069,6 +1019,7 @@ typedef struct _SN_Disconnect {
 } SN_Disconnect;
 
 typedef union _SN_Object {
+    MqttMsgHeader     header; /* all objects types have this at top of struct */
     SN_Advertise      advertise;
     SN_GwInfo         gwInfo;
     SN_SearchGw       searchGw;
@@ -1102,8 +1053,7 @@ typedef union _SN_Object {
 /* Forward Encapsulation */
 // TODO
 
-WOLFMQTT_LOCAL int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
-    SN_MsgType* p_packet_type, word16* p_packet_id);
+WOLFMQTT_LOCAL int SN_Decode_Header(byte *rx_buf, int rx_buf_len, MqttMsgPacketHeader *header);
 WOLFMQTT_LOCAL int SN_Decode_Advertise(byte *rx_buf, int rx_buf_len,
         SN_Advertise *gw_info);
 WOLFMQTT_LOCAL int SN_Encode_SearchGW(byte *tx_buf, int tx_buf_len, byte hops);

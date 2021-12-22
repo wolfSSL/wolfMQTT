@@ -83,7 +83,7 @@ int sn_testQoSn1(MQTTCtx *mqttCtx)
 
         /* Predefined Topic Name Publish */
         XMEMSET(&publish, 0, sizeof(SN_Publish));
-        publish.qos = MQTT_QOS_3; /* Set QoS level -1 */
+        publish.header.packet.qos = MQTT_QOS_3; /* Set QoS level -1 */
         publish.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
         publish.topic_name = (char*)SHORT_TOPIC_NAME;
         publish.buffer = (byte*)TEST_MESSAGE;

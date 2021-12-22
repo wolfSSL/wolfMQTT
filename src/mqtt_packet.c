@@ -2176,8 +2176,7 @@ const char* SN_Packet_TypeDesc(SN_MsgType packet_type)
     return "Unknown";
 }
 
-int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
-    SN_MsgType* p_packet_type, word16* p_packet_id)
+int SN_Decode_Header(byte *rx_buf, int rx_buf_len, MqttMsgPacketHeader *header)
 {
     SN_MsgType packet_type;
     word16 total_len;
@@ -2200,26 +2199,25 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
     /* Message Type */
     packet_type = (SN_MsgType)*rx_buf++;
 
-    if (p_packet_type)
-        *p_packet_type = packet_type;
-
-    if (p_packet_id) {
+    if (header) {
+        header->qos = MQTT_QOS_0;
+        header->type = packet_type;
         switch(packet_type) {
             case SN_MSG_TYPE_REGACK:
             case SN_MSG_TYPE_PUBACK:
                 /* octet 4-5 */
-                MqttDecode_Num(rx_buf + 2, p_packet_id);
+                MqttDecode_Num(rx_buf + 2, &header->id);
                 break;
             case SN_MSG_TYPE_PUBCOMP:
             case SN_MSG_TYPE_PUBREC:
             case SN_MSG_TYPE_PUBREL:
             case SN_MSG_TYPE_UNSUBACK:
                 /* octet 2-3 */
-                MqttDecode_Num(rx_buf, p_packet_id);
+                MqttDecode_Num(rx_buf, &header->id);
                 break;
             case SN_MSG_TYPE_SUBACK:
                 /* octet 5-6 */
-                MqttDecode_Num(rx_buf + 3, p_packet_id);
+                MqttDecode_Num(rx_buf + 3, &header->id);
                 break;
             case SN_MSG_TYPE_ADVERTISE:
             case SN_MSG_TYPE_SEARCHGW:
@@ -2244,7 +2242,7 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
             case SN_MSG_TYPE_ENCAPMSG:
             case SN_MSG_TYPE_RESERVED:
             default:
-                *p_packet_id = 0;
+                header->id = 0;
                 break;
         }
     }
@@ -2368,7 +2366,7 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
 
     /* Validate required arguments */
     if ((tx_buf == NULL) || (mc_connect == NULL) ||
-        (mc_connect->client_id == NULL) || (mc_connect->protocol_level == 0)) {
+        (mc_connect->client_id == NULL) || (mc_connect->header.protocol_level == 0)) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
@@ -2411,7 +2409,7 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
     *tx_payload++ = flags;
 
     /* Protocol version */
-    *tx_payload++ = mc_connect->protocol_level;
+    *tx_payload++ = mc_connect->header.protocol_level;
 
     /* Encode duration (keep-alive) */
     tx_payload += MqttEncode_Num(tx_payload, mc_connect->keep_alive_sec);
@@ -2504,7 +2502,7 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         int will_len;
 
         /* Encode flags */
-        flags |= ((willTopic->qos << SN_PACKET_FLAG_QOS_SHIFT) &
+        flags |= ((willTopic->header.packet.qos << SN_PACKET_FLAG_QOS_SHIFT) &
                   SN_PACKET_FLAG_QOS_MASK);
         flags |= (willTopic->retain != 0) ? SN_PACKET_FLAG_RETAIN : 0;
         *tx_payload++ = flags;
@@ -2647,7 +2645,7 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         int will_len;
 
         /* Encode flags */
-        flags |= ((willTopic->qos << SN_PACKET_FLAG_QOS_SHIFT) &
+        flags |= ((willTopic->header.packet.qos << SN_PACKET_FLAG_QOS_SHIFT) &
                   SN_PACKET_FLAG_QOS_MASK);
         flags |= (willTopic->retain != 0) ? SN_PACKET_FLAG_RETAIN : 0;
         *tx_payload++ = flags;
@@ -2845,7 +2843,7 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     tx_payload += MqttEncode_Num(tx_payload, regist->topicId);
 
     /* Encode Packet ID */
-    tx_payload += MqttEncode_Num(tx_payload, regist->packet_id);
+    tx_payload += MqttEncode_Num(tx_payload, regist->header.packet.id);
 
     /* Encode Topic Name */
     topic_len = (int)XSTRLEN(regist->topicName);
@@ -2891,7 +2889,7 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
         rx_payload += MqttDecode_Num(rx_payload, &regist->topicId);
 
         /* Decode packet ID */
-        rx_payload += MqttDecode_Num(rx_payload, &regist->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &regist->header.packet.id);
 
         /* Decode Topic Name */
         regist->topicName = (char*)rx_payload;
@@ -2936,7 +2934,7 @@ int SN_Encode_RegAck(byte *tx_buf, int tx_buf_len, SN_RegAck *regack)
     tx_payload += MqttEncode_Num(tx_payload, regack->topicId);
 
     /* Encode Message ID */
-    tx_payload += MqttEncode_Num(tx_payload, regack->packet_id);
+    tx_payload += MqttEncode_Num(tx_payload, regack->header.packet.id);
 
     /* Encode Return Code */
     *tx_payload += regack->return_code;
@@ -2972,7 +2970,7 @@ int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len, SN_RegAck *regack)
         rx_payload += MqttDecode_Num(rx_payload, &regack->topicId);
 
         /* Decode packet ID */
-        rx_payload += MqttDecode_Num(rx_payload, &regack->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &regack->header.packet.id);
 
         /* Decode return code */
         regack->return_code = *rx_payload++;
@@ -3034,13 +3032,13 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     if (subscribe->duplicate)
         flags |= SN_PACKET_FLAG_DUPLICATE;
     flags |= (SN_PACKET_FLAG_QOS_MASK &
-            (subscribe->qos << SN_PACKET_FLAG_QOS_SHIFT));
+            (subscribe->header.packet.qos << SN_PACKET_FLAG_QOS_SHIFT));
     flags |= (SN_PACKET_FLAG_TOPICIDTYPE_MASK & subscribe->topic_type);
 
     *tx_payload++ = flags;
 
     /* Encode packet ID */
-    tx_payload += MqttEncode_Num(tx_payload, subscribe->packet_id);
+    tx_payload += MqttEncode_Num(tx_payload, subscribe->header.packet.id);
 
     /* Encode topic */
     if (subscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
@@ -3083,7 +3081,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     if (subscribe_ack) {
         subscribe_ack->flags = *rx_payload++;
         rx_payload += MqttDecode_Num(rx_payload, &subscribe_ack->topicId);
-        rx_payload += MqttDecode_Num(rx_payload, &subscribe_ack->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &subscribe_ack->header.packet.id);
         subscribe_ack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -3134,7 +3132,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     if (publish->duplicate)
         flags |= SN_PACKET_FLAG_DUPLICATE;
     flags |= (SN_PACKET_FLAG_QOS_MASK &
-            (publish->qos << SN_PACKET_FLAG_QOS_SHIFT));
+            (publish->header.packet.qos << SN_PACKET_FLAG_QOS_SHIFT));
     if (publish->retain)
         flags |= SN_PACKET_FLAG_RETAIN;
     flags |= (SN_PACKET_FLAG_TOPICIDTYPE_MASK & publish->topic_type);
@@ -3153,7 +3151,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
         tx_payload += MqttEncode_Num(tx_payload, (word16)*publish->topic_name);
     }
 
-    tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
+    tx_payload += MqttEncode_Num(tx_payload, publish->header.packet.id);
 
     /* Encode payload */
     XMEMCPY(tx_payload, publish->buffer, publish->total_len);
@@ -3203,12 +3201,12 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
     rx_payload += MQTT_DATA_LEN_SIZE;
     publish->topic_name_len = MQTT_DATA_LEN_SIZE;
 
-    rx_payload += MqttDecode_Num(rx_payload, &publish->packet_id);
+    rx_payload += MqttDecode_Num(rx_payload, &publish->header.packet.id);
 
     /* Set flags */
     publish->duplicate = flags & SN_PACKET_FLAG_DUPLICATE;
 
-    publish->qos = (MqttQoS)((flags & SN_PACKET_FLAG_QOS_MASK) >>
+    publish->header.packet.qos = (MqttQoS)((flags & SN_PACKET_FLAG_QOS_MASK) >>
             SN_PACKET_FLAG_QOS_SHIFT);
 
     publish->retain = flags & SN_PACKET_FLAG_RETAIN;
@@ -3252,7 +3250,7 @@ int SN_Encode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
         tx_payload += MqttEncode_Num(tx_payload, publish_resp->topicId);
     }
 
-    tx_payload += MqttEncode_Num(tx_payload, publish_resp->packet_id);
+    tx_payload += MqttEncode_Num(tx_payload, publish_resp->header.packet.id);
 
     if (type == SN_MSG_TYPE_PUBACK) {
         *tx_payload++ = publish_resp->return_code;
@@ -3293,7 +3291,7 @@ int SN_Decode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             rx_payload += MqttDecode_Num(rx_payload, &publish_resp->topicId);
         }
 
-        rx_payload += MqttDecode_Num(rx_payload, &publish_resp->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &publish_resp->header.packet.id);
 
         if (type == SN_MSG_TYPE_PUBACK) {
             publish_resp->return_code = *rx_payload++;
@@ -3356,12 +3354,12 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     if (unsubscribe->duplicate)
         flags |= SN_PACKET_FLAG_DUPLICATE;
     flags |= (SN_PACKET_FLAG_QOS_MASK &
-            (unsubscribe->qos << SN_PACKET_FLAG_QOS_SHIFT));
+            (unsubscribe->header.packet.qos << SN_PACKET_FLAG_QOS_SHIFT));
     flags |= (SN_PACKET_FLAG_TOPICIDTYPE_MASK & unsubscribe->topic_type);
 
     *tx_payload++ = flags;
 
-    tx_payload += MqttEncode_Num(tx_payload, unsubscribe->packet_id);
+    tx_payload += MqttEncode_Num(tx_payload, unsubscribe->header.packet.id);
 
     /* Encode topic */
     if (unsubscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
@@ -3404,7 +3402,7 @@ int SN_Decode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 
     /* Decode SubAck fields */
     if (unsubscribe_ack) {
-        rx_payload += MqttDecode_Num(rx_payload, &unsubscribe_ack->packet_id);
+        rx_payload += MqttDecode_Num(rx_payload, &unsubscribe_ack->header.packet.id);
     }
     (void)rx_payload;
 
