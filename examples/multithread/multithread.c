@@ -397,7 +397,7 @@ static void *subscribe_task(void *param)
         rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
         rc = check_response(mqttCtx, rc);
     } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
-    
+
     PRINTF("MQTT Subscribe: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
 
@@ -625,7 +625,7 @@ int multithread_test(MQTTCtx *mqttCtx)
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__
-            /* %m is specific to glibc/uclibc/musl, and recently (2018) 
+            /* %m is specific to glibc/uclibc/musl, and recently (2018)
              * added to FreeBSD */
             PRINTF("THREAD_JOIN failed: %m");
 #else
