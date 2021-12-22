@@ -35,7 +35,7 @@
 
 
 /* this code is a template for using UART for communication */
-#if 0
+#if 1
 
 /* Local context for callbacks */
 typedef struct _UartContext {
@@ -84,27 +84,27 @@ static int NetDisconnect(void *context)
 }
 
 /* Public Functions */
-int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
+int MqttClientUartNet_Init(MqttClient* client)
 {
-    if (net) {
-        XMEMSET(net, 0, sizeof(MqttNet));
-        net->connect = NetConnect;
-        net->read = NetRead;
-        net->write = NetWrite;
-        net->disconnect = NetDisconnect;
-        net->context = WOLFMQTT_MALLOC(sizeof(UartContext));
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
     }
-    (void)mqttCtx;
+    XMEMSET(&client->net, 0, sizeof(client->net));
+    client->net.connect = NetConnect;
+    client->net.read = NetRead;
+    client->net.write = NetWrite;
+    client->net.disconnect = NetDisconnect;
+    client->net.context = WOLFMQTT_MALLOC(sizeof(UartContext));
     return 0;
 }
 
-int MqttClientNet_DeInit(MqttNet* net)
+int MqttClientUartNet_DeInit(MqttClient* client)
 {
-    if (net) {
-        if (net->context) {
-            WOLFMQTT_FREE(net->context);
+    if (client) {
+        if (client->net.context) {
+            WOLFMQTT_FREE(client->net.context);
         }
-        XMEMSET(net, 0, sizeof(MqttNet));
+        XMEMSET(&client->net, 0, sizeof(client->net));
     }
     return 0;
 }

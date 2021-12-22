@@ -288,17 +288,6 @@ int awsiot_test(MQTTCtx *mqttCtx)
         {
             mqttCtx->stat = WMQ_NET_INIT;
 
-            /* Initialize Network */
-            rc = MqttClientNet_Init(&mqttCtx->net, mqttCtx);
-            if (rc == MQTT_CODE_CONTINUE) {
-                return rc;
-            }
-            PRINTF("MQTT Net Init: %s (%d)",
-                MqttClient_ReturnCodeToString(rc), rc);
-            if (rc != MQTT_CODE_SUCCESS) {
-                goto exit;
-            }
-
             /* setup tx/rx buffers */
             mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
             mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
@@ -310,7 +299,7 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_INIT;
 
             /* Initialize MqttClient structure */
-            rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net, mqtt_message_cb,
+            rc = MqttClient_Init(&mqttCtx->client, mqttCtx, mqtt_init_client_cb, mqtt_message_cb,
                 mqttCtx->tx_buf, MAX_BUFFER_SIZE, mqttCtx->rx_buf, MAX_BUFFER_SIZE,
                 mqttCtx->cmd_timeout_ms);
             if (rc == MQTT_CODE_CONTINUE) {
@@ -321,7 +310,6 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc != MQTT_CODE_SUCCESS) {
                 goto exit;
             }
-            mqttCtx->client.ctx = mqttCtx;
 
         #ifdef WOLFMQTT_V5
             /* AWS broker only supports v3.1.1 client */
@@ -599,9 +587,6 @@ exit:
         /* Free resources */
         if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
         if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
-
-        /* Cleanup network */
-        MqttClientNet_DeInit(&mqttCtx->net);
 
         MqttClient_DeInit(&mqttCtx->client);
     }

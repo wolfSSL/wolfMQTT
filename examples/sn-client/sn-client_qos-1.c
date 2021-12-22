@@ -51,21 +51,12 @@ int sn_testQoSn1(MQTTCtx *mqttCtx)
 
     PRINTF("MQTT-SN Client: QoS %d", mqttCtx->qos);
 
-    /* Initialize Network */
-    rc = SN_ClientNet_Init(&mqttCtx->net, mqttCtx);
-    PRINTF("MQTT-SN Net Init: %s (%d)",
-        MqttClient_ReturnCodeToString(rc), rc);
-    if (rc != MQTT_CODE_SUCCESS) {
-        goto exit;
-    }
-
     /* setup tx/rx buffers */
     mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
 
     /* Initialize MqttClient structure */
-    rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net,
-        NULL,
+    rc = MqttClient_Init(&mqttCtx->client, mqttCtx, mqtt_sn_init_client_cb, NULL,
         mqttCtx->tx_buf, MAX_BUFFER_SIZE,
         mqttCtx->rx_buf, MAX_BUFFER_SIZE,
         mqttCtx->cmd_timeout_ms);
@@ -126,9 +117,6 @@ exit:
     /* Free resources */
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
     if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
-
-    /* Cleanup network */
-    MqttClientNet_DeInit(&mqttCtx->net);
 
     MqttClient_DeInit(&mqttCtx->client);
 

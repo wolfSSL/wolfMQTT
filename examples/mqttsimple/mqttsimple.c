@@ -40,6 +40,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(_WIN32)
+#include <ws2tcpip.h>
+#endif
+
 /* Configuration */
 #define MQTT_HOST            "test.mosquitto.org" /* broker.hivemq.com */
 #define MQTT_QOS             MQTT_QOS_0
@@ -64,7 +68,6 @@
 
 /* Local Variables */
 static MqttClient mClient;
-static MqttNet mNetwork;
 static int mSockFd = INVALID_SOCKET_FD;
 static byte mSendBuf[MQTT_MAX_PACKET_SZ];
 static byte mReadBuf[MQTT_MAX_PACKET_SZ];
@@ -350,21 +353,25 @@ static word16 mqtt_get_packetid(void)
     return ++mPacketIdLast;
 }
 
+static int mqtt_simple_init_client_cb(MqttClient *mqttClient)
+{
+    mqttClient->net.connect = mqtt_net_connect;
+    mqttClient->net.read = mqtt_net_read;
+    mqttClient->net.write = mqtt_net_write;
+    mqttClient->net.disconnect = mqtt_net_disconnect;
+    mqttClient->net.context = &mSockFd;
+    return MQTT_CODE_SUCCESS;
+}
+
 /* Public Function */
 int mqttsimple_test(void)
 {
     int rc = 0;
     MqttObject mqttObj;
     MqttTopic topics[1];
-
     /* Initialize MQTT client */
-    XMEMSET(&mNetwork, 0, sizeof(mNetwork));
-    mNetwork.connect = mqtt_net_connect;
-    mNetwork.read = mqtt_net_read;
-    mNetwork.write = mqtt_net_write;
-    mNetwork.disconnect = mqtt_net_disconnect;
-    mNetwork.context = &mSockFd;
-    rc = MqttClient_Init(&mClient, &mNetwork, mqtt_message_cb,
+
+    rc = MqttClient_Init(&mClient, NULL, mqtt_simple_init_client_cb, mqtt_message_cb,
         mSendBuf, sizeof(mSendBuf), mReadBuf, sizeof(mReadBuf),
         MQTT_CON_TIMEOUT_MS);
     if (rc != MQTT_CODE_SUCCESS) {

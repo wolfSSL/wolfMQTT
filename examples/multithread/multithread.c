@@ -219,9 +219,6 @@ static void client_cleanup(MQTTCtx *mqttCtx)
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
     if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
 
-    /* Cleanup network */
-    MqttClientNet_DeInit(&mqttCtx->net);
-
     MqttClient_DeInit(&mqttCtx->client);
 }
 
@@ -276,21 +273,12 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
 
     PRINTF("Use \"Ctrl+c\" to exit.");
 
-    /* Initialize Network */
-    rc = MqttClientNet_Init(&mqttCtx->net, mqttCtx);
-    PRINTF("MQTT Net Init: %s (%d)",
-        MqttClient_ReturnCodeToString(rc), rc);
-    if (rc != MQTT_CODE_SUCCESS) {
-        client_exit(mqttCtx);
-    }
-
     /* setup tx/rx buffers */
     mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
 
     /* Initialize MqttClient structure */
-    rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net,
-        mqtt_message_cb,
+    rc = MqttClient_Init(&mqttCtx->client, mqttCtx, mqtt_init_client_cb, mqtt_message_cb,
         mqttCtx->tx_buf, MAX_BUFFER_SIZE,
         mqttCtx->rx_buf, MAX_BUFFER_SIZE,
         mqttCtx->cmd_timeout_ms);
@@ -300,13 +288,6 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     if (rc != MQTT_CODE_SUCCESS) {
         client_exit(mqttCtx);
     }
-    /* The client.ctx will be stored in the cert callback ctx during
-       MqttSocket_Connect for use by mqtt_tls_verify_cb */
-    mqttCtx->client.ctx = mqttCtx;
-#ifdef WOLFMQTT_NONBLOCK
-    mqttCtx->useNonBlockMode = 1;
-#endif
-
 #ifdef WOLFMQTT_DISCONNECT_CB
     /* setup disconnect callback */
     rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,
@@ -689,7 +670,9 @@ int multithread_test(MQTTCtx *mqttCtx)
                 mqtt_stop_set();
                 PRINTF("Received Ctrl+c");
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                MqttClientNet_Wake(&gMqttCtx.net);
+                if (gMqttCtx.client.net.wake) {
+                    gMqttCtx.client.net.wake(&gMqttCtx.client);
+                }
             #endif
                 return TRUE;
             }
@@ -703,7 +686,9 @@ int multithread_test(MQTTCtx *mqttCtx)
                 mqtt_stop_set();
                 PRINTF("Received SIGINT");
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                MqttClientNet_Wake(&gMqttCtx.net);
+                if (gMqttCtx.client.net.wake) {
+                    gMqttCtx.client.net.wake(&gMqttCtx.client);
+                }
             #endif
             }
         }

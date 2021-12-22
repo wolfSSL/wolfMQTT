@@ -131,7 +131,7 @@ int wiot_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos, mqttCtx->use_tls);
 
     /* Initialize Network */
-    rc = MqttClientNet_Init(&mqttCtx->net, mqttCtx);
+    rc = MqttClientNet_Init(&mqttCtx->client);
 
     PRINTF("MQTT Net Init: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
@@ -144,8 +144,7 @@ int wiot_test(MQTTCtx *mqttCtx)
     mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
 
     /* Initialize MqttClient structure */
-    rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net,
-        mqtt_message_cb,
+    rc = MqttClient_Init(&mqttCtx->client, mqttCtx, mqtt_init_client_cb, mqtt_message_cb,
         mqttCtx->tx_buf, MAX_BUFFER_SIZE,
         mqttCtx->rx_buf, MAX_BUFFER_SIZE,
         mqttCtx->cmd_timeout_ms);
@@ -155,7 +154,6 @@ int wiot_test(MQTTCtx *mqttCtx)
     if (rc != MQTT_CODE_SUCCESS) {
         goto exit;
     }
-    mqttCtx->client.ctx = mqttCtx;
 
 #ifdef WOLFMQTT_DISCONNECT_CB
     /* setup disconnect callback */
@@ -365,9 +363,6 @@ exit:
     /* Free resources */
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
     if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
-
-    /* Cleanup network */
-    MqttClientNet_DeInit(&mqttCtx->net);
 
     MqttClient_DeInit(&mqttCtx->client);
 

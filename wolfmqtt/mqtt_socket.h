@@ -49,6 +49,8 @@
 
 struct _MqttClient;
 
+typedef int (*MqttClientCb)(struct _MqttClient* client);
+
 /* Function callbacks */
 typedef int (*MqttTlsCb)(struct _MqttClient* client);
 
@@ -82,6 +84,8 @@ typedef struct _MqttNet {
     MqttNetReadCb       read;
     MqttNetWriteCb      write;
     MqttNetDisconnectCb disconnect;
+    MqttClientCb        wake;
+    MqttClientCb        deinit;
 #ifdef WOLFMQTT_SN
     MqttNetPeekCb       peek;
     void                *multi_ctx;
@@ -90,7 +94,7 @@ typedef struct _MqttNet {
 
 
 /* MQTT SOCKET APPLICATION INTERFACE */
-WOLFMQTT_LOCAL int MqttSocket_Init(struct _MqttClient *client, MqttNet* net);
+WOLFMQTT_LOCAL int MqttSocket_Init(struct _MqttClient *client);
 WOLFMQTT_LOCAL int MqttSocket_Write(struct _MqttClient *client, const byte* buf,
         int buf_len, int timeout_ms);
 WOLFMQTT_LOCAL int MqttSocket_Read(struct _MqttClient *client, byte* buf,

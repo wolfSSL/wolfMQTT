@@ -251,6 +251,45 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
 #endif
 }
 
+static int mqtt_example_init_client_cb(int rc, MqttClient *client)
+{
+    MQTTCtx *ctx;
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    ctx = client->ctx;
+    client->test_mode = ctx->test_mode;
+    client->use_tls = ctx->use_tls;
+    return rc;
+}
+
+int mqtt_init_client_cb(MqttClient *client)
+{
+    int rc = MqttClientNet_Init(client);
+    if (rc == MQTT_CODE_CONTINUE) {
+        return rc;
+    }
+    PRINTF("MQTT Net Init: %s (%d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+    return mqtt_example_init_client_cb(rc, client);
+}
+
+#ifdef WOLFMQTT_SN
+int mqtt_sn_init_client_cb(MqttClient *client)
+{
+    int rc = SN_ClientNet_Init(client);
+    if (rc == MQTT_CODE_CONTINUE) {
+        return rc;
+    }
+    PRINTF("MQTT-SN Net Init: %s (%d)",
+        MqttClient_ReturnCodeToString(rc), rc);
+    return mqtt_example_init_client_cb(rc, client);
+}
+#endif
+
 int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 {
     int rc;

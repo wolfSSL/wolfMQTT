@@ -67,7 +67,7 @@ The library has three components.
 
 This is where the top level application interfaces for the MQTT client reside.
 
-* `int MqttClient_Init(MqttClient *client, MqttNet *net, MqttMsgCb msg_cb, byte *tx_buf, int tx_buf_len, byte *rx_buf, int rx_buf_len, int cmd_timeout_ms);`
+* `int MqttClient_Init(MqttClient *client, void *ctx, MqttClientCb ctx_init_cb, MqttMsgCb msg_cb, byte *tx_buf, int tx_buf_len, byte *rx_buf, int rx_buf_len, int cmd_timeout_ms);`
 
 These API's are blocking on `MqttNet.read` until error/timeout (`cmd_timeout_ms`):
 

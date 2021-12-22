@@ -104,21 +104,12 @@ int sn_test(MQTTCtx *mqttCtx)
 
     PRINTF("MQTT-SN Client: QoS %d", mqttCtx->qos);
 
-    /* Initialize Network */
-    rc = SN_ClientNet_Init(&mqttCtx->net, mqttCtx);
-    PRINTF("MQTT-SN Net Init: %s (%d)",
-        MqttClient_ReturnCodeToString(rc), rc);
-    if (rc != MQTT_CODE_SUCCESS) {
-        goto exit;
-    }
-
     /* setup tx/rx buffers */
     mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
 
     /* Initialize MqttClient structure */
-    rc = MqttClient_Init(&mqttCtx->client, &mqttCtx->net,
-        sn_message_cb,
+    rc = MqttClient_Init(&mqttCtx->client, mqttCtx, mqtt_sn_init_client_cb, sn_message_cb,
         mqttCtx->tx_buf, MAX_BUFFER_SIZE,
         mqttCtx->rx_buf, MAX_BUFFER_SIZE,
         mqttCtx->cmd_timeout_ms);
@@ -128,10 +119,6 @@ int sn_test(MQTTCtx *mqttCtx)
     if (rc != MQTT_CODE_SUCCESS) {
         goto exit;
     }
-
-    /* The client.ctx will be stored in the cert callback ctx during
-       MqttSocket_Connect for use by mqtt_tls_verify_cb */
-    mqttCtx->client.ctx = mqttCtx;
 
     /* Setup socket direct to gateway */
     rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
@@ -609,9 +596,6 @@ exit:
     /* Free resources */
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
     if (mqttCtx->rx_buf) WOLFMQTT_FREE(mqttCtx->rx_buf);
-
-    /* Cleanup network */
-    MqttClientNet_DeInit(&mqttCtx->net);
 
     MqttClient_DeInit(&mqttCtx->client);
 

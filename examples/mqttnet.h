@@ -26,16 +26,13 @@
     extern "C" {
 #endif
 
-#include "examples/mqttexample.h"
+#include "wolfmqtt/mqtt_client.h"
 
 /* Functions used to handle the MqttNet structure creation / destruction */
-int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx);
-int MqttClientNet_DeInit(MqttNet* net);
+int MqttClientNet_Init(MqttClient* client);
 #ifdef WOLFMQTT_SN
-int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx);
+int SN_ClientNet_Init(MqttClient* client);
 #endif
-
-int MqttClientNet_Wake(MqttNet* net);
 
 #ifdef __cplusplus
     } /* extern "C" */

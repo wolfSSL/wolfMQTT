@@ -141,7 +141,12 @@ typedef struct _MqttClient {
     byte        *rx_buf;
     int          rx_buf_len;
 
-    MqttNet     *net;   /* Pointer to network callbacks and context */
+    MqttNet      net;   /* Pointer to network callbacks and context */
+
+    byte         useNonBlockMode: 1; /* set to use non-blocking mode. network callbacks can return MQTT_CODE_CONTINUE to indicate "would block" */
+    byte         use_tls: 1;
+    byte         test_mode: 1;
+
 #ifdef ENABLE_MQTT_TLS
     MqttTls      tls;   /* WolfSSL context for TLS */
 #endif
@@ -190,8 +195,8 @@ typedef struct _MqttClient {
 /*! \brief      Initializes the MqttClient structure
  *  \param      client      Pointer to MqttClient structure
                             (uninitialized is okay)
- *  \param      net         Pointer to MqttNet structure that has been
-                            initialized with callback pointers and context
+ *  \param      ctx         The context used to call platform functions such as network
+ *  \param      ctx_init_cb Pointer to initialize client with ctx, including network
  *  \param      msgCb       Pointer to message callback function
  *  \param      tx_buf      Pointer to transmit buffer used during encoding
  *  \param      tx_buf_len  Maximum length of the transmit buffer
@@ -204,7 +209,8 @@ typedef struct _MqttClient {
  */
 WOLFMQTT_API int MqttClient_Init(
     MqttClient *client,
-    MqttNet *net,
+    void *ctx,
+    MqttClientCb ctx_init_cb,
     MqttMsgCb msg_cb,
     byte *tx_buf, int tx_buf_len,
     byte *rx_buf, int rx_buf_len,

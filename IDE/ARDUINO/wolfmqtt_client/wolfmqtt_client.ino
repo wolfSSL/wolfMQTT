@@ -177,11 +177,25 @@ void setup() {
   return;
 }
 
+static int mqttclient_init_cb(MqttClient* client)
+{
+  if (client == NULL) {
+    return MQTT_CODE_ERROR_BAD_ARG;
+  }
+  /* Setup network callbacks */
+  XMEMSET(&client->net, 0, sizeof(client->net));
+  client->net.connect = EthernetConnect;
+  client->net.read = EthernetRead;
+  client->net.write = EthernetWrite;
+  client->net.disconnect = EthernetDisconnect;
+  client->net.context = &ethClient;
+  return 0;
+}
+
 void loop() {
   int rc;
   MqttClient client;
   EthernetClient ethClient;
-  MqttNet net;
 #ifdef ENABLE_MQTT_TLS
   int use_tls = 1;
 #else
@@ -200,16 +214,10 @@ void loop() {
 
   Serial.print("MQTT Client: QoS ");
   Serial.println(qos);
-  
-  /* Setup network callbacks */
-  net.connect = EthernetConnect;
-  net.read = EthernetRead;
-  net.write = EthernetWrite;
-  net.disconnect = EthernetDisconnect;
-  net.context = &ethClient;
 
   /* Init Mqtt Client */
-  rc = MqttClient_Init(&client, &net, mqttclient_message_cb, tx_buf, MAX_BUFFER_SIZE,
+  rc = MqttClient_Init(&client, NULL, mqttclient_init_cb, mqttclient_message_cb,
+                       tx_buf, MAX_BUFFER_SIZE,
                        rx_buf, MAX_BUFFER_SIZE, DEFAULT_CMD_TIMEOUT_MS);
   Serial.print("MQTT Init: ");
   Serial.print(MqttClient_ReturnCodeToString(rc));
