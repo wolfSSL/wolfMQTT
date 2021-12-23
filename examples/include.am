@@ -9,18 +9,12 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/azure/azureiothub \
                    examples/aws/awsiot \
                    examples/wiot/wiot
-if BUILD_NONBLOCK
 noinst_PROGRAMS += examples/nbclient/nbclient
-endif
-if BUILD_MULTITHREAD
 noinst_PROGRAMS += examples/multithread/multithread
-endif
 if BUILD_SN
 noinst_PROGRAMS += examples/sn-client/sn-client
 noinst_PROGRAMS += examples/sn-client/sn-client_qos-1
-if BUILD_MULTITHREAD
 noinst_PROGRAMS += examples/sn-client/sn-multithread
-endif
 endif
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
@@ -33,12 +27,8 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/wiot/wiot.h \
                    examples/mqttnet.h \
                    examples/mqttexample.h
-if BUILD_NONBLOCK
 noinst_HEADERS +=  examples/nbclient/nbclient.h
-endif
-if BUILD_MULTITHREAD
 noinst_HEADERS +=  examples/multithread/multithread.h
-endif
 if BUILD_SN
 noinst_HEADERS +=  examples/sn-client/sn-client.h
 endif
@@ -54,23 +44,19 @@ examples_mqttsimple_mqttsimple_SOURCES      = examples/mqttsimple/mqttsimple.c
 examples_mqttsimple_mqttsimple_LDADD        = src/libwolfmqtt.la
 examples_mqttsimple_mqttsimple_DEPENDENCIES = src/libwolfmqtt.la
 
-if BUILD_MULTITHREAD
 examples_multithread_multithread_SOURCES      = examples/multithread/multithread.c \
                                                 examples/mqttnet.c \
                                                 examples/mqttexample.c
 examples_multithread_multithread_LDADD        = src/libwolfmqtt.la
 examples_multithread_multithread_DEPENDENCIES = src/libwolfmqtt.la
 examples_multithread_multithread_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
-endif
 
-if BUILD_NONBLOCK
 examples_nbclient_nbclient_SOURCES          = examples/nbclient/nbclient.c \
                                               examples/mqttnet.c \
                                               examples/mqttexample.c
 examples_nbclient_nbclient_LDADD            = src/libwolfmqtt.la
 examples_nbclient_nbclient_DEPENDENCIES     = src/libwolfmqtt.la
 examples_nbclient_nbclient_CPPFLAGS         = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
-endif
 
 examples_firmware_fwpush_SOURCES            = examples/firmware/fwpush.c \
                                               examples/mqttnet.c \
@@ -126,14 +112,12 @@ examples_sn_client_sn_client_qos_1_LDADD        = src/libwolfmqtt.la
 examples_sn_client_sn_client_qos_1_DEPENDENCIES = src/libwolfmqtt.la
 examples_sn_client_sn_client_qos_1_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
-if BUILD_MULTITHREAD
 examples_sn_client_sn_multithread_SOURCES        = examples/sn-client/sn-multithread.c \
                                                    examples/mqttnet.c \
                                                    examples/mqttexample.c
 examples_sn_client_sn_multithread_LDADD          = src/libwolfmqtt.la
 examples_sn_client_sn_multithread_DEPENDENCIES   = src/libwolfmqtt.la
 examples_sn_client_sn_multithread_CPPFLAGS       = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
-endif
 endif
 endif
 
@@ -147,19 +131,11 @@ dist_example_DATA+= examples/mqttnet.c \
                     examples/azure/azureiothub.c \
                     examples/aws/awsiot.c \
                     examples/wiot/wiot.c
-if BUILD_NONBLOCK
 dist_example_DATA+= examples/nbclient/nbclient.c
-endif
-if BUILD_MULTITHREAD
 dist_example_DATA+= examples/multithread/multithread.c
-endif
-if BUILD_SN
 dist_example_DATA+= examples/sn-client/sn-client.c
 dist_example_DATA+= examples/sn-client/sn-client_qos-1.c
-if BUILD_MULTITHREAD
 dist_example_DATA+= examples/sn-client/sn-multithread.c
-endif
-endif
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/firmware/.libs/fwpush \
@@ -167,18 +143,12 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/azure/.libs/azureiothub \
                    examples/aws/.libs/awsiot \
                    examples/wiot/.libs/wiot
-if BUILD_NONBLOCK
 DISTCLEANFILES+=   examples/nbclient/.libs/nbclient
-endif
-if BUILD_MULTITHREAD
 DISTCLEANFILES+=   examples/multithread/.libs/multithread
-endif
 if BUILD_SN
 DISTCLEANFILES+=   examples/sn-client/.libs/sn-client
 DISTCLEANFILES+=   examples/sn-client/.libs/sn-client_qos-1
-if BUILD_MULTITHREAD
 DISTCLEANFILES+=   examples/sn-client/.libs/sn-multithread
-endif
 endif
 
 EXTRA_DIST+=       examples/mqttuart.c \
