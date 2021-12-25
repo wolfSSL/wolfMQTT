@@ -203,9 +203,8 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* count the number of TEST_MESSAGE matches received */
         {
-            if (sizeof(TEST_MESSAGE) - 1 == msg->buffer_len &&
-                /* Only compare the "test" part */
-                XSTRNCMP(TEST_MESSAGE + 4, (char*)msg->buffer + 4,
+            /* Only compare the "test" part */
+            if (XSTRNCMP(TEST_MESSAGE + 4, (char*)msg->buffer + 4,
                          msg->buffer_len-4) == 0)
             {
                 mNumMsgsRecv++;
@@ -293,13 +292,13 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     PRINTF("Use \"Ctrl+c\" to exit.");
 
     /* setup tx/rx buffers */
-    mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
-    mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
+    mqttCtx->tx_buf = (byte*)WOLFMQTT_MALLOC(128);
+    mqttCtx->rx_buf = (byte*)WOLFMQTT_MALLOC(128);
 
     /* Initialize MqttClient structure */
     rc = MqttClient_Init(&mqttCtx->client, mqttCtx, mqtt_init_client_cb, mqtt_message_cb,
-        mqttCtx->tx_buf, MAX_BUFFER_SIZE,
-        mqttCtx->rx_buf, MAX_BUFFER_SIZE,
+        mqttCtx->tx_buf, 128,
+        mqttCtx->rx_buf, 128,
         mqttCtx->cmd_timeout_ms);
 
     PRINTF("MQTT Init: %s (%d)",
