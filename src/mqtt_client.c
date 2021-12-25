@@ -1362,95 +1362,84 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     return rc;
 }
 
-#ifdef WOLFMQTT_TEST_NONBLOCK
-static int testNbAlt = 0;
-#endif
-
 static int MqttClient_Publish_ReadPayload(MqttClient* client,
     MqttPublish* publish, int timeout_ms)
 {
     int rc = MQTT_CODE_SUCCESS;
-    byte msg_done;
+    byte msg_done = 0;
+    byte received_chunk = 0;
 
     /* Handle packet callback and read remaining payload */
-    do {
+    for (;;) {
+        int msg_len;
+        word32 received_len = publish->buffer_pos + publish->buffer_len;
+        if (received_len > publish->total_len) {
+            rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+            break;
+        }
+
         /* Determine if message is done */
-        msg_done = ((publish->buffer_pos + publish->buffer_len) >=
-                    publish->total_len) ? 1 : 0;
+        if (received_len == publish->total_len) {
+            msg_done = 1;
+        }
 
-        if (publish->buffer_new) {
-            /* Issue callback for new message (first time only) */
-            if (client->msg_cb) {
-                /* if using the temp publish message buffer,
-                   then populate message context with client context */
-                if (publish->ctx == NULL && &client->msg.publish == publish) {
-                    publish->ctx = client->ctx;
-                }
-                rc = client->msg_cb(client, publish, publish->buffer_new,
-                                    msg_done);
-                if (rc != MQTT_CODE_SUCCESS) {
-                    return rc;
-                };
+        /* Issue callback for new message (first time only) */
+        if (client->msg_cb) {
+            /* if using the temp publish message buffer,
+                then populate message context with client context */
+            if (publish->ctx == NULL && &client->msg.publish == publish) {
+                publish->ctx = client->ctx;
             }
-
+            rc = client->msg_cb(client, publish, publish->buffer_new,
+                                msg_done);
+            /* May be MQTT_CODE_CONTINUE, so break it and try next time */
+            if (rc != MQTT_CODE_SUCCESS) {
+                break;
+            }
+        }
+        /**The buffer is either consumed by msg_cb or dropped.
+         * add last length to position and reset len
+         */
+        publish->buffer_pos += publish->buffer_len;
+        publish->buffer_len = 0;
+        if (publish->buffer_new) {
+            publish->buffer_new = 0;
             /* Reset topic name since valid on new message only */
             publish->topic_name = NULL;
             publish->topic_name_len = 0;
-
-            publish->buffer_new = 0;
+        }
+        if (msg_done) {
+            break;
         }
 
-        /* Read payload */
-        if (!msg_done) {
-            int msg_len;
+        if (received_chunk && client->useNonBlockMode) {
+            rc = MQTT_CODE_CONTINUE; /* mark continue for event loop */
+            break;
+        }
 
-            /* add last length to position and reset len */
-            publish->buffer_pos += publish->buffer_len;
-            publish->buffer_len = 0;
-
-            /* set state to reading payload */
-            publish->stat.read = MQTT_MSG_PAYLOAD;
-
-            msg_len = (publish->total_len - publish->buffer_pos);
+        if (rc == MQTT_CODE_SUCCESS) {
+            /* Read payload */
+            msg_len = publish->total_len - received_len;
             if (msg_len > client->rx_buf_len) {
                 msg_len = client->rx_buf_len;
             }
 
             /* make sure there is something to read */
-            if (msg_len > 0) {
-                #ifdef WOLFMQTT_TEST_NONBLOCK
-                    if (!testNbAlt) {
-                        testNbAlt = 1;
-                        return MQTT_CODE_CONTINUE;
-                    }
-                    testNbAlt = 0;
-                #endif
-
-                rc = MqttSocket_Read(client, client->rx_buf, msg_len,
-                        timeout_ms);
-                if (rc < 0) {
-                    break;
-                }
-
+            rc = MqttSocket_Read(client, client->rx_buf, msg_len,
+                    timeout_ms);
+            if (rc >= 0) {
                 /* Update message */
                 publish->buffer = client->rx_buf;
                 publish->buffer_len = rc;
+                received_chunk = 1;
                 rc = MQTT_CODE_SUCCESS; /* mark success */
-
-                msg_done = ((publish->buffer_pos + publish->buffer_len) >=
-                    publish->total_len) ? 1 : 0;
-
-                /* Issue callback for additional publish payload */
-                if (client->msg_cb) {
-                    rc = client->msg_cb(client, publish, publish->buffer_new,
-                                        msg_done);
-                    if (rc != MQTT_CODE_SUCCESS) {
-                        return rc;
-                    };
-                }
+            } else {
+                break;
             }
+        } else {
+            break;
         }
-    } while (!msg_done);
+    }
 
     return rc;
 }
