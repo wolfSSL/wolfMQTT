@@ -38,3 +38,9 @@ jobs:
       run: make
     - name: make check
       run: make check
+    - name: configure with SN Enabled
+      run: ./configure --enable-sn
+    - name: make
+      run: make
+    - name: make check
+      run: make check
