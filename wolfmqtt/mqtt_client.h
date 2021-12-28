@@ -48,8 +48,8 @@
 
 struct _MqttClient;
 
-/*! \brief      Mqtt Message Callback
- *  \discussion If the message payload is larger than the maximum RX buffer
+/*! \brief      Mqtt Message Callback.
+ *  If the message payload is larger than the maximum RX buffer
     then this callback is called multiple times.
     If msg_new = 1 its a new message.
     The topic_name and topic_name length are only valid when msg_new = 1.
@@ -72,8 +72,8 @@ struct _MqttClient;
 typedef int (*MqttMsgCb)(struct _MqttClient *client, MqttMessage *message,
     byte msg_new, byte msg_done);
 
-/*! \brief      Mqtt Publish Callback
- *  \discussion If the publish payload is larger than the maximum TX buffer
+/*! \brief      Mqtt Publish Callback.
+ *  If the publish payload is larger than the maximum TX buffer
     then this callback is called multiple times. This callback is executed from
     within a call to MqttPublish. It is expected to provide a buffer and it's
     size and return >=0 for success.
@@ -116,8 +116,8 @@ typedef struct _MqttSk {
     typedef int (*MqttPropertyCb)(struct _MqttClient* client, MqttProp* head, void* ctx);
 #endif
 #ifdef WOLFMQTT_SN
-    /*! \brief      Mqtt-SN Register Callback
-     *  \discussion A GW sends a REGISTER message to a client if it wants to
+    /*! \brief      Mqtt-SN Register Callback.
+     *  A GW sends a REGISTER message to a client if it wants to
         inform that client about the topic name and the assigned topic id that
         it will use later on when sending PUBLISH messages of the corresponding
         topic name. This callback allows the client to accept and save the new
@@ -192,12 +192,12 @@ typedef struct _MqttClient {
                             (uninitialized is okay)
  *  \param      net         Pointer to MqttNet structure that has been
                             initialized with callback pointers and context
- *  \param      msgCb       Pointer to message callback function
+ *  \param      msg_cb       Pointer to message callback function
  *  \param      tx_buf      Pointer to transmit buffer used during encoding
  *  \param      tx_buf_len  Maximum length of the transmit buffer
  *  \param      rx_buf      Pointer to receive buffer used during decoding
  *  \param      rx_buf_len  Maximum length of the receive buffer
- *  \param      connect_timeout_ms
+ *  \param      cmd_timeout_ms
                             Maximum command wait timeout in milliseconds
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
                 (see enum MqttPacketResponseCodes)
@@ -220,7 +220,7 @@ WOLFMQTT_API void MqttClient_DeInit(MqttClient *client);
 /*! \brief      Sets a disconnect callback with custom context
  *  \param      client      Pointer to MqttClient structure
                             (uninitialized is okay)
- *  \param      disCb       Pointer to disconnect callback function
+ *  \param      discb       Pointer to disconnect callback function
  *  \param      ctx         Pointer to your own context
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
                 (see enum MqttPacketResponseCodes)
@@ -248,7 +248,7 @@ WOLFMQTT_API int MqttClient_SetPropertyCallback(
 
 /*! \brief      Encodes and sends the MQTT Connect packet and waits for the
                 Connect Acknowledgment packet
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      connect     Pointer to MqttConnect structure initialized
                             with connect parameters
@@ -264,7 +264,7 @@ WOLFMQTT_API int MqttClient_Connect(
                 payload is larger than the buffer size, it can be called
                 successively to transmit the full payload.
                 (if QoS > 0)
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *              If QoS level = 1 then will wait for PUBLISH_ACK.
  *              If QoS level = 2 then will wait for PUBLISH_REC then send
                     PUBLISH_REL and wait for PUBLISH_COMP.
@@ -284,7 +284,7 @@ WOLFMQTT_API int MqttClient_Publish(
                 Publish response (if QoS > 0). The callback function is used to
                 copy the payload data, allowing the use of transmit buffers
                 smaller than the total size of the payload.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *              If QoS level = 1 then will wait for PUBLISH_ACK.
  *              If QoS level = 2 then will wait for PUBLISH_REC then send
                     PUBLISH_REL and wait for PUBLISH_COMP.
@@ -304,7 +304,7 @@ WOLFMQTT_API int MqttClient_Publish_ex(
 
 /*! \brief      Encodes and sends the MQTT Subscribe packet and waits for the
                 Subscribe Acknowledgment packet
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      subscribe   Pointer to MqttSubscribe structure initialized with
                             subscription topic list and desired QoS.
@@ -317,7 +317,7 @@ WOLFMQTT_API int MqttClient_Subscribe(
 
 /*! \brief      Encodes and sends the MQTT Unsubscribe packet and waits for the
                 Unsubscribe Acknowledgment packet
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      unsubscribe Pointer to MqttUnsubscribe structure initialized
                             with topic list.
@@ -330,7 +330,7 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
 
 /*! \brief      Encodes and sends the MQTT Ping Request packet and waits for the
                 Ping Response packet
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
@@ -341,8 +341,9 @@ WOLFMQTT_API int MqttClient_Ping(
 /*! \brief      Encodes and sends the MQTT Ping Request packet and waits for the
                 Ping Response packet. This version takes a MqttPing structure
                 and can be used with non-blocking applications.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
+ *  \param      ping        Pointer to MqttPing structure 
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -351,7 +352,7 @@ WOLFMQTT_API int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping);
 #ifdef WOLFMQTT_V5
 /*! \brief      Encodes and sends the MQTT Authentication Request packet and
                 waits for the Ping Response packet
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      auth        Pointer to MqttAuth structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -362,17 +363,17 @@ WOLFMQTT_API int MqttClient_Auth(
     MqttAuth *auth);
 
 
-/*! \brief      Add a new property
- *  \discussion Allocate a property structure and add it to the head of the list
-                pointed to by head. To be used prior to calling packet command.
+/*! \brief      Add a new property.
+ *  Allocate a property structure and add it to the head of the list
+    pointed to by head. To be used prior to calling packet command.
  *  \param      head        Pointer-pointer to a property structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
  */
 WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
     MqttProp **head);
 
-/*! \brief      Free property list
- *  \discussion Deallocate the list pointed to by head. Must be used after the
+/*! \brief      Free property list.
+ *  Deallocate the list pointed to by head. Must be used after the
                 packet command that used MqttClient_Prop_Add.
  *  \param      head        Pointer-pointer to a property structure
  *  \return     MQTT_CODE_SUCCESS or -1 on error (and sets errno)
@@ -383,7 +384,7 @@ WOLFMQTT_API int MqttClient_PropsFree(
 
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
- *  \discussion This is a non-blocking function that will try and send using
+ *  \note This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -394,7 +395,7 @@ WOLFMQTT_API int MqttClient_Disconnect(
 
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
- *  \discussion This is a non-blocking function that will try and send using
+ *  \note This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
  *  \param      disconnect  Pointer to MqttDisconnect structure. NULL is valid.
@@ -408,7 +409,7 @@ WOLFMQTT_API int MqttClient_Disconnect_ex(
 
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -420,7 +421,7 @@ WOLFMQTT_API int MqttClient_WaitMessage(
 
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \param      timeout_ms  Milliseconds until read timeout
@@ -434,7 +435,7 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 
 
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)
- *  \discussion Will perform the MqttTlsCb callback if use_tls is non-zero value
+ *  Will perform the MqttTlsCb callback if use_tls is non-zero value
  *  \param      client      Pointer to MqttClient structure
  *  \param      host        Address of the broker server
  *  \param      port        Optional custom port. If zero will use defaults
@@ -442,6 +443,7 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
                             encryption of data
  *  \param      cb          A function callback for configuration of the SSL
                             context certificate checking
+ *  \param      timeout_ms  Milliseconds until read timeout 
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -488,7 +490,7 @@ WOLFMQTT_API const char* MqttClient_ReturnCodeToString(
 #ifdef WOLFMQTT_SN
 /*! \brief      Encodes and sends the a message to search for a gateway and
                 waits for the gateway info response message.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      search      Pointer to SN_SearchGW structure initialized
                             with hop radius.
@@ -504,7 +506,7 @@ WOLFMQTT_API int SN_Client_SearchGW(
                 prompts for LWT Topic and Message. Sending an empty will topic
                 indicates that the client wishes to delete the Will topic and
                 the Will message stored in the server.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      connect     Pointer to SN_Connect structure initialized
                             with connect parameters
@@ -518,7 +520,7 @@ WOLFMQTT_API int SN_Client_Connect(
 /*! \brief      Encodes and sends the MQTT-SN Will Topic Update packet. Sending
                 a NULL 'will' indicates that the client wishes to delete the
                 Will topic and the Will message stored in the server.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      will        Pointer to SN_Will structure initialized
                             with topic and message parameters. NULL is valid.
@@ -528,7 +530,7 @@ WOLFMQTT_API int SN_Client_Connect(
 WOLFMQTT_API int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will);
 
 /*! \brief      Encodes and sends the MQTT-SN Will Message Update packet.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      will        Pointer to SN_Will structure initialized
                             with topic and message parameters. NULL is valid.
@@ -542,7 +544,7 @@ WOLFMQTT_API int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will);
                 client to a GW for requesting a topic id value for the included
                 topic name. It is also sent by a GW to inform a client about
                 the topic id value it has assigned to the included topic name.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      regist      Pointer to SN_Register structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -568,7 +570,7 @@ WOLFMQTT_API int SN_Client_SetRegisterCallback(
 
 /*! \brief      Encodes and sends the MQTT-SN Publish packet and waits for the
                 Publish response (if QoS > 0).
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *              If QoS level = 1 then will wait for PUBLISH_ACK.
  *              If QoS level = 2 then will wait for PUBLISH_REC then send
                     PUBLISH_REL and wait for PUBLISH_COMP.
@@ -587,7 +589,7 @@ WOLFMQTT_API int SN_Client_Publish(
 /*! \brief      Encodes and sends the MQTT-SN Subscribe packet and waits for the
                 Subscribe Acknowledgment packet containing the assigned
                 topic ID.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      subscribe   Pointer to SN_Subscribe structure initialized with
                             subscription topic list and desired QoS.
@@ -600,7 +602,7 @@ WOLFMQTT_API int SN_Client_Subscribe(
 
 /*! \brief      Encodes and sends the MQTT-SN Unsubscribe packet and waits for
                 the Unsubscribe Acknowledgment packet
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      unsubscribe Pointer to SN_Unsubscribe structure initialized
                             with topic ID.
@@ -614,7 +616,7 @@ WOLFMQTT_API int SN_Client_Unsubscribe(
 /*! \brief      Encodes and sends the MQTT-SN Disconnect packet. Client may
                 send the disconnect with a duration to indicate the client is
                 entering the "asleep" state.
- *  \discussion This is a non-blocking function that will try and send using
+ *  \note This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -626,7 +628,7 @@ WOLFMQTT_API int SN_Client_Disconnect(
 /*! \brief      Encodes and sends the MQTT-SN Disconnect packet. Client may
                 send the disconnect with a duration to indicate the client is
                 entering the "asleep" state.
- *  \discussion This is a non-blocking function that will try and send using
+ *  \note This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
  *  \param      disconnect  Pointer to SN_Disconnect structure. NULL is valid.
@@ -643,7 +645,7 @@ WOLFMQTT_API int SN_Client_Disconnect_ex(
                 state and wants to notify the gateway that it is entering the
                 "awake" state, it should add it's client ID to the ping
                 request.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      ping        Pointer to SN_PingReq structure. NULL is valid.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -655,7 +657,7 @@ WOLFMQTT_API int SN_Client_Ping(
 
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
- *  \discussion This is a blocking function that will wait for MqttNet.read
+ *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
