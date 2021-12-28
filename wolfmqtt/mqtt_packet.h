@@ -277,16 +277,24 @@ typedef struct _MqttPacket {
 
 
 /* Generic Message */
-typedef enum _MqttMsgStat {
+typedef enum _MqttMsgState {
     MQTT_MSG_BEGIN = 0, /* must be zero, so memset will setup state */
-#ifdef WOLFMQTT_V5
-    MQTT_MSG_AUTH,
-#endif
     MQTT_MSG_WAIT,
-    MQTT_MSG_WRITE,
-    MQTT_MSG_WRITE_PAYLOAD,
-    MQTT_MSG_READ,
-    MQTT_MSG_READ_PAYLOAD,
+    MQTT_MSG_AUTH,
+    MQTT_MSG_HEADER,
+    MQTT_MSG_PAYLOAD,
+    MQTT_MSG_ACK,
+} MqttMsgState;
+
+/* Generic message status tracking */
+typedef struct _MqttMsgStat {
+    MqttMsgState read;
+    MqttMsgState write;
+
+#ifdef WOLFMQTT_MULTITHREAD
+    byte isReadLocked:1;
+    byte isWriteLocked:1;
+#endif
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD
@@ -448,8 +456,9 @@ typedef struct _MqttPublishResp {
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp pendResp;
 #endif
-
     word16      packet_id;
+    byte        packet_type; /* type to send */
+    
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;
@@ -616,6 +625,7 @@ typedef struct _MqttAuth {
 
 /* Generic MQTT struct for packet types */
 typedef union _MqttObject {
+    MqttMsgStat        stat; /* all objects types have this at top of struct */
     MqttConnect        connect;
     MqttConnectAck     connect_ack;
     MqttPublish        publish;

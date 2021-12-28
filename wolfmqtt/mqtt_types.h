@@ -84,7 +84,11 @@
 
 #ifdef WOLFMQTT_MULTITHREAD
     /* Multi-threading uses binary semaphores */
-    #if defined(__MACH__)
+    #if defined(WOLFMQTT_USER_THREADING)
+        /* User provides API's and wm_Sem type.
+         * Add your wc_Sem into user_settings.h */
+
+    #elif defined(__MACH__)
         /* Apple Style Dispatch Semaphore */
         #include <dispatch/dispatch.h>
         typedef dispatch_semaphore_t wm_Sem;
@@ -111,9 +115,6 @@
         #include <ws2tcpip.h>
         #include <windows.h>
         typedef HANDLE wm_Sem;
-
-    #elif defined(WOLFMQTT_USER_THREADING)
-        /* User provides API's and wm_Sem type */
 
     #else
         #error "Multithreading requires binary semaphore implementation!"

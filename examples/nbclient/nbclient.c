@@ -355,8 +355,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 }
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Need to send keep-alive ping */
-                    rc = MQTT_CODE_CONTINUE;
                     PRINTF("Keep-alive timeout, sending ping");
+                    rc = MQTT_CODE_CONTINUE;
                     mqttCtx->stat = WMQ_PING;
                     return rc;
                 }
@@ -380,10 +380,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 sizeof(mqttCtx->topics) / sizeof(MqttTopic);
             mqttCtx->unsubscribe.topics = mqttCtx->topics;
 
-            mqttCtx->stat = WMQ_UNSUB;
             mqttCtx->start_sec = 0;
+            mqttCtx->stat = WMQ_UNSUB;
+            rc = MQTT_CODE_CONTINUE;
+            return rc;
         }
-        FALL_THROUGH;
 
         case WMQ_PING:
         {

@@ -458,10 +458,10 @@ word16 mqtt_get_packetid(void)
 }
 
 #ifdef WOLFMQTT_NONBLOCK
-    #if defined(MICROCHIP_MPLAB_HARMONY)
-        #include <system/tmr/sys_tmr.h>
-    #else
-        #include <time.h>
+#if defined(MICROCHIP_MPLAB_HARMONY)
+    #include <system/tmr/sys_tmr.h>
+#else
+    #include <time.h>
 #endif
 
 static word32 mqtt_get_timer_seconds(void)

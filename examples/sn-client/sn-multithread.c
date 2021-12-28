@@ -41,13 +41,16 @@
 /* Number of publish tasks. Each will send a unique message to the broker. */
 #define NUM_PUB_TASKS   10
 
-
 /* Locals */
 static int mStopRead = 0;
+
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_SN)
+
+/* Locals */
 static int mNumMsgsRecvd;
 static word16 topicID;
 
-#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_SN)
 
 #ifdef USE_WINDOWS_API
     /* Windows Threading */
@@ -626,7 +629,8 @@ int sn_multithread_test(MQTTCtx *mqttCtx)
             if (signo == SIGINT) {
                 mStopRead = 1;
                 PRINTF("Received SIGINT");
-            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+            #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_SN) && \
+                defined(WOLFMQTT_ENABLE_STDIN_CAP)
                 MqttClientNet_Wake(&gMqttCtx.net);
             #endif
             }

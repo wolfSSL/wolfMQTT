@@ -146,9 +146,10 @@ typedef struct _MqttClient {
     MqttTls      tls;   /* WolfSSL context for TLS */
 #endif
 
-    MqttPkRead   packet;
-    MqttSk       read;
-    MqttSk       write;
+    MqttPkRead   packet; /* publish packet state - protected by read lock */
+    MqttPublishResp packetAck; /* publish ACK - protected by write lock */
+    MqttSk       read;   /* read socket state - protected by read lock */
+    MqttSk       write;  /* write socket state - protected by write lock */
 
     MqttMsgCb    msg_cb;
     MqttObject   msg;   /* generic incoming message used by MqttClient_WaitType */
@@ -160,11 +161,11 @@ typedef struct _MqttClient {
     void*        ctx;   /* user supplied context for publish callbacks */
 
 #ifdef WOLFMQTT_V5
-    word32  packet_sz_max; /* Server property */
-    byte    max_qos;       /* Server property */
-    byte    retain_avail;  /* Server property */
-    byte    enable_eauth;  /* Enhanced authentication */
-    byte protocol_level;
+    word32 packet_sz_max; /* Server property */
+    byte   max_qos;       /* Server property */
+    byte   retain_avail;  /* Server property */
+    byte   enable_eauth;  /* Enhanced authentication */
+    byte   protocol_level;
 #endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -179,8 +180,8 @@ typedef struct _MqttClient {
     wm_Sem lockSend;
     wm_Sem lockRecv;
     wm_Sem lockClient;
-    struct _MqttPendResp* firstPendResp;
-    struct _MqttPendResp* lastPendResp;
+    struct _MqttPendResp* firstPendResp; /* protected with client lock */
+    struct _MqttPendResp* lastPendResp;  /* protected with client lock */
 #endif
 } MqttClient;
 

@@ -151,8 +151,8 @@ typedef struct _MQTTCtx {
     int      max_packet_size;
 #endif
     word32 cmd_timeout_ms;
-#if defined(WOLFMQTT_NONBLOCK)
-    word32  start_sec; /* used for keep-alive */
+#ifdef WOLFMQTT_NONBLOCK
+    word32 start_sec; /* used for timeout and keep-alive */
 #endif
     word16 keep_alive_sec;
     word16 port;
