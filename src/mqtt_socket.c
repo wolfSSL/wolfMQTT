@@ -35,11 +35,6 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_socket.h"
 
-/* Options */
-#ifdef WOLFMQTT_NO_STDIO
-    #undef WOLFMQTT_DEBUG_SOCKET
-#endif
-
 
 /* Public Functions */
 #ifdef ENABLE_MQTT_TLS
@@ -161,7 +156,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
 
     /* check for buffer position overflow */
     if (client->write.pos >= buf_len) {
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -246,7 +241,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 
     /* check for buffer position overflow */
     if (client->read.pos >= buf_len) {
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -296,7 +291,7 @@ int MqttSocket_Peek(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 
     /* check for buffer position overflow */
     if (client->read.pos >= buf_len) {
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     rc = client->net->peek(client->net->context, buf, buf_len, timeout_ms);

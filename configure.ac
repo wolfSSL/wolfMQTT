@@ -71,7 +71,7 @@ DEBUG_CFLAGS="-g -O0 -DDEBUG_WOLFMQTT"
 OPTIMIZE_CFLAGS="-O2"
 
 AX_DEBUG
-AS_IF([test "x$ax_enable_debug" = "xyes" || test "x$ax_enable_debug" = "xverbose"],
+AS_IF([test "x$ax_enable_debug" = "xyes" || test "x$ax_enable_debug" = "xverbose" || test "x$ax_enable_debug" = "xtrace"],
       [AM_CFLAGS="$DEBUG_CFLAGS $AM_CFLAGS -DDEBUG"],
       [AM_CFLAGS="$AM_CFLAGS $OPTIMIZE_CFLAGS -DNDEBUG"])
 
@@ -94,11 +94,16 @@ else
 fi
 
 
-# Verbose Logging
-if test "x$ax_enable_debug" = "xverbose"
+# Logging / Tracing
+if test "x$ax_enable_debug" = "xverbose" || test "x$ax_enable_debug" = "xtrace"
 then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_DEBUG_CLIENT -DWOLFMQTT_DEBUG_SOCKET"
+    if test "x$ax_enable_debug" = "xtrace"
+    then
+        AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_DEBUG_TRACE"
+    fi
 fi
+
 
 # ALL FEATURES
 AC_ARG_ENABLE([all],

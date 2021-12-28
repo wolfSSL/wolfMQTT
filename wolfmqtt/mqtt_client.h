@@ -183,6 +183,9 @@ typedef struct _MqttClient {
     struct _MqttPendResp* firstPendResp; /* protected with client lock */
     struct _MqttPendResp* lastPendResp;  /* protected with client lock */
 #endif
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DEBUG_CLIENT)
+    int lastRc;
+#endif
 } MqttClient;
 
 

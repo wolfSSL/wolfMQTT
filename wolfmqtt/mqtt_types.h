@@ -321,6 +321,20 @@ enum MqttPacketResponseCodes {
     #define WOLFMQTT_NORETURN
 #endif
 
+/* Logging / Tracing */
+#ifdef WOLFMQTT_NO_STDIO
+    #undef WOLFMQTT_DEBUG_CLIENT
+    #undef WOLFMQTT_DEBUG_SOCKET
+#endif
+
+#ifdef WOLFMQTT_DEBUG_TRACE
+#define MQTT_TRACE_ERROR(err) ({ PRINTF("ERROR: %d (%s:%d)", err, __FUNCTION__, __LINE__); err; })
+#define MQTT_TRACE_MSG(msg)      PRINTF("%s: (%s:%d)", msg, __FUNCTION__, __LINE__);
+#else
+#define MQTT_TRACE_ERROR(err) err
+#define MQTT_TRACE_MSG(msg)
+#endif /* WOLFMQTT_DEBUG_TRACE */
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif
