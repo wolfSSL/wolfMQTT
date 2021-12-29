@@ -347,7 +347,7 @@ WOLFMQTT_API int MqttClient_Ping(
                 and can be used with non-blocking applications.
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
- *  \param      ping        Pointer to MqttPing structure 
+ *  \param      ping        Pointer to MqttPing structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -437,6 +437,17 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
     MqttObject* msg,
     int timeout_ms);
 
+/*! \brief      In a multi-threaded and non-blocking mode this allows you to
+                cancel an MQTT object that was previously submitted.
+ *  \note This is a blocking function that will wait for MqttNet.read
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      msg         Pointer to MqttObject structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_CancelMessage(
+    MqttClient *client,
+    MqttObject* msg);
 
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)
  *  Will perform the MqttTlsCb callback if use_tls is non-zero value
@@ -447,7 +458,7 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
                             encryption of data
  *  \param      cb          A function callback for configuration of the SSL
                             context certificate checking
- *  \param      timeout_ms  Milliseconds until read timeout 
+ *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

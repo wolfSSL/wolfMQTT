@@ -302,7 +302,8 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
            mqttCtx->port, DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
         rc = check_response(mqttCtx, rc, &startSec);
-    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+    } while (rc == MQTT_CODE_CONTINUE);
+
     PRINTF("MQTT Socket Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
@@ -338,7 +339,11 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     do {
         rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
         rc = check_response(mqttCtx, rc, &startSec);
-    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+    } while (rc == MQTT_CODE_CONTINUE);
+    if (rc != MQTT_CODE_SUCCESS) {
+        MqttClient_CancelMessage(&mqttCtx->client,
+            (MqttObject*)&mqttCtx->connect);
+    }
 
     PRINTF("MQTT Connect: Proto (%s), %s (%d)",
         MqttClient_GetProtocolVersionString(&mqttCtx->client),
@@ -407,7 +412,11 @@ static void *subscribe_task(void *param)
     do {
         rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
         rc = check_response(mqttCtx, rc, &startSec);
-    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+    } while (rc == MQTT_CODE_CONTINUE);
+    if (rc != MQTT_CODE_SUCCESS) {
+        MqttClient_CancelMessage(&mqttCtx->client,
+            (MqttObject*)&mqttCtx->subscribe);
+    }
     
     PRINTF("MQTT Subscribe: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
@@ -546,7 +555,10 @@ static void *publish_task(void *param)
     do {
         rc = MqttClient_Publish(&mqttCtx->client, &publish);
         rc = check_response(mqttCtx, rc, &startSec);
-    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+    } while (rc == MQTT_CODE_CONTINUE);
+    if (rc != MQTT_CODE_SUCCESS) {
+        MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish);
+    }
 
     wm_SemLock(&mtLock);
     PRINTF("MQTT Publish: Topic %s, %s (%d)",
@@ -583,7 +595,11 @@ static void *ping_task(void *param)
         do {
             rc = MqttClient_Ping_ex(&mqttCtx->client, &ping);
             rc = check_response(mqttCtx, rc, &startSec);
-        } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+        } while (rc == MQTT_CODE_CONTINUE);
+        if (rc != MQTT_CODE_SUCCESS) {
+            MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&ping);
+        }
+
         if (rc != MQTT_CODE_SUCCESS) {
             PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
@@ -610,7 +626,11 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
     do {
         rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
         rc = check_response(mqttCtx, rc, &startSec);
-    } while (rc == MQTT_CODE_CONTINUE || rc == MQTT_CODE_STDIN_WAKE);
+    } while (rc == MQTT_CODE_CONTINUE);
+    if (rc != MQTT_CODE_SUCCESS) {
+        MqttClient_CancelMessage(&mqttCtx->client,
+            (MqttObject*)&mqttCtx->unsubscribe);
+    }
 
     PRINTF("MQTT Unsubscribe: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
