@@ -10,6 +10,11 @@ do_cleanup() {
     then
         kill -6 $broker_pid
     fi
+    
+    if  [ $1 -ne 0 ]
+    then
+        exit 1
+    fi
 }
 
 # Check for application
@@ -33,30 +38,30 @@ fi
 
 ./examples/mqttclient/mqttclient $def_args -q 0 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=0" && do_cleanup && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=0" && do_cleanup "-1"
 
 ./examples/mqttclient/mqttclient $def_args -q 1 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=1" && do_cleanup && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=1" && do_cleanup "-1"
 
 ./examples/mqttclient/mqttclient $def_args -q 2 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=2" && do_cleanup && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=Off, QoS=2" && do_cleanup "-1"
 
 ./examples/mqttclient/mqttclient $def_args -t -q 0 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0" && do_cleanup && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0" && do_cleanup "-1"
 
 ./examples/mqttclient/mqttclient $def_args -t -q 1 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=1" && do_cleanup && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=1" && do_cleanup "-1" 
 
 ./examples/mqttclient/mqttclient $def_args -t -q 2 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=2" && do_cleanup && exit 1
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=2" && do_cleanup "-1"
 
 # End broker
-do_cleanup
+do_cleanup "0"
  
 echo -e "\n\nMQTT Client Tests Passed"
 
