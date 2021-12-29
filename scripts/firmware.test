@@ -10,6 +10,11 @@ do_cleanup() {
     then
         kill -6 $broker_pid
     fi
+
+    if  [ $1 -ne 0 ]
+    then
+        exit 1
+    fi
 }
 
 # Check for application
@@ -35,23 +40,23 @@ fi
 # Start firmware push
 ./examples/firmware/fwpush $def_args -r -f $filein $1
 server_result=$?
-[ $server_result -ne 0 ] && echo -e "\n\nMQTT Example fwpush failed!" && do_cleanup && exit 1
+[ $server_result -ne 0 ] && echo -e "\n\nMQTT Example fwpush failed!" && do_cleanup "-1"
 
 # Start firmware client
 ./examples/firmware/fwclient $def_args -f $fileout $1
 client_result=$?
-[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && do_cleanup && exit 1
+[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && do_cleanup "-1"
 
 # Compare files
 md5sum -b $filein $fileout
 compare_result=$?
-[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && do_cleanup && exit 1
+[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && do_cleanup "-1"
 
 # Delete file
 rm $fileout
 
 # End broker
-do_cleanup
+do_cleanup "0"
  
 echo -e "\n\nFirmware Example MQTT Client Tests Passed"
 
