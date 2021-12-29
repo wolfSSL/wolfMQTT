@@ -91,7 +91,9 @@
     #elif defined(__MACH__)
         /* Apple Style Dispatch Semaphore */
         #include <dispatch/dispatch.h>
-        typedef dispatch_semaphore_t wm_Sem;
+        typedef struct {
+            dispatch_semaphore_t sem;
+        } wm_Sem;
 
     #elif defined(__FreeBSD__) || defined(__linux__) || defined(__QNX__)
         /* Posix Style Pthread Mutex and Conditional */

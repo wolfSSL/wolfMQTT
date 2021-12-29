@@ -52,11 +52,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
          * dispatch_semaphore_create().  work around this by initing
          * with 0, then incrementing it afterwards.
          */
-        *s = dispatch_semaphore_create(0);
-        if (*s == NULL)
+        s->sem = dispatch_semaphore_create(0);
+        if (s->sem == NULL)
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MEMORY);
-        if (dispatch_semaphore_signal(*s) < 0) {
-            dispatch_release(*s);
+        if (dispatch_semaphore_signal(s->sem) < 0) {
+            dispatch_release(s->sem);
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
         }
 
@@ -64,18 +64,19 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
     }
     int wm_SemFree(wm_Sem *s){
         if ((s == NULL) ||
-            (*s == NULL))
+            (s->sem == NULL))
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
-        dispatch_release(*s);
-        *s = NULL;
+        dispatch_release(s->sem);
+        s->sem = NULL;
         return 0;
     }
-    int wm_SemLock(wm_Sem *s){
-        dispatch_semaphore_wait(*s, DISPATCH_TIME_FOREVER);
+
+    int wm_SemLock(wm_Sem *s) {
+        dispatch_semaphore_wait(s->sem, DISPATCH_TIME_FOREVER);
         return 0;
     }
     int wm_SemUnlock(wm_Sem *s){
-        dispatch_semaphore_signal(*s);
+        dispatch_semaphore_signal(s->sem);
         return 0;
     }
 #elif defined(WOLFMQTT_POSIX_SEMAPHORES)
