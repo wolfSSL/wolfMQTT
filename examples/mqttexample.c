@@ -194,20 +194,28 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     PRINTF("-?          Help, print this usage");
     PRINTF("-h <host>   Host to connect to, default: %s",
             mqttCtx->host);
+    /* Remove TLS and SNI args for sn-client */ 
+    if(XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
 #ifdef ENABLE_MQTT_TLS
-    PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
-            MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
-    PRINTF("-t          Enable TLS");
-    PRINTF("-A <file>   Load CA (validate peer)");
-    PRINTF("-K <key>    Use private key (for TLS mutual auth)");
-    PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");
+        PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
+                MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
+        PRINTF("-t          Enable TLS");
+        PRINTF("-A <file>   Load CA (validate peer)");
+        PRINTF("-K <key>    Use private key (for TLS mutual auth)");
+        PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");
 #ifdef HAVE_SNI
-    PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
+        PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
 #endif
 #else
-    PRINTF("-p <num>    Port to connect on, default: %d",
-            MQTT_DEFAULT_PORT);
+        PRINTF("-p <num>    Port to connect on, default: %d",
+             MQTT_DEFAULT_PORT);
 #endif
+    }
+    
+    else{
+        PRINTF("-p <num>    Port to connect on, default: %d",
+             MQTT_DEFAULT_PORT);
+    }
     PRINTF("-q <num>    Qos Level 0-2, default: %d",
             mqttCtx->qos);
     PRINTF("-s          Disable clean session connect flag");
@@ -373,6 +381,14 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         default:
             mqtt_show_usage(mqttCtx);
             return MY_EX_USAGE;
+        }
+    
+        /* Remove TLS and SNI functionality for sn-client */
+        if(!XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
+            mqttCtx->use_tls = 0;
+        #ifdef HAVE_SNI    
+            useSNI=0;
+        #endif
         }
     }
 
