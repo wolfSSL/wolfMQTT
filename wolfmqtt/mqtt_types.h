@@ -84,10 +84,16 @@
 
 #ifdef WOLFMQTT_MULTITHREAD
     /* Multi-threading uses binary semaphores */
-    #if defined(__MACH__)
+    #if defined(WOLFMQTT_USER_THREADING)
+        /* User provides API's and wm_Sem type.
+         * Add your wc_Sem into user_settings.h */
+
+    #elif defined(__MACH__)
         /* Apple Style Dispatch Semaphore */
         #include <dispatch/dispatch.h>
-        typedef dispatch_semaphore_t wm_Sem;
+        typedef struct {
+            dispatch_semaphore_t sem;
+        } wm_Sem;
 
     #elif defined(__FreeBSD__) || defined(__linux__) || defined(__QNX__)
         /* Posix Style Pthread Mutex and Conditional */
@@ -111,9 +117,6 @@
         #include <ws2tcpip.h>
         #include <windows.h>
         typedef HANDLE wm_Sem;
-
-    #elif defined(WOLFMQTT_USER_THREADING)
-        /* User provides API's and wm_Sem type */
 
     #else
         #error "Multithreading requires binary semaphore implementation!"
@@ -319,6 +322,20 @@ enum MqttPacketResponseCodes {
 #else
     #define WOLFMQTT_NORETURN
 #endif
+
+/* Logging / Tracing */
+#ifdef WOLFMQTT_NO_STDIO
+    #undef WOLFMQTT_DEBUG_CLIENT
+    #undef WOLFMQTT_DEBUG_SOCKET
+#endif
+
+#ifdef WOLFMQTT_DEBUG_TRACE
+#define MQTT_TRACE_ERROR(err) ({ PRINTF("ERROR: %d (%s:%d)", err, __FUNCTION__, __LINE__); err; })
+#define MQTT_TRACE_MSG(msg)      PRINTF("%s: (%s:%d)", msg, __FUNCTION__, __LINE__);
+#else
+#define MQTT_TRACE_ERROR(err) err
+#define MQTT_TRACE_MSG(msg)
+#endif /* WOLFMQTT_DEBUG_TRACE */
 
 #ifdef __cplusplus
     } /* extern "C" */

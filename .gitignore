@@ -50,26 +50,30 @@ diff
 
 # scan-build
 client.plist
-examples/mqttclient/mqttclient
-examples/nbclient/nbclient
+
+# other
 Debug
 .vs
 *.aps
 *.sdf
 *.user
+*.opensdf
+*.trs
+firmware.bin
+wolfmqtt/options.h
+IDE/ARDUINO/wolfMQTT
+IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/dist/default/
+
+# examples
+examples/aws/awsiot
+examples/azure/azureiothub
 examples/firmware/fwclient
 examples/firmware/fwpush
-*.opensdf
-firmware.bin
-*.trs
-IDE/ARDUINO/wolfMQTT
-examples/azure/azureiothub
-examples/aws/awsiot
-examples/wiot/wiot
-wolfmqtt/options.h
-/IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/dist/default/
+examples/mqttclient/mqttclient
+examples/mqttsimple/mqttsimple
+examples/nbclient/nbclient
 examples/sn-client/sn-client
 examples/sn-client/sn-client_qos-1
 examples/sn-client/sn-multithread
 examples/multithread/multithread
-examples/mqttsimple/mqttsimple
+examples/wiot/wiot

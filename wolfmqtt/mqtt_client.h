@@ -146,9 +146,10 @@ typedef struct _MqttClient {
     MqttTls      tls;   /* WolfSSL context for TLS */
 #endif
 
-    MqttPkRead   packet;
-    MqttSk       read;
-    MqttSk       write;
+    MqttPkRead   packet; /* publish packet state - protected by read lock */
+    MqttPublishResp packetAck; /* publish ACK - protected by write lock */
+    MqttSk       read;   /* read socket state - protected by read lock */
+    MqttSk       write;  /* write socket state - protected by write lock */
 
     MqttMsgCb    msg_cb;
     MqttObject   msg;   /* generic incoming message used by MqttClient_WaitType */
@@ -160,11 +161,11 @@ typedef struct _MqttClient {
     void*        ctx;   /* user supplied context for publish callbacks */
 
 #ifdef WOLFMQTT_V5
-    word32  packet_sz_max; /* Server property */
-    byte    max_qos;       /* Server property */
-    byte    retain_avail;  /* Server property */
-    byte    enable_eauth;  /* Enhanced authentication */
-    byte protocol_level;
+    word32 packet_sz_max; /* Server property */
+    byte   max_qos;       /* Server property */
+    byte   retain_avail;  /* Server property */
+    byte   enable_eauth;  /* Enhanced authentication */
+    byte   protocol_level;
 #endif
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -179,8 +180,11 @@ typedef struct _MqttClient {
     wm_Sem lockSend;
     wm_Sem lockRecv;
     wm_Sem lockClient;
-    struct _MqttPendResp* firstPendResp;
-    struct _MqttPendResp* lastPendResp;
+    struct _MqttPendResp* firstPendResp; /* protected with client lock */
+    struct _MqttPendResp* lastPendResp;  /* protected with client lock */
+#endif
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DEBUG_CLIENT)
+    int lastRc;
 #endif
 } MqttClient;
 
@@ -343,7 +347,7 @@ WOLFMQTT_API int MqttClient_Ping(
                 and can be used with non-blocking applications.
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
- *  \param      ping        Pointer to MqttPing structure 
+ *  \param      ping        Pointer to MqttPing structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -433,6 +437,17 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
     MqttObject* msg,
     int timeout_ms);
 
+/*! \brief      In a multi-threaded and non-blocking mode this allows you to
+                cancel an MQTT object that was previously submitted.
+ *  \note This is a blocking function that will wait for MqttNet.read
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      msg         Pointer to MqttObject structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_CancelMessage(
+    MqttClient *client,
+    MqttObject* msg);
 
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)
  *  Will perform the MqttTlsCb callback if use_tls is non-zero value
@@ -443,7 +458,7 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
                             encryption of data
  *  \param      cb          A function callback for configuration of the SSL
                             context certificate checking
- *  \param      timeout_ms  Milliseconds until read timeout 
+ *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

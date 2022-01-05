@@ -512,6 +512,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT Waiting for message...");
 
     do {
+        /* check for test mode */
+        if (mqttCtx->test_mode) {
+            PRINTF("MQTT Test mode, exit now");
+            break;            
+        }
+
         /* Try and read packet */
         rc = MqttClient_WaitMessage(&mqttCtx->client,
                                             mqttCtx->cmd_timeout_ms);
@@ -522,7 +528,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
             mqttCtx->cmd_timeout_ms/1000);
     #endif
 
-        /* check for test mode */
         if (mStopRead) {
             rc = MQTT_CODE_SUCCESS;
             PRINTF("MQTT Exiting...");
@@ -573,7 +578,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
-    } while (1);
+    } while (!mStopRead);
 
     /* Check for error */
     if (rc != MQTT_CODE_SUCCESS) {
