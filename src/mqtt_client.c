@@ -1126,6 +1126,13 @@ wait_again:
         /* if we get here, then the we are still waiting for a packet */
         mms_stat->read = MQTT_MSG_BEGIN;
         MQTT_TRACE_MSG("Wait Again");
+    #ifdef WOLFMQTT_NONBLOCK
+        /* for non-blocking return with code continue instead of waiting again
+         * if called with packet type and id of 'any' */
+        if (wait_type == MQTT_PACKET_TYPE_ANY && wait_packet_id == 0) {
+            return MQTT_CODE_CONTINUE;
+        }
+    #endif
         goto wait_again;
     }
 
