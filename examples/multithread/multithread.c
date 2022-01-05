@@ -603,7 +603,7 @@ static void *ping_task(void *param)
     int rc;
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     MqttPing ping;
-    word32 startSec = 0;
+    word32 startSec;
 
     do {
         wm_SemLock(&pingSignal);
@@ -614,6 +614,7 @@ static void *ping_task(void *param)
         /* Keep Alive Ping */
         PRINTF("Sending ping keep-alive");
 
+        startSec = 0;
         XMEMSET(&ping, 0, sizeof(ping));
         do {
             rc = MqttClient_Ping_ex(&mqttCtx->client, &ping);
