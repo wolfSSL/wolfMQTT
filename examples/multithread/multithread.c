@@ -440,6 +440,21 @@ static void *subscribe_task(void *param)
     THREAD_EXIT(0);
 }
 
+static int TestIsDone(int rc, MQTTCtx* mqttCtx)
+{
+    int isDone = 0;
+    /* check if we are in test mode and done */
+    wm_SemLock(&mtLock);
+    if ((rc == 0 || rc == MQTT_CODE_CONTINUE) && mqttCtx->test_mode &&
+            mNumMsgsDone == NUM_PUB_TASKS && mNumMsgsRecvd == NUM_PUB_TASKS) {
+        wm_SemUnlock(&mtLock);
+        mqtt_stop_set();
+        isDone = 1; /* done */
+    }
+    wm_SemUnlock(&mtLock);
+    return isDone;
+}
+
 /* This task waits for messages */
 #ifdef USE_WINDOWS_API
 static DWORD WINAPI waitMessage_task( LPVOID param )
@@ -447,28 +462,35 @@ static DWORD WINAPI waitMessage_task( LPVOID param )
 static void *waitMessage_task(void *param)
 #endif
 {
-    int rc;
+    int rc = 0;
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
-    word32 startSec = 0;
+    word32 startSec;
+    word32 cmd_timeout_ms = mqttCtx->cmd_timeout_ms;
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
 
+    startSec = 0;
     do {
-        /* Try and read packet */
-        rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
-        rc = check_response(mqttCtx, rc, &startSec);
-
-        /* check if we are in test mode and done */
-        wm_SemLock(&mtLock);
-        if ((rc == 0 || rc == MQTT_CODE_CONTINUE) && mqttCtx->test_mode &&
-              mNumMsgsDone == NUM_PUB_TASKS && mNumMsgsRecvd == NUM_PUB_TASKS) {
-            wm_SemUnlock(&mtLock);
-            mqtt_stop_set();
+        if (TestIsDone(rc, mqttCtx)) {
             rc = 0; /* success */
             break;
         }
-        wm_SemUnlock(&mtLock);
+
+        /* if blocking, use short timeout in test mode */
+        if (mqttCtx->test_mode
+        #ifdef WOLFMQTT_NONBLOCK
+            && !mqttCtx->useNonBlockMode
+        #endif
+        ){
+            cmd_timeout_ms = 1000; /* short timeout */
+        }
+        /* Try and read packet */
+        rc = MqttClient_WaitMessage(&mqttCtx->client, cmd_timeout_ms);
+        if (mqttCtx->test_mode && rc == MQTT_CODE_ERROR_TIMEOUT) {
+            rc = 0;
+        }
+        rc = check_response(mqttCtx, rc, &startSec);
 
         /* check return code */
         if (rc == MQTT_CODE_CONTINUE) {
@@ -517,6 +539,7 @@ static void *waitMessage_task(void *param)
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
+        startSec = 0;
     } while (!mqtt_stop_get());
 
     mqttCtx->return_code = rc;
