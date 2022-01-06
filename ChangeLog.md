@@ -1,5 +1,21 @@
-
 ## Release Notes
+### v1.11 (1/7/2022)
+* Return correct error code in SN_Client_Connect (PR #268)
+* Removing unsupported TLS and SNI options in sn-client (PR #266)
+* Fixes for multithreading with non-blocking (PR #252)
+* Doxygen work removing depreciated command and fixing other warnings (PR #264)
+* Fix overwriting TLS error in connect (PR #259)
+* Add GitHub Actions (PR #256 #260 #263)
+* Fix wm_Sem on Windows (PR #255 #261)
+* Fix scripts for host without mosquitto (PR #257 #265)
+* Trim whitespace and convert tab to spaces (PR #251)
+* Refactor of write length (PR #250)
+* Fixes for publish edge cases (PR #248)
+* Remove unused sub_id element, add support for local test broker (PR #249)
+* Fix to make sure MqttClient_DecodePacket called in all cases (PR #246)
+
+* Known bug with multithread and without nonblocking enabled in this release.
+
 ### v1.10 (11/2/2021)
 * Improve FALL_THROUGH macro logic for XC32. (PR #227)
 * Fix potential NULL printf in MqttSocket_Connect with verbose debug enabled. (PR #229)

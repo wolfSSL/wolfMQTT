@@ -147,6 +147,7 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 
 ### Watson IoT Example
 This example enables the wolfMQTT client to connect to the IBM Watson Internet of Things (WIOT) Platform. The WIOT Platform has a limited test broker called "Quickstart" that allows non-secure connections to exercise the component. The example is located in `/examples/wiot/`. Works with MQTT v5 support enabled.
+**NOTE** The WIOT QuickStart broker is no longer available. The demo may still be useful for users of IBM Watson IOT.
 
 ### MQTT-SN Example
 The Sensor Network client implements the MQTT-SN protocol for low-bandwidth networks. There are several differences from MQTT, including the ability to use a two byte Topic ID instead the full topic during subscribe and publish. The SN client requires an MQTT-SN gateway. The gateway acts as an intermediary between the SN clients and the broker. This client was tested with the Eclipse Paho MQTT-SN Gateway, which connects by default to the public Eclipse broker, much like our wolfMQTT Client example. The address of the gateway must be configured as the host. The example is located in `/examples/sn-client/`.
@@ -226,7 +227,7 @@ wolfMQTT client library has been tested with the following brokers:
 The initially supported version with full specification support for all features and packets type such as:
 * QoS 0-2
 * Last Will and Testament (LWT)
-* Client examples for: AWS, Azure IoT, IBM Watson, Firmware update, non-blocking and generic.
+* Client examples for: AWS, Azure IoT, Firmware update, non-blocking and generic.
 
 ### MQTT v5.0 Specification Support
 
@@ -257,8 +258,6 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 ** `./examples/mqttclient/mqttclient -h localhost`
 * HiveMQ Cloud
 ** `./examples/mqttclient/mqttclient -h 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud -t -S -u wolf1 -w NEZjcm7i8eRjFKF -p 8883`
-* Watson IoT Quickserver
-** `./examples/wiot/wiot`
 
 ### MQTT Sensor Network (MQTT-SN) Specification Support
 
