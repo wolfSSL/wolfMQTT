@@ -178,12 +178,15 @@ int sn_test(MQTTCtx *mqttCtx)
         /* Send Connect and wait for Connect Ack */
         rc = SN_Client_Connect(&mqttCtx->client, connect);
 
+        if (rc != MQTT_CODE_SUCCESS) {                                          
+            PRINTF("MQTT-SN Connect: %s (%d)",                                  
+                MqttClient_ReturnCodeToString(rc), rc);                         
+            goto disconn;                                                       
+        }    
+
         /* Validate Connect Ack info */
         PRINTF("....MQTT-SN Connect Ack: Return Code %u",
                 connect->ack.return_code);
-        if (rc != MQTT_CODE_SUCCESS) {
-            goto disconn;
-        }
     }
 
     /* Either the register or the subscribe block could be used to get the
