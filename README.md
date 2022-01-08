@@ -219,6 +219,7 @@ wolfMQTT client library has been tested with the following brokers:
 * Mosquitto by Eclipse
 * Paho MQTT-SN Gateway by Eclipse
 * VerneMQ by VerneMQ/Erlio
+* EMQX by EMQ
 
 ## Specification Support
 
@@ -247,6 +248,11 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 * Mosquitto
 ** Runs locally.
 ** `./examples/mqttclient/mqttclient -h localhost`
+* EMQX
+** Runs locally.
+** `./examples/mqttclient/mqttclient -h localhost`
+** Runs free public [mqtt broker](https://www.emqx.com/en/mqtt/public-mqtt5-broker).
+** `./examples/mqttclient/mqttclient -h "broker.emqx.io"`
 * Flespi
 ** Requires an account tied token that is regenerated hourly.
 ** `./examples/mqttclient/mqttclient -h "mqtt.flespi.io" -u "<your-flespi-token>"`
