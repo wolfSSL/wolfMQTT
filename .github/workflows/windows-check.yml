@@ -1,0 +1,70 @@
+name: Windows Build Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+env:
+  # Path to the solution file relative to the root of the project.
+  WOLFSSL_SOLUTION_FILE_PATH: wolfssl/wolfssl64.sln 
+  SOLUTION_FILE_PATH: wolfmqtt.sln
+  OPTIONS_H_IN_PATH: wolfmqtt/wolfmqtt/options.h.in
+  OPTIONS_H_PATH: wolfmqtt/wolfmqtt/options.h
+  WOLFSSL_LIB_PATH: wolfssl/x64/Release/wolfssl.lib
+  WOLFSSL_LIB_TARGET_PATH: wolfmqtt/wolfssl.lib
+  INCLUDE_DIR: wolfmqtt
+
+  # Configuration type to build.
+  # You can convert this to a build matrix if you need coverage of multiple configuration types.
+  # https://docs.github.com/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  WOLFSSL_BUILD_CONFIGURATION: Release
+  WOLFMQTT_BUILD_CONFIGURATION: Debug
+  BUILD_PLATFORM: x64
+  TARGET_PLATFORM: 10 
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+
+    - name: Add MSBuild to PATH
+      uses: microsoft/setup-msbuild@v1
+
+    - name: Restore wolfSSL NuGet packages
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: nuget restore ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - name: Build wolfssl
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      # Add additional options to the MSBuild command line here (like platform or verbosity level).
+      # See https://docs.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFSSL_BUILD_CONFIGURATION}} ${{env.WOLFSSL_SOLUTION_FILE_PATH}}
+
+    - uses: actions/checkout@master
+      with: 
+        path: wolfmqtt
+ 
+    - name: Restore NuGet packages
+      working-directory: ${{env.GITHUB_WORKSPACE}}wolfmqtt
+      run: nuget restore ${{env.SOLUTION_FILE_PATH}}
+      
+    - name: create options.h
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: cp ${{env.OPTIONS_H_IN_PATH}} ${{env.OPTIONS_H_PATH}}
+      
+    - name: copy wolfSSL.lib
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: cp ${{env.WOLFSSL_LIB_PATH}} ${{env.WOLFSSL_LIB_TARGET_PATH}}
+   
+    - name: Build
+      working-directory: ${{env.GITHUB_WORKSPACE}}wolfmqtt
+      # Add additional options to the MSBuild command line here (like platform or verbosity level).
+      # See https://docs.microsoft.com/visualstudio/msbuild/msbuild-command-line-reference
+      run: msbuild /m /p:PlatformToolset=v142 /p:Platform=${{env.BUILD_PLATFORM}} /p:WindowsTargetPlatformVersion=${{env.TARGET_PLATFORM}} /p:Configuration=${{env.WOLFMQTT_BUILD_CONFIGURATION}} ${{env.SOLUTION_FILE_PATH}} 
