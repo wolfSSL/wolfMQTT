@@ -555,7 +555,10 @@ int mqtt_tls_cb(MqttClient* client)
 {
     int rc = WOLFSSL_FAILURE;
 
-    client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+    /* Use highest available and allow downgrade. If wolfSSL is built with
+     * old TLS support, it is possible for a server to force a downgrade to
+     * an insecure version. */
+    client->tls.ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
     if (client->tls.ctx) {
         wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
                 mqtt_tls_verify_cb);

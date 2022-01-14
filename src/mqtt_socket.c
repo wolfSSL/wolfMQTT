@@ -364,7 +364,10 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         /* Create and initialize the WOLFSSL_CTX structure */
         if (client->tls.ctx == NULL) {
             /* Use defaults */
-            client->tls.ctx = wolfSSL_CTX_new(wolfTLSv1_2_client_method());
+            /* Use highest available and allow downgrade. If wolfSSL is built with
+             * old TLS support, it is possible for a server to force a downgrade to
+             * an insecure version. */
+            client->tls.ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
             if (client->tls.ctx == NULL) {
                 rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
