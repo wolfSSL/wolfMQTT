@@ -2619,16 +2619,21 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
         case SN_MSG_TYPE_PUBREC:
         case SN_MSG_TYPE_PUBREL:
         {
-            SN_PublishResp publish_resp;
-            XMEMSET(&publish_resp, 0, sizeof(SN_PublishResp));
+            SN_PublishResp publish_resp, *p_publish_resp = &publish_resp;
+            if (packet_obj) {
+                p_publish_resp = (SN_PublishResp*)packet_obj;
+            }
+            else {
+                XMEMSET(p_publish_resp, 0, sizeof(SN_PublishResp));
+            }
 
             /* Decode publish response message */
             rc = SN_Decode_PublishResp(client->rx_buf, client->packet.buf_len,
-                packet_type, &publish_resp);
+                packet_type, p_publish_resp);
             if (rc <= 0) {
                 return rc;
             }
-            packet_id = publish_resp.packet_id;
+            packet_id = p_publish_resp->packet_id;
 
             /* If Qos then send response */
             if (packet_type == SN_MSG_TYPE_PUBREC ||
@@ -2646,9 +2651,9 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             #endif
 
                 /* Encode publish response */
-                publish_resp.packet_id = packet_id;
+                p_publish_resp->packet_id = packet_id;
                 rc = SN_Encode_PublishResp(client->tx_buf,
-                    client->tx_buf_len, resp_type, &publish_resp);
+                    client->tx_buf_len, resp_type, p_publish_resp);
             #ifdef WOLFMQTT_DEBUG_CLIENT
                 PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d",
                     rc, MqttPacket_TypeDesc(resp_type), resp_type, packet_id);
@@ -2786,6 +2791,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
         {
             /* Decode Disconnect */
             rc = SN_Decode_Disconnect(client->rx_buf, client->packet.buf_len);
+
+#ifdef WOLFMQTT_DISCONNECT_CB
+            /* Call disconnect callback to allow handling broker disconnect */
+            if (client->disconnect_cb) {
+                client->disconnect_cb(client, rc, client->disconnect_ctx);
+            }
+#endif
             break;
         }
 
