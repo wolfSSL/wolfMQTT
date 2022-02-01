@@ -2296,7 +2296,8 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
          tmpResp != NULL;
          tmpResp = tmpResp->next)
     {
-        if (tmpResp->packet_obj == (void*)msg) {
+        if ((size_t)tmpResp->packet_obj == (size_t)msg ||
+            (size_t)tmpResp - OFFSETOF(MqttMessage, pendResp) == (size_t)msg) {
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Cancel Msg: %p, Type %s (%d), ID %d, InProc %d, Done %d",
                 tmpResp, MqttPacket_TypeDesc(tmpResp->packet_type),
