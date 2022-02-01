@@ -915,6 +915,18 @@ wait_again:
             else {
                 /* use generic packet object */
                 use_packet_obj = &client->msg;
+        #ifdef WOLFMQTT_MULTITHREAD
+                rc = wm_SemLock(&client->lockClient);
+                if (rc == 0) {
+        #endif /* WOLFMQTT_MULTITHREAD */
+                    XMEMSET(use_packet_obj, 0, sizeof(client->msg));
+        #ifdef WOLFMQTT_MULTITHREAD
+                    wm_SemUnlock(&client->lockClient);
+                }
+                else {
+                    break; /* error */
+                }
+        #endif /* WOLFMQTT_MULTITHREAD */
             }
             use_packet_type = packet_type;
 
