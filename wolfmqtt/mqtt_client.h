@@ -268,17 +268,20 @@ WOLFMQTT_API int MqttClient_Connect(
                 payload is larger than the buffer size, it can be called
                 successively to transmit the full payload.
                 (if QoS > 0)
- *  \note This is a blocking function that will wait for MqttNet.read
- *              If QoS level = 1 then will wait for PUBLISH_ACK.
- *              If QoS level = 2 then will wait for PUBLISH_REC then send
-                    PUBLISH_REL and wait for PUBLISH_COMP.
+ *  \note       This function that will wait for MqttNet.read to complete,
+                timeout or MQTT_CODE_CONTINUE if non-blocking.
+                    If QoS level = 1 then will wait for PUBLISH_ACK.
+                    If QoS level = 2 then will wait for PUBLISH_REC then send
+                        PUBLISH_REL and wait for PUBLISH_COMP.
  *  \param      client      Pointer to MqttClient structure
  *  \param      publish     Pointer to MqttPublish structure initialized
                             with message data
  *                          Note: MqttPublish and MqttMessage are same
                             structure.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking) or 
+                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
+    \sa         MqttClient_Publish_WriteOnly
+    \sa         MqttClient_Publish_ex
  */
 WOLFMQTT_API int MqttClient_Publish(
     MqttClient *client,
@@ -288,10 +291,11 @@ WOLFMQTT_API int MqttClient_Publish(
                 Publish response (if QoS > 0). The callback function is used to
                 copy the payload data, allowing the use of transmit buffers
                 smaller than the total size of the payload.
- *  \note This is a blocking function that will wait for MqttNet.read
- *              If QoS level = 1 then will wait for PUBLISH_ACK.
- *              If QoS level = 2 then will wait for PUBLISH_REC then send
-                    PUBLISH_REL and wait for PUBLISH_COMP.
+ *  \note       This function that will wait for MqttNet.read to complete,
+                timeout or MQTT_CODE_CONTINUE if non-blocking.
+                    If QoS level = 1 then will wait for PUBLISH_ACK.
+                    If QoS level = 2 then will wait for PUBLISH_REC then send
+                        PUBLISH_REL and wait for PUBLISH_COMP.
  *  \param      client      Pointer to MqttClient structure
  *  \param      publish     Pointer to MqttPublish structure initialized
                             with message data
@@ -305,6 +309,33 @@ WOLFMQTT_API int MqttClient_Publish_ex(
     MqttClient *client,
     MqttPublish *publish,
     MqttPublishCb pubCb);
+
+
+#ifdef WOLFMQTT_MULTITHREAD
+/*! \brief      Same as MqttClient_Publish_ex, however this API will only 
+                perform writes and requires another thread to handle the read
+                ACK processing using MqttClient_WaitMessage_ex
+ *  \note       This function that will wait for MqttNet.read to complete,
+                timeout or MQTT_CODE_CONTINUE if non-blocking.
+                    If QoS level = 1 then will wait for PUBLISH_ACK.
+                    If QoS level = 2 then will wait for PUBLISH_REC then send
+                        PUBLISH_REL and wait for PUBLISH_COMP.
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      publish     Pointer to MqttPublish structure initialized
+                            with message data
+ *                          Note: MqttPublish and MqttMessage are same
+                            structure.
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking) or 
+                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
+    \sa         MqttClient_Publish
+    \sa         MqttClient_Publish_ex
+    \sa         MqttClient_WaitMessage_ex
+ */
+WOLFMQTT_API int MqttClient_Publish_WriteOnly(
+    MqttClient *client,
+    MqttPublish *publish,
+    MqttPublishCb pubCb);
+#endif
 
 /*! \brief      Encodes and sends the MQTT Subscribe packet and waits for the
                 Subscribe Acknowledgment packet
