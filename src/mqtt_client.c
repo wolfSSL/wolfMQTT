@@ -273,10 +273,12 @@ static int MqttClient_RespList_Find(MqttClient *client,
            (packet_id == tmpResp->packet_id))
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
+            if (client->lastRc != MQTT_CODE_CONTINUE) {
             PRINTF("PendResp Found: %p, Type %s (%d), ID %d, InProc %d, Done %d",
                 tmpResp, MqttPacket_TypeDesc(tmpResp->packet_type),
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
+            }
         #endif
 
             if (retResp)
@@ -2286,6 +2288,10 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     /* all packet type structures must have MqttMsgStat at top */
     mms_stat = (MqttMsgStat*)msg;
 
+#ifdef WOLFMQTT_DEBUG_CLIENT
+    PRINTF("Cancel Msg: %p", msg);
+#endif
+
     /* Find pending response entry and remove */
     rc = wm_SemLock(&client->lockClient);
     if (rc != MQTT_CODE_SUCCESS) {
@@ -2296,10 +2302,20 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
          tmpResp != NULL;
          tmpResp = tmpResp->next)
     {
-        if (tmpResp->packet_obj == (void*)msg) {
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("\tMsg: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
+            tmpResp, tmpResp->packet_obj,
+            MqttPacket_TypeDesc(tmpResp->packet_type),
+            tmpResp->packet_type, tmpResp->packet_id,
+            tmpResp->packetProcessing, tmpResp->packetDone);
+    #endif
+        if ((size_t)tmpResp->packet_obj == (size_t)msg ||
+            (size_t)tmpResp - OFFSETOF(MqttMessage, pendResp) == (size_t)msg) {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("Cancel Msg: %p, Type %s (%d), ID %d, InProc %d, Done %d",
-                tmpResp, MqttPacket_TypeDesc(tmpResp->packet_type),
+            PRINTF("Found Cancel Msg: %p (obj %p), Type %s (%d), ID %d, "
+                   "InProc %d, Done %d",
+                tmpResp, tmpResp->packet_obj,
+                MqttPacket_TypeDesc(tmpResp->packet_type),
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
@@ -2311,10 +2327,16 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
 
     /* clear any locks */
     if (mms_stat->isReadLocked) {
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("Cancel Read Lock");
+    #endif
         mms_stat->isReadLocked = 0;
         wm_SemUnlock(&client->lockRecv);
     }
     if (mms_stat->isWriteLocked) {
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("Cancel Write Lock");
+    #endif
         mms_stat->isWriteLocked = 0;
         wm_SemUnlock(&client->lockSend);
     }

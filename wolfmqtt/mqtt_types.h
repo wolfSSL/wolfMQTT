@@ -265,6 +265,13 @@ enum MqttPacketResponseCodes {
 #endif /* !NO_INLINE */
 #endif /* !INLINE */
 
+#ifndef OFFSETOF
+    #if defined(__clang__) || defined(__GNUC__)
+        #define OFFSETOF(type, field) __builtin_offsetof(type, field)
+    #else
+        #define OFFSETOF(type, field) ((size_t)&(((type *)0)->field))
+    #endif
+#endif
 
 /* printf */
 #ifndef WOLFMQTT_CUSTOM_PRINTF
