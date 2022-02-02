@@ -756,6 +756,33 @@ static inline int MqttIsPubRespPacket(int packet_type)
             packet_type == MQTT_PACKET_TYPE_PUBLISH_COMP /* Complete */);
 }
 
+#ifdef WOLFMQTT_MULTITHREAD
+static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
+    word16 wait_packet_id)
+{
+    int rc = MQTT_CODE_CONTINUE;
+    MqttPendResp *pendResp;
+
+    /* Check to see if packet type and id have already completed */
+    rc = wm_SemLock(&client->lockClient);
+    if (rc == 0) {
+        if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
+            wait_packet_id, &pendResp)) {
+            if (pendResp->packetDone) {
+                /* pending response is already done, so return */
+                rc = pendResp->packet_ret;
+            #ifdef WOLFMQTT_DEBUG_CLIENT
+                PRINTF("PendResp Check Done %p: Rc %d", pendResp, rc);
+            #endif
+                MqttClient_RespList_Remove(client, pendResp);
+            }
+        }
+        wm_SemUnlock(&client->lockClient);
+    }
+    return rc;
+}
+#endif /* WOLFMQTT_MULTITHREAD */
+
 static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     byte wait_type, word16 wait_packet_id, int timeout_ms)
 {
@@ -804,25 +831,9 @@ wait_again:
         {
         #ifdef WOLFMQTT_MULTITHREAD
             /* Check to see if packet type and id have already completed */
-            rc = wm_SemLock(&client->lockClient);
-            if (rc == 0) {
-                if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
-                    wait_packet_id, &pendResp)) {
-                    if (pendResp->packetDone) {
-                        /* pending response is already done, so return */
-                        rc = pendResp->packet_ret;
-                    #ifdef WOLFMQTT_DEBUG_CLIENT
-                        PRINTF("PendResp already Done %p: Rc %d", pendResp, rc);
-                    #endif
-                        MqttClient_RespList_Remove(client, pendResp);
-                        wm_SemUnlock(&client->lockClient);
-                        return rc;
-                    }
-                }
-                wm_SemUnlock(&client->lockClient);
-            }
-            else {
-                break; /* error */
+            rc = MqttClient_CheckPendResp(client, wait_type, wait_packet_id);
+            if (rc != MQTT_CODE_CONTINUE) {
+                return rc;
             }
 
             /* Lock recv socket mutex */
@@ -1609,13 +1620,8 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
     return rc;
 }
 
-int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
-{
-    return MqttClient_Publish_ex(client, publish, NULL);
-}
-
-int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
-                            MqttPublishCb pubCb)
+static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
+                          MqttPublishCb pubCb, int writeOnly)
 {
     int rc = MQTT_CODE_SUCCESS;
     MqttPacketType resp_type;
@@ -1765,9 +1771,19 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
                     MQTT_PACKET_TYPE_PUBLISH_ACK :
                     MQTT_PACKET_TYPE_PUBLISH_COMP;
 
-                /* Wait for publish response packet */
-                rc = MqttClient_WaitType(client, &publish->resp, resp_type,
-                    publish->packet_id, client->cmd_timeout_ms);
+            #ifdef WOLFMQTT_MULTITHREAD
+                if (writeOnly) {
+                    /* another thread will handle the wait type */
+                    rc = MqttClient_CheckPendResp(client, resp_type,
+                        publish->packet_id);
+                }
+                else
+            #endif
+                {
+                    /* Wait for publish response packet */
+                    rc = MqttClient_WaitType(client, &publish->resp, resp_type,
+                        publish->packet_id, client->cmd_timeout_ms);
+                }
             #ifdef WOLFMQTT_NONBLOCK
                 if (rc == MQTT_CODE_CONTINUE)
                     break;
@@ -1807,6 +1823,26 @@ int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
 
     return rc;
 }
+
+int MqttClient_Publish(MqttClient *client, MqttPublish *publish)
+{
+    return MqttPublishMsg(client, publish, NULL, 0);
+}
+
+int MqttClient_Publish_ex(MqttClient *client, MqttPublish *publish,
+    MqttPublishCb pubCb)
+{
+    return MqttPublishMsg(client, publish, pubCb, 0);
+}
+
+#ifdef WOLFMQTT_MULTITHREAD
+int MqttClient_Publish_WriteOnly(MqttClient *client, MqttPublish *publish,
+    MqttPublishCb pubCb)
+{
+    return MqttPublishMsg(client, publish, pubCb, 1);
+}
+#endif
+
 
 int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
 {
