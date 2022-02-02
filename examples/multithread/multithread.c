@@ -586,7 +586,7 @@ static void *publish_task(void *param)
     publish.total_len = (word16)XSTRLEN(buf);
 
     do {
-        rc = MqttClient_Publish(&mqttCtx->client, &publish);
+        rc = MqttClient_Publish_WriteOnly(&mqttCtx->client, &publish, NULL);
         rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_PUBLISH);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
