@@ -1780,6 +1780,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                 else
             #endif
                 {
+                    (void)writeOnly; /* not used */
                     /* Wait for publish response packet */
                     rc = MqttClient_WaitType(client, &publish->resp, resp_type,
                         publish->packet_id, client->cmd_timeout_ms);
