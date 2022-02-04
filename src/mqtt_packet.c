@@ -1536,10 +1536,6 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
     if ((disconnect != NULL) &&
         (disconnect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
 
-        if (disconnect->reason_code != MQTT_REASON_SUCCESS) {
-            /* Length of Reason Code */
-            remain_len++;
-        }
         if (disconnect->props != NULL) {
             /* Determine length of properties */
             remain_len += props_len = MqttEncode_Props(
@@ -1548,6 +1544,11 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
 
             /* Determine the length of the "property length" */
             remain_len += MqttEncode_Vbi(NULL, props_len);
+        }
+        if ((remain_len != 0) ||
+            (disconnect->reason_code != MQTT_REASON_SUCCESS)) {
+            /* Length of Reason Code */
+            remain_len++;
         }
     }
 #endif
@@ -1567,8 +1568,8 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
     if ((disconnect != NULL) &&
         (disconnect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
         byte* tx_payload = &tx_buf[header_len];
-        if (disconnect->reason_code != MQTT_REASON_SUCCESS) {
-
+        if ((remain_len != 0) ||
+            (disconnect->reason_code != MQTT_REASON_SUCCESS)) {
             /* Encode the Reason Code */
             *tx_payload++ = disconnect->reason_code;
         }
@@ -1578,7 +1579,7 @@ int MqttEncode_Disconnect(byte *tx_buf, int tx_buf_len,
             tx_payload += MqttEncode_Vbi(tx_payload, props_len);
 
             /* Encode properties */
-            tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+            tx_payload += MqttEncode_Props(MQTT_PACKET_TYPE_DISCONNECT,
                             disconnect->props, tx_payload);
         }
         (void)tx_payload;

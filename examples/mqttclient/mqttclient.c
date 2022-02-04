@@ -605,8 +605,28 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
 disconn:
     /* Disconnect */
-    rc = MqttClient_Disconnect_ex(&mqttCtx->client,
-           &mqttCtx->disconnect);
+    XMEMSET(&mqttCtx->disconnect, 0, sizeof(mqttCtx->disconnect));
+#ifdef WOLFMQTT_V5
+    {
+        /* Session expiry interval */
+        MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->disconnect.props);
+        prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+        prop->data_int = 0;
+    }
+    #if 0 /* enable to test sending a disconnect reason code */
+    if (mqttCtx->enable_lwt) {
+        /* Disconnect with Will Message */
+        mqttCtx->disconnect.reason_code = MQTT_REASON_DISCONNECT_W_WILL_MSG;
+    }
+    #endif
+#endif
+    rc = MqttClient_Disconnect_ex(&mqttCtx->client, &mqttCtx->disconnect);
+#ifdef WOLFMQTT_V5
+    if (mqttCtx->disconnect.props != NULL) {
+        /* Release the allocated properties */
+        MqttClient_PropsFree(mqttCtx->disconnect.props);
+    }
+#endif
 
     PRINTF("MQTT Disconnect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
