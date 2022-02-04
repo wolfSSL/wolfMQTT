@@ -116,7 +116,7 @@ static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec, int packet
     }
     else
 #else
-    (void)packet_type;
+        (void)packet_type;
 #endif
     /* Track elapsed time with no activity and trigger timeout */
     rc = mqtt_check_timeout(rc, startSec, mqttCtx->cmd_timeout_ms/1000);
@@ -129,6 +129,7 @@ static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec, int packet
     #endif
     }
 #else
+    (void)packet_type;
     (void)startSec;
     (void)mqttCtx;
 #endif
