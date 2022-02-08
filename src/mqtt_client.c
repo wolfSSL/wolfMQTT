@@ -771,14 +771,14 @@ static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
     word16 wait_packet_id)
 {
     int rc = MQTT_CODE_CONTINUE;
-    MqttPendResp *pendResp;
+    MqttPendResp *pendResp = NULL;
 
     /* Check to see if packet type and id have already completed */
     rc = wm_SemLock(&client->lockClient);
     if (rc == 0) {
         if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
             wait_packet_id, &pendResp)) {
-            if (pendResp->packetDone) {
+            if ((pendResp != NULL) && (pendResp->packetDone)) {
                 /* pending response is already done, so return */
                 rc = pendResp->packet_ret;
             #ifdef WOLFMQTT_DEBUG_CLIENT
