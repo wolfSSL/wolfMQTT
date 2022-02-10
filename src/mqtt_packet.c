@@ -479,16 +479,15 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
 int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         word32 buf_len, word32 prop_len)
 {
-    /* TODO: Validate property type is allowed for packet type */
-
     int rc = 0;
-    int tmp;
+    int total, tmp;
     MqttProp* cur_prop;
     byte* buf = pbuf;
 
     *props = NULL;
+    total = 0;
 
-    while ((prop_len > 0) && (rc >= 0))
+    while (((int)prop_len > 0) && (rc >= 0))
     {
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
@@ -498,16 +497,17 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         }
 
         /* Decode the Identifier */
-        tmp = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
+        rc = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
                 (word32)(buf_len - (buf - pbuf)));
-        if (tmp < 0) {
-            return tmp;
+        if (rc < 0) {
+            break;
         }
+        tmp = rc;
         buf += tmp;
-        rc += (int)tmp;
+        total += tmp;
         prop_len -= tmp;
 
-        /* TODO: validate packet type */
+        /* TODO: Validate property type is allowed for packet type */
         (void)packet;
 
         if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
@@ -521,7 +521,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             {
                 cur_prop->data_byte = *buf++;
                 tmp++;
-                rc++;
+                total++;
                 prop_len--;
                 break;
             }
@@ -529,15 +529,15 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             {
                 tmp = MqttDecode_Num(buf, &cur_prop->data_short);
                 buf += tmp;
-                rc += (int)tmp;
-                prop_len -= tmp;
+                total += tmp;
+                prop_len -= (word32)tmp;
                 break;
             }
             case MQTT_DATA_TYPE_INT:
             {
                 tmp = MqttDecode_Int(buf, &cur_prop->data_int);
                 buf += tmp;
-                rc += (int)tmp;
+                total += tmp;
                 prop_len -= tmp;
                 break;
             }
@@ -548,8 +548,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                         &cur_prop->data_str.len);
                 if (cur_prop->data_str.len <= (buf_len - (buf - pbuf))) {
                     buf += tmp;
-                    rc += (int)tmp;
-                    prop_len -= tmp;
+                    total += tmp;
+                    prop_len -= (word32)tmp;
                 }
                 else {
                     /* Invalid length */
@@ -560,13 +560,13 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             case MQTT_DATA_TYPE_VAR_INT:
             {
                 tmp = MqttDecode_Vbi(buf, &cur_prop->data_int,
-                        (word32)(buf_len -(buf - pbuf)));
+                        (word32)(buf_len - (buf - pbuf)));
                 if (tmp < 0) {
                     return tmp;
                 }
                 buf += tmp;
-                rc += (int)tmp;
-                prop_len -= tmp;
+                total += tmp;
+                prop_len -= (word32)tmp;
                 break;
             }
             case MQTT_DATA_TYPE_BINARY:
@@ -575,13 +575,13 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                    followed by that number of bytes */
                 tmp = MqttDecode_Num(buf, &cur_prop->data_bin.len);
                 buf += tmp;
-                rc += (int)tmp;
+                total += tmp;
                 prop_len -= tmp;
 
                 if (cur_prop->data_bin.len <= (buf_len - (buf - pbuf))) {
                     cur_prop->data_bin.data = buf;
                     buf += cur_prop->data_bin.len;
-                    rc += (int)cur_prop->data_bin.len;
+                    total += (int)cur_prop->data_bin.len;
                     prop_len -= cur_prop->data_bin.len;
                 }
                 else {
@@ -600,8 +600,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 if (cur_prop->data_str.len <=
                     (buf_len - (buf + tmp - pbuf))) {
                     buf += tmp;
-                    rc += (int)tmp;
-                    prop_len -= tmp;
+                    total += tmp;
+                    prop_len -= (word32)tmp;
 
                     tmp = MqttDecode_String(buf,
                             (const char**)&cur_prop->data_str2.str,
@@ -609,8 +609,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     if (cur_prop->data_str2.len <=
                         (buf_len - (buf + tmp - pbuf))) {
                         buf += tmp;
-                        rc += (int)tmp;
-                        prop_len -= tmp;
+                        total += tmp;
+                        prop_len -= (word32)tmp;
                     }
                     else {
                         /* Invalid length */
@@ -624,8 +624,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 break;
             }
             case MQTT_DATA_TYPE_NONE:
+                PRINTF("DATA TYPE NONE");
+                break;
             default:
             {
+                PRINTF("INVALID DATA TYPE");
                 /* Invalid property data type */
                 rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 break;
@@ -634,8 +637,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     };
 
     if (rc < 0) {
-        /* Free the properties */
+        /* Free the property */
         MqttProps_Free(*props);
+    }
+    else {
+        rc = total;
     }
 
     return rc;
@@ -1809,8 +1815,9 @@ MqttProp* MqttProps_Add(MqttProp **head)
     }
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&clientPropStack_lock))
+    if (wm_SemLock(&clientPropStack_lock) != 0) {
         return NULL;
+    }
 #endif
 
     cur = *head;
@@ -1823,7 +1830,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
 
     /* Find a free element */
     for (i = 0; i < MQTT_MAX_PROPS; i++) {
-        if (clientPropStack[i].type == 0) {
+        if (clientPropStack[i].type == MQTT_PROP_NONE) {
             /* Found one */
             new_prop = &clientPropStack[i];
             XMEMSET(new_prop, 0, sizeof(MqttProp));
@@ -1832,7 +1839,8 @@ MqttProp* MqttProps_Add(MqttProp **head)
     }
 
     if (new_prop != NULL) {
-        new_prop->type = MQTT_PROP_TYPE_MAX; /* placeholder until caller sets it to a real type. */
+        /* set placeholder until caller sets it to a real type */
+        new_prop->type = MQTT_PROP_TYPE_MAX;
         if (prev == NULL) {
             /* Start a new list */
             *head = new_prop;
@@ -1853,19 +1861,20 @@ MqttProp* MqttProps_Add(MqttProp **head)
 /* Free properties */
 int MqttProps_Free(MqttProp *head)
 {
+    int ret = MQTT_CODE_SUCCESS;
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&clientPropStack_lock))
-        return -1;
+    if ((ret = wm_SemLock(&clientPropStack_lock)) != 0) {
+        return ret;
+    }
 #endif
     while (head != NULL) {
-        head->type = (MqttPropertyType)0;
+        head->type = MQTT_PROP_NONE; /* available */
         head = head->next;
     }
 #ifdef WOLFMQTT_MULTITHREAD
-    return wm_SemUnlock(&clientPropStack_lock);
-#else
-    return 0;
+    (void)wm_SemUnlock(&clientPropStack_lock);
 #endif
+    return ret;
 }
 
 #endif /* WOLFMQTT_V5 */

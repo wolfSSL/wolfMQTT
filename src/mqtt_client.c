@@ -391,16 +391,20 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         }
         case MQTT_PACKET_TYPE_PUBLISH:
         {
-            MqttPublish publish, *p_publish = &publish;
+            MqttPublish publish, *p_publish;
             if (packet_obj) {
                 p_publish = (MqttPublish*)packet_obj;
+            #ifdef WOLFMQTT_V5
+                /* setting the protocol level will enable parsing of the
+                 * properties. The properties are allocated from a list,
+                 * so only parse if we are using a return packet object */
+                p_publish->protocol_level = client->protocol_level;
+            #endif
             }
             else {
-                XMEMSET(p_publish, 0, sizeof(MqttPublish));
+                p_publish = &publish;
+                XMEMSET(p_publish, 0, sizeof(MqttPublish));   
             }
-        #ifdef WOLFMQTT_V5
-            p_publish->protocol_level = client->protocol_level;
-        #endif
             rc = MqttDecode_Publish(rx_buf, rx_len, p_publish);
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
@@ -913,20 +917,21 @@ wait_again:
                 }
             }
             else {
-                /* use generic packet object */
-                use_packet_obj = &client->msg;
-        #ifdef WOLFMQTT_MULTITHREAD
+            #ifdef WOLFMQTT_MULTITHREAD
                 rc = wm_SemLock(&client->lockClient);
-                if (rc == 0) {
-        #endif /* WOLFMQTT_MULTITHREAD */
-                    XMEMSET(use_packet_obj, 0, sizeof(client->msg));
-        #ifdef WOLFMQTT_MULTITHREAD
-                    wm_SemUnlock(&client->lockClient);
-                }
-                else {
+                if (rc != 0) {
                     break; /* error */
                 }
-        #endif /* WOLFMQTT_MULTITHREAD */
+            #endif
+
+                /* use generic packet object */
+                use_packet_obj = &client->msg;
+                /* make sure the generic client message is zero initialized */
+                XMEMSET(use_packet_obj, 0, sizeof(client->msg));
+
+            #ifdef WOLFMQTT_MULTITHREAD
+                wm_SemUnlock(&client->lockClient);
+            #endif
             }
             use_packet_type = packet_type;
 
