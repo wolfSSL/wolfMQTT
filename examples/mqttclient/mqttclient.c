@@ -98,6 +98,21 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     PRINTF("Payload (%d - %d): %s",
         msg->buffer_pos, msg->buffer_pos + len, buf);
 
+    #ifdef WOLFMQTT_V5
+    {
+        /* Properties can be checked in the message callback */
+        MqttProp *prop = msg->props;
+        while (prop != NULL)
+        {
+            if (prop->type == MQTT_PROP_CONTENT_TYPE) {
+                PRINTF("Content type: %.*s", prop->data_str.len,
+                                             prop->data_str.str);
+            }
+            prop = prop->next;
+        }
+    }
+    #endif
+
     if (msg_done) {
         PRINTF("MQTT Message: Done");
     }

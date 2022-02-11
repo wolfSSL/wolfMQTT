@@ -292,7 +292,8 @@ static int MqttClient_RespList_Find(MqttClient *client,
 #endif /* WOLFMQTT_MULTITHREAD */
 
 #ifdef WOLFMQTT_V5
-static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb)
+static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb,
+                        byte free_props)
 {
     int rc = MQTT_CODE_SUCCESS;
 
@@ -312,8 +313,10 @@ static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb)
         (void)client;
         (void)use_cb;
     #endif
-        /* Free the properties */
-        MqttProps_Free(props);
+        if (free_props) {
+            /* Free the properties */
+            MqttProps_Free(props);
+        }
     }
     return rc;
 }
@@ -378,7 +381,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         #ifdef WOLFMQTT_V5
             if (rc >= 0){
                 int tmp = Handle_Props(client, p_connect_ack->props,
-                                       (packet_obj != NULL));
+                                       (packet_obj != NULL), 1);
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -388,23 +391,29 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         }
         case MQTT_PACKET_TYPE_PUBLISH:
         {
-            MqttPublish publish, *p_publish = &publish;
+            MqttPublish publish, *p_publish;
             if (packet_obj) {
                 p_publish = (MqttPublish*)packet_obj;
+            #ifdef WOLFMQTT_V5
+                /* setting the protocol level will enable parsing of the
+                 * properties. The properties are allocated from a list,
+                 * so only parse if we are using a return packet object */
+                p_publish->protocol_level = client->protocol_level;
+            #endif
             }
             else {
-                XMEMSET(p_publish, 0, sizeof(MqttPublish));
+                p_publish = &publish;
+                XMEMSET(p_publish, 0, sizeof(MqttPublish));   
             }
-        #ifdef WOLFMQTT_V5
-            p_publish->protocol_level = client->protocol_level;
-        #endif
             rc = MqttDecode_Publish(rx_buf, rx_len, p_publish);
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
                 {
+                    /* Do not free property list here. It will be freed
+                       after the message callback. */
                     int tmp = Handle_Props(client, p_publish->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 0);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -435,7 +444,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             #ifdef WOLFMQTT_V5
                 {
                     int tmp = Handle_Props(client, p_publish_resp->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 1);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -462,7 +471,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             #ifdef WOLFMQTT_V5
                 {
                     int tmp = Handle_Props(client, p_subscribe_ack->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 1);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -490,7 +499,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             #ifdef WOLFMQTT_V5
                 {
                     int tmp = Handle_Props(client, p_unsubscribe_ack->props,
-                                           (packet_obj != NULL));
+                                           (packet_obj != NULL), 1);
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -524,7 +533,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_Auth(rx_buf, rx_len, p_auth);
             if (rc >= 0) {
                 int tmp = Handle_Props(client, p_auth->props,
-                                       (packet_obj != NULL));
+                                       (packet_obj != NULL), 1);
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -547,7 +556,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_Disconnect(rx_buf, rx_len, p_disc);
             if (rc >= 0) {
                 int tmp = Handle_Props(client, p_disc->props,
-                                       (packet_obj != NULL));
+                                       (packet_obj != NULL), 1);
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -632,6 +641,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 break;
             }
             /* Note: Getting here means the Publish Read is done */
+
+        #ifdef WOLFMQTT_V5
+            /* Free the properties */
+            MqttProps_Free(publish->props);
+        #endif
 
             /* Handle QoS */
             if (packet_qos == MQTT_QOS_0) {
@@ -761,14 +775,14 @@ static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
     word16 wait_packet_id)
 {
     int rc = MQTT_CODE_CONTINUE;
-    MqttPendResp *pendResp;
+    MqttPendResp *pendResp = NULL;
 
     /* Check to see if packet type and id have already completed */
     rc = wm_SemLock(&client->lockClient);
     if (rc == 0) {
         if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
             wait_packet_id, &pendResp)) {
-            if (pendResp->packetDone) {
+            if ((pendResp != NULL) && (pendResp->packetDone)) {
                 /* pending response is already done, so return */
                 rc = pendResp->packet_ret;
             #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -903,8 +917,21 @@ wait_again:
                 }
             }
             else {
+            #ifdef WOLFMQTT_MULTITHREAD
+                rc = wm_SemLock(&client->lockClient);
+                if (rc != 0) {
+                    break; /* error */
+                }
+            #endif
+
                 /* use generic packet object */
                 use_packet_obj = &client->msg;
+                /* make sure the generic client message is zero initialized */
+                XMEMSET(use_packet_obj, 0, sizeof(client->msg));
+
+            #ifdef WOLFMQTT_MULTITHREAD
+                wm_SemUnlock(&client->lockClient);
+            #endif
             }
             use_packet_type = packet_type;
 
