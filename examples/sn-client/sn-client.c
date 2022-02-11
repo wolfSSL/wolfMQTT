@@ -97,6 +97,18 @@ static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
     return(MQTT_CODE_SUCCESS);
 }
 
+#ifdef WOLFMQTT_DISCONNECT_CB
+/* callback indicates a network error or broker disconnect occurred */
+static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
+{
+    (void)client;
+    (void)ctx;
+    PRINTF("Disconnect Callback: %s (error %d)",
+        MqttClient_ReturnCodeToString(error_code), error_code);
+    return 0;
+}
+#endif
+
 int sn_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -129,14 +141,9 @@ int sn_test(MQTTCtx *mqttCtx)
         goto exit;
     }
 
-    /* The client.ctx will be stored in the cert callback ctx during
-       MqttSocket_Connect for use by mqtt_tls_verify_cb */
-    mqttCtx->client.ctx = mqttCtx;
-
-    /* Setup socket direct to gateway */
+    /* Setup socket direct to gateway (UDP network, so no TLS) */
     rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
-           mqttCtx->port,DEFAULT_CON_TIMEOUT_MS,
-           mqttCtx->use_tls, mqtt_tls_cb);
+           mqttCtx->port, DEFAULT_CON_TIMEOUT_MS, 0, NULL);
 
     PRINTF("MQTT-SN Socket Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);
@@ -150,6 +157,15 @@ int sn_test(MQTTCtx *mqttCtx)
     if (rc != MQTT_CODE_SUCCESS) {
         goto exit;
     }
+
+#ifdef WOLFMQTT_DISCONNECT_CB
+    /* setup disconnect callback */
+    rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,
+        mqtt_disconnect_cb, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        goto exit;
+    }
+#endif
 
     {
         SN_Connect connect_s, *connect = &connect_s;
@@ -321,8 +337,15 @@ int sn_test(MQTTCtx *mqttCtx)
                 subscribe.topicNameId[1]);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
-        PRINTF("....MQTT-SN Predefined Subscribe Ack: topic id = %d, rc = %d",
-                subscribe.subAck.topicId, subscribe.subAck.return_code);
+        if (rc == MQTT_CODE_SUCCESS) {
+            PRINTF("....MQTT-SN Predefined Subscribe Ack: topic id = %d, rc = %d",
+                    subscribe.subAck.topicId, subscribe.subAck.return_code);
+        }
+        if ((rc == MQTT_CODE_SUCCESS) && (subscribe.subAck.return_code != 0)) {
+            /* Error in subscribe ack */
+            PRINTF("MQTT-SN Predefined Topic (%d) is invalid in Gateway",
+                    subscribe.subAck.topicId);
+        }
 
         /* Publish Predefined Topic */
         XMEMSET(&publish, 0, sizeof(SN_Publish));
@@ -331,7 +354,7 @@ int sn_test(MQTTCtx *mqttCtx)
         publish.duplicate = 0;
         publish.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
 
-        /* Use the topic ID saved from the subscribe */
+        /* Use the predefined topic ID */
         publish.topic_name = pd_topic_id;
 
         if (publish.qos > MQTT_QOS_0) {
