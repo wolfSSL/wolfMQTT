@@ -780,6 +780,7 @@ static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
     /* Check to see if packet type and id have already completed */
     rc = wm_SemLock(&client->lockClient);
     if (rc == 0) {
+        rc = MQTT_CODE_CONTINUE; /* default to "continue" */
         if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
             wait_packet_id, &pendResp)) {
             if ((pendResp != NULL) && (pendResp->packetDone)) {
