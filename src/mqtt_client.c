@@ -860,7 +860,11 @@ wait_again:
         #ifdef WOLFMQTT_MULTITHREAD
             /* Check to see if packet type and id have already completed */
             rc = MqttClient_CheckPendResp(client, wait_type, wait_packet_id);
-            if (rc != MQTT_CODE_CONTINUE && rc != MQTT_CODE_ERROR_NOT_FOUND) {
+            if (rc != MQTT_CODE_ERROR_NOT_FOUND
+            #ifdef WOLFMQTT_NONBLOCK
+                && rc != MQTT_CODE_CONTINUE
+            #endif
+            ) {
                 return rc;
             }
 
