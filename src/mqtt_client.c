@@ -403,7 +403,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             }
             else {
                 p_publish = &publish;
-                XMEMSET(p_publish, 0, sizeof(MqttPublish));   
+                XMEMSET(p_publish, 0, sizeof(MqttPublish));
             }
             rc = MqttDecode_Publish(rx_buf, rx_len, p_publish);
             if (rc >= 0) {
@@ -771,17 +771,23 @@ static inline int MqttIsPubRespPacket(int packet_type)
 }
 
 #ifdef WOLFMQTT_MULTITHREAD
+/* this function will return:
+ * MQTT_CODE_CONTINUE indicating found, but not marked done
+ * MQTT_CODE_ERROR_NOT_FOUND: Not found 
+ * Any other response is from the the packet_ret
+ */
 static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
     word16 wait_packet_id)
 {
-    int rc = MQTT_CODE_CONTINUE;
+    int rc;
     MqttPendResp *pendResp = NULL;
 
     /* Check to see if packet type and id have already completed */
     rc = wm_SemLock(&client->lockClient);
     if (rc == 0) {
         if (MqttClient_RespList_Find(client, (MqttPacketType)wait_type,
-            wait_packet_id, &pendResp)) {
+            wait_packet_id, &pendResp))
+        {
             if ((pendResp != NULL) && (pendResp->packetDone)) {
                 /* pending response is already done, so return */
                 rc = pendResp->packet_ret;
@@ -790,6 +796,14 @@ static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
             #endif
                 MqttClient_RespList_Remove(client, pendResp);
             }
+            else {
+                /* item not done */
+                rc = MQTT_CODE_CONTINUE;
+            }
+        }
+        else {
+            /* item not found */
+            rc = MQTT_CODE_ERROR_NOT_FOUND;
         }
         wm_SemUnlock(&client->lockClient);
     }
@@ -846,7 +860,11 @@ wait_again:
         #ifdef WOLFMQTT_MULTITHREAD
             /* Check to see if packet type and id have already completed */
             rc = MqttClient_CheckPendResp(client, wait_type, wait_packet_id);
-            if ((rc != MQTT_CODE_SUCCESS) && (rc != MQTT_CODE_CONTINUE)) {
+            if (rc != MQTT_CODE_ERROR_NOT_FOUND
+            #ifdef WOLFMQTT_NONBLOCK
+                && rc != MQTT_CODE_CONTINUE
+            #endif
+            ) {
                 return rc;
             }
 
@@ -2347,7 +2365,7 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     if (client == NULL || msg == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
-    
+
 #ifdef WOLFMQTT_MULTITHREAD
     /* all packet type structures must have MqttMsgStat at top */
     mms_stat = (MqttMsgStat*)msg;
@@ -2487,6 +2505,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Error in Callback)";
         case MQTT_CODE_ERROR_SYSTEM:
             return "Error (System resource failed)";
+        case MQTT_CODE_ERROR_NOT_FOUND:
+            return "Error (Not found)";
     }
     return "Unknown";
 }
