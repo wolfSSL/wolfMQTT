@@ -189,7 +189,14 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                 break;
 
             case MQTT_PROP_REASON_STR:
-                PRINTF("Reason String: %s", prop->data_str.str);
+                PRINTF("Reason String: %.*s",
+                        prop->data_str.len, prop->data_str.str);
+                break;
+
+            case MQTT_PROP_USER_PROP:
+                PRINTF("User property: key=\"%.*s\", value=\"%.*s\"",
+                        prop->data_str.len, prop->data_str.str,
+                        prop->data_str2.len, prop->data_str2.str);
                 break;
 
             case MQTT_PROP_PAYLOAD_FORMAT_IND:
@@ -202,7 +209,6 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
             case MQTT_PROP_TOPIC_ALIAS:
             case MQTT_PROP_TYPE_MAX:
             case MQTT_PROP_RECEIVE_MAX:
-            case MQTT_PROP_USER_PROP:
             case MQTT_PROP_WILDCARD_SUB_AVAIL:
             case MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL:
             case MQTT_PROP_RESP_INFO:
