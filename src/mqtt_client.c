@@ -273,7 +273,10 @@ static int MqttClient_RespList_Find(MqttClient *client,
            (packet_id == tmpResp->packet_id))
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            if (client->lastRc != MQTT_CODE_CONTINUE) {
+            #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DEBUG_CLIENT)
+            if (client->lastRc != MQTT_CODE_CONTINUE)
+            #endif
+            {
             PRINTF("PendResp Found: %p, Type %s (%d), ID %d, InProc %d, Done %d",
                 tmpResp, MqttPacket_TypeDesc(tmpResp->packet_type),
                 tmpResp->packet_type, tmpResp->packet_id,
