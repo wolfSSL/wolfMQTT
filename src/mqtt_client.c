@@ -273,7 +273,10 @@ static int MqttClient_RespList_Find(MqttClient *client,
            (packet_id == tmpResp->packet_id))
         {
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            if (client->lastRc != MQTT_CODE_CONTINUE) {
+            #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DEBUG_CLIENT)
+            if (client->lastRc != MQTT_CODE_CONTINUE)
+            #endif
+            {
             PRINTF("PendResp Found: %p, Type %s (%d), ID %d, InProc %d, Done %d",
                 tmpResp, MqttPacket_TypeDesc(tmpResp->packet_type),
                 tmpResp->packet_type, tmpResp->packet_id,
@@ -861,9 +864,7 @@ wait_again:
             /* Check to see if packet type and id have already completed */
             rc = MqttClient_CheckPendResp(client, wait_type, wait_packet_id);
             if (rc != MQTT_CODE_ERROR_NOT_FOUND
-            #ifdef WOLFMQTT_NONBLOCK
                 && rc != MQTT_CODE_CONTINUE
-            #endif
             ) {
                 return rc;
             }
@@ -1434,7 +1435,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     /* Wait for connect ack packet */
     rc = MqttClient_WaitType(client, &mc_connect->ack,
         MQTT_PACKET_TYPE_CONNECT_ACK, 0, client->cmd_timeout_ms);
-#ifdef WOLFMQTT_NONBLOCK
+#if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     if (rc == MQTT_CODE_CONTINUE)
         return rc;
 #endif
@@ -1830,7 +1831,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     rc = MqttClient_WaitType(client, &publish->resp, resp_type,
                         publish->packet_id, client->cmd_timeout_ms);
                 }
-            #ifdef WOLFMQTT_NONBLOCK
+            #if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
                 if (rc == MQTT_CODE_CONTINUE)
                     break;
             #endif
@@ -1966,7 +1967,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     rc = MqttClient_WaitType(client, &subscribe->ack,
         MQTT_PACKET_TYPE_SUBSCRIBE_ACK, subscribe->packet_id,
         client->cmd_timeout_ms);
-#ifdef WOLFMQTT_NONBLOCK
+#if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     if (rc == MQTT_CODE_CONTINUE)
         return rc;
 #endif
@@ -2068,7 +2069,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     rc = MqttClient_WaitType(client, &unsubscribe->ack,
         MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK, unsubscribe->packet_id,
         client->cmd_timeout_ms);
-#ifdef WOLFMQTT_NONBLOCK
+#if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     if (rc == MQTT_CODE_CONTINUE)
         return rc;
 #endif
@@ -2161,7 +2162,7 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
     /* Wait for ping resp packet */
     rc = MqttClient_WaitType(client, ping, MQTT_PACKET_TYPE_PING_RESP, 0,
         client->cmd_timeout_ms);
-#ifdef WOLFMQTT_NONBLOCK
+#if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     if (rc == MQTT_CODE_CONTINUE)
         return rc;
 #endif
@@ -2311,7 +2312,7 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
     /* Wait for auth packet */
     rc = MqttClient_WaitType(client, auth, MQTT_PACKET_TYPE_AUTH, 0,
         client->cmd_timeout_ms);
-#ifdef WOLFMQTT_NONBLOCK
+#if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     if (rc == MQTT_CODE_CONTINUE)
         return rc;
 #endif
