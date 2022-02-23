@@ -1,4 +1,17 @@
 ## Release Notes
+### v1.12 (2/23/2022)
+* Allow MqttClient_WaitType to return MQTT_CODE_CONTINUE with MT (PR #283)
+* Fix decoding user property and add example (PR #282)
+* Fix issue with MqttClient_Publish_WriteOnly not waiting properly for ACK
+  (PR #281)
+* Fix MQTTv5 disconnect with props (PR #279)
+* Add new publish write only API for multi-threading (PR #277)
+* Fix for multithreaded cancel (PR #276)
+* MQTT-SN Add disconnect_cb when disconnect recv from broker; Fix PUB ACK
+  return status handling (PR #274)
+* Enable TLS1.3 in examples (PR #273)
+* Adding windows github actions build test (PR #272)
+
 ### v1.11 (1/7/2022)
 * Return correct error code in SN_Client_Connect (PR #268)
 * Removing unsupported TLS and SNI options in sn-client (PR #266)
@@ -53,7 +66,7 @@
 ### v1.7 (08/21/2020)
 
 * Fix for publish with short topic name and example. (PR #169)
-Add MqttProps_ShutDown(). Fix MqttProp leaks(PR #167)
+* Add MqttProps_ShutDown(). Fix MqttProp leaks(PR #167)
 * Multithread fixes. (PR #166)
 * Fix buffer overrun in strcpy(). Fix logic around getaddrinfo(). (PR #165)
 * Fix MqttClient_WaitType for nonblock mode. (PR #164)
