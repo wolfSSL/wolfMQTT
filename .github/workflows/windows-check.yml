@@ -12,7 +12,7 @@ env:
   SOLUTION_FILE_PATH: wolfmqtt.sln
   OPTIONS_H_IN_PATH: wolfmqtt/wolfmqtt/options.h.in
   OPTIONS_H_PATH: wolfmqtt/wolfmqtt/options.h
-  WOLFSSL_LIB_PATH: wolfssl/x64/Release/wolfssl.lib
+  WOLFSSL_LIB_PATH: wolfssl/Release/x64/wolfssl.lib
   WOLFSSL_LIB_TARGET_PATH: wolfmqtt/wolfssl.lib
   INCLUDE_DIR: wolfmqtt
 
