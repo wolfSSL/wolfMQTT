@@ -39,6 +39,16 @@
     #define SOCKET_T                     Socket_t
     #define SOCK_ADDR_IN                 struct freertos_sockaddr
 
+/* ToppersOS and LWIP */
+#elif defined(TOPPERS) && defined(WOLFSSL_LWIP)
+    /* lwIP includes. */
+    #include "lwip/api.h"
+    #include "lwip/tcpip.h"
+    #include "lwip/memp.h"
+    #include "lwip/stats.h"
+    #include "lwip/sockets.h"
+    #include "lwip/netdb.h"
+
 /* FreeRTOS and LWIP */
 #elif defined(FREERTOS) && defined(WOLFSSL_LWIP)
     /* Scheduler includes. */

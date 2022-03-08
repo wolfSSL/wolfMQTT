@@ -35,6 +35,17 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_socket.h"
 
+/* Options */
+#ifdef WOLFMQTT_NO_STDIO
+    #undef WOLFMQTT_DEBUG_SOCKET
+#endif
+/* lwip */
+#ifdef WOLFSSL_LWIP
+    #undef read
+    #undef write
+    #undef connect
+#endif
+
 
 /* Public Functions */
 #ifdef ENABLE_MQTT_TLS
