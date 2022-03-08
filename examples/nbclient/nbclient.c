@@ -186,6 +186,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
 
+        #ifdef WOLFSSL_ASYNC_CRYPT
+            /* enable async mode for testing */
+            wolfSSL_CTX_SetDevId(mqttCtx->client.tls.ctx, 1);
+        #endif
+
             /* Build connect packet */
             XMEMSET(&mqttCtx->connect, 0, sizeof(MqttConnect));
             mqttCtx->connect.keep_alive_sec = mqttCtx->keep_alive_sec;
@@ -554,6 +559,10 @@ exit:
 #ifdef WOLFMQTT_NONBLOCK
         do {
             rc = mqttclient_test(&mqttCtx);
+
+        #ifdef WOLFSSL_ASYNC_CRYPT
+            wolfSSL_AsyncPoll(mqttCtx.client.tls.ssl, WOLF_POLL_FLAG_CHECK_HW);
+        #endif
         } while (rc == MQTT_CODE_CONTINUE);
 
         mqtt_free_ctx(&mqttCtx);
