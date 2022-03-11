@@ -656,6 +656,10 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 break;
             }
 
+        #ifdef WOLFMQTT_V5
+            /* Copy response code in case changed by callback */
+            resp->reason_code = publish->resp.reason_code;
+        #endif
             /* Populate information needed for ack */
             resp->packet_type = (packet_qos == MQTT_QOS_1) ?
                 MQTT_PACKET_TYPE_PUBLISH_ACK :
@@ -1054,10 +1058,9 @@ wait_again:
             /* setup ACK in shared context */
             XMEMCPY(&client->packetAck, &resp, sizeof(MqttPublishResp));
         #ifdef WOLFMQTT_V5
-            /* Publish QoS response needs success reason code,
-             * otherwise will cause disconnect at broker */
-            client->packetAck.reason_code = MQTT_REASON_SUCCESS;
+            client->packetAck.protocol_level = client->protocol_level;
         #endif
+
             mms_stat->write = MQTT_MSG_ACK;
             break;
         }
