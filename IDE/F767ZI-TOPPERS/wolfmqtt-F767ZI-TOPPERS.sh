@@ -29,7 +29,8 @@ if [ "$DIR" = "F767ZI-TOPPERS" ]; then
      mkdir wolfmqtt
      cp ../../wolfmqtt/*.h ./wolfmqtt
      cp ./user_settings.h ./wolfmqtt
-     cp ./options.h  ./wolfmq
+     cp ../../wolfmqtt/options.h.in ./wolfmqtt/options.h
+
 else
     echo "ERROR: You must be in the IDE/F767ZI-TOPPERS directory to run this script"
 fi

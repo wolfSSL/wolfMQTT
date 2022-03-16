@@ -33,7 +33,7 @@ clean :
 
 else
 
-# trick rules into thinking we are in the root, when we are in the bulid dir
+# trick rules into thinking we are in the root, when we are in the build dir
 VPATH = ../../F767ZI-TOPPERS
 
 # Boiler-plate
