@@ -37,6 +37,22 @@ For building wolfMQTT with TLS support in Visual Studio:
 9. Configure your Visual Studio build settings using `wolfmqtt/vs_settings.h`.
 10. Build the wolfMQTT solution.
 
+### CMake
+CMake supports compiling in many environments including Visual Studio
+if CMake support is installed. The commands below can be run in
+`Developer Command Prompt`.
+
+```
+mkdir build
+cd build
+# to use installed wolfSSL location (library and headers)
+cmake .. -DWITH_WOLFSSL=/prefix/to/wolfssl/install/
+# OR to use a wolfSSL source tree
+cmake .. -DWITH_WOLFSSL_TREE=/path/to/wolfssl/
+# build
+cmake --build .
+```
+
 ### Arduino
 
 See `README.md` at [IDE/ARDUINO.README.md](IDE/ARDUINO.README.md)
