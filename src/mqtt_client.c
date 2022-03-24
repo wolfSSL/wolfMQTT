@@ -854,9 +854,9 @@ wait_again:
     if (client->lastRc != MQTT_CODE_CONTINUE)
     #endif
     {
-        PRINTF("MqttClient_WaitType: Type %s (%d), ID %d, State %d",
+        PRINTF("MqttClient_WaitType: Type %s (%d), ID %d, State %d-%d",
             MqttPacket_TypeDesc((MqttPacketType)wait_type),
-                wait_type, wait_packet_id, mms_stat->read);
+                wait_type, wait_packet_id, mms_stat->read, mms_stat->write);
     }
 #endif
 
@@ -1141,12 +1141,13 @@ wait_again:
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
     if (rc != MQTT_CODE_CONTINUE) {
-        PRINTF("MqttClient_WaitType: rc %d, state %d", rc, mms_stat->read);
+        PRINTF("MqttClient_WaitType: rc %d, state %d-%d",
+            rc, mms_stat->read, mms_stat->write);
     }
 #endif
 
-    /* no data read, reset state */
-    if (mms_stat->read == MQTT_MSG_WAIT) {
+    /* no data read or ack done, then reset state */
+    if (mms_stat->read == MQTT_MSG_WAIT || mms_stat->read == MQTT_MSG_ACK) {
         mms_stat->read = MQTT_MSG_BEGIN;
     }
 
