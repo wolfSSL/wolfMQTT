@@ -981,6 +981,10 @@ wait_again:
             }
         #endif /* WOLFMQTT_MULTITHREAD */
 
+            /* for payload state packet type is always publish */
+            if (mms_stat->read == MQTT_MSG_PAYLOAD) {
+                use_packet_type = MQTT_PACKET_TYPE_PUBLISH;
+            }
             /* cache publish packet id and qos for MqttClient_HandlePacket payload */
             if (use_packet_type == MQTT_PACKET_TYPE_PUBLISH &&
                   mms_stat->read == MQTT_MSG_HEADER && use_packet_obj != NULL) {
