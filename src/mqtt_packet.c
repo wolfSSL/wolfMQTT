@@ -217,7 +217,7 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
 int MqttDecode_Vbi(byte *buf, word32 *value, word32 buf_len)
 {
     word32 rc = 0;
-    int multiplier = 1;
+    word32 multiplier = 1;
     byte encodedByte;
 
     *value = 0;
@@ -225,14 +225,14 @@ int MqttDecode_Vbi(byte *buf, word32 *value, word32 buf_len)
         if (buf_len < rc + 1) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
         }
-        encodedByte = *(buf++);
-        *value += (encodedByte & ~MQTT_PACKET_LEN_ENCODE_MASK) * multiplier;
-        multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
-        if (multiplier > (MQTT_PACKET_LEN_ENCODE_MASK *
-                          MQTT_PACKET_LEN_ENCODE_MASK *
-                          MQTT_PACKET_LEN_ENCODE_MASK)) {
+        if (rc >= 4) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
+
+        encodedByte = *(buf++);
+        *value += (word32)(encodedByte & ~MQTT_PACKET_LEN_ENCODE_MASK) *
+                           multiplier;
+        multiplier *= MQTT_PACKET_LEN_ENCODE_MASK;
         rc++;
     } while ((encodedByte & MQTT_PACKET_LEN_ENCODE_MASK) != 0);
 
@@ -248,9 +248,9 @@ int MqttEncode_Vbi(byte *buf, word32 x)
     byte encodedByte;
 
     do {
-        encodedByte = x % MQTT_PACKET_LEN_ENCODE_MASK;
-        x /= MQTT_PACKET_LEN_ENCODE_MASK;
-        // if there are more data to encode, set the top bit of this byte
+        encodedByte = (x & ~MQTT_PACKET_LEN_ENCODE_MASK) & 0xFF;
+        x >>= 7;
+        /* if there are more data to encode, set the top bit of this byte */
         if (x > 0) {
             encodedByte |= MQTT_PACKET_LEN_ENCODE_MASK;
         }
@@ -258,7 +258,7 @@ int MqttEncode_Vbi(byte *buf, word32 x)
             *(buf++) = encodedByte;
         }
         rc++;
-    } while (x > 0);
+    } while (x > 0 && rc < 4);
 
     return rc;
 }
@@ -365,7 +365,7 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
 
     /* TODO: Check against max size. Sometimes all properties are not
              expected to be added */
-    // TODO: Validate property type is allowed for packet type
+    /* TODO: Validate property type is allowed for packet type */
 
     /* loop through the list properties */
     while ((cur_prop != NULL) && (rc >= 0))
@@ -2308,7 +2308,7 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     if (gw_info != NULL) {
         gw_info->gwId = *rx_payload++;
 
-        //TODO: validate size of gwAddr
+        /* TODO: validate size of gwAddr */
         if (total_len - 3 > 0) {
             /* The gateway address is only present if sent by a client */
             XMEMCPY(gw_info->gwAddr, rx_payload, total_len - 3);
