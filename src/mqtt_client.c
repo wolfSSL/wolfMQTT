@@ -1461,10 +1461,6 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     return rc;
 }
 
-#ifdef WOLFMQTT_TEST_NONBLOCK
-static int testNbAlt = 0;
-#endif
-
 static int MqttClient_Publish_ReadPayload(MqttClient* client,
     MqttPublish* publish, int timeout_ms)
 {
@@ -1517,7 +1513,8 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 
             /* make sure there is something to read */
             if (msg_len > 0) {
-                #ifdef WOLFMQTT_TEST_NONBLOCK
+                #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+                    static int testNbAlt = 0;
                     if (!testNbAlt) {
                         testNbAlt = 1;
                         return MQTT_CODE_CONTINUE;

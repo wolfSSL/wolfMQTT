@@ -207,6 +207,15 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 {
     int rc;
 
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    static int testNbAlt = 0;
+    if (!testNbAlt) {
+        testNbAlt = 1;
+        return MQTT_CODE_CONTINUE;
+    }
+    testNbAlt = 0;
+#endif
+
 #ifdef ENABLE_MQTT_TLS
     if (client->flags & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;

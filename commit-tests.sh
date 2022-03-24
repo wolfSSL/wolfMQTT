@@ -63,7 +63,7 @@ RESULT=$?
 
 # make sure multithread with non-blocking is okay
 echo -e "\n\nTesting multithread with non-block config...\n\n"
-./configure --enable-mt;
+./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK";
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nTest './configure --enable-mt --enable-nonblock' failed" && exit 1
 
@@ -73,7 +73,7 @@ RESULT=$?
 
 # make sure non-blocking plus TLS is okay
 echo -e "\n\nTesting Non-Blocking TLS config as well...\n\n"
-./configure --enable-nonblock --enable-tls;
+./configure --enable-nonblock --enable-tls CFLAGS="-DWOLFMQTT_TEST_NONBLOCK";
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nTest './configure --enable-nonblock --enable-tls' failed" && exit 1
 
@@ -83,7 +83,7 @@ RESULT=$?
 
 # make sure non-blocking is okay
 echo -e "\n\nTesting Non-Blocking config too...\n\n"
-./configure --enable-nonblock --disable-tls;
+./configure --enable-nonblock --disable-tls CFLAGS="-DWOLFMQTT_TEST_NONBLOCK";
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nTest './configure --enable-nonblock --disable-tls' failed" && exit 1
 
