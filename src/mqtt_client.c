@@ -1151,7 +1151,9 @@ wait_again:
 #endif
 
     /* no data read or ack done, then reset state */
-    if (mms_stat->read == MQTT_MSG_WAIT || mms_stat->read == MQTT_MSG_ACK) {
+    if ((mms_stat->read == MQTT_MSG_WAIT &&
+            client->packet.stat == MQTT_PK_BEGIN) ||
+         mms_stat->read == MQTT_MSG_ACK) {
         mms_stat->read = MQTT_MSG_BEGIN;
     }
 
