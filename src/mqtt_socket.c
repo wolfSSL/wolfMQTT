@@ -245,12 +245,24 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
     else
 #endif /* ENABLE_MQTT_TLS */
     {
+    #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+        static int testSmallerRead = 0;
+        if (!testSmallerRead) {
+            if (buf_len > 100) {
+                buf_len /= 2;
+            }
+            testSmallerRead = 1;
+        }
+        else {
+            testSmallerRead = 0;
+        }
+    #endif
         rc = client->net->read(client->net->context, buf, buf_len, timeout_ms);
     }
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
     if (rc != 0 && rc != MQTT_CODE_CONTINUE) { /* hide in non-blocking case */
-        PRINTF("MqttSocket_Read: Len=%d, Rc=%d", buf_len, rc);
+        PRINTF("MqttSocket_ReadDo: Len=%d, Rc=%d", buf_len, rc);
     }
 #endif
 

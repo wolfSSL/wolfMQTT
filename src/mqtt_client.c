@@ -625,7 +625,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
         case MQTT_PACKET_TYPE_PUBLISH:
         {
             MqttPublish* publish = (MqttPublish*)packet_obj;
-            if (publish->stat.read != MQTT_MSG_PAYLOAD) {
+            if (publish->stat.read != MQTT_MSG_PAYLOAD2) {
                 rc = MqttClient_DecodePacket(client, client->rx_buf,
                     client->packet.buf_len, packet_obj, &packet_type,
                     &packet_qos, &packet_id);
@@ -780,7 +780,7 @@ static inline int MqttIsPubRespPacket(int packet_type)
 #ifdef WOLFMQTT_MULTITHREAD
 /* this function will return:
  * MQTT_CODE_CONTINUE indicating found, but not marked done
- * MQTT_CODE_ERROR_NOT_FOUND: Not found 
+ * MQTT_CODE_ERROR_NOT_FOUND: Not found
  * Any other response is from the the packet_ret
  */
 static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
@@ -891,14 +891,25 @@ wait_again:
         FALL_THROUGH;
 
         case MQTT_MSG_WAIT:
+        case MQTT_MSG_HEADER:
         {
             /* Wait for packet */
             rc = MqttPacket_Read(client, client->rx_buf, client->rx_buf_len,
                     timeout_ms);
             /* handle failure */
             if (rc <= 0) {
+            #ifdef WOLFMQTT_NONBLOCK
+                if (rc == MQTT_CODE_CONTINUE &&
+                                          client->packet.stat > MQTT_PK_BEGIN) {
+                    /* advance state, since we received some data */
+                    mms_stat->read = MQTT_MSG_HEADER;
+                }
+            #endif
                 break;
             }
+
+            /* advance state, since we received some data */
+            mms_stat->read = MQTT_MSG_HEADER;
 
             /* capture length read */
             client->packet.buf_len = rc;
@@ -916,12 +927,12 @@ wait_again:
                 client->packet.buf_len, packet_type, packet_id);
         #endif
 
-            mms_stat->read = MQTT_MSG_HEADER;
+            mms_stat->read = MQTT_MSG_PAYLOAD;
         }
         FALL_THROUGH;
 
-        case MQTT_MSG_HEADER:
         case MQTT_MSG_PAYLOAD:
+        case MQTT_MSG_PAYLOAD2:
         {
             MqttPublishResp resp;
             MqttPacketType use_packet_type;
@@ -982,12 +993,16 @@ wait_again:
         #endif /* WOLFMQTT_MULTITHREAD */
 
             /* for payload state packet type is always publish */
-            if (mms_stat->read == MQTT_MSG_PAYLOAD) {
+            if (use_packet_type == MQTT_PACKET_TYPE_RESERVED &&
+                    (mms_stat->read == MQTT_MSG_PAYLOAD ||
+                     mms_stat->read == MQTT_MSG_PAYLOAD2))
+            {
                 use_packet_type = MQTT_PACKET_TYPE_PUBLISH;
             }
             /* cache publish packet id and qos for MqttClient_HandlePacket payload */
             if (use_packet_type == MQTT_PACKET_TYPE_PUBLISH &&
-                  mms_stat->read == MQTT_MSG_HEADER && use_packet_obj != NULL) {
+                  mms_stat->read == MQTT_MSG_PAYLOAD && use_packet_obj != NULL)
+            {
                 MqttObject* obj = (MqttObject*)use_packet_obj;
                 obj->publish.qos = packet_qos;
                 obj->publish.packet_id = packet_id;
@@ -1134,6 +1149,7 @@ wait_again:
         case MQTT_MSG_AUTH:
         case MQTT_MSG_HEADER:
         case MQTT_MSG_PAYLOAD:
+        case MQTT_MSG_PAYLOAD2:
         default:
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("MqttClient_WaitType: Invalid write state %d!",
@@ -1151,9 +1167,7 @@ wait_again:
 #endif
 
     /* no data read or ack done, then reset state */
-    if ((mms_stat->read == MQTT_MSG_WAIT &&
-            client->packet.stat == MQTT_PK_BEGIN) ||
-         mms_stat->read == MQTT_MSG_ACK) {
+    if (mms_stat->read == MQTT_MSG_WAIT || mms_stat->read == MQTT_MSG_ACK) {
         mms_stat->read = MQTT_MSG_BEGIN;
     }
 
@@ -1506,7 +1520,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             publish->buffer_len = 0;
 
             /* set state to reading payload */
-            publish->stat.read = MQTT_MSG_PAYLOAD;
+            publish->stat.read = MQTT_MSG_PAYLOAD2;
 
             msg_len = (publish->total_len - publish->buffer_pos);
             if (msg_len > client->rx_buf_len) {
@@ -1854,6 +1868,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
 
         case MQTT_MSG_ACK:
         case MQTT_MSG_AUTH:
+        case MQTT_MSG_PAYLOAD2:
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("MqttClient_Publish: Invalid state %d!",
                 publish->stat.write);
@@ -3050,6 +3065,7 @@ wait_again:
 
         case MQTT_MSG_HEADER:
         case MQTT_MSG_PAYLOAD:
+        case MQTT_MSG_PAYLOAD2:
         {
             SN_MsgType use_packet_type;
 
@@ -3866,6 +3882,7 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
 
         case MQTT_MSG_HEADER:
         case MQTT_MSG_PAYLOAD:
+        case MQTT_MSG_PAYLOAD2:
         {
             /* Send packet and payload */
             rc = MqttPacket_Write(client, client->tx_buf, client->write.len);

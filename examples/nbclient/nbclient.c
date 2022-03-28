@@ -358,6 +358,22 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
+            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+                else if (rc == MQTT_CODE_STDIN_WAKE) {
+                    XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
+                    if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
+                            stdin) != NULL)
+                    {
+                        PRINTF("STDIN Wake to Publish");
+                        mqttCtx->publish.buffer = (byte*)mqttCtx->rx_buf;
+                        mqttCtx->publish.total_len = (int)XSTRLEN((char*)mqttCtx->rx_buf);
+
+                        rc = MQTT_CODE_CONTINUE;
+                        mqttCtx->stat = WMQ_PUB;
+                        return rc;
+                    }
+                }
+            #endif
                 else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Need to send keep-alive ping */
                     PRINTF("Keep-alive timeout, sending ping");

@@ -283,6 +283,7 @@ typedef enum _MqttMsgState {
     MQTT_MSG_AUTH,
     MQTT_MSG_HEADER,
     MQTT_MSG_PAYLOAD,
+    MQTT_MSG_PAYLOAD2,
     MQTT_MSG_ACK,
 } MqttMsgState;
 

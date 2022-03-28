@@ -896,15 +896,28 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     #ifndef WOLFMQTT_NO_TIMEOUT
         #ifdef WOLFMQTT_NONBLOCK
         if (mqttCtx->useNonBlockMode) {
+        #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+            /* quick no timeout check if data is available on stdin */
+            setup_timeout(&tv, 0);
+            rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
+            if (rc > 0) {
+                if (FD_ISSET(sock->fd, &recvfds)) {
+                    do_read = 1;
+                }
+                else if ((!mqttCtx->test_mode && FD_ISSET(STDIN, &recvfds))) {
+                    return MQTT_CODE_STDIN_WAKE;
+                }
+            }
+        #else
             do_read = 1;
+        #endif
         }
         else
         #endif
         {
             /* Wait for rx data to be available */
             rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
-            if (rc > 0)
-            {
+            if (rc > 0) {
                 if (FD_ISSET(sock->fd, &recvfds)) {
                     do_read = 1;
                 }
