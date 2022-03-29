@@ -136,19 +136,18 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
     }
     mqttCtx = (MQTTCtx*)client->ctx;
 
-    while (prop != NULL)
-    {
-        switch (prop->type)
-        {
+    while (prop != NULL) {
+        PRINTF("Property CB: Type %d", prop->type);
+        switch (prop->type) {
             case MQTT_PROP_ASSIGNED_CLIENT_ID:
                 /* Store client ID in global */
                 mqttCtx->client_id = &gClientId[0];
 
                 /* Store assigned client ID from CONNACK*/
-                XSTRNCPY((char*)mqttCtx->client_id,
-                        prop->data_str.str,
-                        MAX_CLIENT_ID_LEN-1);
-                ((char*)mqttCtx->client_id)[MAX_CLIENT_ID_LEN-1] = 0; /* really want strlcpy() semantics, but that's non-portable. */
+                XSTRNCPY((char*)mqttCtx->client_id, prop->data_str.str,
+                         MAX_CLIENT_ID_LEN - 1);
+                /* should use strlcpy() semantics, but non-portable */
+                ((char*)mqttCtx->client_id)[MAX_CLIENT_ID_LEN - 1] = '\0';
                 break;
 
             case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
@@ -232,7 +231,7 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
 
     return rc;
 }
-#endif
+#endif /* WOLFMQTT_PROPERTY_CB */
 
 int mqttclient_test(MQTTCtx *mqttCtx)
 {
@@ -536,7 +535,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         /* check for test mode */
         if (mqttCtx->test_mode) {
             PRINTF("MQTT Test mode, exit now");
-            break;            
+            break;
         }
 
         /* Try and read packet */

@@ -385,6 +385,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0){
                 int tmp = Handle_Props(client, p_connect_ack->props,
                                        (packet_obj != NULL), 1);
+                p_connect_ack->props = NULL;
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -437,10 +438,11 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             else {
                 XMEMSET(p_publish_resp, 0, sizeof(MqttPublishResp));
             }
+
         #ifdef WOLFMQTT_V5
-                p_publish_resp->protocol_level = client->protocol_level;
+            p_publish_resp->protocol_level = client->protocol_level;
         #endif
-                rc = MqttDecode_PublishResp(rx_buf, rx_len, packet_type,
+            rc = MqttDecode_PublishResp(rx_buf, rx_len, packet_type,
                 p_publish_resp);
             if (rc >= 0) {
                 packet_id = p_publish_resp->packet_id;
@@ -448,6 +450,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 {
                     int tmp = Handle_Props(client, p_publish_resp->props,
                                            (packet_obj != NULL), 1);
+                    p_publish_resp->props = NULL;
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -475,6 +478,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 {
                     int tmp = Handle_Props(client, p_subscribe_ack->props,
                                            (packet_obj != NULL), 1);
+                    p_subscribe_ack->props = NULL;
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -503,6 +507,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 {
                     int tmp = Handle_Props(client, p_unsubscribe_ack->props,
                                            (packet_obj != NULL), 1);
+                    p_unsubscribe_ack->props = NULL;
                     if (tmp != MQTT_CODE_SUCCESS) {
                         rc = tmp;
                     }
@@ -537,6 +542,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 int tmp = Handle_Props(client, p_auth->props,
                                        (packet_obj != NULL), 1);
+                p_auth->props = NULL;
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -560,6 +566,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 int tmp = Handle_Props(client, p_disc->props,
                                        (packet_obj != NULL), 1);
+                p_disc->props = NULL;
                 if (tmp != MQTT_CODE_SUCCESS) {
                     rc = tmp;
                 }
@@ -648,6 +655,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
         #ifdef WOLFMQTT_V5
             /* Free the properties */
             MqttProps_Free(publish->props);
+            publish->props = NULL;
         #endif
 
             /* Handle QoS */
@@ -945,6 +953,9 @@ wait_again:
                 (wait_packet_id == 0 || wait_packet_id == packet_id))
             {
                 use_packet_obj = packet_obj;
+            #ifdef WOLFMQTT_DEBUG_CLIENT
+                PRINTF("Using INCOMING packet_obj %p", use_packet_obj);
+            #endif
                 if (packet_type == wait_type || wait_type == MQTT_PACKET_TYPE_ANY) {
                     /* Only stop waiting when matched or waiting for "any" */
                     waitMatchFound = 1;
@@ -960,6 +971,9 @@ wait_again:
 
                 /* use generic packet object */
                 use_packet_obj = &client->msg;
+            #ifdef WOLFMQTT_DEBUG_CLIENT
+                PRINTF("Using SHARED packet_obj %p", use_packet_obj);
+            #endif
                 /* make sure the generic client message is zero initialized */
                 XMEMSET(use_packet_obj, 0, sizeof(client->msg));
 
@@ -1848,6 +1862,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
             #endif
                 {
                     (void)writeOnly; /* not used */
+
                     /* Wait for publish response packet */
                     rc = MqttClient_WaitType(client, &publish->resp, resp_type,
                         publish->packet_id, client->cmd_timeout_ms);

@@ -639,6 +639,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     if (rc < 0) {
         /* Free the property */
         MqttProps_Free(*props);
+        *props = NULL;
     }
     else {
         rc = total;
