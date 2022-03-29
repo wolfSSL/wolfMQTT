@@ -341,7 +341,7 @@ static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb,
  */
 static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
     word32 rx_len, void *packet_obj, MqttPacketType* ppacket_type,
-    MqttQoS* ppacket_qos, word16* ppacket_id)
+    MqttQoS* ppacket_qos, word16* ppacket_id, int doProps)
 {
     int rc = MQTT_CODE_SUCCESS;
     MqttPacket* header;
@@ -382,7 +382,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         #endif
             rc = MqttDecode_ConnectAck(rx_buf, rx_len, p_connect_ack);
         #ifdef WOLFMQTT_V5
-            if (rc >= 0){
+            if (rc >= 0 && doProps) {
                 int tmp = Handle_Props(client, p_connect_ack->props,
                                        (packet_obj != NULL), 1);
                 p_connect_ack->props = NULL;
@@ -413,7 +413,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
-                {
+                if (doProps) {
                     /* Do not free property list here. It will be freed
                        after the message callback. */
                     int tmp = Handle_Props(client, p_publish->props,
@@ -447,7 +447,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish_resp->packet_id;
             #ifdef WOLFMQTT_V5
-                {
+                if (doProps) {
                     int tmp = Handle_Props(client, p_publish_resp->props,
                                            (packet_obj != NULL), 1);
                     p_publish_resp->props = NULL;
@@ -475,7 +475,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_subscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                {
+                if (doProps) {
                     int tmp = Handle_Props(client, p_subscribe_ack->props,
                                            (packet_obj != NULL), 1);
                     p_subscribe_ack->props = NULL;
@@ -504,7 +504,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_unsubscribe_ack->packet_id;
             #ifdef WOLFMQTT_V5
-                {
+                if (doProps) {
                     int tmp = Handle_Props(client, p_unsubscribe_ack->props,
                                            (packet_obj != NULL), 1);
                     p_unsubscribe_ack->props = NULL;
@@ -539,7 +539,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 XMEMSET(p_auth, 0, sizeof(MqttAuth));
             }
             rc = MqttDecode_Auth(rx_buf, rx_len, p_auth);
-            if (rc >= 0) {
+            if (rc >= 0 && doProps) {
                 int tmp = Handle_Props(client, p_auth->props,
                                        (packet_obj != NULL), 1);
                 p_auth->props = NULL;
@@ -563,7 +563,7 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                 XMEMSET(p_disc, 0, sizeof(MqttDisconnect));
             }
             rc = MqttDecode_Disconnect(rx_buf, rx_len, p_disc);
-            if (rc >= 0) {
+            if (rc >= 0 && doProps) {
                 int tmp = Handle_Props(client, p_disc->props,
                                        (packet_obj != NULL), 1);
                 p_disc->props = NULL;
@@ -594,12 +594,13 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
     }
 
     (void)client;
+    (void)doProps;
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
     PRINTF("MqttClient_DecodePacket: Rc %d, Len %d, Type %s (%d), ID %d,"
-            " QoS %d",
+            " QoS %d, doProps %d",
         rc, rx_len, MqttPacket_TypeDesc(packet_type), packet_type, packet_id,
-        packet_qos);
+        packet_qos, doProps);
 #endif
 
     return rc;
@@ -626,7 +627,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
         {
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 1);
             break;
         }
         case MQTT_PACKET_TYPE_PUBLISH:
@@ -635,7 +636,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
             if (publish->stat.read != MQTT_MSG_PAYLOAD2) {
                 rc = MqttClient_DecodePacket(client, client->rx_buf,
                     client->packet.buf_len, packet_obj, &packet_type,
-                    &packet_qos, &packet_id);
+                    &packet_qos, &packet_id, 1);
                 if (rc <= 0) {
                     return rc;
                 }
@@ -685,7 +686,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
         #endif
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type,
-                &packet_qos, &packet_id);
+                &packet_qos, &packet_id, 1);
             if (rc <= 0) {
                 return rc;
             }
@@ -713,21 +714,21 @@ static int MqttClient_HandlePacket(MqttClient* client,
         {
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 1);
             break;
         }
         case MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK:
         {
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 1);
             break;
         }
         case MQTT_PACKET_TYPE_PING_RESP:
         {
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 1);
             break;
         }
         case MQTT_PACKET_TYPE_AUTH:
@@ -735,7 +736,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
         #ifdef WOLFMQTT_V5
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 1);
         #else
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
         #endif
@@ -747,7 +748,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
         #ifdef WOLFMQTT_V5
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 1);
         #else
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
         #endif
@@ -925,7 +926,7 @@ wait_again:
             /* Decode Packet - get type, qos and id */
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, NULL, &packet_type, &packet_qos,
-                &packet_id);
+                &packet_id, 0);
             if (rc < 0) {
                 break;
             }
