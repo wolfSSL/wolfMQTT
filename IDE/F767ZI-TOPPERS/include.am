@@ -1,0 +1,13 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/README.md
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/Makefile
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/wolfmqtt-F767ZI-TOPPERS.sh
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/user_settings.h
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/options.h
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/.vscode/c_cpp_properties.json
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/.vscode/extensions.json
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/.vscode/settings.json
+EXTRA_DIST+= IDE/F767ZI-TOPPERS/.vscode/tasks.json
