@@ -1033,6 +1033,8 @@ wait_again:
                 break;
             }
         #endif
+            /* Make sure shared packet object is reset */
+            XMEMSET(&client->msg, 0, sizeof(client->msg));
 
             /* handle success case */
             if (rc >= 0) {
