@@ -1209,6 +1209,10 @@ wait_again:
                 /* Send publish response packet */
                 rc = MqttPacket_Write(client, client->tx_buf,
                     client->write.len);
+            #ifdef WOLFMQTT_NONBLOCK
+                if (rc == MQTT_CODE_CONTINUE)
+                    break;
+            #endif
                 if (rc == client->write.len) {
                     rc = 0; /* success */
                 }
@@ -1458,13 +1462,12 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         wm_SemUnlock(&client->lockSend);
     #endif
         if (rc != client->write.len) {
-    #ifdef WOLFMQTT_MULTITHREAD
-            if ((rc != MQTT_CODE_CONTINUE) &&
-                (wm_SemLock(&client->lockClient)) == 0) {
+        #ifdef WOLFMQTT_MULTITHREAD
+            if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &mc_connect->pendResp);
                 wm_SemUnlock(&client->lockClient);
             }
-    #endif
+        #endif
             return rc;
         }
     #ifdef WOLFMQTT_V5

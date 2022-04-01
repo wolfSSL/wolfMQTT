@@ -577,6 +577,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
         case WMQ_DISCONNECT:
         {
+            mqttCtx->stat = WMQ_DISCONNECT;
+
             /* Disconnect */
             rc = MqttClient_Disconnect_ex(&mqttCtx->client,
                    &mqttCtx->disconnect);
