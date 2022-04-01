@@ -827,6 +827,66 @@ static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
 }
 #endif /* WOLFMQTT_MULTITHREAD */
 
+/* Helper for clearing the contents of an object buffer based on packet type */
+static void MqttClient_PacketReset(MqttPacketType packet_type, void* packet_obj)
+{
+    size_t objSz = 0;
+    size_t offset = sizeof(MqttMsgStat);
+#ifdef WOLFMQTT_MULTITHREAD
+    offset += sizeof(MqttPendResp);
+#endif
+    switch (packet_type) {
+        case MQTT_PACKET_TYPE_CONNECT:
+            objSz = sizeof(MqttConnect);
+            break;
+        case MQTT_PACKET_TYPE_CONNECT_ACK:
+            objSz = sizeof(MqttConnectAck);
+            break;
+        case MQTT_PACKET_TYPE_PUBLISH:
+            objSz = sizeof(MqttPublish);
+            break;
+        case MQTT_PACKET_TYPE_PUBLISH_ACK:
+        case MQTT_PACKET_TYPE_PUBLISH_REC:
+        case MQTT_PACKET_TYPE_PUBLISH_REL:
+        case MQTT_PACKET_TYPE_PUBLISH_COMP:
+            objSz = sizeof(MqttPublishResp);
+            break;
+        case MQTT_PACKET_TYPE_SUBSCRIBE:
+            objSz = sizeof(MqttSubscribe);
+            break;
+        case MQTT_PACKET_TYPE_SUBSCRIBE_ACK:
+            objSz = sizeof(MqttSubscribeAck);
+            break;
+        case MQTT_PACKET_TYPE_UNSUBSCRIBE:
+            objSz = sizeof(MqttUnsubscribe);
+            break;
+        case MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK:
+            objSz = sizeof(MqttUnsubscribeAck);
+            break;
+        case MQTT_PACKET_TYPE_PING_REQ:
+        case MQTT_PACKET_TYPE_PING_RESP:
+            objSz = sizeof(MqttPing);
+            break;
+        case MQTT_PACKET_TYPE_AUTH:
+        #ifdef WOLFMQTT_V5
+            objSz = sizeof(MqttAuth);
+        #endif
+            break;
+        case MQTT_PACKET_TYPE_DISCONNECT:
+        #ifdef WOLFMQTT_V5
+            objSz = sizeof(MqttDisconnect);
+        #endif
+            break;
+        case MQTT_PACKET_TYPE_ANY:
+        case MQTT_PACKET_TYPE_RESERVED:
+        default:
+            break;
+    } /* switch (packet_type) */
+    if (objSz > offset) {
+        XMEMSET((byte*)packet_obj + offset, 0, objSz - offset);
+    }
+}
+
 static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     byte wait_type, word16 wait_packet_id, int timeout_ms)
 {
@@ -931,6 +991,8 @@ wait_again:
                 break;
             }
 
+            MqttClient_PacketReset(packet_type, &client->msg);
+
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Read Packet: Len %d, Type %d, ID %d",
                 client->packet.buf_len, packet_type, packet_id);
@@ -1033,8 +1095,6 @@ wait_again:
                 break;
             }
         #endif
-            /* Make sure shared packet object is reset */
-            XMEMSET(&client->msg, 0, sizeof(client->msg));
 
             /* handle success case */
             if (rc >= 0) {
