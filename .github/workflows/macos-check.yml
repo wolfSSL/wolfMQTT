@@ -44,3 +44,15 @@ jobs:
       run: make
     - name: make check
       run: make check
+    - name: configure with Non-Block
+      run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+    - name: configure with Non-Block and Multi-threading
+      run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+    - name: make
+      run: make
+    - name: make check
+      run: make check
