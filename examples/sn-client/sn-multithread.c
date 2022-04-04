@@ -104,8 +104,6 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     word16 topicId;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
-    (void)mqttCtx;
-
     if (msg_new) {
         /* Topic ID or short topic name */
         topicId = (word16)(msg->topic_name[0] << 8 | msg->topic_name[1]);
@@ -115,7 +113,7 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
                 topicId, msg->qos, msg->packet_id, msg->total_len);
 
         /* for test mode: count the number of TEST_MESSAGE matches received */
-        if (mqttCtx->test_mode) {
+        if (mqttCtx != NULL && mqttCtx->test_mode) {
             if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
                 /* Only compare the "test" part */
                 XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
