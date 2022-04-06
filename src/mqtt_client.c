@@ -1037,8 +1037,6 @@ wait_again:
             #ifdef WOLFMQTT_DEBUG_CLIENT
                 PRINTF("Using SHARED packet_obj %p", use_packet_obj);
             #endif
-                /* make sure the generic client message is zero initialized */
-                XMEMSET(use_packet_obj, 0, sizeof(client->msg));
 
             #ifdef WOLFMQTT_MULTITHREAD
                 wm_SemUnlock(&client->lockClient);
