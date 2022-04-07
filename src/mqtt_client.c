@@ -652,6 +652,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 break;
             }
             /* Note: Getting here means the Publish Read is done */
+            publish->stat.read = MQTT_MSG_BEGIN; /* reset state */
 
         #ifdef WOLFMQTT_V5
             /* Free the properties */
