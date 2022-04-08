@@ -1089,6 +1089,13 @@ wait_again:
             rc = MqttClient_HandlePacket(client, use_packet_type,
                 use_packet_obj, &resp, timeout_ms);
 
+            /* if using the shared packet object, make sure the original
+             * state is correct for publish payload 2 (continued) */
+            if (use_packet_obj != mms_stat &&
+                    ((MqttMsgStat*)use_packet_obj)->read == MQTT_MSG_PAYLOAD2) {
+                mms_stat->read = MQTT_MSG_PAYLOAD2;
+            }
+
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
                 break;
