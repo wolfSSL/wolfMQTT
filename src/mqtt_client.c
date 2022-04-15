@@ -2999,12 +2999,19 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
         }
         case SN_MSG_TYPE_DISCONNECT:
         {
+            SN_Disconnect disc_s, *disc = &disc_s;
+            if (packet_obj) {
+                disc = (SN_Disconnect*)packet_obj;
+            }
+            else {
+                XMEMSET(disc, 0, sizeof(SN_Disconnect));
+            }
             /* Decode Disconnect */
             rc = SN_Decode_Disconnect(client->rx_buf, client->packet.buf_len);
 
 #ifdef WOLFMQTT_DISCONNECT_CB
             /* Call disconnect callback to allow handling broker disconnect */
-            if (client->disconnect_cb) {
+            if ((client->disconnect_cb != NULL) && (disc->sleepTmr == 0)) {
                 client->disconnect_cb(client, rc, client->disconnect_ctx);
             }
 #endif
