@@ -652,6 +652,7 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 break;
             }
             /* Note: Getting here means the Publish Read is done */
+            publish->stat.read = MQTT_MSG_BEGIN; /* reset state */
 
         #ifdef WOLFMQTT_V5
             /* Free the properties */
@@ -1037,8 +1038,6 @@ wait_again:
             #ifdef WOLFMQTT_DEBUG_CLIENT
                 PRINTF("Using SHARED packet_obj %p", use_packet_obj);
             #endif
-                /* make sure the generic client message is zero initialized */
-                XMEMSET(use_packet_obj, 0, sizeof(client->msg));
 
             #ifdef WOLFMQTT_MULTITHREAD
                 wm_SemUnlock(&client->lockClient);
@@ -1089,6 +1088,13 @@ wait_again:
             XMEMSET(&resp, 0, sizeof(resp));
             rc = MqttClient_HandlePacket(client, use_packet_type,
                 use_packet_obj, &resp, timeout_ms);
+
+            /* if using the shared packet object, make sure the original
+             * state is correct for publish payload 2 (continued) */
+            if (use_packet_obj != mms_stat &&
+                    ((MqttMsgStat*)use_packet_obj)->read == MQTT_MSG_PAYLOAD2) {
+                mms_stat->read = MQTT_MSG_PAYLOAD2;
+            }
 
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
