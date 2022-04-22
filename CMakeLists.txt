@@ -30,6 +30,8 @@ set(MQTT_SOURCES
     src/mqtt_socket.c
     )
 
+# default to build shared library
+option(BUILD_SHARED_LIBS "Build shared libraries (.dll/.so) instead of static ones (.lib/.a)" ON)
 add_library(wolfmqtt ${MQTT_SOURCES})
 
 
@@ -41,6 +43,9 @@ if (WITH_WOLFSSL)
         "ENABLE_MQTT_TLS"
         )
 elseif (WITH_WOLFSSL_TREE)
+    set(WOLFSSL_EXAMPLES "no" CACHE STRING "")
+    set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "")
+
     add_subdirectory(${WITH_WOLFSSL_TREE} wolfssl)
     target_link_libraries(wolfmqtt PUBLIC wolfssl)
     target_compile_definitions(wolfmqtt PUBLIC
@@ -106,7 +111,7 @@ target_include_directories(wolfmqtt
     )
 
 
-if (${WOLFMQTT_EXAMPLES})
+if (WOLFMQTT_EXAMPLES)
     add_library(mqtt_test_lib STATIC
         examples/mqttexample.c
         examples/mqttnet.c
