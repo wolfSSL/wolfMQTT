@@ -96,7 +96,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     }
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
-    PRINTF("Payload (%d - %d) printing %d bytes:"LINE_END"%s",
+    PRINTF("Payload (%d - %d) printing %d bytes:" LINE_END "%s",
         msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
 
     if (msg_done) {
