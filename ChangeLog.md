@@ -10,6 +10,7 @@
 * Fix for improper reset of shared object by @dgarske in #291
 * cmake: add example option and fixes for vcpkg by @elms in #293
 * cmake: shared/static lib build and cleanup by @elms in #295
+* Fix example msg cb print error @embhorn in #298
 
 ### v1.12 (2/23/2022)
 * Allow MqttClient_WaitType to return MQTT_CODE_CONTINUE with MT (PR #283)
