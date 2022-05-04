@@ -1,4 +1,16 @@
 ## Release Notes
+
+### v1.13.0 (5/4/2022)
+* Fix windows build test by @lealem47 in #286
+* Add async support for wolfMQTT by @dgarske in #285
+* Allow message callback to set reason code for response by @embhorn in #287
+* Porting WolfMQTT to NUCLEO F767ZI  with TOPPERS OS by @nekoman2187 in #254
+* Fixes for non-blocking state and large payload by @dgarske in #288
+* Add CMake support build by @elms in #292
+* Fix for improper reset of shared object by @dgarske in #291
+* cmake: add example option and fixes for vcpkg by @elms in #293
+* cmake: shared/static lib build and cleanup by @elms in #295
+
 ### v1.12 (2/23/2022)
 * Allow MqttClient_WaitType to return MQTT_CODE_CONTINUE with MT (PR #283)
 * Fix decoding user property and add example (PR #282)
