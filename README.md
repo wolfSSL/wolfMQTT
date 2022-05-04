@@ -235,6 +235,7 @@ wolfMQTT client library has been tested with the following brokers:
 * Mosquitto by Eclipse
 * Paho MQTT-SN Gateway by Eclipse
 * VerneMQ by VerneMQ/Erlio
+* EMQX broker
 
 ## Specification Support
 
@@ -274,6 +275,8 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 ** `./examples/mqttclient/mqttclient -h localhost`
 * HiveMQ Cloud
 ** `./examples/mqttclient/mqttclient -h 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud -t -S -u wolf1 -w NEZjcm7i8eRjFKF -p 8883`
+* EMQX broker
+** `./examples/mqttclient/mqttclient -h "broker.emqx.io"`
 
 ### MQTT Sensor Network (MQTT-SN) Specification Support
 
