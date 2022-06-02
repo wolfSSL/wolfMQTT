@@ -43,10 +43,13 @@ static const char* mTlsCaFile;
 static const char* mTlsCertFile;
 static const char* mTlsKeyFile;
 #ifdef HAVE_SNI
-static int useSNI = 0;
+static int useSNI;
 static const char* mTlsSniHostName;
 #endif
+#ifdef HAVE_PQC
+static const char* mTlsPQAlg;
 #endif
+#endif /* ENABLE_MQTT_TLS */
 
 static int mygetopt(int argc, char** argv, const char* optstring)
 {
@@ -206,6 +209,9 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
 #ifdef HAVE_SNI
         PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
 #endif
+#ifdef HAVE_PQC
+        PRINTF("-Q <str>    Use Key Share with post-quantum algorithm");
+#endif
 #else
         PRINTF("-p <num>    Port to connect on, default: %d",
              MQTT_DEFAULT_PORT);
@@ -264,7 +270,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     int rc;
 
     #ifdef ENABLE_MQTT_TLS
-        #define MQTT_TLS_ARGS "c:A:K:S;"
+        #define MQTT_TLS_ARGS "c:A:K:S:Q;"
     #else
         #define MQTT_TLS_ARGS ""
     #endif
@@ -368,6 +374,13 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             mTlsSniHostName = myoptarg;
         #else
             PRINTF("To use '-S', enable SNI in wolfSSL");
+        #endif
+            break;
+        case 'Q':
+        #ifdef HAVE_PQC
+            mTlsPQAlg = myoptarg;
+        #else
+            PRINTF("To use '-Q', build wolfSSL with --with-liboqs");
         #endif
             break;
     #endif
@@ -616,16 +629,42 @@ int mqtt_tls_cb(MqttClient* client)
     #endif
     #endif /* !NO_FILESYSTEM */
 #endif /* !NO_CERT */
-    }
 #ifdef HAVE_SNI
-    if ((rc == WOLFSSL_SUCCESS) && (mTlsSniHostName != NULL)) {
-        rc = wolfSSL_CTX_UseSNI(client->tls.ctx, WOLFSSL_SNI_HOST_NAME,
-                mTlsSniHostName, (word16) XSTRLEN(mTlsSniHostName));
-        if (rc != WOLFSSL_SUCCESS) {
-            PRINTF("UseSNI failed");
+        if ((rc == WOLFSSL_SUCCESS) && (mTlsSniHostName != NULL)) {
+            rc = wolfSSL_CTX_UseSNI(client->tls.ctx, WOLFSSL_SNI_HOST_NAME,
+                    mTlsSniHostName, (word16) XSTRLEN(mTlsSniHostName));
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("UseSNI failed");
+            }
         }
-    }
 #endif /* HAVE_SNI */
+#ifdef HAVE_PQC
+        if ((rc == WOLFSSL_SUCCESS) && (mTlsPQAlg != NULL)) {
+            int group = 0;
+            if (XSTRCMP(mTlsPQAlg, "KYBER_LEVEL1") == 0) {
+                group = WOLFSSL_KYBER_LEVEL1;
+            } else if (XSTRCMP(mTlsPQAlg, "P256_KYBER_LEVEL1") == 0) {
+                group = WOLFSSL_P256_KYBER_LEVEL1;
+            } else {
+                PRINTF("Invalid post-quantum KEM specified");
+            }
+
+            if (group != 0) {
+                client->tls.ssl = wolfSSL_new(client->tls.ctx);
+                if (client->tls.ssl == NULL) {
+                    rc = WOLFSSL_FAILURE;
+                }
+
+                if (rc == WOLFSSL_SUCCESS) {
+                    rc = wolfSSL_UseKeyShare(client->tls.ssl, group);
+                    if (rc != WOLFSSL_SUCCESS) {
+                        PRINTF("Use key share failed");
+                    }
+                }
+            }
+        }
+#endif /* HAVE_PQC */
+    }
 
     PRINTF("MQTT TLS Setup (%d)", rc);
 

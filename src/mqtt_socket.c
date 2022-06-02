@@ -441,6 +441,11 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
             }
+        } else {
+            /* Since the user setup client->tls.ssl the IO callbacks didn't get
+             * associated with this wolfSSL struct */
+            wolfSSL_SSLSetIORecv(client->tls.ssl, MqttSocket_TlsSocketReceive);
+            wolfSSL_SSLSetIOSend(client->tls.ssl, MqttSocket_TlsSocketSend);
         }
         /* Set the IO callback context */
         wolfSSL_SetIOReadCtx(client->tls.ssl, (void *)client);

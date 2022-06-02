@@ -25,7 +25,7 @@
 #include "examples/mqttexample.h"
 
 #define FIRMWARE_PUSH_CLIENT_ID "WolfMQTTFwPush"
-#define FIRMWARE_PUSH_DEF_FILE  "README.md"
+#define FIRMWARE_PUSH_DEF_FILE  "examples/publish.dat"
 
 /* Structure to pass into the publish callback
  * using the publish->ctx pointer */
