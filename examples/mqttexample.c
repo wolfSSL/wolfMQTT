@@ -270,7 +270,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     int rc;
 
     #ifdef ENABLE_MQTT_TLS
-        #define MQTT_TLS_ARGS "c:A:K:S:Q;"
+        #define MQTT_TLS_ARGS "c:A:K:S;Q:"
     #else
         #define MQTT_TLS_ARGS ""
     #endif
