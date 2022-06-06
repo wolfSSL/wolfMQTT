@@ -292,3 +292,45 @@ Unsupported features:
 * Multiple gateway handling
 
 The SN client was tested using the Eclipse Paho MQTT-SN Gateway (https://github.com/eclipse/paho.mqtt-sn.embedded-c) running locally and on a separate network node. Instructions for building and running the gateway are in the project README.
+
+## Post-Quantum MQTT Support
+
+Recently the OpenQuantumSafe project has integrated their fork of OpenSSL with the mosquito MQTT broker. You can now build wolfMQTT with wolfSSL and liboqs and use that to publish to the mosquito MQTT broker. Currently, wolfMQTT supports the `KYBER_LEVEL1` and `P256_KYBER_LEVEL1` groups and FALCON_LEVEL1 for authentication in TLS 1.3. This works on Linux.
+
+### Getting Started with Post-Quantum Mosquito MQTT Broker and Subscriber
+
+To get started, you can use the code from the following github pull request:
+
+https://github.com/open-quantum-safe/oqs-demos/pull/143
+
+Follow all the instructions in README.md and USAGE.md. This allows you to create a docker image and a docker network. Then you will run a broker, a subscriber and a publisher. At the end the publisher will exit and the broker and subscriber will remain active. You will need to re-activate the publisher docker instance and get the following files onto your local machine:
+
+- /test/cert/CA.crt
+- /test/cert/publisher.crt
+- /test/cert/publisher.key
+
+NOTE: Do not stop the broker and the subscriber instances.
+
+### Building and Running Post-Quantum wolfMQTT Publisher
+
+Follow the instructions for obtaining and building liboqs and building wolfSSL in section 15 of the following document:
+
+https://github.com/wolfSSL/wolfssl/blob/master/INSTALL
+
+No special flags are required for building wolfMQTT. Simply do the following:
+
+```
+./autogen.sh (if obtained from github)
+./configure
+make all
+make check
+```
+
+Since the broker and subscriber are still running, you can use `mqttclient` to publish using post-quantum algorithms in TLS 1.3 by doing the following:
+
+```
+./examples/mqttclient/mqttclient -h 172.18.0.2 -t -A CA.crt -K publisher.key -c publisher.crt -m "Hello from post-quantum wolfMQTT!!" -n test/sensor1 -Q KYBER_LEVEL1
+```
+
+Congratulations! You have just published an MQTT message using TLS 1.3 with the `KYBER_LEVEL1` KEM and `FALCON_LEVEL1` signature scheme. To use the hybrid group, replace `KYBER_LEVEL1` with `P256_KYBER_LEVEL1`.
+

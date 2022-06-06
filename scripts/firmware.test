@@ -22,8 +22,8 @@ do_cleanup() {
 [ ! -x ./examples/firmware/fwclient ] && echo -e "\n\nMQTT Example fwclient doesn't exist" && exit 1
 
 def_args="-t -T -C 2000"
-filein=./README.md
-fileout=./README.md.trs
+filein=./examples/publish.dat
+fileout=./examples/publish.dat.trs
 
 # Wait 1 secs for other tests to conclude
 sleep 1

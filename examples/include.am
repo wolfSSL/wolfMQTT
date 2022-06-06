@@ -157,6 +157,7 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/sn-client/.libs/sn-multithread
 
 EXTRA_DIST+=       examples/mqttuart.c \
+                   examples/publish.dat \
                    examples/mqttclient/mqttclient.vcxproj \
                    examples/nbclient/nbclient.vcxproj \
                    examples/firmware/fwclient.vcxproj \
