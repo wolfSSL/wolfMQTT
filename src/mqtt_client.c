@@ -335,6 +335,7 @@ static int Handle_Props(MqttClient* client, MqttProp* props, byte use_cb,
  *  \param      ppacket_type Decoded packet type
  *  \param      ppacket_qos  Decoded QoS level
  *  \param      ppacket_id   Decoded packet id
+ *  \param      doProps      True: Call Handle_Props to free prop struct
 
  *  \return     Returns length decoded or error (as negative) MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
@@ -987,7 +988,7 @@ wait_again:
             /* Decode Packet - get type, qos and id */
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, NULL, &packet_type, &packet_qos,
-                &packet_id, 0);
+                &packet_id, 1);
             if (rc < 0) {
                 break;
             }

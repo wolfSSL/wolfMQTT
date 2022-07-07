@@ -1851,6 +1851,10 @@ MqttProp* MqttProps_Add(MqttProp **head)
             prev->next = new_prop;
         }
     }
+    else {
+        /* Could not allocate property */
+        (void)MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+    }
 
 #ifdef WOLFMQTT_MULTITHREAD
     (void)wm_SemUnlock(&clientPropStack_lock);
