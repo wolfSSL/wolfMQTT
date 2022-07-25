@@ -1,5 +1,12 @@
 ## Release Notes
 
+### v1.14.0 (7/25/2022)
+* Support post-quantum KYBER_LEVEL1 and P256_KYBER_LEVEL1 with FALCON_LEVEL1 
+  in wolfMQTT. by @anhu #300
+* Add WOLFMQTT_USE_CB_ON_DISCONNECT for CB on client disconnect by @embhorn 
+  in #302
+* Fix to release connect ack props by @embhorn in #301
+
 ### v1.13.0 (5/4/2022)
 * Fix windows build test by @lealem47 in #286
 * Add async support for wolfMQTT by @dgarske in #285
