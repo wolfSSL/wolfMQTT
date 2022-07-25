@@ -42,6 +42,15 @@
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"
 
+/* This macro allows the disconnect callback to be triggered when
+ * MqttClient_Disconnect_ex is called. Normally the CB is only used to handle
+ * errors from MqttPacket_HandleNetError.
+ */
+#ifndef WOLFMQTT_USE_CB_ON_DISCONNECT
+    #undef WOLFMQTT_USE_CB_ON_DISCONNECT
+    /* #define WOLFMQTT_USE_CB_ON_DISCONNECT */
+#endif
+
 #if defined(WOLFMQTT_PROPERTY_CB) && !defined(WOLFMQTT_V5)
     #error "WOLFMQTT_V5 must be defined to use WOLFMQTT_PROPERTY_CB"
 #endif

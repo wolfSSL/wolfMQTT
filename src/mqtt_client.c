@@ -2347,9 +2347,17 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *disconnect)
         return rc;
     }
 
+    rc = MQTT_CODE_SUCCESS;
+
+#if defined(WOLFMQTT_DISCONNECT_CB) && defined(WOLFMQTT_USE_CB_ON_DISCONNECT)
+    /* Trigger disconnect callback */
+    if (client->disconnect_cb)
+        client->disconnect_cb(client, rc, client->disconnect_ctx);
+#endif
+
     /* No response for MQTT disconnect packet */
 
-    return MQTT_CODE_SUCCESS;
+    return rc;
 }
 
 #ifdef WOLFMQTT_V5
