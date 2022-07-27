@@ -65,7 +65,8 @@
 #endif
 
 #ifdef ENABLE_MQTT_TLS
-    #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
+    #if !defined(WOLFSSL_USER_SETTINGS) && \
+        (!defined(USE_WINDOWS_API) || defined(BUILDING_CMAKE))
         #include <wolfssl/options.h>
     #endif
     #include <wolfssl/wolfcrypt/settings.h>
