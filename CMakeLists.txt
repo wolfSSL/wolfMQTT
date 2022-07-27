@@ -94,6 +94,11 @@ target_compile_definitions(wolfmqtt PRIVATE
     "BUILDING_WOLFMQTT"
     )
 
+    # Tell mqtt_types.h we are using a ./configure like output / options.h
+target_compile_definitions(wolfmqtt PRIVATE
+    "BUILDING_CMAKE"
+    )
+
 #TODO generate options file
 configure_file(wolfmqtt/options.h.in wolfmqtt/options.h)
 
