@@ -26,7 +26,8 @@
 
 #ifdef WOLFMQTT_NONBLOCK
     /* need EWOULDBLOCK and EAGAIN */
-    #ifdef MICROCHIP_MPLAB_HARMONY
+    #if defined(MICROCHIP_MPLAB_HARMONY) && ((__XC32_VERSION < 4000) || (__XC32_VERSION == 243739000))
+        // xc32 versions >= v4.0 no longer have sys/errno.h
         #include <sys/errno.h>
     #endif
     #include <errno.h>
