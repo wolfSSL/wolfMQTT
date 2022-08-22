@@ -63,6 +63,7 @@ firmware.bin
 wolfmqtt/options.h
 IDE/ARDUINO/wolfMQTT
 IDE/Microchip-Harmony/wolfmqtt_client/firmware/mqtt_client.X/dist/default/
+build/
 
 # examples
 examples/aws/awsiot
