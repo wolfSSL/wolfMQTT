@@ -24,8 +24,8 @@
     #include <config.h>
 #endif
 
-#include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_client.h"
+#include "wolfmqtt/mqtt_packet.h"
 
 #ifdef WOLFMQTT_V5
 struct MqttPropMatrix {
