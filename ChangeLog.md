@@ -1,5 +1,9 @@
 ## Release Notes
 
+### v1.14.1 (8/31/2022)
+* Fix cmake builds #307
+* Fix for Vcpkg on Windows not getting wolfssl/options.h included #305
+
 ### v1.14.0 (7/25/2022)
 * Support post-quantum KYBER_LEVEL1 and P256_KYBER_LEVEL1 with FALCON_LEVEL1 
   in wolfMQTT. by @anhu #300

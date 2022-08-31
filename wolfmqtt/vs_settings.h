@@ -4,9 +4,8 @@
 #ifndef _WOLFMQTT_VS_SETTINGS_
 #define _WOLFMQTT_VS_SETTINGS_
 
-/* Don't include this if using autoconf cross-compile or cmake */
-#if !defined(HAVE_CONFIG_H) && !defined(BUILDING_CMAKE)
-
+/* Don't include this if using autoconf cross-compile */
+#if !defined(HAVE_CONFIG_H)
 
 /* TLS Support */
 #undef  ENABLE_MQTT_TLS
@@ -59,7 +58,6 @@
 #undef  WOLFMQTT_NO_ERROR_STRINGS
 //#define WOLFMQTT_NO_ERROR_STRINGS
 
-
-#endif /* !HAVE_CONFIG_H && !BUILDING_CMAKE */
+#endif /* !HAVE_CONFIG_H */
 
 #endif /* _WOLFMQTT_VS_SETTINGS_ */
