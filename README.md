@@ -53,6 +53,23 @@ cmake .. -DWITH_WOLFSSL_TREE=/path/to/wolfssl/
 cmake --build .
 ```
 
+### vcpkg
+
+ You can download and install wolfMQTT using the [vcpkg](https://github.com/Microsoft/vcpkg):
+
+    git clone https://github.com/Microsoft/vcpkg.git
+    cd vcpkg
+    ./bootstrap-vcpkg.sh
+    OR for Windows
+    bootstrap-vcpkg.bat
+
+    ./vcpkg integrate install
+    ./vcpkg install wolfmqtt
+
+The wolfMQTT port in vcpkg is kept up to date by wolfSSL.
+
+We also have vcpkg ports for wolftpm, wolfssl and curl.
+
 ### Arduino
 
 See `README.md` at [IDE/ARDUINO.README.md](IDE/ARDUINO.README.md)
