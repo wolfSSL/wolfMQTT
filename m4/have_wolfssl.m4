@@ -7,7 +7,7 @@
 AC_DEFUN([_TAO_SEARCH_LIBWOLFSSL],[
   AC_REQUIRE([AC_LIB_PREFIX])
 
-  LDFLAGS="$LDFLAGS -L/usr/local/lib"
+  LDFLAGS="$LDFLAGS"
   LIBS="$LIBS -lwolfssl"
 
   AC_LIB_HAVE_LINKFLAGS(wolfssl,,
