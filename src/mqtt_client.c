@@ -572,6 +572,12 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                     rc = tmp;
                 }
             }
+            #ifdef WOLFMQTT_DISCONNECT_CB
+            /* Call disconnect callback with reason code */
+            if ((packet_obj != NULL) && client->disconnect_cb) {
+                client->disconnect_cb(client, p_disc->reason_code, client->disconnect_ctx);
+            }
+            #endif
         #else
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
         #endif /* WOLFMQTT_V5 */
