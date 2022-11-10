@@ -572,6 +572,12 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                     rc = tmp;
                 }
             }
+            #ifdef WOLFMQTT_DISCONNECT_CB
+            /* Call disconnect callback with reason code */
+            if ((packet_obj != NULL) && client->disconnect_cb) {
+                client->disconnect_cb(client, p_disc->reason_code, client->disconnect_ctx);
+            }
+            #endif
         #else
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
         #endif /* WOLFMQTT_V5 */
@@ -2626,6 +2632,80 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (System resource failed)";
         case MQTT_CODE_ERROR_NOT_FOUND:
             return "Error (Not found)";
+
+#ifdef WOLFMQTT_V5
+        /* MQTT v5 Reason code strings */
+        case MQTT_REASON_UNSPECIFIED_ERR:
+            return "Unspecified error";
+        case MQTT_REASON_MALFORMED_PACKET:
+            return "Malformed Packet";
+        case MQTT_REASON_PROTOCOL_ERR:
+            return "Protocol Error";
+        case MQTT_REASON_IMPL_SPECIFIC_ERR:
+            return "Implementation specific error";
+        case MQTT_REASON_UNSUP_PROTO_VER:
+            return "Unsupported Protocol Version";
+        case MQTT_REASON_CLIENT_ID_NOT_VALID:
+            return "Client Identifier not valid";
+        case MQTT_REASON_BAD_USER_OR_PASS:
+            return "Bad User Name or Password";
+        case MQTT_REASON_NOT_AUTHORIZED:
+            return "Not authorized";
+        case MQTT_REASON_SERVER_UNAVAILABLE:
+            return "Server unavailable";
+        case MQTT_REASON_SERVER_BUSY:
+            return "Server busy";
+        case MQTT_REASON_BANNED:
+            return "Banned";
+        case MQTT_REASON_SERVER_SHUTTING_DOWN:
+            return "Server shutting down";
+        case MQTT_REASON_BAD_AUTH_METHOD:
+            return "Bad authentication method";
+        case MQTT_REASON_KEEP_ALIVE_TIMEOUT:
+            return "Keep Alive timeout";
+        case MQTT_REASON_SESSION_TAKEN_OVER:
+            return "Session taken over";
+        case MQTT_REASON_TOPIC_FILTER_INVALID:
+            return "Topic Filter invalid";
+        case MQTT_REASON_TOPIC_NAME_INVALID:
+            return "Topic Name invalid";
+        case MQTT_REASON_PACKET_ID_IN_USE:
+            return "Packet Identifier in use";
+        case MQTT_REASON_PACKET_ID_NOT_FOUND:
+            return "Packet Identifier not found";
+        case MQTT_REASON_RX_MAX_EXCEEDED:
+            return "Receive Maximum exceeded";
+        case MQTT_REASON_TOPIC_ALIAS_INVALID:
+            return "Topic Alias invalid";
+        case MQTT_REASON_PACKET_TOO_LARGE:
+            return "Packet too large";
+        case MQTT_REASON_MSG_RATE_TOO_HIGH:
+            return "Message rate too high";
+        case MQTT_REASON_QUOTA_EXCEEDED:
+            return "Quota exceeded";
+        case MQTT_REASON_ADMIN_ACTION:
+            return "Administrative action";
+        case MQTT_REASON_PAYLOAD_FORMAT_INVALID:
+            return "Payload format invalid";
+        case MQTT_REASON_RETAIN_NOT_SUPPORTED:
+            return "Retain not supported";
+        case MQTT_REASON_QOS_NOT_SUPPORTED:
+            return "QoS not supported";
+        case MQTT_REASON_USE_ANOTHER_SERVER:
+            return "Use another server";
+        case MQTT_REASON_SERVER_MOVED:
+            return "Server moved";
+        case MQTT_REASON_SS_NOT_SUPPORTED:
+            return "Shared Subscriptions not supported";
+        case MQTT_REASON_CON_RATE_EXCEED:
+            return "Connection rate exceeded";
+        case MQTT_REASON_MAX_CON_TIME:
+            return "Maximum connect time";
+        case MQTT_REASON_SUB_ID_NOT_SUP:
+            return "Subscription Identifiers not supported";
+        case MQTT_REASON_WILDCARD_SUB_NOT_SUP:
+            return "Wildcard Subscriptions not supported";
+#endif
     }
     return "Unknown";
 }
