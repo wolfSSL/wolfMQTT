@@ -1,5 +1,11 @@
 ## Release Notes
 
+### v1.15.0 (12/30/2022)
+* Fix for --with-libwolfssl-prefix config option #312
+* Call disconn CB with MQTTv5 reason code #314
+* Add github CIFuzz action by @DavidKorczynski #315
+* Fix SN disconnect with sleep should not use CB #294
+
 ### v1.14.1 (8/31/2022)
 * Fix cmake builds #307
 * Fix for Vcpkg on Windows not getting wolfssl/options.h included #305
