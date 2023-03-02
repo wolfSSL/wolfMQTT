@@ -3,6 +3,6 @@
 # All paths should be given relative to the root
 
 EXTRA_DIST+= IDE/QNX/README.md
-EXTRA_DIST+= IDE/QNX/wolfssl/.cproject
-EXTRA_DIST+= IDE/QNX/wolfssl/.project
-EXTRA_DIST+= IDE/QNX/wolfssl/Makefile
+EXTRA_DIST+= IDE/QNX/wolfmqtt/.cproject
+EXTRA_DIST+= IDE/QNX/wolfmqtt/.project
+EXTRA_DIST+= IDE/QNX/wolfmqtt/Makefile
