@@ -2259,11 +2259,9 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
 
         /* Send ping req packet */
         rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockSend);
             if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &ping->pendResp);
                 wm_SemUnlock(&client->lockClient);
@@ -2271,7 +2269,9 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
         #endif
             return rc;
         }
-
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
         ping->stat.write = MQTT_MSG_WAIT;
     }
 
