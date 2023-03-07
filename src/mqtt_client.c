@@ -3905,9 +3905,9 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
             }
         #endif
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
 
         will->stat.write = MQTT_MSG_WAIT;
     }
@@ -4431,7 +4431,7 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
         }
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
-     #endif
+    #endif
 
         ping->stat.write = MQTT_MSG_WAIT;
     }
