@@ -1481,9 +1481,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         #endif
             return rc;
         }
-#ifdef WOLFMQTT_MULTITHREAD
-    wm_SemUnlock(&client->lockSend);
-#endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
     #ifdef WOLFMQTT_V5
         /* Enhanced authentication */
         if (client->enable_eauth == 1) {
@@ -2077,6 +2077,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
     #endif
+
         subscribe->stat.write = MQTT_MSG_WAIT;
     }
 
@@ -3490,6 +3491,7 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
     #endif
+
         search->stat.write = MQTT_MSG_WAIT;
     }
 
@@ -3714,9 +3716,9 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         #endif
             return rc;
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
 
         mc_connect->stat.write = MQTT_MSG_WAIT;
     }
@@ -3817,9 +3819,9 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
             }
         #endif
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
 
         will->stat.write = MQTT_MSG_WAIT;
     }
@@ -3992,9 +3994,9 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
         #endif
             return rc;
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
 
         subscribe->stat.write = MQTT_MSG_WAIT;
     }
@@ -4245,9 +4247,9 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
             }
         #endif
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
 
         unsubscribe->stat.write = MQTT_MSG_WAIT;
     }
@@ -4333,9 +4335,9 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
         #endif
             return rc;
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+    #endif
 
         regist->stat.write = MQTT_MSG_WAIT;
     }
@@ -4427,9 +4429,9 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
         #endif
             return rc;
         }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockSend);
+     #endif
 
         ping->stat.write = MQTT_MSG_WAIT;
     }
