@@ -2066,8 +2066,8 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
-        	wm_SemUnlock(&client->lockSend);
-        	if (wm_SemLock(&client->lockClient) == 0) {
+            wm_SemUnlock(&client->lockSend);
+            if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &subscribe->pendResp);
                 wm_SemUnlock(&client->lockClient);
             }
