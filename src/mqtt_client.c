@@ -2169,8 +2169,8 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
         rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
-        	wm_SemUnlock(&client->lockSend);
-        	if (wm_SemLock(&client->lockClient) == 0) {
+            wm_SemUnlock(&client->lockSend);
+            if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &unsubscribe->pendResp);
                 wm_SemUnlock(&client->lockClient);
             }
@@ -3073,7 +3073,7 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             #ifdef WOLFMQTT_MULTITHREAD
                 wm_SemUnlock(&client->lockSend);
             #endif
-            	return rc;
+                return rc;
             }
         #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockSend);
@@ -3480,7 +3480,7 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
         rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
-        	wm_SemUnlock(&client->lockSend);
+            wm_SemUnlock(&client->lockSend);
             if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &search->pendResp);
                 wm_SemUnlock(&client->lockClient);
@@ -3812,7 +3812,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
         rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
-        	wm_SemUnlock(&client->lockSend);
+            wm_SemUnlock(&client->lockSend);
             if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &will->pendResp);
                 wm_SemUnlock(&client->lockClient);
@@ -3898,7 +3898,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
-        	wm_SemUnlock(&client->lockSend);
+            wm_SemUnlock(&client->lockSend);
             if (wm_SemLock(&client->lockClient) == 0) {
                 MqttClient_RespList_Remove(client, &will->pendResp);
                 wm_SemUnlock(&client->lockClient);
