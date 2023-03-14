@@ -1098,7 +1098,7 @@ wait_again:
 
             /* if using the shared packet object, make sure the original
              * state is correct for publish payload 2 (continued) */
-            if (use_packet_obj != mms_stat &&
+            if (use_packet_obj != NULL && use_packet_obj != mms_stat &&
                     ((MqttMsgStat*)use_packet_obj)->read == MQTT_MSG_PAYLOAD2) {
                 mms_stat->read = MQTT_MSG_PAYLOAD2;
             }
