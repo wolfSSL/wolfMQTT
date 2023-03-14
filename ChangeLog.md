@@ -1,5 +1,9 @@
 ## Release Notes
 
+### v1.15.1 (3/14/2023)
+* Fix to protect read from client->write.len, which resolve edge case issue
+  when using multi-threading. (PR #318 and PR #319)
+
 ### v1.15.0 (12/30/2022)
 * Fix for --with-libwolfssl-prefix config option #312
 * Call disconn CB with MQTTv5 reason code #314
