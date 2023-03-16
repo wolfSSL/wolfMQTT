@@ -534,6 +534,23 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
 
 
 #ifdef ENABLE_MQTT_TLS
+
+#ifdef WOLFSSL_ENCRYPTED_KEYS
+int mqtt_password_cb(char* passwd, int sz, int rw, void* userdata)
+{
+    (void)rw;
+    (void)userdata;
+    if (userdata != NULL) {
+        strncpy(passwd, (char*)userdata, sz);
+        return (int)XSTRLEN((char*)userdata);
+    }
+    else {
+        strncpy(passwd, "yassl123", sz);
+        return 8;
+    }
+}
+#endif
+
 static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 {
     char buffer[WOLFSSL_MAX_ERROR_SZ];
@@ -600,6 +617,13 @@ int mqtt_tls_cb(MqttClient* client)
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
+
+        #ifdef WOLFSSL_ENCRYPTED_KEYS
+            /* Setup password callback for pkcs8 key */
+            wolfSSL_CTX_set_default_passwd_cb(client->tls.ctx,
+                    mqtt_password_cb);
+        #endif
+
             rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
                 mTlsKeyFile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
@@ -620,6 +644,12 @@ int mqtt_tls_cb(MqttClient* client)
             rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
                 (const byte*)device_cert, (long)XSTRLEN(device_cert),
                 WOLFSSL_FILETYPE_PEM);
+
+        #ifdef WOLFSSL_ENCRYPTED_KEYS
+            /* Setup password callback for pkcs8 key */
+            wolfSSL_CTX_set_default_passwd_cb(client->tls.ctx,
+                    mqtt_password_cb);
+        #endif
 
         /* Load Private Key */
         if (rc == WOLFSSL_SUCCESS)
