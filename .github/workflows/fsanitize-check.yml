@@ -1,0 +1,57 @@
+name: fsanitize check Test
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl        
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl 
+      run: ./configure --enable-enckeys
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+    - uses: actions/checkout@master
+    - name: autogen
+      run: ./autogen.sh
+    - name: configure
+      run: ./configure CC="gcc -fsanitize=address"
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+    - name: configure with SN Enabled
+      run: ./configure --enable-sn CC="gcc -fsanitize=address"
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+    - name: configure with Non-Block
+      run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" CC="gcc -fsanitize=address"
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+    - name: configure with Non-Block and Multi-threading
+      run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" CC="gcc -fsanitize=address"
+    - name: make
+      run: make
+    - name: make check
+      run: make check
