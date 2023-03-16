@@ -22,7 +22,7 @@ jobs:
       run: ./autogen.sh
     - name: wolfssl configure
       working-directory: ./wolfssl 
-      run: ./configure
+      run: ./configure --enable-enckeys
     - name: wolfssl make
       working-directory: ./wolfssl
       run: make
