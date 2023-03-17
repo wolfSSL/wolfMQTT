@@ -190,6 +190,10 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec);
 
 int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen);
 
+#ifdef WOLFSSL_ENCRYPTED_KEYS
+int mqtt_password_cb(char* passwd, int sz, int rw, void* userdata);
+#endif
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif

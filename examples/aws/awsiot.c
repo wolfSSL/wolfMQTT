@@ -126,6 +126,7 @@ static const char* device_pub_key =
 #endif
 
 static const char* device_priv_key =
+#ifndef WOLFSSL_ENCRYPTED_KEYS
 "-----BEGIN RSA PRIVATE KEY-----\n"
 "MIIEpAIBAAKCAQEAqsAKVhbfQEWblC8PvgubqpJasVoCEsSfvLF4b5DIAsoMeieP\n"
 "26y6Vyd3njRyuigSQ6jP+mo3GyqSfeCbqfJ2dx3BNICEk7P46Bu37ewoI24pScnT\n"
@@ -153,6 +154,38 @@ static const char* device_priv_key =
 "5aGgRkmSW/Fc1ab33Gj2liLXCDN8bziri3KfMW6n9Dxhk8ppue7N5vNpjaoMLU2e\n"
 "tT/aucPRjdDp9JPzZQaewIDz7OG8bJtwLfx25FiR2oWDz2kD02joag==\n"
 "-----END RSA PRIVATE KEY-----";
+#else
+"-----BEGIN ENCRYPTED PRIVATE KEY-----\n"
+"MIIFLTBXBgkqhkiG9w0BBQ0wSjApBgkqhkiG9w0BBQwwHAQIpsU/SSIa4OoCAggA\n"
+"MAwGCCqGSIb3DQIJBQAwHQYJYIZIAWUDBAEqBBDvD4YFDn8hY+f4s88K0duqBIIE\n"
+"0E4TFcEYQYD1ltbYf5xHbEA3j0Vjs/5w9YL4K7JqrR9R7HTlxCFavNl/l7Rga3rk\n"
+"IiAz5cuSYxusUnIkDlBqcB3XQefKkl1G2E1DtExCdo02eDI4EdJ4N4zDLt5wmnL8\n"
+"w10WWMU3ZkRfrD4XPz0cuuBWD5LFI9QKLJ93tUhBQtjtrZSxPG7x2tmD9YotjIiV\n"
+"/PQ5Vd6agIoHyfXdRz9CIMZU25iV1tm5s2WN0JiLW3MH4Zw1bpyGDEoN8EwtnQjc\n"
+"/GN6Z384o4jr+ut8z356ilSESvr6mcxTcDZoO64xWvbIRjWIyRmtv8tMd1Qtamfo\n"
+"6bQCpV3I/dxBfshqPDWk/S1g9NxoPETm/yDz98Jukj8+NoJ2r4w0+y9CWyObBBUX\n"
+"cAiwxluYrP7xKRMunC77WxgD2P1N29N+8QK23YcJnUQJ/TcMXSXb/W/3GbnoHhS+\n"
+"KyUk05fWpswFXxtglGGjxN5wh7uOXSFY3bq/KbO/riHZ++Fwe9vSAUUaRvZUF948\n"
+"alfAMRUBG2r4cIi/kQRdsQQ5icwZwsCTo2W8xvKqw26x145egEx0Jsb27Eoapcvr\n"
+"vOutbe4JXMhKhrGwZohDZ4EgcM5ue7zobYwIo8DKnqTbb6UtgaVoYJm1m/YtCavy\n"
+"X9xz8eXruwI00BXf+9Aj1Ryn7wn0Pcw/EoNjYAHAQB2J8yvI97FPDtwFeXm+abZg\n"
+"sMMoYhQbFRd2G+xPmqltEgMv88C/cYXJGufTvYdBZNmqyZSMVu8YTxpHnM/fOODw\n"
+"yB6sx5VriEkMvh5So7X1xH0UXJ1HI8LGzJKEKNPrSQKZW0KofPsCZsAbgkoDZ/HV\n"
+"ji6uMHgXYbZRJEhYbTnQNE26elniTMkQXa0tw9atbjsFwk609Nbz63KeQWyvnAC+\n"
+"Q3IoXWWt42APNmOBGdg1xRIWolXtmWFMCI58eY9YCJkwUQjWy4vS85waWY2kA8tq\n"
+"4W15XEXYwuhWoyOqNubhkEs+PT+CaEh2M9C4exfBAnTy9fYYx2lm1OC8CX+L8OZU\n"
+"mhOU7EdRuah5wnTEATUu4i2Zm5+R7oF+12QHk5vaoZAbkl4xChVdD44UneREzDLb\n"
+"WV27YlN0RApeFCoYf+BQi8YzBXZahxG4g74Yu7sfjOKJj+VAT3ilLlhKelLBqjlw\n"
+"ZUV9F+mLKo91k3omAr+M4mp72DqH8OiWnhvQaBY1QADrez4kA0krfewHcKosKMMK\n"
+"EIc9zD0FAsBgFCGgmOxyPD9Xu8tbkD7rxJZsEfHxXj3LgO8AYC2e/743D5WivqWR\n"
+"8wNlSn53ED7BuNBTbnaWhfElqqpyPYtUDi3G+R87dv48Yec1xMdUu0aRb65QeerT\n"
+"O2TL6F+KOlKWklBSzibCLBNLTBkXsf1aQb1FxQtGJjrTkA0FEqEvGgGtHHfMoRFq\n"
+"T1kvzEocWJGQv78eCpREl35vho4Aj+0MgUvGPfBlijoWFYHCm2LRGOLv1yWLRrOS\n"
+"LHaxJ2tK/0sXxIoxUQqLcwrobnA4l2drdPB+EeBpYBlYhhsp/F3IRQ3ylOpIPBgd\n"
+"AOaroBlSDin5rLfa7T0YvzcAcNvodVjszIGrSeECx1l4VdiL+M73MvvW4GyfIE2S\n"
+"P7wyuvA665ZFyqsV1ZerHCKyhX3G0xCj+V6wMjAWyHlh\n"
+"-----END ENCRYPTED PRIVATE KEY-----";
+#endif
 
 static const char* device_cert =
 "-----BEGIN CERTIFICATE-----\n"
@@ -216,6 +249,12 @@ static int mqtt_aws_tls_cb(MqttClient* client)
             rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
                 (const byte*)device_cert, (long)XSTRLEN(device_cert),
                 WOLFSSL_FILETYPE_PEM);
+
+        #ifdef WOLFSSL_ENCRYPTED_KEYS
+            /* Setup password callback for pkcs8 key */
+            wolfSSL_CTX_set_default_passwd_cb(client->tls.ctx,
+                    mqtt_password_cb);
+        #endif
 
         /* Load Private Key */
         if (rc == WOLFSSL_SUCCESS)
