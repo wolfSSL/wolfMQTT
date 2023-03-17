@@ -541,12 +541,12 @@ int mqtt_password_cb(char* passwd, int sz, int rw, void* userdata)
     (void)rw;
     (void)userdata;
     if (userdata != NULL) {
-        strncpy(passwd, (char*)userdata, sz);
+        XSTRNCPY(passwd, (char*)userdata, sz);
         return (int)XSTRLEN((char*)userdata);
     }
     else {
-        strncpy(passwd, "yassl123", sz);
-        return 8;
+        XSTRNCPY(passwd, "yassl123", sz);
+        return (int)XSTRLEN(passwd);
     }
 }
 #endif
