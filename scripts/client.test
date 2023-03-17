@@ -32,6 +32,8 @@ then
     mosquitto -c scripts/broker_test/mosquitto.conf &
     broker_pid=$!
     def_args="${def_args} -h localhost"
+    mutual_auth_args="${mutual_auth_args} -c certs/client-cert.pem -K certs/client-key.pem"
+    ecc_mutual_auth_args="${mutual_auth_args} -c certs/client-ecc-cert.pem -K certs/ecc-client-key.pem"
 fi
 
 # Run with and without TLS and QoS 0-2
@@ -59,6 +61,14 @@ RESULT=$?
 ./examples/mqttclient/mqttclient $def_args -t -q 2 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=2" && do_cleanup "-1"
+
+./examples/mqttclient/mqttclient $def_args $mutual_auth_args -t -q 0 $1
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0, RSA mutual auth" && do_cleanup "-1"
+
+./examples/mqttclient/mqttclient $def_args $ecc_mutual_auth_args -t -q 0 $1
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0, ECC mutual auth" && do_cleanup "-1"
 
 # End broker
 do_cleanup "0"
