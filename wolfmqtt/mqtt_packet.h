@@ -61,7 +61,7 @@ typedef enum MqttDataType {
     MQTT_DATA_TYPE_STRING,
     MQTT_DATA_TYPE_VAR_INT,
     MQTT_DATA_TYPE_BINARY,
-    MQTT_DATA_TYPE_STRING_PAIR,
+    MQTT_DATA_TYPE_STRING_PAIR
 } MqttDataType;
 
 /* PROPERTIES */
@@ -170,7 +170,7 @@ enum MqttReasonCodes {
     MQTT_REASON_CON_RATE_EXCEED = 0x9F,
     MQTT_REASON_MAX_CON_TIME = 0xA0,
     MQTT_REASON_SUB_ID_NOT_SUP = 0xA1,
-    MQTT_REASON_WILDCARD_SUB_NOT_SUP = 0xA2,
+    MQTT_REASON_WILDCARD_SUB_NOT_SUP = 0xA2
 };
 #endif /* WOLFMQTT_V5 */
 
@@ -181,7 +181,7 @@ typedef enum _MqttQoS {
     MQTT_QOS_0 = 0, /* At most once delivery */
     MQTT_QOS_1 = 1, /* At least once delivery */
     MQTT_QOS_2 = 2, /* Exactly once delivery */
-    MQTT_QOS_3 = 3, /* MQTT - Reserved - must not be used
+    MQTT_QOS_3 = 3  /* MQTT - Reserved - must not be used
                        MQTT-SN - QoS -1 allows publish without connection */
 } MqttQoS;
 
@@ -238,7 +238,7 @@ typedef enum _MqttPacketType {
     MQTT_PACKET_TYPE_PING_RESP = 13,        /* Response */
     MQTT_PACKET_TYPE_DISCONNECT = 14,
     MQTT_PACKET_TYPE_AUTH = 15,             /* Authentication (MQTT 5) */
-    MQTT_PACKET_TYPE_ANY = 16,
+    MQTT_PACKET_TYPE_ANY = 16
 } MqttPacketType;
 
 /* Packet flag bit-mask: Located in first byte of packet in bits 0-3 */
@@ -284,7 +284,7 @@ typedef enum _MqttMsgState {
     MQTT_MSG_HEADER,
     MQTT_MSG_PAYLOAD,
     MQTT_MSG_PAYLOAD2,
-    MQTT_MSG_ACK,
+    MQTT_MSG_ACK
 } MqttMsgState;
 
 /* Generic message status tracking */
@@ -334,7 +334,7 @@ enum MqttConnectFlags {
     MQTT_CONNECT_FLAG_WILL_QOS_MASK = 0x18,
     MQTT_CONNECT_FLAG_WILL_RETAIN = 0x20,
     MQTT_CONNECT_FLAG_PASSWORD = 0x40,
-    MQTT_CONNECT_FLAG_USERNAME = 0x80,
+    MQTT_CONNECT_FLAG_USERNAME = 0x80
 };
 
 /* Connect Protocol */
@@ -366,7 +366,7 @@ typedef struct _MqttConnectPacket {
 /* CONNECT ACKNOWLEDGE */
 /* Connect Ack flags */
 enum MqttConnectAckFlags {
-    MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT = 0x01,
+    MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT = 0x01
 };
 
 /* Connect Ack return codes */
@@ -389,7 +389,7 @@ enum MqttConnectAckReturnCodes {
     MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD = 4,
 
     /* The Client is not authorized to connect */
-    MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH = 5,
+    MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH = 5
 };
 
 /* Connect Ack packet structure */
@@ -459,7 +459,7 @@ typedef struct _MqttPublishResp {
 #endif
     word16      packet_id;
     byte        packet_type; /* type to send */
-    
+
 #ifdef WOLFMQTT_V5
     byte reason_code;
     MqttProp* props;
@@ -517,7 +517,7 @@ enum MqttSubscribeAckReturnCodes {
     MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS0 = 0,
     MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS1 = 1,
     MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS2 = 2,
-    MQTT_SUBSCRIBE_ACK_CODE_FAILURE = 0x80,
+    MQTT_SUBSCRIBE_ACK_CODE_FAILURE = 0x80
 };
 typedef struct _MqttSubscribeAck {
     MqttMsgStat stat; /* must be first member at top */
@@ -783,7 +783,7 @@ typedef enum _SN_MsgType {
     SN_MSG_TYPE_ENCAPMSG        = 0xFE,    /* Encapsulated message */
     /* 0xFF reserved */
     SN_MSG_TYPE_RESERVED        = 0xFF,
-    SN_MSG_TYPE_ANY     = 0xFF
+    SN_MSG_TYPE_ANY             = 0xFF
 } SN_MsgType;
 
 /* Topic ID types */

@@ -174,7 +174,7 @@
 /* Local context for Net callbacks */
 typedef enum {
     SOCK_BEGIN = 0,
-    SOCK_CONN,
+    SOCK_CONN
 } NB_Stat;
 
 
