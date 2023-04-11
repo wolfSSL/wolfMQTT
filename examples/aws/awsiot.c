@@ -28,13 +28,6 @@
 
 
 /* This example only works with ENABLE_MQTT_TLS (wolfSSL library) */
-/* Notes:
- *
- *  The "wc_GetTime" API was added in 3.9.1 and if not present you'll need to implement
- *  your own version of this to get current UTC seconds or update your wolfSSL library
-*/
-
-/* This example requires features in wolfSSL 3.9.1 or later */
 #if defined(ENABLE_MQTT_TLS)
     #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
         #include <wolfssl/options.h>
@@ -42,11 +35,8 @@
     #include <wolfssl/wolfcrypt/settings.h>
     #include <wolfssl/version.h>
 
-    #if defined(LIBWOLFSSL_VERSION_HEX) && \
-        LIBWOLFSSL_VERSION_HEX >= 0x03009001
-        #undef ENABLE_AWSIOT_EXAMPLE
-        #define ENABLE_AWSIOT_EXAMPLE
-    #endif
+    #undef  ENABLE_AWSIOT_EXAMPLE
+    #define ENABLE_AWSIOT_EXAMPLE
 #endif
 
 
