@@ -1285,6 +1285,10 @@ wait_again:
     client->lastRc = rc;
     #endif
     if (rc == MQTT_CODE_CONTINUE) {
+    #ifdef WOLFMQTT_MULTITHREAD
+    /* if nonblocking and no data has been read, release read lock */
+        wm_SemUnlock(&client->lockRecv);
+    #endif
         return rc;
     }
 #endif
