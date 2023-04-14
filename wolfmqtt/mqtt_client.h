@@ -474,9 +474,10 @@ WOLFMQTT_API int MqttClient_WaitMessage(
  */
 WOLFMQTT_API int MqttClient_WaitMessage_ex(
     MqttClient *client,
-    MqttObject* msg,
+    MqttObject *msg,
     int timeout_ms);
 
+#if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
 /*! \brief      In a multi-threaded and non-blocking mode this allows you to
                 cancel an MQTT object that was previously submitted.
  *  \note This is a blocking function that will wait for MqttNet.read
@@ -487,7 +488,22 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
  */
 WOLFMQTT_API int MqttClient_CancelMessage(
     MqttClient *client,
-    MqttObject* msg);
+    MqttObject *msg);
+#endif
+
+#ifdef WOLFMQTT_NONBLOCK
+/*! \brief      In a non-blocking mode this checks if the message has a read
+                or write pending (state is not MQTT_MSG_BEGIN).
+ *  \note This function assumes caller owns the object
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      msg         Pointer to MqttObject structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_IsMessageActive(
+    MqttClient *client,
+    MqttObject *msg);
+#endif /* WOLFMQTT_NONBLOCK */
 
 /*! \brief      Performs network connect with TLS (if use_tls is non-zero value)
  *  Will perform the MqttTlsCb callback if use_tls is non-zero value
