@@ -2486,6 +2486,7 @@ int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
     return MqttClient_WaitMessage_ex(client, &client->msg, timeout_ms);
 }
 
+#if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
 int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -2557,6 +2558,47 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
 #endif
     return rc;
 }
+#endif /* WOLFMQTT_MULTITHREAD || WOLFMQTT_NONBLOCK */
+
+#ifdef WOLFMQTT_NONBLOCK
+static inline int IsMessageActive(MqttObject *msg)
+{
+    return (msg->stat.read  != MQTT_MSG_BEGIN ||
+            msg->stat.write != MQTT_MSG_BEGIN);
+}
+
+int MqttClient_IsMessageActive(
+    MqttClient *client,
+    MqttObject *msg)
+{
+    int rc;
+
+    /* must supply either client or msg */
+    if (client == NULL && msg == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
+    /* if msg is null then client->msg is used */
+    if ((client != NULL && &client->msg == msg) || msg == NULL) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        rc = wm_SemLock(&client->lockClient);
+        if (rc == 0)
+    #endif
+        {
+            rc = IsMessageActive(&client->msg);
+        #ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockClient);
+        #endif
+        }
+    }
+    else {
+        rc = IsMessageActive(msg);
+    }
+    return rc;
+}
+
+
+#endif /* WOLFMQTT_NONBLOCK */
 
 
 int MqttClient_NetConnect(MqttClient *client, const char* host,

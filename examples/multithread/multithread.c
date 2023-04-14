@@ -456,8 +456,11 @@ static int TestIsDone(int rc, MQTTCtx* mqttCtx)
     /* check if we are in test mode and done */
     wm_SemLock(&mtLock);
     if ((rc == 0 || rc == MQTT_CODE_CONTINUE) && mqttCtx->test_mode &&
-            mNumMsgsDone == NUM_PUB_TASKS && mNumMsgsRecvd == NUM_PUB_TASKS &&
-            mqttCtx->client.msg.stat.read == MQTT_MSG_BEGIN) {
+            mNumMsgsDone == NUM_PUB_TASKS && mNumMsgsRecvd == NUM_PUB_TASKS
+        #ifdef WOLFMQTT_NONBLOCK
+            && !MqttClient_IsMessageActive(&mqttCtx->client, NULL)
+        #endif
+        ) {
         wm_SemUnlock(&mtLock);
         mqtt_stop_set();
         isDone = 1; /* done */
