@@ -265,7 +265,8 @@ The initially supported version with full specification support for all features
 
 ### MQTT v5.0 Specification Support
 
-The wolfMQTT client supports connecting to v5 enabled brokers when configured with the `--enable-mqtt5` option. Handling properties received from the server is accomplished via a callback when the `--enable-propcb` option is set. The following v5.0 specification features are supported by the wolfMQTT client:
+The wolfMQTT client supports connecting to v5 enabled brokers when configured with the `--enable-v5` option. 
+The following v5.0 specification features are supported by the wolfMQTT client:
 * AUTH packet
 * User properties
 * Server connect ACK properties
@@ -294,6 +295,8 @@ The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 ** `./examples/mqttclient/mqttclient -h 833f87e253304692bd2b911f0c18dba1.s1.eu.hivemq.cloud -t -S -u wolf1 -w NEZjcm7i8eRjFKF -p 8883`
 * EMQX broker
 ** `./examples/mqttclient/mqttclient -h "broker.emqx.io"`
+
+Properties are allocated from a local stack (size `MQTT_MAX_PROPS`) by default. Define `WOLFMQTT_DYN_PROP` to use malloc for property allocation.
 
 ### MQTT Sensor Network (MQTT-SN) Specification Support
 
