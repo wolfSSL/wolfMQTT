@@ -16,6 +16,7 @@ xxx_ar_flags=$(ar --help 2>&1)
 AS_CASE([$xxx_ar_flags],[*'use actual timestamps and uids/gids'*],[: ${AR_FLAGS="Ucru"}])
 
 AC_CANONICAL_HOST
+AC_CANONICAL_TARGET
 
 AM_INIT_AUTOMAKE([1.11 -Wall -Werror -Wno-portability foreign tar-ustar subdir-objects no-define color-tests])
 
@@ -55,12 +56,11 @@ AC_PROG_CC
 AM_PROG_CC_C_O
 AC_PROG_INSTALL
 
-# Checks for header files.
-AC_HEADER_STDC
 AC_CHECK_SIZEOF([long long], 8)
 AC_CHECK_SIZEOF([long], 4)
 
 # Check headers/libs
+AC_CHECK_HEADERS([arpa/inet.h fcntl.h limits.h netdb.h netinet/in.h stddef.h time.h sys/ioctl.h sys/socket.h sys/time.h errno.h sys/un.h])
 AC_CHECK_FUNCS([gethostbyname getaddrinfo gettimeofday inet_ntoa memset socket signal rand])
 AC_CHECK_LIB([network],[socket])
 
@@ -108,7 +108,8 @@ AX_PTHREAD([
     # -Xcompiler libtool will use it. Newer versions of clang don't need
     # the -Q flag when using pthreads.
     AS_CASE([$PTHREAD_CFLAGS],[-Qunused-arguments*],[PTHREAD_CFLAGS="-Xcompiler $PTHREAD_CFLAGS"])
-    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"])
+    AM_CFLAGS="$AM_CFLAGS $PTHREAD_CFLAGS"
+])
 
 
 # Checks for typedefs, structures, and compiler characteristics.
