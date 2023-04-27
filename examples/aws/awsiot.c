@@ -60,7 +60,7 @@ static int mStopRead = 0;
 #define APP_FIRMWARE_VERSION LIBWOLFMQTT_VERSION_STRING
 
 #define MAX_BUFFER_SIZE         512    /* Maximum size for network read/write callbacks */
-#define AWSIOT_HOST             "a2dujmi05ideo2.iot.us-west-2.amazonaws.com"
+#define AWSIOT_HOST             "a2dujmi05ideo2-ats.iot.us-west-2.amazonaws.com"
 #define AWSIOT_DEVICE_ID        "demoDevice"
 #define AWSIOT_QOS              MQTT_QOS_1
 #define AWSIOT_KEEP_ALIVE_SEC   DEFAULT_KEEP_ALIVE_SEC
@@ -299,6 +299,109 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef WOLFMQTT_PROPERTY_CB
+/* The property callback is called after decoding a packet that contains at
+   least one property. The property list is deallocated after returning from
+   the callback. */
+static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
+{
+    MqttProp *prop = head;
+    int rc = 0;
+    MQTTCtx* mqttCtx;
+
+    if ((client == NULL) || (client->ctx == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    mqttCtx = (MQTTCtx*)client->ctx;
+
+    while (prop != NULL) {
+        PRINTF("Property CB: Type %d", prop->type);
+        switch (prop->type) {
+            case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
+                mqttCtx->subId_not_avail =
+                        prop->data_byte == 0;
+                break;
+
+            case MQTT_PROP_TOPIC_ALIAS_MAX:
+                mqttCtx->topic_alias_max =
+                 (mqttCtx->topic_alias_max < prop->data_short) ?
+                 mqttCtx->topic_alias_max : prop->data_short;
+                break;
+
+            case MQTT_PROP_MAX_PACKET_SZ:
+                if ((prop->data_int > 0) &&
+                    (prop->data_int <= MQTT_PACKET_SZ_MAX))
+                {
+                    client->packet_sz_max =
+                        (client->packet_sz_max < prop->data_int) ?
+                         client->packet_sz_max : prop->data_int;
+                }
+                else {
+                    /* Protocol error */
+                    rc = MQTT_CODE_ERROR_PROPERTY;
+                }
+                break;
+
+            case MQTT_PROP_SERVER_KEEP_ALIVE:
+                mqttCtx->keep_alive_sec = prop->data_short;
+                break;
+
+            case MQTT_PROP_MAX_QOS:
+                client->max_qos = prop->data_byte;
+                break;
+
+            case MQTT_PROP_RETAIN_AVAIL:
+                client->retain_avail = prop->data_byte;
+                break;
+
+            case MQTT_PROP_REASON_STR:
+                PRINTF("Reason String: %.*s",
+                        prop->data_str.len, prop->data_str.str);
+                break;
+
+            case MQTT_PROP_USER_PROP:
+                PRINTF("User property: key=\"%.*s\", value=\"%.*s\"",
+                        prop->data_str.len, prop->data_str.str,
+                        prop->data_str2.len, prop->data_str2.str);
+                break;
+
+            case MQTT_PROP_ASSIGNED_CLIENT_ID:
+            case MQTT_PROP_PAYLOAD_FORMAT_IND:
+            case MQTT_PROP_MSG_EXPIRY_INTERVAL:
+            case MQTT_PROP_CONTENT_TYPE:
+            case MQTT_PROP_RESP_TOPIC:
+            case MQTT_PROP_CORRELATION_DATA:
+            case MQTT_PROP_SUBSCRIPTION_ID:
+            case MQTT_PROP_SESSION_EXPIRY_INTERVAL:
+            case MQTT_PROP_TOPIC_ALIAS:
+            case MQTT_PROP_TYPE_MAX:
+            case MQTT_PROP_RECEIVE_MAX:
+            case MQTT_PROP_WILDCARD_SUB_AVAIL:
+            case MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL:
+            case MQTT_PROP_RESP_INFO:
+            case MQTT_PROP_SERVER_REF:
+            case MQTT_PROP_AUTH_METHOD:
+            case MQTT_PROP_AUTH_DATA:
+            case MQTT_PROP_NONE:
+                break;
+            case MQTT_PROP_REQ_PROB_INFO:
+            case MQTT_PROP_WILL_DELAY_INTERVAL:
+            case MQTT_PROP_REQ_RESP_INFO:
+            default:
+                /* Invalid */
+                rc = MQTT_CODE_ERROR_PROPERTY;
+                break;
+        }
+        prop = prop->next;
+    }
+
+    (void)ctx;
+
+    return rc;
+}
+#endif /* WOLFMQTT_PROPERTY_CB */
+
+
 int awsiot_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS, i;
@@ -354,12 +457,13 @@ int awsiot_test(MQTTCtx *mqttCtx)
                 goto exit;
             }
             mqttCtx->client.ctx = mqttCtx;
-
-        #ifdef WOLFMQTT_V5
-            /* AWS broker only supports v3.1.1 client */
-            mqttCtx->client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
-        #endif
-
+#ifdef WOLFMQTT_PROPERTY_CB
+            rc = MqttClient_SetPropertyCallback(&mqttCtx->client,
+                    mqtt_property_cb, NULL);
+            if (rc != MQTT_CODE_SUCCESS) {
+                goto exit;
+            }
+#endif
         }
         FALL_THROUGH;
 
@@ -401,6 +505,20 @@ int awsiot_test(MQTTCtx *mqttCtx)
             /* Optional authentication */
             mqttCtx->connect.username = mqttCtx->username;
             mqttCtx->connect.password = mqttCtx->password;
+#ifdef WOLFMQTT_V5
+            {
+                /* Request Response Information */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_REQ_RESP_INFO;
+                prop->data_byte = 1;
+            }
+            {
+                /* Request Problem Information */
+                MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
+                prop->type = MQTT_PROP_REQ_PROB_INFO;
+                prop->data_byte = 1;
+            }
+#endif
         }
         FALL_THROUGH;
 
@@ -413,6 +531,12 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
+#ifdef WOLFMQTT_V5
+            if (mqttCtx->connect.props != NULL) {
+                /* Release the allocated properties */
+                MqttClient_PropsFree(mqttCtx->connect.props);
+            }
+#endif
             PRINTF("MQTT Connect: Proto (%s), %s (%d)",
                 MqttClient_GetProtocolVersionString(&mqttCtx->client),
                 MqttClient_ReturnCodeToString(rc), rc);
