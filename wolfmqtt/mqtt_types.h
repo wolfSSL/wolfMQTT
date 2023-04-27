@@ -64,6 +64,17 @@
 #include "user_settings.h"
 #endif
 
+#ifdef CONFIG_ZEPHYR_WOLFMQTT_MODULE
+#define WOLFMQTT_ZEPHYR
+#ifdef CONFIG_WOLFMQTT_TLS
+#undef  ENABLE_MQTT_TLS
+#define ENABLE_MQTT_TLS
+#endif
+#ifdef CONFIG_WOLFMQTT_SETTINGS_FILE
+#include CONFIG_WOLFMQTT_SETTINGS_FILE
+#endif
+#endif
+
 #ifdef ENABLE_MQTT_TLS
     #if !defined(WOLFSSL_USER_SETTINGS) && \
         (!defined(USE_WINDOWS_API) || defined(BUILDING_CMAKE))
@@ -291,6 +302,9 @@ enum MqttPacketResponseCodes {
                 #include <pthread.h>
                 #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
             #endif
+        #elif defined(WOLFMQTT_ZEPHYR)
+            #include <zephyr/sys/printk.h>
+            #define PRINTF(_f_, ...)  printk( (_f_ LINE_END), ##__VA_ARGS__)
         #else
             #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
         #endif

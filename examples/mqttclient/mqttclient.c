@@ -699,7 +699,7 @@ exit:
         }
     #endif
 
-int main(int argc, char** argv)
+static int run_client(int argc, char** argv)
 {
     int rc;
     MQTTCtx mqttCtx;
@@ -708,6 +708,21 @@ int main(int argc, char** argv)
     mqtt_init_ctx(&mqttCtx);
     mqttCtx.app_name = "mqttclient";
     mqttCtx.message = DEFAULT_MESSAGE;
+
+#ifdef WOLFMQTT_ZEPHYR
+#ifdef CONFIG_NET_CONFIG_PEER_IPV4_ADDR
+    mqttCtx.host = CONFIG_NET_CONFIG_PEER_IPV4_ADDR;
+#endif
+#ifdef ENABLE_MQTT_TLS
+    mqttCtx.use_tls = 1;
+#endif
+#ifdef CONFIG_NET_CONFIG_PEER_PORT
+    mqttCtx.port = CONFIG_NET_CONFIG_PEER_PORT;
+#endif
+#ifdef WOLFMQTT_TOPIC
+    mqttCtx.topic_name = WOLFMQTT_TOPIC;
+#endif
+#endif
 
     /* parse arguments */
     rc = mqtt_parse_args(&mqttCtx, argc, argv);
@@ -737,5 +752,17 @@ int main(int argc, char** argv)
 
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }
+
+#ifdef WOLFMQTT_ZEPHYR
+void main(void)
+{
+    (void)run_client(0, NULL);
+}
+#else
+int main(int argc, char** argv)
+{
+    return run_client(argc, argv);
+}
+#endif
 
 #endif /* NO_MAIN_DRIVER */

@@ -1,0 +1,10 @@
+sample:
+  description: MQTT client sample application with TLS
+  name: MQTT TLS client
+common:
+  harness: crypto
+  tags: net mqtt crypto
+tests:
+  test:
+    platform_whitelist: qemu_x86
+

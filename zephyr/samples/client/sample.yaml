@@ -1,0 +1,10 @@
+sample:
+  description: MQTT client sample application
+  name: MQTT client
+common:
+  harness: net
+  tags: net mqtt
+tests:
+  test:
+    platform_whitelist: qemu_x86
+

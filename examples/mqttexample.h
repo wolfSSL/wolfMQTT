@@ -41,7 +41,7 @@
     /* For Linux/Mac */
     #if !defined(FREERTOS) && !defined(USE_WINDOWS_API) && \
         !defined(FREESCALE_MQX) && !defined(FREESCALE_KSDK_MQX) && \
-        !defined(MICROCHIP_MPLAB_HARMONY)
+        !defined(MICROCHIP_MPLAB_HARMONY) && !defined(WOLFMQTT_ZEPHYR)
         /* Make sure its not explicitly disabled and not already defined */
         #if !defined(WOLFMQTT_NO_STDIN_CAP) && \
             !defined(WOLFMQTT_ENABLE_STDIN_CAP)
