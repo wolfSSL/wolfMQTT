@@ -5,6 +5,7 @@ project(mqtt_client_tls)
 
 FILE(GLOB app_sources ../../../examples/mqttclient/*.c ../../../examples/*.c)
 target_sources(app PRIVATE ${app_sources})
-zephyr_library_include_directories(app PRIVATE ${ZEPHYR_WOLFMQTT_MODULE_DIR}/zephyr)
+target_include_directories(app PRIVATE ${ZEPHYR_WOLFMQTT_MODULE_DIR}/zephyr/client_tls)
 add_definitions(-DWOLFSSL_USER_SETTINGS)
+add_definitions(-DWOLFMQTT_USER_SETTINGS)
 

@@ -24,6 +24,7 @@ Follow the [instructions](https://docs.zephyrproject.org/latest/develop/getting_
 ### Modify your project's west manifest
 
 Add wolfMQTT as a project to your west.yml:
+
 ```
 manifest:
   remotes:
@@ -50,12 +51,17 @@ CMakeFiles.txt in the build system.
 
 ## Build and Run Samples
 
-Follow the [instructions](https://docs.zephyrproject.org/latest/connectivity/networking/qemu_setup.html) to setup the infratructure to enable networking in QEMU. Run the following commands in parallel in this order in the `zephyrproject` directory to allow comunication between the QEMU instance and the host.
+Follow the [instructions](https://docs.zephyrproject.org/latest/connectivity/networking/qemu_setup.html) to setup the infratructure to enable networking in QEMU. Run the following commands in parallel in this order in the `net-tools` directory to allow comunication between the QEMU instance and the host. Make sure to disable any software that modifies the local network like VPN's.
 
 ```bash
 ./loop-socat.sh
 sudo ./loop-slip-tap.sh
-mosquitto -c modules/lib/wolfmqtt/scripts/broker_test/mosquitto.conf
+```
+
+Run the following commands in parallel in this order in the `zephyrproject` directory to setup a MQTT broker and subscriber.
+
+```bash
+cd modules/lib/wolfmqtt && mosquitto -c scripts/broker_test/mosquitto.conf
 mosquitto_sub -t sensors
 ```
 
@@ -77,4 +83,19 @@ build and execute `client TLS`
 cd [zephyrproject]
 west build -p auto -b qemu_x86 modules/lib/wolfmqtt/zephyr/samples/client_tls
 west build -t run
+```
+
+### Debugging using QEMU
+
+To attach a debugger to the QEMU instance run:
+
+```bash
+west build -t debugserver_qemu
+```
+
+And attach gdb with:
+
+```bash
+$ gdb path/to/zephyr.elf
+(gdb) target remote localhost:1234
 ```

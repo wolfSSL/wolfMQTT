@@ -64,17 +64,6 @@
 #include "user_settings.h"
 #endif
 
-#ifdef CONFIG_ZEPHYR_WOLFMQTT_MODULE
-#define WOLFMQTT_ZEPHYR
-#ifdef CONFIG_WOLFMQTT_TLS
-#undef  ENABLE_MQTT_TLS
-#define ENABLE_MQTT_TLS
-#endif
-#ifdef CONFIG_WOLFMQTT_SETTINGS_FILE
-#include CONFIG_WOLFMQTT_SETTINGS_FILE
-#endif
-#endif
-
 #ifdef ENABLE_MQTT_TLS
     #if !defined(WOLFSSL_USER_SETTINGS) && \
         (!defined(USE_WINDOWS_API) || defined(BUILDING_CMAKE))

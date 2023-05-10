@@ -77,8 +77,12 @@
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0
 #define DEFAULT_KEEP_ALIVE_SEC  60
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
-#define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
-#define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
+#ifndef WOLFMQTT_TOPIC_NAME
+    #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
+    #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
+#else
+    #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME
+#endif
 #define DEFAULT_AUTH_METHOD    "EXTERNAL"
 #define PRINT_BUFFER_SIZE       80
 #define DEFAULT_MESSAGE         "test"

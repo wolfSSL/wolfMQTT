@@ -33,10 +33,7 @@
 
 /* Windows uses the vs_settings.h file included vis mqtt_types.h */
 #if !defined(WOLFMQTT_USER_SETTINGS) && \
-    !defined(_WIN32) && !defined(USE_WINDOWS_API) && \
-    !defined(CONFIG_WOLFMQTT_SETTINGS_FILE) /* Zephyr config option */
-    /* If options.h is missing use the "./configure" script. Otherwise, copy
-     * the template "wolfmqtt/options.h.in" into "wolfmqtt/options.h" */
+    !defined(_WIN32) && !defined(USE_WINDOWS_API)
     #include <wolfmqtt/options.h>
 #endif
 #include "wolfmqtt/mqtt_types.h"

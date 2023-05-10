@@ -4,7 +4,6 @@ menuconfig WOLFMQTT
 if WOLFMQTT
 config WOLFMQTT_SETTINGS_FILE
 	string "wolfMQTT settings file"
-	default "wolfMQTT_user_settings.h"
 	help
 	  Use a specific wolfMQTT settings file.
 

@@ -709,21 +709,6 @@ static int run_client(int argc, char** argv)
     mqttCtx.app_name = "mqttclient";
     mqttCtx.message = DEFAULT_MESSAGE;
 
-#ifdef WOLFMQTT_ZEPHYR
-#ifdef CONFIG_NET_CONFIG_PEER_IPV4_ADDR
-    mqttCtx.host = CONFIG_NET_CONFIG_PEER_IPV4_ADDR;
-#endif
-#ifdef ENABLE_MQTT_TLS
-    mqttCtx.use_tls = 1;
-#endif
-#ifdef CONFIG_NET_CONFIG_PEER_PORT
-    mqttCtx.port = CONFIG_NET_CONFIG_PEER_PORT;
-#endif
-#ifdef WOLFMQTT_TOPIC
-    mqttCtx.topic_name = WOLFMQTT_TOPIC;
-#endif
-#endif
-
     /* parse arguments */
     rc = mqtt_parse_args(&mqttCtx, argc, argv);
     if (rc != 0) {
@@ -754,9 +739,12 @@ static int run_client(int argc, char** argv)
 }
 
 #ifdef WOLFMQTT_ZEPHYR
-void main(void)
+/* In zephyr commit 0b90fd5adf1f01625412efadba4331b5041fb828 the main signature
+ * was changed from void main(void) to int main(void). Zephyr doesn't provide a
+ * way to check the version of Zephyr at compile time so support the latest. */
+int main(void)
 {
-    (void)run_client(0, NULL);
+    return run_client(0, NULL);
 }
 #else
 int main(int argc, char** argv)
