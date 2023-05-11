@@ -28,6 +28,14 @@ sleep 1
 # Check for mosquitto
 if command -v mosquitto
 then
+    # bwrap only if using a local mosquitto instance
+    if [ "${AM_BWRAPPED-}" != "yes" ]; then
+        bwrap_path="$(command -v bwrap)"
+        if [ -n "$bwrap_path" ]; then
+            export AM_BWRAPPED=yes
+            exec "$bwrap_path" --unshare-net --dev-bind / / "./scripts/client.test" "$@"
+        fi
+    fi
     # Run mosquitto broker
     mosquitto -c scripts/broker_test/mosquitto.conf &
     broker_pid=$!
