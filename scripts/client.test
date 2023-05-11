@@ -22,9 +22,6 @@ do_cleanup() {
 
 def_args="-T -C 2000"
 
-# Wait 2 secs for other tests to conclude
-sleep 2
-
 # Check for mosquitto
 if command -v mosquitto
 then
