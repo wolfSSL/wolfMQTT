@@ -267,6 +267,8 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
 #ifdef WOLFMQTT_DEFAULT_TLS
     mqttCtx->use_tls = WOLFMQTT_DEFAULT_TLS;
 #endif
+    mqttCtx->app_name = "mqttclient";
+    mqttCtx->message = DEFAULT_MESSAGE;
 }
 
 int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)

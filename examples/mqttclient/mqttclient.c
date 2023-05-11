@@ -24,8 +24,6 @@
     #include <config.h>
 #endif
 
-#include "wolfmqtt/mqtt_client.h"
-
 #include "mqttclient.h"
 #include "examples/mqttnet.h"
 
@@ -699,15 +697,13 @@ exit:
         }
     #endif
 
-static int run_client(int argc, char** argv)
+int main(int argc, char** argv)
 {
     int rc;
     MQTTCtx mqttCtx;
 
     /* init defaults */
     mqtt_init_ctx(&mqttCtx);
-    mqttCtx.app_name = "mqttclient";
-    mqttCtx.message = DEFAULT_MESSAGE;
 
     /* parse arguments */
     rc = mqtt_parse_args(&mqttCtx, argc, argv);
@@ -737,20 +733,5 @@ static int run_client(int argc, char** argv)
 
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }
-
-#ifdef WOLFMQTT_ZEPHYR
-/* In zephyr commit 0b90fd5adf1f01625412efadba4331b5041fb828 the main signature
- * was changed from void main(void) to int main(void). Zephyr doesn't provide a
- * way to check the version of Zephyr at compile time so support the latest. */
-int main(void)
-{
-    return run_client(0, NULL);
-}
-#else
-int main(int argc, char** argv)
-{
-    return run_client(argc, argv);
-}
-#endif
 
 #endif /* NO_MAIN_DRIVER */

@@ -12,6 +12,7 @@ extern "C" {
 #define WOLFMQTT_DEFAULT_TLS 1
 #define DEFAULT_MQTT_HOST "192.0.2.2"
 #define ENABLE_MQTT_TLS
+#define NO_MAIN_DRIVER
 
 const static unsigned char root_ca[] = {
     0x30, 0x82, 0x04, 0xe9, 0x30, 0x82, 0x03, 0xd1, 0xa0, 0x03, 0x02, 0x01,

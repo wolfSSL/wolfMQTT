@@ -10,6 +10,7 @@ extern "C" {
 
 #define WOLFMQTT_TOPIC_NAME "sensors"
 #define DEFAULT_MQTT_HOST "192.0.2.2"
+#define NO_MAIN_DRIVER
 
 #if defined(CONFIG_WOLFSSL_DEBUG)
 #undef  DEBUG_WOLFSSL
