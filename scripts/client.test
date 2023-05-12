@@ -30,7 +30,7 @@ then
         bwrap_path="$(command -v bwrap)"
         if [ -n "$bwrap_path" ]; then
             export AM_BWRAPPED=yes
-            exec "$bwrap_path" --unshare-net --dev-bind / / "./scripts/client.test" "$@"
+            exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
         fi
     fi
     # Run mosquitto broker
