@@ -1,5 +1,5 @@
-#ifndef WOLFMQTT_OPTIONS_H
-#define WOLFMQTT_OPTIONS_H
+#ifndef WOLFMQTT_ZEPHYR_SAMPLE_SETTINGS_H
+#define WOLFMQTT_ZEPHYR_SAMPLE_SETTINGS_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,5 +21,5 @@ extern "C" {
 }
 #endif
 
-#endif /* WOLFMQTT_OPTIONS_H */
+#endif /* WOLFMQTT_ZEPHYR_SAMPLE_SETTINGS_H */
 

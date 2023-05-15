@@ -1,8 +1,12 @@
-#ifndef WOLFMQTT_OPTIONS_H
-#define WOLFMQTT_OPTIONS_H
+#ifndef WOLFMQTT_ZEPHYR_SAMPLE_SETTINGS_H
+#define WOLFMQTT_ZEPHYR_SAMPLE_SETTINGS_H
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+#ifdef CONFIG_WOLFSSL_SETTINGS_FILE
+#include CONFIG_WOLFSSL_SETTINGS_FILE
 #endif
 
 #undef NO_FILESYSTEM
@@ -348,5 +352,5 @@ const static unsigned char device_priv_key[] = {
 }
 #endif
 
-#endif /* WOLFMQTT_OPTIONS_H */
+#endif /* WOLFMQTT_ZEPHYR_SAMPLE_SETTINGS_H */
 

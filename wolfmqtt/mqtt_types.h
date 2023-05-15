@@ -60,7 +60,9 @@
     #include "wolfmqtt/vs_settings.h"
 #endif
 
-#ifdef WOLFMQTT_USER_SETTINGS
+#if defined(WOLFMQTT_ZEPHYR) && defined(CONFIG_WOLFMQTT_SETTINGS_FILE)
+#include CONFIG_WOLFMQTT_SETTINGS_FILE
+#elif defined(WOLFMQTT_USER_SETTINGS)
 #include "user_settings.h"
 #endif
 

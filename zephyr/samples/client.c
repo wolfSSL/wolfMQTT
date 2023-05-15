@@ -30,9 +30,14 @@ int main(void)
     /* init defaults */
     mqtt_init_ctx(&mqttCtx);
 
+    mqttCtx.test_mode = 1;
+
     rc = mqttclient_test(&mqttCtx);
 
     mqtt_free_ctx(&mqttCtx);
+
+    if (rc == 0)
+        PRINTF("Zephyr MQTT test passed");
 
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }
