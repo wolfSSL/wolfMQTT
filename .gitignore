@@ -78,3 +78,9 @@ examples/sn-client/sn-client_qos-1
 examples/sn-client/sn-multithread
 examples/multithread/multithread
 examples/wiot/wiot
+
+# eclipse
+.cproject
+.project
+.settings
+

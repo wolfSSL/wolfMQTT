@@ -20,9 +20,6 @@ do_cleanup() {
 # Check for application
 [ ! -x ./examples/nbclient/nbclient ] && echo -e "\n\nNon-blocking Client doesn't exist" && exit 1
 
-# Wait 1 secs for other tests to conclude
-sleep 1
-
 # Use minimum of 2 seconds
 # The check timout will sometimes incorrectly trigger if 1 second is used
 def_args="-T -C 2000"
@@ -30,6 +27,14 @@ def_args="-T -C 2000"
 # Check for mosquitto
 if command -v mosquitto
 then
+    # bwrap only if using a local mosquitto instance
+    if [ "${AM_BWRAPPED-}" != "yes" ]; then
+        bwrap_path="$(command -v bwrap)"
+        if [ -n "$bwrap_path" ]; then
+            export AM_BWRAPPED=yes
+            exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
+        fi
+    fi
     # Run mosquitto broker
     mosquitto -c scripts/broker_test/mosquitto.conf &
     broker_pid=$!

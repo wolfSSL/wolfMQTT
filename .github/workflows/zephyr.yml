@@ -1,0 +1,130 @@
+name: Zephyr tests
+
+on:
+  push:
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  run_test:
+    name: Build and run
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install dependencies
+        run: |
+          # Don't prompt for anything
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          # most of the ci-base zephyr docker image packages
+          sudo apt-get install -y mosquitto mosquitto-clients zip bridge-utils uml-utilities \
+            git cmake ninja-build gperf ccache dfu-util device-tree-compiler wget \
+            python3-dev python3-pip python3-setuptools python3-tk python3-wheel xz-utils file \
+            make gcc gcc-multilib g++-multilib libsdl2-dev libmagic1 \
+            autoconf automake bison build-essential ca-certificates cargo ccache chrpath cmake \
+            cpio device-tree-compiler dfu-util diffstat dos2unix doxygen file flex g++ gawk gcc \
+            gcovr git git-core gnupg gperf gtk-sharp2 help2man iproute2 lcov libcairo2-dev \
+            libglib2.0-dev libgtk2.0-0 liblocale-gettext-perl libncurses5-dev libpcap-dev \
+            libpopt0 libsdl1.2-dev libsdl2-dev libssl-dev libtool libtool-bin locales make \
+            net-tools ninja-build openssh-client parallel pkg-config python3-dev python3-pip \
+            python3-ply python3-setuptools python-is-python3 qemu rsync socat srecord sudo \
+            texinfo unzip wget ovmf xz-utils
+
+      - name: Install west
+        run: sudo pip install west
+
+      - name: Init west workspace
+        run: west init zephyr
+
+      - name: Update west.yml
+        working-directory: zephyr/zephyr
+        run: |
+          REF=$(echo '${{ github.ref }}' | sed -e 's/\//\\\//g')
+          sed -e 's/remotes:/remotes:\n    \- name: wolfssl\n      url\-base: https:\/\/github.com\/wolfssl/' -i west.yml
+          sed -e "s/remotes:/remotes:\n    \- name: wolfmqtt\n      url\-base: https:\/\/github.com\/${{ github.repository_owner }}/" -i west.yml
+          sed -e "s/projects:/projects:\n    \- name: wolfMQTT\n      path: modules\/lib\/wolfmqtt\n      remote: wolfmqtt\n      revision: $REF/" -i west.yml
+          sed -e 's/projects:/projects:\n    \- name: wolfssl\n      path: modules\/crypto\/wolfssl\n      remote: wolfssl\n      revision: master/' -i west.yml
+
+      - name: Update west workspace
+        working-directory: zephyr
+        run: west update -n -o=--depth=1
+
+      - name: Export zephyr
+        working-directory: zephyr
+        run: west zephyr-export
+
+      - name: Install pip dependencies
+        working-directory: zephyr
+        run: sudo pip install -r zephyr/scripts/requirements.txt
+
+      - name: Install zephyr SDK
+        run: |
+          wget -q https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v0.16.1/zephyr-sdk-0.16.1_linux-x86_64.tar.xz
+          tar xf zephyr-sdk-0.16.1_linux-x86_64.tar.xz
+          cd zephyr-sdk-0.16.1
+          ./setup.sh -h -c
+
+      - name: Setup qemu networking
+        working-directory: zephyr/tools/net-tools
+        run: |
+          make
+          ./loop-socat.sh &
+          sleep 1 # let the networks set everything up
+          sudo ./loop-slip-tap.sh -v &
+          sleep 1 # let the networks set everything up
+
+      - name: Setup mosquitto broker and sub
+        working-directory: zephyr/modules/lib/wolfmqtt
+        run: |
+          # Disable default broker daemon
+          sudo service mosquitto stop
+          mosquitto -c scripts/broker_test/mosquitto.conf &> broker.log &
+          sleep 1 # let the broker set everything up
+          mosquitto_sub -t sensors &> sub.log &
+
+      # This is some debug info useful if something goes wrong
+      - name: Show network status
+        run: |
+          sudo ifconfig
+          sudo route
+          sudo netstat -tulpan
+
+      - name: Run client
+        id: client-test
+        working-directory: zephyr
+        run: |
+          ./zephyr/scripts/twister --testsuite-root modules/lib/wolfmqtt --test zephyr/samples/client/sample.lib.wolfmqtt_client -vvv
+          rm -rf zephyr/twister-out
+
+      - name: Check output
+        run: |
+          grep test zephyr/modules/lib/wolfmqtt/sub.log
+          > zephyr/modules/lib/wolfmqtt/sub.log # clear file
+
+      - name: Run tls client
+        id: client-tls-test
+        working-directory: zephyr
+        run: |
+          ./zephyr/scripts/twister --testsuite-root modules/lib/wolfmqtt --test zephyr/samples/client_tls/sample.lib.wolfmqtt_client_tls -vvv
+          rm -rf zephyr/twister-out
+
+      - name: Check output
+        run: |
+          grep test zephyr/modules/lib/wolfmqtt/sub.log
+          > zephyr/modules/lib/wolfmqtt/sub.log # clear file
+
+      - name: Zip failure logs
+        if: ${{ failure() && (steps.client-test.outcome == 'failure' || steps.client-tls-test.outcome == 'failure') }}
+        run: |
+          zip -9 -r logs.zip zephyr/twister-out
+          zip -9 logs.zip zephyr/modules/lib/wolfmqtt/broker.log \
+            zephyr/modules/lib/wolfmqtt/sub.log
+
+      - name: Upload failure logs
+        if: ${{ failure() && (steps.client-test.outcome == 'failure' || steps.client-tls-test.outcome == 'failure') }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: zephyr-client-test-logs
+          path: logs.zip
+          retention-days: 5

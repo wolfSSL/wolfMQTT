@@ -24,8 +24,6 @@
     #include <config.h>
 #endif
 
-#include "wolfmqtt/mqtt_client.h"
-
 #include "mqttclient.h"
 #include "examples/mqttnet.h"
 
@@ -706,8 +704,6 @@ int main(int argc, char** argv)
 
     /* init defaults */
     mqtt_init_ctx(&mqttCtx);
-    mqttCtx.app_name = "mqttclient";
-    mqttCtx.message = DEFAULT_MESSAGE;
 
     /* parse arguments */
     rc = mqtt_parse_args(&mqttCtx, argc, argv);

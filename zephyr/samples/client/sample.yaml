@@ -1,0 +1,15 @@
+sample:
+  description: MQTT client sample application
+  name: MQTT client
+common:
+  harness: console
+  harness_config:
+    type: one_line
+    regex:
+      - "Zephyr MQTT test passed"
+tests:
+  sample.lib.wolfmqtt_client:
+    timeout: 10
+    platform_allow: qemu_x86
+    integration_platforms:
+      - qemu_x86

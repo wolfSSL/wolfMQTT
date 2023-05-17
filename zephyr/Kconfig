@@ -1,0 +1,19 @@
+menuconfig WOLFMQTT
+	bool "wolfMQTT module support"
+
+if WOLFMQTT
+config WOLFMQTT_SETTINGS_FILE
+	string "wolfMQTT settings file"
+	help
+	  Use a specific wolfMQTT settings file.
+
+config WOLFMQTT_TLS
+	bool "wolfMQTT TLS support"
+	default n
+	select WOLFSSL
+
+config ZEPHYR_WOLFMQTT_MODULE
+	bool
+	depends on WOLFMQTT
+endif
+

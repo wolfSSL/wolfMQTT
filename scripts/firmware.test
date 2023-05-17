@@ -25,12 +25,17 @@ def_args="-t -T -C 2000"
 filein=./examples/publish.dat
 fileout=./examples/publish.dat.trs
 
-# Wait 1 secs for other tests to conclude
-sleep 1
-
 # Check for mosquitto
 if command -v mosquitto
 then
+    # bwrap only if using a local mosquitto instance
+    if [ "${AM_BWRAPPED-}" != "yes" ]; then
+        bwrap_path="$(command -v bwrap)"
+        if [ -n "$bwrap_path" ]; then
+            export AM_BWRAPPED=yes
+            exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
+        fi
+    fi
     # Run mosquitto broker
     mosquitto -c scripts/broker_test/mosquitto.conf &
     broker_pid=$!

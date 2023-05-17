@@ -27,6 +27,7 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttexample.h"
 #include "examples/mqttnet.h"
+#include "examples/mqttport.h"
 
 
 /* locals */
@@ -263,6 +264,11 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->topic_alias = 1;
     mqttCtx->topic_alias_max = 1;
 #endif
+#ifdef WOLFMQTT_DEFAULT_TLS
+    mqttCtx->use_tls = WOLFMQTT_DEFAULT_TLS;
+#endif
+    mqttCtx->app_name = "mqttclient";
+    mqttCtx->message = DEFAULT_MESSAGE;
 }
 
 int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
@@ -464,7 +470,7 @@ void mqtt_free_ctx(MQTTCtx* mqttCtx)
     }
 }
 
-#if defined(__GNUC__) && !defined(NO_EXIT)
+#if defined(__GNUC__) && !defined(NO_EXIT) && !defined(WOLFMQTT_ZEPHYR)
     __attribute__ ((noreturn))
 #endif
 int err_sys(const char* msg)
@@ -473,6 +479,14 @@ int err_sys(const char* msg)
         PRINTF("wolfMQTT error: %s", msg);
     }
     exit(EXIT_FAILURE);
+#ifdef WOLFMQTT_ZEPHYR
+    /* Zephyr compiler produces below warning. Let's silence it.
+     * warning: 'noreturn' function does return
+     * 477 | }
+     *     | ^
+     */
+    return 0;
+#endif
 }
 
 
@@ -632,31 +646,31 @@ int mqtt_tls_cb(MqttClient* client)
                 return rc;
             }
         }
-    #else
-    #if 0
+    #elif defined(WOLFMQTT_ZEPHYR)
+    #ifdef WOLFSSL_ENCRYPTED_KEYS
+        /* Setup password callback for pkcs8 key */
+        wolfSSL_CTX_set_default_passwd_cb(client->tls.ctx,
+                mqtt_password_cb);
+    #endif
         /* Examples for loading buffer directly */
         /* Load CA certificate buffer */
-        rc = wolfSSL_CTX_load_verify_buffer(client->tls.ctx,
-            (const byte*)root_ca, (long)XSTRLEN(root_ca), WOLFSSL_FILETYPE_PEM);
+        rc = wolfSSL_CTX_load_verify_buffer_ex(client->tls.ctx,
+                (const byte*)root_ca, (long)sizeof(root_ca),
+                WOLFSSL_FILETYPE_ASN1, 0, WOLFSSL_LOAD_FLAG_DATE_ERR_OKAY);
 
         /* Load Client Cert */
-        if (rc == WOLFSSL_SUCCESS)
+        if (rc == WOLFSSL_SUCCESS) {
             rc = wolfSSL_CTX_use_certificate_buffer(client->tls.ctx,
-                (const byte*)device_cert, (long)XSTRLEN(device_cert),
-                WOLFSSL_FILETYPE_PEM);
-
-        #ifdef WOLFSSL_ENCRYPTED_KEYS
-            /* Setup password callback for pkcs8 key */
-            wolfSSL_CTX_set_default_passwd_cb(client->tls.ctx,
-                    mqtt_password_cb);
-        #endif
+                (const byte*)device_cert, (long)sizeof(device_cert),
+                WOLFSSL_FILETYPE_ASN1);
+        }
 
         /* Load Private Key */
-        if (rc == WOLFSSL_SUCCESS)
+        if (rc == WOLFSSL_SUCCESS) {
             rc = wolfSSL_CTX_use_PrivateKey_buffer(client->tls.ctx,
-                (const byte*)device_priv_key, (long)XSTRLEN(device_priv_key),
-                WOLFSSL_FILETYPE_PEM);
-    #endif
+                (const byte*)device_priv_key, (long)sizeof(device_priv_key),
+                WOLFSSL_FILETYPE_ASN1);
+        }
     #endif /* !NO_FILESYSTEM */
 #endif /* !NO_CERT */
 #ifdef HAVE_SNI
@@ -712,7 +726,7 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
 {
 #if !defined(NO_FILESYSTEM)
     int rc = 0;
-    FILE* file = NULL;
+    XFILE file = NULL;
     long int pos = -1L;
 
     /* Check arguments */
@@ -722,7 +736,7 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
     }
 
     /* Open file */
-    file = fopen(filePath, "rb");
+    file = XFOPEN(filePath, "rb");
     if (file == NULL) {
         PRINTF("File '%s' does not exist!", filePath);
         rc = EXIT_FAILURE;
@@ -730,13 +744,13 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
     }
 
     /* Determine length of file */
-    if (fseek(file, 0, SEEK_END) != 0) {
+    if (XFSEEK(file, 0, XSEEK_END) != 0) {
         PRINTF("fseek() failed");
         rc = EXIT_FAILURE;
         goto exit;
      }
 
-    pos = (int) ftell(file);
+    pos = (int)XFTELL(file);
     if (pos == -1L) {
        PRINTF("ftell() failed");
        rc = EXIT_FAILURE;
@@ -744,7 +758,7 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
     }
 
     *fileLen = (int)pos;
-    if (fseek(file, 0, SEEK_SET) != 0) {
+    if (XFSEEK(file, 0, XSEEK_SET) != 0) {
         PRINTF("fseek() failed");
         rc = EXIT_FAILURE;
         goto exit;
@@ -762,7 +776,7 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
     }
 
     /* Load file into buffer */
-    rc = (int)fread(*fileBuf, 1, *fileLen, file);
+    rc = (int)XFREAD(*fileBuf, 1, *fileLen, file);
     if (rc != *fileLen) {
         PRINTF("Error reading file! %d", rc);
         rc = EXIT_FAILURE;
@@ -772,7 +786,7 @@ int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
 
 exit:
     if (file) {
-        fclose(file);
+        XFCLOSE(file);
     }
     if (rc != 0) {
         if (*fileBuf) {

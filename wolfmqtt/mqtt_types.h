@@ -60,7 +60,9 @@
     #include "wolfmqtt/vs_settings.h"
 #endif
 
-#ifdef WOLFMQTT_USER_SETTINGS
+#if defined(WOLFMQTT_ZEPHYR) && defined(CONFIG_WOLFMQTT_SETTINGS_FILE)
+#include CONFIG_WOLFMQTT_SETTINGS_FILE
+#elif defined(WOLFMQTT_USER_SETTINGS)
 #include "user_settings.h"
 #endif
 
@@ -291,6 +293,9 @@ enum MqttPacketResponseCodes {
                 #include <pthread.h>
                 #define PRINTF(_f_, ...)  printf( ("%lx: "_f_ LINE_END), pthread_self(), ##__VA_ARGS__)
             #endif
+        #elif defined(WOLFMQTT_ZEPHYR)
+            #include <zephyr/sys/printk.h>
+            #define PRINTF(_f_, ...)  printk( (_f_ LINE_END), ##__VA_ARGS__)
         #else
             #define PRINTF(_f_, ...)  printf( (_f_ LINE_END), ##__VA_ARGS__)
         #endif

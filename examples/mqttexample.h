@@ -22,6 +22,8 @@
 #ifndef WOLFMQTT_EXAMPLE_H
 #define WOLFMQTT_EXAMPLE_H
 
+#include "wolfmqtt/mqtt_client.h"
+
 #ifdef __cplusplus
     extern "C" {
 #endif
@@ -41,7 +43,7 @@
     /* For Linux/Mac */
     #if !defined(FREERTOS) && !defined(USE_WINDOWS_API) && \
         !defined(FREESCALE_MQX) && !defined(FREESCALE_KSDK_MQX) && \
-        !defined(MICROCHIP_MPLAB_HARMONY)
+        !defined(MICROCHIP_MPLAB_HARMONY) && !defined(WOLFMQTT_ZEPHYR)
         /* Make sure its not explicitly disabled and not already defined */
         #if !defined(WOLFMQTT_NO_STDIN_CAP) && \
             !defined(WOLFMQTT_ENABLE_STDIN_CAP)
@@ -77,8 +79,12 @@
 #define DEFAULT_MQTT_QOS        MQTT_QOS_0
 #define DEFAULT_KEEP_ALIVE_SEC  60
 #define DEFAULT_CLIENT_ID       "WolfMQTTClient"
-#define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
-#define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
+#ifndef WOLFMQTT_TOPIC_NAME
+    #define WOLFMQTT_TOPIC_NAME     "wolfMQTT/example/"
+    #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME"testTopic"
+#else
+    #define DEFAULT_TOPIC_NAME      WOLFMQTT_TOPIC_NAME
+#endif
 #define DEFAULT_AUTH_METHOD    "EXTERNAL"
 #define PRINT_BUFFER_SIZE       80
 #define DEFAULT_MESSAGE         "test"

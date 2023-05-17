@@ -92,6 +92,10 @@ cd ../wolfmqtt
 make
 ```
 
+### Zephyr RTOS
+
+Support for Zephyr is available in the [zephyr](zephyr) directory. For instructions on how to build for Zephyr, see the [README.md](zephyr/README.md).
+
 ## Architecture
 
 The library has three components.
