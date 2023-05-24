@@ -22,10 +22,18 @@
 #ifndef WOLFMQTT_AZUREIOTHUB_H
 #define WOLFMQTT_AZUREIOTHUB_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "examples/mqttexample.h"
 
 
 /* Exposed functions */
 int azureiothub_test(MQTTCtx *mqttCtx);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* WOLFMQTT_AZUREIOTHUB_H */

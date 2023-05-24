@@ -22,11 +22,18 @@
 #ifndef WOLFMQTT_MULTITHREAD_H
 #define WOLFMQTT_MULTITHREAD_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "examples/mqttexample.h"
 
 
 /* Exposed functions */
 int multithread_test(MQTTCtx *mqttCtx);
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* WOLFMQTT_MULTITHREAD_H */
