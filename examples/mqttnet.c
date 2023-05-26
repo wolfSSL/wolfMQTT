@@ -711,7 +711,7 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     int timeout_ms, byte peek)
 {
     SocketContext *sock = (SocketContext*)context;
-    MQTTCtx* mqttCtx = sock->mqttCtx;
+    MQTTCtx* mqttCtx;
     int rc = -1, timeout = 0;
     SOERROR_T so_error = 0;
     int bytes = 0;
@@ -721,8 +721,6 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     fd_set errfds;
     struct timeval tv;
 #endif
-
-    (void)mqttCtx;
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -734,6 +732,9 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     if (peek == 1) {
         flags |= MSG_PEEK;
     }
+
+    mqttCtx = sock->mqttCtx;
+    (void)mqttCtx;
 
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */

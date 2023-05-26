@@ -22,9 +22,16 @@
 #ifndef WOLFMQTT_SIMPLE_H
 #define WOLFMQTT_SIMPLE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 
 /* Exposed functions */
 int mqttsimple_test(void);
 
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* WOLFMQTT_SIMPLE_H */

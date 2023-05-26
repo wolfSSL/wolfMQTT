@@ -23,6 +23,10 @@
 #ifndef WOLFMQTT_PORT_H
 #define WOLFMQTT_PORT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* FreeRTOS TCP */
 #ifdef FREERTOS_TCP
     #include "FreeRTOS.h"
@@ -256,6 +260,10 @@
 #endif
 #ifndef SOCK_EQ_ERROR
     #define SOCK_EQ_ERROR(e) (((e) == EWOULDBLOCK) || ((e) == EAGAIN))
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif /* WOLFMQTT_PORT_H */

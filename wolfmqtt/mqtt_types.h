@@ -134,6 +134,7 @@
 /* configuration for Harmony */
 #ifdef MICROCHIP_MPLAB_HARMONY
     #define NO_EXIT
+    #define NO_MAIN_DRIVER
 
     /* make sure we are using non-blocking for Harmony */
     #ifndef WOLFMQTT_NONBLOCK

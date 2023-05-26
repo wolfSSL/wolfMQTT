@@ -31,5 +31,8 @@
 /* Exposed functions */
 int fwclient_test(MQTTCtx *mqttCtx);
 
+#if defined(NO_MAIN_DRIVER)
+int fwclient_main(int argc, char** argv);
+#endif
 
 #endif /* WOLFMQTT_FWCLIENT_H */

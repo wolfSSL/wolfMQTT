@@ -589,7 +589,6 @@ exit:
 
 
 /* so overall tests can pull in test function */
-#ifndef NO_MAIN_DRIVER
     #ifdef USE_WINDOWS_API
         #include <windows.h> /* for ctrl handler */
 
@@ -617,7 +616,11 @@ exit:
         }
     #endif
 
+#ifdef NO_MAIN_DRIVER
+    int azureiothub_main(int argc, char** argv)
+#else
     int main(int argc, char** argv)
+#endif /* NO_MAIN_DRIVER */
     {
         int rc;
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
@@ -671,4 +674,3 @@ exit:
         return (rc == 0) ? 0 : EXIT_FAILURE;
     }
 
-#endif /* NO_MAIN_DRIVER */

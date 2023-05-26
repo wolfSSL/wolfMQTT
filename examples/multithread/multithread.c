@@ -733,7 +733,6 @@ int multithread_test(MQTTCtx *mqttCtx)
 #endif /* WOLFMQTT_MULTITHREAD */
 
 /* so overall tests can pull in test function */
-#if !defined(NO_MAIN_DRIVER) && !defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef USE_WINDOWS_API
         #include <windows.h> /* for ctrl handler */
 
@@ -765,7 +764,11 @@ int multithread_test(MQTTCtx *mqttCtx)
         }
     #endif
 
+#if defined(NO_MAIN_DRIVER)
+int multithread_main(int argc, char** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     int rc;
 #ifdef WOLFMQTT_MULTITHREAD
@@ -807,4 +810,3 @@ int main(int argc, char** argv)
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }
 
-#endif /* NO_MAIN_DRIVER */
