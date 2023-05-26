@@ -32,6 +32,10 @@ extern "C" {
 /* Exposed functions */
 int azureiothub_test(MQTTCtx *mqttCtx);
 
+#ifdef NO_MAIN_DRIVER
+int azureiothub_main(int argc, char** argv);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

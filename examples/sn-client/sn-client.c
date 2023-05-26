@@ -645,7 +645,6 @@ exit:
 #endif /* WOLFMQTT_SN */
 
 /* so overall tests can pull in test function */
-#if !defined(NO_MAIN_DRIVER) && !defined(MICROCHIP_MPLAB_HARMONY)
     #ifdef USE_WINDOWS_API
         #include <windows.h> /* for ctrl handler */
 
@@ -669,7 +668,11 @@ exit:
         }
     #endif
 
+#if defined(NO_MAIN_DRIVER)
+int sn_main(int argc, char** argv)
+#else
 int main(int argc, char** argv)
+#endif
 {
     int rc;
 #ifdef WOLFMQTT_SN
@@ -718,4 +721,3 @@ int main(int argc, char** argv)
     return (rc == 0) ? 0 : EXIT_FAILURE;
 }
 
-#endif /* NO_MAIN_DRIVER */

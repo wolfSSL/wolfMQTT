@@ -32,6 +32,10 @@ extern "C" {
 /* Exposed functions */
 int multithread_test(MQTTCtx *mqttCtx);
 
+#if defined(NO_MAIN_DRIVER)
+int multithread_main(int argc, char** argv);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

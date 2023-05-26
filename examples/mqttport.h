@@ -256,8 +256,7 @@ extern "C" {
 #ifndef GET_SOCK_ERROR
     #define GET_SOCK_ERROR(f,s,o,e) \
         socklen_t len = sizeof(so_error); \
-        if (getsockopt((f), (s), (o), &(e), &len)) \
-            rc = -1
+        getsockopt((f), (s), (o), &(e), &len)
 #endif
 #ifndef SOCK_EQ_ERROR
     #define SOCK_EQ_ERROR(e) (((e) == EWOULDBLOCK) || ((e) == EAGAIN))
