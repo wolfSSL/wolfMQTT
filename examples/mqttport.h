@@ -63,6 +63,20 @@ extern "C" {
     #include "lwip/sockets.h"
     #include "lwip/netdb.h"
 
+/* LWIP only */
+#elif defined(WOLFSSL_LWIP)
+    /* lwIP includes. */
+    #include "lwip/api.h"
+    #include "lwip/tcpip.h"
+    #include "lwip/memp.h"
+    #include "lwip/stats.h"
+    #include "lwip/sockets.h"
+    #include "lwip/netdb.h"
+
+/* User defined IO */
+#elif defined(WOLFMQTT_USER_IO)
+    #include "userio_template.h"
+
 /* Windows */
 #elif defined(USE_WINDOWS_API)
     #include <winsock2.h>
