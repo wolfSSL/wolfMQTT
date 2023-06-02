@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2014-2023 wolfSSL Inc.
  *
- * This file is part of wolfSSH.
+ * This file is part of wolfMQTT.
  *
  * wolfSSH is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by

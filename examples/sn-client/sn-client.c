@@ -29,10 +29,10 @@
 #include "sn-client.h"
 #include "examples/mqttnet.h"
 
-#ifdef WOLFMQTT_SN
-
 /* Locals */
 static int mStopRead = 0;
+
+#ifdef WOLFMQTT_SN
 
 /* Configuration */
 /* Maximum size for network read/write callbacks. */
