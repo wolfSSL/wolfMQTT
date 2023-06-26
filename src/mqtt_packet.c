@@ -126,6 +126,8 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_TYPE_MAX, MQTT_DATA_TYPE_NONE, 0 }
 };
 
+/* WOLFMQTT_DYN_PROP allows property allocation using malloc */
+#ifndef WOLFMQTT_DYN_PROP
 #ifndef MQTT_MAX_PROPS
 #define MQTT_MAX_PROPS 30
 #endif
@@ -133,6 +135,8 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 /* Property structure allocation array. Property type equal
    to zero indicates unused element. */
 static MqttProp clientPropStack[MQTT_MAX_PROPS];
+#endif /* WOLFMQTT_DYN_PROP */
+
 #ifdef WOLFMQTT_MULTITHREAD
 static wm_Sem clientPropStack_lock;
 #endif
@@ -1809,7 +1813,9 @@ int MqttProps_ShutDown(void) {
 MqttProp* MqttProps_Add(MqttProp **head)
 {
     MqttProp *new_prop = NULL, *prev = NULL, *cur;
+#ifndef WOLFMQTT_DYN_PROP
     int i;
+#endif
 
     if (head == NULL) {
         return NULL;
@@ -1829,6 +1835,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
         cur = cur->next;
     };
 
+#ifndef WOLFMQTT_DYN_PROP
     /* Find a free element */
     for (i = 0; i < MQTT_MAX_PROPS; i++) {
         if (clientPropStack[i].type == MQTT_PROP_NONE) {
@@ -1838,6 +1845,13 @@ MqttProp* MqttProps_Add(MqttProp **head)
             break;
         }
     }
+#else
+    /* Allocate a new prop */
+    new_prop = WOLFMQTT_MALLOC(sizeof(MqttProp));
+    if (new_prop != NULL) {
+        XMEMSET(new_prop, 0, sizeof(MqttProp));
+    }
+#endif
 
     if (new_prop != NULL) {
         /* set placeholder until caller sets it to a real type */
@@ -1873,8 +1887,16 @@ int MqttProps_Free(MqttProp *head)
     }
 #endif
     while (head != NULL) {
+#ifndef WOLFMQTT_DYN_PROP
         head->type = MQTT_PROP_NONE; /* available */
         head = head->next;
+#else
+        MqttProp *tmp;
+
+        tmp = head->next;
+        WOLFMQTT_FREE(head);
+        head = tmp;
+#endif
     }
 #ifdef WOLFMQTT_MULTITHREAD
     (void)wm_SemUnlock(&clientPropStack_lock);
