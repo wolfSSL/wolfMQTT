@@ -25,6 +25,7 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/wiot/wiot.h \
                    examples/mqttnet.h \
                    examples/mqttexample.h \
+                   examples/mqttport.h \
                    examples/nbclient/nbclient.h \
                    examples/multithread/multithread.h \
                    examples/sn-client/sn-client.h
@@ -131,6 +132,7 @@ endif
 
 dist_example_DATA+= examples/mqttnet.c \
                     examples/mqttexample.c \
+                    examples/mqttport.c \
                     examples/mqttclient/mqttclient.c \
                     examples/mqttsimple/mqttsimple.c \
                     examples/firmware/fwpush.c \
