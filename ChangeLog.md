@@ -1,5 +1,21 @@
 ## Release Notes
 
+### v1.16.0 (6/29/2023)
+* Add testing for TLS mutual auth, and fsanitize gh test by @lealem47 in #321
+* Add support for pkcs8 keys to mqtt client by @lealem47 in #322
+* Fix null ptr deref in MqttClient_WaitType by @embhorn in #323
+* Cleanup enum last entry to not have comma by @dgarske in #324
+* Cleanup the AWS example by @dgarske in #326
+* Fix for multi-threaded non-blocking use of sockRc, which could collide
+  between read and write by @dgarske in #328
+* Add API to check if message is active (non-blocking only) by @dgarske in #329
+* Fix configure warnings by @embhorn in #330
+* Support MQTTv5 in AWS example by @embhorn in #332
+* Zephyr port by @julek-wolfssl in #333
+* Improve example headers and small sanitizer fixes by @lealem47 in #334
+* Adding in STM32CubeIDE support by @lealem47 in #335
+* Add dynamic property support by @embhorn in #336
+
 ### v1.15.1 (3/14/2023)
 * Fix to protect read from client->write.len, which resolve edge case issue
   when using multi-threading. (PR #318 and PR #319)
