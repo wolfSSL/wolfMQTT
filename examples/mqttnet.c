@@ -527,7 +527,9 @@ static int NetConnect(void *context, const char* host, word16 port,
                 rc = MQTT_CODE_ERROR_NETWORK;
         #ifdef WOLFMQTT_NONBLOCK
                 /* Check for error */
-                GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+                {
+                    GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+                }
                 if (
             #ifndef _WIN32
                         (errno == EINPROGRESS) ||
