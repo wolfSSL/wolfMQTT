@@ -526,8 +526,8 @@ static int NetConnect(void *context, const char* host, word16 port,
                 /* set default error case */
                 rc = MQTT_CODE_ERROR_NETWORK;
         #ifdef WOLFMQTT_NONBLOCK
-                /* Check for error */
                 {
+                    /* Check for error */
                     GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
                 }
                 if (
@@ -683,8 +683,10 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
     if (rc == -1) {
-        /* Get error */
-        GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+        {
+            /* Get error */
+            GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+        }
         if (so_error == 0) {
     #if defined(USE_WINDOWS_API) && defined(WOLFMQTT_NONBLOCK)
             /* assume non-blocking case */
@@ -848,8 +850,10 @@ exit:
         rc = MQTT_CODE_ERROR_TIMEOUT;
     }
     else if (rc < 0) {
-        /* Get error */
-        GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+        {
+            /* Get error */
+            GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
+        }
         if (so_error == 0) {
             rc = 0; /* Handle signal */
         }
