@@ -2609,6 +2609,26 @@ int MqttClient_NetConnect(MqttClient *client, const char* host,
 
 int MqttClient_NetDisconnect(MqttClient *client)
 {
+#ifdef WOLFMQTT_MULTITHREAD
+    MqttPendResp *tmpResp;
+#endif
+
+    if (client == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+#ifdef WOLFMQTT_MULTITHREAD
+    /* Get client lock on to ensure no other threads are active */
+    wm_SemLock(&client->lockClient);
+
+    for (tmpResp = client->firstPendResp;
+         tmpResp != NULL;
+         tmpResp = tmpResp->next) {
+        MqttClient_RespList_Remove(client, tmpResp);
+    }
+    wm_SemUnlock(&client->lockClient);
+#endif
+
     return MqttSocket_Disconnect(client);
 }
 
