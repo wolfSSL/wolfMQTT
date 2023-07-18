@@ -7,7 +7,7 @@ git clone https://github.com/wolfssl/wolfssl
 git clone https://github.com/wolfssl/wolfmqtt
 ```
 
-Then both projects can be imported as an momentics IDE project. To first build wolfSSL view the README located at wolfssl/IDE/QNX/README.md. Then to build wolfMQTT start momentics with the workspace located at wolfmqtt/IDE/QNX/. Import the wolfmqtt project (File->Import->General->Existing Projects into Workspace, in "Select root directory" browse to the directory wolfmqtt/IDE/QNX/ and select the wolfmqtt project then click "Finish".
+Then both projects can be imported as a Momentics IDE project. To first build wolfSSL view the README located at wolfssl/IDE/QNX/README.md. Then to build wolfMQTT start momentics with the workspace located at wolfmqtt/IDE/QNX/. Import the wolfmqtt project (File->Import->General->Existing Projects into Workspace, in "Select root directory" browse to the directory wolfmqtt/IDE/QNX/ and select the wolfmqtt project then click "Finish".
 
 To alter the location that the wolfSSL directory is set WOLFSSL_DIR as an env. variable.
 
