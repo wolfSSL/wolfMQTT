@@ -1,0 +1,8 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= IDE/QNX/README.md
+EXTRA_DIST+= IDE/QNX/wolfmqtt/.cproject
+EXTRA_DIST+= IDE/QNX/wolfmqtt/.project
+EXTRA_DIST+= IDE/QNX/wolfmqtt/Makefile

@@ -6,3 +6,4 @@ include IDE/ARDUINO/include.am
 include IDE/F767ZI-TOPPERS/include.am
 include IDE/Microchip-Harmony/include.am
 include IDE/STM32CUBE/include.am
+include IDE/QNX/include.am
