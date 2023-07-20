@@ -147,6 +147,8 @@ if (WOLFMQTT_EXAMPLES)
     add_mqtt_example(azureiothub azure/azureiothub.c)
     add_mqtt_example(fwpush firmware/fwpush.c)
     add_mqtt_example(fwclient firmware/fwclient.c)
+    add_mqtt_example(mqtt-pub pub-sub/mqtt-pub.c)
+    add_mqtt_example(mqtt-pub pub-sub/mqtt-sub.c)
 endif()
 
 ####################################################

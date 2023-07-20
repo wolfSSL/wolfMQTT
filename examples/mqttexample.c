@@ -247,6 +247,9 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
 #endif
     PRINTF("-T          Test mode");
     PRINTF("-f <file>   Use file contents for publish");
+    if (!mqttCtx->debug_on) {
+        PRINTF("-d          Enable example debug messages");
+    }
 }
 
 void mqtt_init_ctx(MQTTCtx* mqttCtx)
@@ -259,6 +262,7 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->client_id = kDefClientId;
     mqttCtx->topic_name = kDefTopicName;
     mqttCtx->cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
+    mqttCtx->debug_on = 1;
 #ifdef WOLFMQTT_V5
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
     mqttCtx->topic_alias = 1;
@@ -286,7 +290,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         #define MQTT_V5_ARGS ""
     #endif
 
-    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rt" \
+    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rtd" \
             MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
         switch ((char)rc) {
         case '?' :
@@ -362,6 +366,10 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 
         case 't':
             mqttCtx->use_tls = 1;
+            break;
+
+        case 'd':
+            mqttCtx->debug_on = 1;
             break;
 
     #ifdef ENABLE_MQTT_TLS

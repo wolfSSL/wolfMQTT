@@ -213,6 +213,13 @@ WolfGatewayQoS-1,wolfMQTT/example/testTopic, 1
 ### Multithread Example
 This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (10 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
 
+### Atomic publish and subscribe examples
+In the `examples/pub-sub` folder, there are two simple client examples:
+* mqtt-pub - publishes to a topic
+* mqtt-sub - subscribes to a topic and waits for messages
+
+These examples are useful for quickly testing or scripting.
+
 ## Example Options
 The command line examples can be executed with optional parameters. To see a list of the available parameters, add the `-?`
 
