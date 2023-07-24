@@ -65,15 +65,12 @@ else()
         target_compile_options(wolfmqtt PUBLIC ${WOLFSSL_CFLAGS_OTHER})
     else()
         # For support with vcpkg
-        find_package(wolfssl CONFIG)
+        find_package(wolfssl CONFIG REQUIRED)
         if (wolfssl_FOUND)
-            find_path(WOLFSSL_INCLUDE_DIR NAMES wolfssl/ssl.h)
-            find_library(WOLFSSL_LIBRARY_PATH NAMES wolfssl)
             target_compile_definitions(wolfmqtt PUBLIC
                 "ENABLE_MQTT_TLS"
                 )
-            include_directories(${WOLFSSL_INCLUDE_DIR})
-            target_link_libraries(wolfmqtt PUBLIC ${WOLFSSL_LIBRARY_PATH})
+            target_link_libraries(wolfmqtt PRIVATE wolfssl::wolfssl)
         endif()
     endif()
 endif()
