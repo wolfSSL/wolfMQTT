@@ -70,7 +70,7 @@ else()
             target_compile_definitions(wolfmqtt PUBLIC
                 "ENABLE_MQTT_TLS"
                 )
-            target_link_libraries(wolfmqtt PRIVATE wolfssl::wolfssl)
+            target_link_libraries(wolfmqtt PUBLIC wolfssl::wolfssl)
         endif()
     endif()
 endif()
