@@ -500,6 +500,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             break;
         }
 
+    #ifdef WOLFMQTT_MULTITHREAD
+        rc = wm_SemLock(&clientPropStack_lock);
+        if (rc != 0) {
+            break;
+        }
+    #endif
         /* Decode the Identifier */
         rc = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
                 (word32)(buf_len - (buf - pbuf)));
@@ -638,6 +644,9 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 break;
             }
         }
+    #ifdef WOLFMQTT_MULTITHREAD
+        (void)wm_SemUnlock(&clientPropStack_lock);
+    #endif
     };
 
     if (rc < 0) {
@@ -1821,12 +1830,6 @@ MqttProp* MqttProps_Add(MqttProp **head)
         return NULL;
     }
 
-#ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&clientPropStack_lock) != 0) {
-        return NULL;
-    }
-#endif
-
     cur = *head;
 
     /* Find the end of the parameter list */
@@ -1836,6 +1839,12 @@ MqttProp* MqttProps_Add(MqttProp **head)
     };
 
 #ifndef WOLFMQTT_DYN_PROP
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&clientPropStack_lock) != 0) {
+        return NULL;
+    }
+#endif
+
     /* Find a free element */
     for (i = 0; i < MQTT_MAX_PROPS; i++) {
         if (clientPropStack[i].type == MQTT_PROP_NONE) {
@@ -1870,7 +1879,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
         (void)MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
     }
 
-#ifdef WOLFMQTT_MULTITHREAD
+#if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_DYN_PROP)
     (void)wm_SemUnlock(&clientPropStack_lock);
 #endif
 
@@ -1881,11 +1890,12 @@ MqttProp* MqttProps_Add(MqttProp **head)
 int MqttProps_Free(MqttProp *head)
 {
     int ret = MQTT_CODE_SUCCESS;
-#ifdef WOLFMQTT_MULTITHREAD
+#if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_DYN_PROP)
     if ((ret = wm_SemLock(&clientPropStack_lock)) != 0) {
         return ret;
     }
 #endif
+
     while (head != NULL) {
 #ifndef WOLFMQTT_DYN_PROP
         head->type = MQTT_PROP_NONE; /* available */
@@ -1898,12 +1908,40 @@ int MqttProps_Free(MqttProp *head)
         head = tmp;
 #endif
     }
-#ifdef WOLFMQTT_MULTITHREAD
+#if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_DYN_PROP)
     (void)wm_SemUnlock(&clientPropStack_lock);
 #endif
     return ret;
 }
 
+int MqttProps_Add_ex(MqttProp **head, MqttProp *new_prop)
+{
+    MqttProp *prev = NULL, *cur;
+
+    if ((head == NULL) || (new_prop == NULL)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
+    cur = *head;
+
+    /* Find the end of the parameter list */
+    while (cur != NULL) {
+        prev = cur;
+        cur = cur->next;
+    };
+
+    /* set placeholder until caller sets it to a real type */
+    if (prev == NULL) {
+        /* Start a new list */
+        *head = new_prop;
+    }
+    else {
+        /* Add to the existing list */
+        prev->next = new_prop;
+    }
+
+    return MQTT_CODE_SUCCESS;
+}
 #endif /* WOLFMQTT_V5 */
 
 static int MqttPacket_HandleNetError(MqttClient *client, int rc)

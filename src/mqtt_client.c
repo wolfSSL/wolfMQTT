@@ -1502,7 +1502,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             mc_connect->stat.write == MQTT_MSG_AUTH)
     {
         MqttAuth auth, *p_auth = &auth;
-        MqttProp* prop, *conn_prop;
+        MqttProp prop, *conn_prop;
 
         /* Find the AUTH property in the connect structure */
         for (conn_prop = mc_connect->props;
@@ -1526,14 +1526,14 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         p_auth->reason_code = MQTT_REASON_CONT_AUTH;
 
         /* Use the same authentication method property from connect */
-        prop = MqttProps_Add(&p_auth->props);
-        prop->type = MQTT_PROP_AUTH_METHOD;
-        prop->data_str.str = conn_prop->data_str.str;
-        prop->data_str.len = conn_prop->data_str.len;
+        XMEMSET(&prop, 0, sizeof(MqttProp));
+        rc = MqttProps_Add_ex(&p_auth->props, &prop);
+        prop.type = MQTT_PROP_AUTH_METHOD;
+        prop.data_str.str = conn_prop->data_str.str;
+        prop.data_str.len = conn_prop->data_str.len;
 
         /* Send the AUTH packet */
         rc = MqttClient_Auth(client, p_auth);
-        MqttClient_PropsFree(p_auth->props);
     #ifdef WOLFMQTT_NONBLOCK
         if (rc == MQTT_CODE_CONTINUE)
             return rc;
@@ -2469,6 +2469,11 @@ MqttProp* MqttClient_PropsAdd(MqttProp **head)
 int MqttClient_PropsFree(MqttProp *head)
 {
     return MqttProps_Free(head);
+}
+
+int MqttClient_PropsAdd_ex(MqttProp **head, MqttProp *new_prop)
+{
+    return MqttProps_Add_ex(head, new_prop);
 }
 
 #endif /* WOLFMQTT_V5 */

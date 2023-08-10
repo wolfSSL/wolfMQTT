@@ -395,7 +395,7 @@ WOLFMQTT_API int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping);
 
 #ifdef WOLFMQTT_V5
 /*! \brief      Encodes and sends the MQTT Authentication Request packet and
-                waits for the Ping Response packet
+                waits for the broker AUTH packet
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      auth        Pointer to MqttAuth structure
@@ -410,8 +410,10 @@ WOLFMQTT_API int MqttClient_Auth(
 /*! \brief      Add a new property.
  *  Allocate a property structure and add it to the head of the list
     pointed to by head. To be used prior to calling packet command.
+    Properties added using this method use the internal stack, and must be
+    freed using MqttClient_PropsFree after the operation is complete.
  *  \param      head        Pointer-pointer to a property structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ *  \return     pointer to new MqttProp or NULL
  */
 WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
     MqttProp **head);
@@ -424,8 +426,19 @@ WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
  */
 WOLFMQTT_API int MqttClient_PropsFree(
     MqttProp *head);
-#endif
 
+/*! \brief      Add a new property.
+ *  Pass in a pointer to a locally allocated property structure and add it to
+    the head of the list pointed to by head. To be used prior to calling packet
+    command.
+ *  \param      head        Pointer-pointer to a property structure
+ *  \param      new_prop    Pointer to new property structure to be added.
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ */
+WOLFMQTT_API int MqttClient_PropsAdd_ex(
+    MqttProp **head, MqttProp *new_prop);
+
+#endif
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
  *  \note This is a non-blocking function that will try and send using

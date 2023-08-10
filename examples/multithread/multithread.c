@@ -58,6 +58,7 @@ static int mNumMsgsDone;
     #define THREAD_CREATE(h, f, c) ((*h = CreateThread(NULL, 0, f, c, 0, NULL)) == NULL)
     #define THREAD_JOIN(h, c)      WaitForMultipleObjects(c, h, TRUE, INFINITE)
     #define THREAD_EXIT(e)         ExitThread(e)
+    #define THREAD_SLEEP_MS(ms)    Sleep(ms)
 #else
     /* Posix (Linux/Mac) */
     #include <pthread.h>
@@ -67,6 +68,7 @@ static int mNumMsgsDone;
     #define THREAD_CREATE(h, f, c) ({ int ret = pthread_create(h, NULL, f, c); if (ret) { errno = ret; } ret; })
     #define THREAD_JOIN(h, c)      ({ int ret, x; for(x=0;x<c;x++) { ret = pthread_join(h[x], NULL); if (ret) { errno = ret; break; }} ret; })
     #define THREAD_EXIT(e)         pthread_exit((void*)e)
+    #define THREAD_SLEEP_MS(ms)    usleep((ms)*1000)
 #endif
 
 static wm_Sem mtLock; /* Protect "packetId" and "stop" */
@@ -125,7 +127,7 @@ static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec, int packet
     if (rc == MQTT_CODE_CONTINUE) {
     #if 0
         /* optionally add delay when debugging */
-        usleep(100*1000);
+        THREAD_SLEEP_MS(100);
     #endif
     }
 #else
@@ -196,6 +198,25 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     if (msg_done) {
         PRINTF("MQTT Message: Done");
     }
+    #ifdef WOLFMQTT_V5
+    {
+        /* Properties can be checked in the message callback */
+        MqttProp *prop = msg->props;
+        while (prop != NULL)
+        {
+            if (prop->type == MQTT_PROP_CONTENT_TYPE) {
+                PRINTF("Content type: %.*s", prop->data_str.len,
+                                             prop->data_str.str);
+            }
+            if (prop->type == MQTT_PROP_USER_PROP) {
+                PRINTF("User property: key=\"%.*s\", value=\"%.*s\"",
+                        prop->data_str.len, prop->data_str.str,
+                        prop->data_str2.len, prop->data_str2.str);
+            }
+            prop = prop->next;
+        }
+    }
+    #endif
     wm_SemUnlock(&mtLock);
 
     /* Return negative to terminate publish processing */
@@ -396,6 +417,9 @@ static void *subscribe_task(void *param)
     uint16_t i;
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     word32 startSec = 0;
+#ifdef WOLFMQTT_V5
+    MqttProp prop;
+#endif
 
     /* Build list of topics */
     XMEMSET(&mqttCtx->subscribe, 0, sizeof(MqttSubscribe));
@@ -406,10 +430,14 @@ static void *subscribe_task(void *param)
 #ifdef WOLFMQTT_V5
     if (mqttCtx->subId_not_avail != 1) {
         /* Subscription Identifier */
-        MqttProp* prop;
-        prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
-        prop->type = MQTT_PROP_SUBSCRIPTION_ID;
-        prop->data_int = DEFAULT_SUB_ID;
+        XMEMSET(&prop, 0, sizeof(MqttProp));
+        prop.type = MQTT_PROP_SUBSCRIPTION_ID;
+        prop.data_int = DEFAULT_SUB_ID;
+        rc = MqttClient_PropsAdd_ex(&mqttCtx->subscribe.props, &prop);
+        if (rc != MQTT_CODE_SUCCESS) {
+            PRINTF("MQTT Subscribe property add failure: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+        }
     }
 #endif
 
@@ -440,12 +468,6 @@ static void *subscribe_task(void *param)
                 topic->qos, topic->return_code);
         }
     }
-
-#ifdef WOLFMQTT_V5
-    if (mqttCtx->subscribe.props != NULL) {
-        MqttClient_PropsFree(mqttCtx->subscribe.props);
-    }
-#endif
 
     THREAD_EXIT(0);
 }
@@ -516,8 +538,6 @@ static void *waitMessage_task(void *param)
             if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
                     stdin) != NULL)
             {
-                rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
-
                 /* Publish Topic */
                 mqttCtx->stat = WMQ_PUB;
                 XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
@@ -527,7 +547,8 @@ static void *waitMessage_task(void *param)
                 mqttCtx->publish.topic_name = mqttCtx->topic_name;
                 mqttCtx->publish.packet_id = mqtt_get_packetid_threadsafe();
                 mqttCtx->publish.buffer = mqttCtx->rx_buf;
-                mqttCtx->publish.total_len = (word16)rc;
+                mqttCtx->publish.total_len =
+                    (word16)XSTRLEN((char*)mqttCtx->rx_buf);
                 rc = MqttClient_Publish(&mqttCtx->client,
                        &mqttCtx->publish);
                 PRINTF("MQTT Publish: Topic %s, %s (%d)",
@@ -544,13 +565,19 @@ static void *waitMessage_task(void *param)
             }
 
             /* Keep Alive handled in ping thread */
+            PRINTF("Keep-alive timeout");
+
             /* Signal keep alive thread */
             wm_SemUnlock(&pingSignal);
+
+            /* Allow ping_task to be scheduled */
+            THREAD_SLEEP_MS(500);
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
             PRINTF("MQTT Message Wait Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+            mqtt_stop_set();
             break;
         }
         startSec = 0;
@@ -575,6 +602,10 @@ static void *publish_task(void *param)
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     MqttPublish publish;
     word32 startSec = 0;
+#ifdef WOLFMQTT_V5
+    MqttProp prop1;
+    MqttProp prop2;
+#endif
 
     /* Publish Topic */
     XMEMSET(&publish, 0, sizeof(MqttPublish));
@@ -588,6 +619,30 @@ static void *publish_task(void *param)
     buf[5] = '0' + (publish.packet_id % 10);
     publish.buffer = (byte*)buf;
     publish.total_len = (word16)XSTRLEN(buf);
+#ifdef WOLFMQTT_V5
+    /* Payload Format Indicator */
+    XMEMSET(&prop1, 0, sizeof(MqttProp));
+    prop1.type = MQTT_PROP_PAYLOAD_FORMAT_IND;
+    prop1.data_byte = 1;
+    rc = MqttClient_PropsAdd_ex(&publish.props, &prop1);
+    if (rc != MQTT_CODE_SUCCESS) {
+        PRINTF("MQTT Publish property add failure: %s (%d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+        mqtt_stop_set();
+    }
+
+    /* Content Type */
+    XMEMSET(&prop2, 0, sizeof(MqttProp));
+    prop2.type = MQTT_PROP_CONTENT_TYPE;
+    prop2.data_str.str = (char*)"wolf_type";
+    prop2.data_str.len = (word16)XSTRLEN(prop2.data_str.str);
+    rc = MqttClient_PropsAdd_ex(&publish.props, &prop2);
+    if (rc != MQTT_CODE_SUCCESS) {
+        PRINTF("MQTT Publish property add failure: %s (%d)",
+            MqttClient_ReturnCodeToString(rc), rc);
+        mqtt_stop_set();
+    }
+#endif
 
     do {
         rc = MqttClient_Publish_WriteOnly(&mqttCtx->client, &publish, NULL);
@@ -641,6 +696,7 @@ static void *ping_task(void *param)
         if (rc != MQTT_CODE_SUCCESS) {
             PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
+            mqtt_stop_set();
             break;
         }
     } while (!mqtt_stop_get());
