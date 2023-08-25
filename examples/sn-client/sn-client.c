@@ -139,9 +139,21 @@ int sn_test(MQTTCtx *mqttCtx)
         goto exit;
     }
 
-    /* Setup socket direct to gateway (UDP network, so no TLS) */
+    /* The client.ctx will be stored in the cert callback ctx during
+       MqttSocket_Connect for use by mqtt_tls_verify_cb */
+    mqttCtx->client.ctx = mqttCtx;
+
+#if defined(ENABLE_MQTT_TLS) && defined(WOLFSSL_DTLS)
+    if (mqttCtx->use_tls) {
+        /* Set the DTLS flag in the client structure to indicate DTLS usage */
+        MqttClient_Flags(&mqttCtx->client, 0, MQTT_CLIENT_FLAG_IS_DTLS);
+    }
+#endif
+
+    /* Setup socket direct to gateway */
     rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
-           mqttCtx->port, DEFAULT_CON_TIMEOUT_MS, 0, NULL);
+           mqttCtx->port, DEFAULT_CON_TIMEOUT_MS,
+           mqttCtx->use_tls, NULL /*mqtt_dtls_cb*/);
 
     PRINTF("MQTT-SN Socket Connect: %s (%d)",
         MqttClient_ReturnCodeToString(rc), rc);

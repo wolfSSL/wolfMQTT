@@ -2780,6 +2780,24 @@ const char* MqttClient_ReturnCodeToString(int return_code)
 }
 #endif /* !WOLFMQTT_NO_ERROR_STRINGS */
 
+word32 MqttClient_Flags(MqttClient *client,  word32 mask, word32 flags)
+{
+    word32 ret = 0;
+    if (client != NULL) {
+#ifdef WOLFMQTT_MULTITHREAD
+        /* Get client lock on to ensure no other threads are active */
+        wm_SemLock(&client->lockClient);
+#endif
+        client->flags &= ~mask;
+        client->flags |= flags;
+        ret = client->flags;
+#ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockClient);
+#endif
+    }
+    return ret;
+}
+
 #ifdef WOLFMQTT_SN
 
 /* Private functions */

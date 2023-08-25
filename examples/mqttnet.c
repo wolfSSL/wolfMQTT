@@ -24,37 +24,13 @@
     #include <config.h>
 #endif
 
-#include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttnet.h"
-#include "examples/mqttexample.h"
-#include "examples/mqttport.h"
-
-/* Local context for Net callbacks */
-typedef enum {
-    SOCK_BEGIN = 0,
-    SOCK_CONN
-} NB_Stat;
 
 #if 0 /* TODO: add multicast support */
 typedef struct MulticastCtx {
 
 } MulticastCtx;
 #endif
-
-
-typedef struct _SocketContext {
-    SOCKET_T fd;
-    NB_Stat stat;
-    SOCK_ADDR_IN addr;
-#ifdef MICROCHIP_MPLAB_HARMONY
-    word32 bytes;
-#endif
-#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
-    /* "self pipe" -> signal wake sleep() */
-    SOCKET_T pfd[2];
-#endif
-    MQTTCtx* mqttCtx;
-} SocketContext;
 
 /* Private functions */
 
@@ -578,7 +554,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
     struct addrinfo hints;
     MQTTCtx* mqttCtx = sock->mqttCtx;
 
-    PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
+    PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use DTLS %d",
         host, port, timeout_ms, mqttCtx->use_tls);
 
     /* Get address information for host and locate IPv4 */
@@ -830,6 +806,12 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
             }
             else {
                 bytes += rc; /* Data */
+    #ifdef ENABLE_MQTT_TLS
+                if (MqttClient_Flags(&mqttCtx->client, 0, 0)
+                    & MQTT_CLIENT_FLAG_IS_TLS) {
+                    break;
+                }
+    #endif
             }
         }
 

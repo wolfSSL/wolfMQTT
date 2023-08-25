@@ -98,7 +98,7 @@ WOLFMQTT_LOCAL int MqttSocket_Read(struct _MqttClient *client, byte* buf,
 #ifdef WOLFMQTT_SN
 WOLFMQTT_LOCAL int MqttSocket_Peek(struct _MqttClient *client, byte* buf,
         int buf_len, int timeout_ms);
-#endif
+#endif /* WOLFMQTT_SN */
 WOLFMQTT_LOCAL int MqttSocket_Connect(struct _MqttClient *client,
         const char* host, word16 port, int timeout_ms, int use_tls,
         MqttTlsCb cb);

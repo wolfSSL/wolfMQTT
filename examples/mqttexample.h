@@ -188,6 +188,11 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv);
 int err_sys(const char* msg);
 
 int mqtt_tls_cb(MqttClient* client);
+
+#ifdef WOLFMQTT_SN
+int mqtt_dtls_cb(MqttClient* client);
+#endif
+
 word16 mqtt_get_packetid(void);
 
 #ifdef WOLFMQTT_NONBLOCK

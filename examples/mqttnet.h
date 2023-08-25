@@ -27,6 +27,27 @@
 #endif
 
 #include "examples/mqttexample.h"
+#include "examples/mqttport.h"
+
+/* Local context for Net callbacks */
+typedef enum {
+    SOCK_BEGIN = 0,
+    SOCK_CONN
+} NB_Stat;
+
+typedef struct _SocketContext {
+    SOCKET_T fd;
+    NB_Stat stat;
+    SOCK_ADDR_IN addr;
+#ifdef MICROCHIP_MPLAB_HARMONY
+    word32 bytes;
+#endif
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+    /* "self pipe" -> signal wake sleep() */
+    SOCKET_T pfd[2];
+#endif
+    MQTTCtx* mqttCtx;
+} SocketContext;
 
 /* Functions used to handle the MqttNet structure creation / destruction */
 int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx);

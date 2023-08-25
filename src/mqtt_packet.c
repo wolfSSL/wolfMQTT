@@ -3524,14 +3524,18 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     int timeout_ms)
 {
     int rc, len = 0, remain_read = 0;
-    word16 total_len = 0;
+    word16 total_len = 0, idx = 0;
 
     switch (client->packet.stat)
     {
         case MQTT_PK_BEGIN:
         {
-            /* Read first 2 bytes using MSG_PEEK */
-            rc = MqttSocket_Peek(client, rx_buf, 2, timeout_ms);
+            /* Read first 2 bytes */
+            if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+                rc = MqttSocket_Read(client, rx_buf, 2, timeout_ms);
+            } else {
+                rc = MqttSocket_Peek(client, rx_buf, 2, timeout_ms);
+            }
             if (rc < 0) {
                 return MqttPacket_HandleNetError(client, rc);
             }
@@ -3544,16 +3548,29 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
             if (rx_buf[0] == SN_PACKET_LEN_IND){
                 /* Read length stored in first three bytes, type in fourth */
-                rc = MqttSocket_Peek(client, rx_buf, 4, timeout_ms);
-                if (rc < 0) {
-                    return MqttPacket_HandleNetError(client, rc);
+                if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+                    rc = MqttSocket_Read(client, rx_buf+len, 2, timeout_ms);
+                    if (rc < 0) {
+                        return MqttPacket_HandleNetError(client, rc);
+                    }
+                    else if (rc != 2) {
+                        return MqttPacket_HandleNetError(client,
+                                 MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
+                    }
+                    rc += len;
                 }
-                else if (rc != 4) {
-                    return MqttPacket_HandleNetError(client,
-                             MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
+                else {
+                    rc = MqttSocket_Peek(client, rx_buf, 4, timeout_ms);
+                    if (rc < 0) {
+                        return MqttPacket_HandleNetError(client, rc);
+                    }
+                    else if (rc != 4) {
+                        return MqttPacket_HandleNetError(client,
+                                 MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
+                    }
+                    len = rc;
                 }
 
-                len = rc;
                 (void)MqttDecode_Num(&rx_buf[1], &total_len);
                 client->packet.header_len = len;
             }
@@ -3580,7 +3597,12 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
             }
             else if ((total_len == 2) || (total_len == 4)) {
                 /* Handle peek */
-                client->packet.remain_len = total_len;
+                if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+                    client->packet.remain_len = total_len - len;
+                }
+                else {
+                    client->packet.remain_len = total_len;
+                }
             }
             else {
                 client->packet.remain_len = 0;
@@ -3592,15 +3614,21 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 client->packet.remain_len = rx_buf_len -
                                             client->packet.header_len;
             }
-
+            if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+                total_len -= client->packet.header_len;
+                idx = client->packet.header_len;
+            }
             /* Read whole message */
             if (client->packet.remain_len > 0) {
-                rc = MqttSocket_Read(client, &rx_buf[0],
+                rc = MqttSocket_Read(client, &rx_buf[idx],
                         total_len, timeout_ms);
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
                 }
                 remain_read = rc;
+            }
+            if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+                remain_read += client->packet.header_len;
             }
 
             break;

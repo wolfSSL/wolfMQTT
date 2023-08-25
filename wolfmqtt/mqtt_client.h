@@ -96,9 +96,18 @@ typedef int (*MqttPublishCb)(MqttPublish* publish);
 
 /* Client flags */
 enum MqttClientFlags {
-    MQTT_CLIENT_FLAG_IS_CONNECTED = 0x01,
-    MQTT_CLIENT_FLAG_IS_TLS = 0x02
+    MQTT_CLIENT_FLAG_IS_CONNECTED = 0x01 << 0,
+    MQTT_CLIENT_FLAG_IS_TLS       = 0x01 << 1,
+    MQTT_CLIENT_FLAG_IS_DTLS      = 0x01 << 2
 };
+/*! \brief      Sets flags in the MqttClient structure. To be used from
+                the application before calling MqttClient_NetConnect.
+ *  \param      client      Pointer to MqttClient structure
+ *  \param      mask        Flags to clear
+ *  \param      flags       Flags to set
+ *  \return     Value of flags in the MqttClient structure
+ */
+WOLFMQTT_API word32 MqttClient_Flags(struct _MqttClient *client,  word32 mask, word32 flags);
 
 typedef enum _MqttPkStat {
     MQTT_PK_BEGIN,
@@ -510,11 +519,11 @@ WOLFMQTT_API int MqttClient_IsMessageActive(
  *  \param      client      Pointer to MqttClient structure
  *  \param      host        Address of the broker server
  *  \param      port        Optional custom port. If zero will use defaults
+ *  \param      timeout_ms  Milliseconds until read timeout
  *  \param      use_tls     If non-zero value will connect with and use TLS for
                             encryption of data
  *  \param      cb          A function callback for configuration of the SSL
                             context certificate checking
- *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
