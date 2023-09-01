@@ -168,4 +168,5 @@ EXTRA_DIST+=       examples/mqttuart.c \
                    examples/aws/awsiot.vcxproj \
                    examples/wiot/wiot.vcxproj \
                    examples/sn-client/sn-client.vcxproj \
+                   examples/sn-client/README.md \
                    examples/multithread/multithread.vcxproj

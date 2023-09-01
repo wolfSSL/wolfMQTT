@@ -198,8 +198,6 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     PRINTF("-?          Help, print this usage");
     PRINTF("-h <host>   Host to connect to, default: %s",
             mqttCtx->host);
-    /* Remove TLS and SNI args for sn-client */ 
-    if(XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
 #ifdef ENABLE_MQTT_TLS
         PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
                 MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
@@ -207,22 +205,19 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
         PRINTF("-A <file>   Load CA (validate peer)");
         PRINTF("-K <key>    Use private key (for TLS mutual auth)");
         PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");
-#ifdef HAVE_SNI
-        PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
-#endif
-#ifdef HAVE_PQC
+    #ifdef HAVE_SNI
+        /* Remove SNI args for sn-client */
+        if(XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
+            PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
+        }
+    #endif
+    #ifdef HAVE_PQC
         PRINTF("-Q <str>    Use Key Share with post-quantum algorithm");
-#endif
+    #endif
 #else
         PRINTF("-p <num>    Port to connect on, default: %d",
              MQTT_DEFAULT_PORT);
 #endif
-    }
-    
-    else{
-        PRINTF("-p <num>    Port to connect on, default: %d",
-             MQTT_DEFAULT_PORT);
-    }
     PRINTF("-q <num>    Qos Level 0-2, default: %d",
             mqttCtx->qos);
     PRINTF("-s          Disable clean session connect flag");
@@ -401,10 +396,9 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             mqtt_show_usage(mqttCtx);
             return MY_EX_USAGE;
         }
-    
-        /* Remove TLS and SNI functionality for sn-client */
+
+        /* Remove SNI functionality for sn-client */
         if(!XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
-            mqttCtx->use_tls = 0;
         #ifdef HAVE_SNI    
             useSNI=0;
         #endif
@@ -646,7 +640,8 @@ int mqtt_tls_cb(MqttClient* client)
                 return rc;
             }
         }
-    #elif defined(WOLFMQTT_ZEPHYR)
+    #else
+        /* Note: Zephyr example uses NO_FILESYSTEM */
     #ifdef WOLFSSL_ENCRYPTED_KEYS
         /* Setup password callback for pkcs8 key */
         wolfSSL_CTX_set_default_passwd_cb(client->tls.ctx,
@@ -714,12 +709,80 @@ int mqtt_tls_cb(MqttClient* client)
 
     return rc;
 }
+
+#ifdef WOLFMQTT_SN
+int mqtt_dtls_cb(MqttClient* client) {
+#ifdef WOLFSSL_DTLS
+    int rc = WOLFSSL_FAILURE;
+
+    client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_2_client_method());
+    if (client->tls.ctx) {
+        wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
+                mqtt_tls_verify_cb);
+
+        /* default to success */
+        rc = WOLFSSL_SUCCESS;
+
+#if !defined(NO_CERT) && !defined(NO_FILESYSTEM)
+        if (mTlsCaFile) {
+            /* Load CA certificate file */
+            rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx,
+                mTlsCaFile, NULL);
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("Error loading CA %s: %d (%s)", mTlsCaFile,
+                    rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
+            }
+        }
+        if (mTlsCertFile && mTlsKeyFile) {
+            /* Load If using a mutual authentication */
+            rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
+                mTlsCertFile, WOLFSSL_FILETYPE_PEM);
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("Error loading certificate %s: %d (%s)", mTlsCertFile,
+                    rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
+            }
+
+            rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
+                mTlsKeyFile, WOLFSSL_FILETYPE_PEM);
+            if (rc != WOLFSSL_SUCCESS) {
+                PRINTF("Error loading key %s: %d (%s)", mTlsKeyFile,
+                    rc, wolfSSL_ERR_reason_error_string(rc));
+                return rc;
+            }
+        }
+#endif
+
+        client->tls.ssl = wolfSSL_new(client->tls.ctx);
+        if (client->tls.ssl == NULL) {
+            rc = WOLFSSL_FAILURE;
+            return rc;
+        }
+    }
+
+    PRINTF("MQTT DTLS Setup (%d)", rc);
+#else /* WOLFSSL_DTLS */
+    (void)client;
+    int rc = 0;
+    PRINTF("MQTT DTLS Setup - Must enable DTLS in wolfSSL!");
+#endif
+    return rc;
+}
+#endif /* WOLFMQTT_SN */
 #else
 int mqtt_tls_cb(MqttClient* client)
 {
     (void)client;
     return 0;
 }
+#ifdef WOLFMQTT_SN
+int mqtt_dtls_cb(MqttClient* client)
+{
+    (void)client;
+    return 0;
+}
+#endif
 #endif /* ENABLE_MQTT_TLS */
 
 int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen)
