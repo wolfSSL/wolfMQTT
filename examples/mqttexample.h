@@ -96,6 +96,18 @@
 #define DEFAULT_SESS_EXP_INT    0xFFFFFFFF
 #endif
 
+/* certs are either static or extern, depending on the specific example */
+#ifdef WOLFMQTT_EXTERN_CERT
+    #undef  WOLFMQTT_EXAMPLE_CERT
+    #define WOLFMQTT_EXAMPLE_CERT /* init extern from mqttexample.h */
+    extern const char* root_ca;
+    extern const char* device_cert;
+    extern const char* device_priv_key;
+#else
+    #undef  WOLFMQTT_EXAMPLE_CERT
+    #define WOLFMQTT_EXAMPLE_CERT static
+#endif
+
 /* MQTT Client state */
 typedef enum _MQTTCtxState {
     WMQ_BEGIN = 0,

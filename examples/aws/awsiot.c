@@ -72,7 +72,7 @@ static int mStopRead = 0;
 #define AWSIOT_PUBLISH_MSG_SZ   400
 
 /* Demo Certificates */
-static const char* root_ca =
+WOLFMQTT_EXAMPLE_CERT const char* root_ca =
 "-----BEGIN CERTIFICATE-----\n"
 "MIIE0zCCA7ugAwIBAgIQGNrRniZ96LtKIVjNzGs7SjANBgkqhkiG9w0BAQUFADCB\n"
 "yjELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL\n"
@@ -115,7 +115,7 @@ static const char* device_pub_key =
 "-----END PUBLIC KEY-----";
 #endif
 
-static const char* device_priv_key =
+WOLFMQTT_EXAMPLE_CERT const char* device_priv_key =
 #ifndef WOLFSSL_ENCRYPTED_KEYS
 "-----BEGIN RSA PRIVATE KEY-----\n"
 "MIIEpAIBAAKCAQEAqsAKVhbfQEWblC8PvgubqpJasVoCEsSfvLF4b5DIAsoMeieP\n"
@@ -177,7 +177,7 @@ static const char* device_priv_key =
 "-----END ENCRYPTED PRIVATE KEY-----";
 #endif
 
-static const char* device_cert =
+WOLFMQTT_EXAMPLE_CERT const char* device_cert =
 "-----BEGIN CERTIFICATE-----\n"
 "MIIDWjCCAkKgAwIBAgIVANIzUucLFUREa2BiJUXoRv6Z4XaIMA0GCSqGSIb3DQEB\n"
 "CwUAME0xSzBJBgNVBAsMQkFtYXpvbiBXZWIgU2VydmljZXMgTz1BbWF6b24uY29t\n"
