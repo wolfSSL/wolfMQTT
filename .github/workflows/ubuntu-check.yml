@@ -55,4 +55,9 @@ jobs:
     - name: make
       run: make
     - name: make check
+      id: make-check
       run: make check
+    - name: Show logs on failure
+      if: ${{ failure() && steps.make-check.outcome == 'failure' }}
+      run: |
+        more test-suite.log
