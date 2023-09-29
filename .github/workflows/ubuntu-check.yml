@@ -37,22 +37,42 @@ jobs:
     - name: make
       run: make
     - name: make check
+      id: make-check
       run: make check
+    - name: Show logs on failure
+      if: ${{ failure() && steps.make-check.outcome == 'failure' }}
+      run: |
+        more test-suite.log
     - name: configure with SN Enabled
       run: ./configure --enable-sn
     - name: make
       run: make
     - name: make check
+      id: make-check-sn
       run: make check
+    - name: Show logs on failure
+      if: ${{ failure() && steps.make-check-sn.outcome == 'failure' }}
+      run: |
+        more test-suite.log
     - name: configure with Non-Block
       run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make
     - name: make check
+      id: make-check-nonblock
       run: make check
+    - name: Show logs on failure
+      if: ${{ failure() && steps.make-check-nonblock.outcome == 'failure' }}
+      run: |
+        more test-suite.log
     - name: configure with Non-Block and Multi-threading
       run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make
     - name: make check
+      id: make-check-nonblock-mt
       run: make check
+    - name: Show logs on failure
+      if: ${{ failure() && steps.make-check-nonblock-mt.outcome == 'failure' }}
+      run: |
+        more test-suite.log
