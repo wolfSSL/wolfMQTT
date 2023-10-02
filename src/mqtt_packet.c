@@ -3138,7 +3138,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     else {
         /* Topic ID */
-        tx_payload += MqttEncode_Num(tx_payload, (word16)*publish->topic_name);
+        tx_payload += MqttEncode_Num(tx_payload, *(word16*)publish->topic_name);
     }
 
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
@@ -3201,7 +3201,7 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
 
     publish->retain = flags & SN_PACKET_FLAG_RETAIN;
 
-    publish->type = flags & SN_PACKET_FLAG_TOPICIDTYPE_MASK;
+    publish->topic_type = flags & SN_PACKET_FLAG_TOPICIDTYPE_MASK;
 
     /* Decode payload */
 
