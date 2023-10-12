@@ -52,8 +52,10 @@ static int NetConnect(void *context, const char* host, word16 port,
 
     switch (sock->stat) {
     case SOCK_BEGIN:
-        PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
-            host, port, timeout_ms, mqttCtx->use_tls);
+        if (mqttCtx->debug_on) {
+            PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
+                host, port, timeout_ms, mqttCtx->use_tls);
+        }
 
         hostIp = FreeRTOS_gethostbyname_a(host, NULL, 0, 0);
         if (hostIp == 0)
@@ -231,9 +233,10 @@ static int NetConnect(void *context, const char* host, word16 port,
     switch(sock->stat) {
         case SOCK_BEGIN:
         {
-            PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
-                host, port, timeout_ms, mqttCtx->use_tls);
-
+            if (mqttCtx->debug_on) {
+                PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, "
+                        "Use TLS %d", host, port, timeout_ms, mqttCtx->use_tls);
+            }
             XMEMSET(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
             hints.ai_socktype = SOCK_STREAM;
@@ -422,8 +425,10 @@ static int NetConnect(void *context, const char* host, word16 port,
     switch(sock->stat) {
         case SOCK_BEGIN:
         {
-            PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
-                host, port, timeout_ms, mqttCtx->use_tls);
+            if (mqttCtx->debug_on) {
+                PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, "
+                        "Use TLS %d", host, port, timeout_ms, mqttCtx->use_tls);
+            }
 
             XMEMSET(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;

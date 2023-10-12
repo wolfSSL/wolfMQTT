@@ -78,6 +78,8 @@ examples/sn-client/sn-client_qos-1
 examples/sn-client/sn-multithread
 examples/multithread/multithread
 examples/wiot/wiot
+examples/pub-sub/mqtt-pub
+examples/pub-sub/mqtt-sub
 
 # eclipse
 .cproject

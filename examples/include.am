@@ -13,7 +13,9 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/multithread/multithread \
                    examples/sn-client/sn-client \
                    examples/sn-client/sn-client_qos-1 \
-                   examples/sn-client/sn-multithread
+                   examples/sn-client/sn-multithread \
+                   examples/pub-sub/mqtt-pub \
+                   examples/pub-sub/mqtt-sub
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/mqttsimple/mqttsimple.h \
@@ -28,7 +30,8 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/mqttport.h \
                    examples/nbclient/nbclient.h \
                    examples/multithread/multithread.h \
-                   examples/sn-client/sn-client.h
+                   examples/sn-client/sn-client.h \
+                   examples/pub-sub/mqtt-pub-sub.h
 
 # MQTT Client Example
 examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
@@ -127,6 +130,21 @@ examples_sn_client_sn_multithread_SOURCES       = examples/sn-client/sn-multithr
 examples_sn_client_sn_multithread_LDADD         = src/libwolfmqtt.la
 examples_sn_client_sn_multithread_DEPENDENCIES  = src/libwolfmqtt.la
 examples_sn_client_sn_multithread_CPPFLAGS      = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+# MQTT pub and sub clients
+examples_pub_sub_mqtt_pub_SOURCES      = examples/pub-sub/mqtt-pub.c \
+                                         examples/mqttnet.c \
+                                         examples/mqttexample.c
+examples_pub_sub_mqtt_pub_LDADD        = src/libwolfmqtt.la
+examples_pub_sub_mqtt_pub_DEPENDENCIES = src/libwolfmqtt.la
+examples_pub_sub_mqtt_pub_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
+examples_pub_sub_mqtt_sub_SOURCES      = examples/pub-sub/mqtt-sub.c \
+                                         examples/mqttnet.c \
+                                         examples/mqttexample.c
+examples_pub_sub_mqtt_sub_LDADD        = src/libwolfmqtt.la
+examples_pub_sub_mqtt_sub_DEPENDENCIES = src/libwolfmqtt.la
+examples_pub_sub_mqtt_sub_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 endif
 
 
@@ -145,6 +163,8 @@ dist_example_DATA+= examples/multithread/multithread.c
 dist_example_DATA+= examples/sn-client/sn-client.c
 dist_example_DATA+= examples/sn-client/sn-client_qos-1.c
 dist_example_DATA+= examples/sn-client/sn-multithread.c
+dist_example_DATA+= examples/pub-sub/mqtt-pub.c
+dist_example_DATA+= examples/pub-sub/mqtt-sub.c
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/firmware/.libs/fwpush \
@@ -156,7 +176,9 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/multithread/.libs/multithread \
                    examples/sn-client/.libs/sn-client \
                    examples/sn-client/.libs/sn-client_qos-1 \
-                   examples/sn-client/.libs/sn-multithread
+                   examples/sn-client/.libs/sn-multithread \
+                   examples/pub-sub/mqtt-pub \
+                   examples/pub-sub/mqtt-sub
 
 EXTRA_DIST+=       examples/mqttuart.c \
                    examples/publish.dat \

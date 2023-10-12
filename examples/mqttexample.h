@@ -168,6 +168,7 @@ typedef struct _MQTTCtx {
 #endif
     byte    clean_session;
     byte    test_mode;
+    byte    debug_on:1; /* enable debug messages in example */
 #ifdef WOLFMQTT_V5
     byte    subId_not_avail; /* Server property */
     byte    enable_eauth; /* Enhanced authentication */
