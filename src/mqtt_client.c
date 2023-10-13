@@ -82,30 +82,38 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 #elif defined(WOLFMQTT_POSIX_SEMAPHORES)
     /* Posix style semaphore */
     int wm_SemInit(wm_Sem *s) {
+    #ifndef WOLFMQTT_NO_COND_SIGNAL
         s->lockCount = 0;
-        pthread_mutex_init(&s->mutex, NULL);
         pthread_cond_init(&s->cond, NULL);
+    #endif
+        pthread_mutex_init(&s->mutex, NULL);
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
         pthread_mutex_destroy(&s->mutex);
+    #ifndef WOLFMQTT_NO_COND_SIGNAL
         pthread_cond_destroy(&s->cond);
+    #endif
         return 0;
     }
     int wm_SemLock(wm_Sem *s) {
         pthread_mutex_lock(&s->mutex);
+    #ifndef WOLFMQTT_NO_COND_SIGNAL
         while (s->lockCount > 0)
             pthread_cond_wait(&s->cond, &s->mutex);
         s->lockCount++;
         pthread_mutex_unlock(&s->mutex);
+    #endif
         return 0;
     }
     int wm_SemUnlock(wm_Sem *s) {
+    #ifndef WOLFMQTT_NO_COND_SIGNAL
         pthread_mutex_lock(&s->mutex);
         if (s->lockCount > 0) {
             s->lockCount--;
             pthread_cond_signal(&s->cond);
         }
+    #endif
         pthread_mutex_unlock(&s->mutex);
         return 0;
     }

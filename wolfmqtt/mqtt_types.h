@@ -106,9 +106,11 @@
         #define WOLFMQTT_POSIX_SEMAPHORES
         #include <pthread.h>
         typedef struct {
+        #ifndef WOLFMQTT_NO_COND_SIGNAL
             volatile int lockCount;
-            pthread_mutex_t mutex;
             pthread_cond_t cond;
+        #endif
+            pthread_mutex_t mutex;
         } wm_Sem;
 
     #elif defined(FREERTOS)
