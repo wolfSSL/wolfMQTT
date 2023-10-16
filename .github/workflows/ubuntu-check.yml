@@ -18,10 +18,10 @@ jobs:
         repository: wolfssl/wolfssl
         path: wolfssl
     - name: wolfssl autogen
-      working-directory: ./wolfssl        
+      working-directory: ./wolfssl
       run: ./autogen.sh
     - name: wolfssl configure
-      working-directory: ./wolfssl 
+      working-directory: ./wolfssl
       run: ./configure --enable-enckeys
     - name: wolfssl make
       working-directory: ./wolfssl
@@ -43,6 +43,8 @@ jobs:
       if: ${{ failure() && steps.make-check.outcome == 'failure' }}
       run: |
         more test-suite.log
+      env: 
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
     - name: configure with SN Enabled
       run: ./configure --enable-sn
     - name: make
