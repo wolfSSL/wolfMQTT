@@ -8,7 +8,9 @@ broker_pid=$no_pid
 do_cleanup() {
     if  [ $broker_pid != $no_pid ]
     then
-        kill -6 $broker_pid
+        kill -9 $broker_pid
+        echo "Killed broker PID $broker_pid"
+        broker_pid=$no_pid
     fi
 
     if  [ $1 -ne 0 ]
@@ -31,6 +33,7 @@ then
     if [ "${AM_BWRAPPED-}" != "yes" ]; then
         bwrap_path="$(command -v bwrap)"
         if [ -n "$bwrap_path" ]; then
+            echo "nbclient test using bwrap"
             export AM_BWRAPPED=yes
             exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
         fi
@@ -38,32 +41,35 @@ then
     # Run mosquitto broker
     mosquitto -c scripts/broker_test/mosquitto.conf &
     broker_pid=$!
+    echo "Broker PID is $broker_pid"
     def_args="${def_args} -h localhost"
+    tls_port_args="-p 18883"
+    port_args="-p 11883"
 fi
 
 # Run with and without TLS and QoS 0-2
 
-./examples/nbclient/nbclient $def_args -q 0 $1
+./examples/nbclient/nbclient $def_args $port_args -q 0 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=0" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args -q 1 $1
+./examples/nbclient/nbclient $def_args $port_args -q 1 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=1" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args -q 2 $1
+./examples/nbclient/nbclient $def_args $port_args -q 2 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=2" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args -t -q 0 $1
+./examples/nbclient/nbclient $def_args $tls_port_args -t -q 0 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args -t -q 1 $1
+./examples/nbclient/nbclient $def_args $tls_port_args -t -q 1 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args -t -q 2 $1
+./examples/nbclient/nbclient $def_args $tls_port_args -t -q 2 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && do_cleanup "-1"
 

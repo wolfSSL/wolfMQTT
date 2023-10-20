@@ -6,9 +6,16 @@ no_pid=-1
 broker_pid=$no_pid
 
 do_cleanup() {
+    if [ $ENABLE_MQTT_TLS -ne 1 ]; then
+        # Delete file
+        rm $fileout
+    fi
+
     if  [ $broker_pid != $no_pid ]
     then
-        kill -6 $broker_pid
+        kill -9 $broker_pid
+        echo "Killed broker PID $broker_pid"
+        broker_pid=$no_pid
     fi
 
     if  [ $1 -ne 0 ]
@@ -32,6 +39,7 @@ then
     if [ "${AM_BWRAPPED-}" != "yes" ]; then
         bwrap_path="$(command -v bwrap)"
         if [ -n "$bwrap_path" ]; then
+            echo "Firmware test using bwrap"
             export AM_BWRAPPED=yes
             exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
         fi
@@ -39,8 +47,12 @@ then
     # Run mosquitto broker
     mosquitto -c scripts/broker_test/mosquitto.conf &
     broker_pid=$!
-    def_args="${def_args} -h localhost"
+    echo "Broker PID is $broker_pid"
+    def_args="${def_args} -h localhost -p 18883"
 fi
+
+grep -F -e 'ENABLE_MQTT_TLS' ./wolfmqtt/options.h
+ENABLE_MQTT_TLS=$?
 
 # Start firmware push
 ./examples/firmware/fwpush $def_args -r -f $filein $1
@@ -52,13 +64,13 @@ server_result=$?
 client_result=$?
 [ $client_result -ne 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && do_cleanup "-1"
 
-# Compare files
-md5sum -b $filein $fileout
-compare_result=$?
-[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && do_cleanup "-1"
-
-# Delete file
-rm $fileout
+if [ $ENABLE_MQTT_TLS -ne 1 ]; then
+    # Compare files
+    echo "Comparing files"
+    md5sum -b $filein $fileout
+    compare_result=$?
+    [ $compare_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && do_cleanup "-1"
+fi
 
 # End broker
 do_cleanup "0"

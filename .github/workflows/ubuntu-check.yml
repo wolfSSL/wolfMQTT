@@ -13,6 +13,27 @@ jobs:
     timeout-minutes: 5
 
     steps:
+    - name: Install dependencies
+      run: |
+        # Don't prompt for anything
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        # Install mosquitto
+        sudo apt-get install -y mosquitto bubblewrap
+
+    - name: Setup mosquitto broker
+      run: |
+        # Disable default broker daemon
+        sudo service mosquitto stop
+        sleep 1
+
+    # This is some debug info useful if something goes wrong
+    - name: Show network status
+      run: |
+        sudo ifconfig
+        sudo route
+        sudo netstat -tulpan
+
     - uses: actions/checkout@master
       with:
         repository: wolfssl/wolfssl
@@ -29,63 +50,51 @@ jobs:
     - name: wolfssl make install
       working-directory: ./wolfssl
       run: sudo make install
+
     - uses: actions/checkout@master
-    - name: autogen
+    - name: wolfmqtt autogen
       run: ./autogen.sh
-    - name: configure
+
+    - name: wolfmqtt configure
       run: ./configure
-    - name: make
+    - name: wolfmqtt make
       run: make
-    - name: make check
-      id: make-check
+    - name: wolfmqtt make check
       run: make check
-    - name: Show logs on failure
-      if: ${{ failure() && steps.make-check.outcome == 'failure' }}
-      run: |
-        more test-suite.log
+
       env: 
         WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-    - name: configure with SN Enabled
+
+    - name: wolfmqtt configure with SN Enabled
       run: ./configure --enable-sn
-    - name: make
+    - name: wolfmqtt make
       run: make
-    - name: make check
-      id: make-check-sn
+    - name: wolfmqtt make check
       run: make check
-    - name: Show logs on failure
-      if: ${{ failure() && steps.make-check-sn.outcome == 'failure' }}
-      run: |
-        more test-suite.log
-    - name: configure with Non-Block
+
+    - name: wolfmqtt configure with Non-Block
       run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
-    - name: make
+    - name: wolfmqtt make
       run: make
-    - name: make check
-      id: make-check-nonblock
+    - name: wolfmqtt make check
       run: make check
-    - name: Show logs on failure
-      if: ${{ failure() && steps.make-check-nonblock.outcome == 'failure' }}
-      run: |
-        more test-suite.log
-    - name: configure with Non-Block and Multi-threading
+
+    - name: wolfmqtt configure with Non-Block and Multi-threading
       run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
-    - name: make
+    - name: wolfmqtt make
       run: make
-    - name: make check
-      id: make-check-nonblock-mt
+    - name: wolfmqtt make check
       run: make check
-    - name: Show logs on failure
-      if: ${{ failure() && steps.make-check-nonblock-mt.outcome == 'failure' }}
-      run: |
-        more test-suite.log
+
     - name: configure with Multi-threading and WOLFMQTT_DYN_PROP
       run: ./configure --enable-mt CFLAGS="-DWOLFMQTT_DYN_PROP"
     - name: make
       run: make
     - name: make check
-      id: make-check-mt-dynprop
       run: make check
+
+      # capture logs on failure
     - name: Show logs on failure
-      if: ${{ failure() && steps.make-check-mt-dynprop.outcome == 'failure' }}
+      if: failure() || cancelled()
       run: |
         more test-suite.log
