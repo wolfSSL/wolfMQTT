@@ -180,6 +180,15 @@ static int MqttClient_RespList_Add(MqttClient *client,
          tmpResp = tmpResp->next)
     {
         if (tmpResp == newResp) {
+            if (packet_type == MQTT_PACKET_TYPE_PING_RESP) {
+                /* For ping response, do not add to list and do not report an
+                 * error. A ping response does not contain a packet ID, so there
+                 * is no way to identify one from another */
+            #ifdef WOLFMQTT_DEBUG_CLIENT
+                PRINTF("Not adding duplicate ping response");
+            #endif
+                return 0;
+            }
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Pending Response already in list!");
         #endif
