@@ -78,3 +78,14 @@ jobs:
       if: ${{ failure() && steps.make-check-nonblock-mt.outcome == 'failure' }}
       run: |
         more test-suite.log
+    - name: configure with Multi-threading and WOLFMQTT_DYN_PROP
+      run: ./configure --enable-mt CFLAGS="-DWOLFMQTT_DYN_PROP"
+    - name: make
+      run: make
+    - name: make check
+      id: make-check-mt-dynprop
+      run: make check
+    - name: Show logs on failure
+      if: ${{ failure() && steps.make-check-mt-dynprop.outcome == 'failure' }}
+      run: |
+        more test-suite.log

@@ -128,6 +128,8 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 
 /* WOLFMQTT_DYN_PROP allows property allocation using malloc */
 #ifndef WOLFMQTT_DYN_PROP
+
+/* Maximum number of active static properties - overridable */
 #ifndef MQTT_MAX_PROPS
 #define MQTT_MAX_PROPS 30
 #endif
@@ -135,11 +137,12 @@ static const struct MqttPropMatrix gPropMatrix[] = {
 /* Property structure allocation array. Property type equal
    to zero indicates unused element. */
 static MqttProp clientPropStack[MQTT_MAX_PROPS];
-#endif /* WOLFMQTT_DYN_PROP */
 
 #ifdef WOLFMQTT_MULTITHREAD
+static volatile int clientPropStack_lockInit = 0;
 static wm_Sem clientPropStack_lock;
 #endif
+#endif /* WOLFMQTT_DYN_PROP */
 #endif /* WOLFMQTT_V5 */
 
 /* Positive return value is header length, zero or negative indicates error */
@@ -1793,20 +1796,28 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     return header_len + remain_len;
 }
 
-int MqttProps_Init(void) {
-#ifdef WOLFMQTT_MULTITHREAD
-    return wm_SemInit(&clientPropStack_lock);
-#else
-    return 0;
+int MqttProps_Init(void)
+{
+    int ret = MQTT_CODE_SUCCESS;
+#if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
+    if (clientPropStack_lockInit == 0) {
+        clientPropStack_lockInit++;
+        ret = wm_SemInit(&clientPropStack_lock);
+    }
 #endif
+    return  ret;
 }
 
-int MqttProps_ShutDown(void) {
-#ifdef WOLFMQTT_MULTITHREAD
-    return wm_SemFree(&clientPropStack_lock);
-#else
-    return 0;
+int MqttProps_ShutDown(void)
+{
+    int ret = MQTT_CODE_SUCCESS;
+#if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
+    clientPropStack_lockInit--;
+    if (clientPropStack_lockInit == 0) {
+        ret = wm_SemFree(&clientPropStack_lock);
+    }
 #endif
+    return ret;
 }
 
 /* Add property */
@@ -1821,7 +1832,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
         return NULL;
     }
 
-#ifdef WOLFMQTT_MULTITHREAD
+#if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     if (wm_SemLock(&clientPropStack_lock) != 0) {
         return NULL;
     }
@@ -1870,7 +1881,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
         (void)MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
     }
 
-#ifdef WOLFMQTT_MULTITHREAD
+#if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     (void)wm_SemUnlock(&clientPropStack_lock);
 #endif
 
@@ -1881,7 +1892,7 @@ MqttProp* MqttProps_Add(MqttProp **head)
 int MqttProps_Free(MqttProp *head)
 {
     int ret = MQTT_CODE_SUCCESS;
-#ifdef WOLFMQTT_MULTITHREAD
+#if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     if ((ret = wm_SemLock(&clientPropStack_lock)) != 0) {
         return ret;
     }
@@ -1898,7 +1909,7 @@ int MqttProps_Free(MqttProp *head)
         head = tmp;
 #endif
     }
-#ifdef WOLFMQTT_MULTITHREAD
+#if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     (void)wm_SemUnlock(&clientPropStack_lock);
 #endif
     return ret;
