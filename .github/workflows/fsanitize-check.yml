@@ -15,15 +15,36 @@ jobs:
       WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
 
     steps:
+    - name: Install dependencies
+      run: |
+        # Don't prompt for anything
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        # Install mosquitto
+        sudo apt-get install -y mosquitto bubblewrap
+
+    - name: Setup mosquitto broker
+      run: |
+        # Disable default broker daemon
+        sudo service mosquitto stop
+        sleep 1
+
+    # This is some debug info useful if something goes wrong
+    - name: Show network status
+      run: |
+        sudo ifconfig
+        sudo route
+        sudo netstat -tulpan
+
     - uses: actions/checkout@master
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
     - name: wolfssl autogen
-      working-directory: ./wolfssl        
+      working-directory: ./wolfssl
       run: ./autogen.sh
     - name: wolfssl configure
-      working-directory: ./wolfssl 
+      working-directory: ./wolfssl
       run: ./configure --enable-enckeys
     - name: wolfssl make
       working-directory: ./wolfssl
@@ -34,27 +55,37 @@ jobs:
     - uses: actions/checkout@master
     - name: autogen
       run: ./autogen.sh
+
     - name: configure
       run: ./configure CC="gcc -fsanitize=address"
     - name: make
       run: make
     - name: make check
       run: make check
+
     - name: configure with SN Enabled
       run: ./configure --enable-sn CC="gcc -fsanitize=address"
     - name: make
       run: make
     - name: make check
       run: make check
+
     - name: configure with Non-Block
       run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" CC="gcc -fsanitize=address"
     - name: make
       run: make
     - name: make check
       run: make check
+
     - name: configure with Non-Block and Multi-threading
       run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" CC="gcc -fsanitize=address"
     - name: make
       run: make
     - name: make check
       run: make check
+
+      # capture logs on failure
+    - name: Show logs on failure
+      if: failure() || cancelled()
+      run: |
+        more test-suite.log

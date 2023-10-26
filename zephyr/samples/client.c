@@ -32,6 +32,13 @@ int main(void)
 
     mqttCtx.test_mode = 1;
 
+    /* Set port as configured in scripts/broker_test/mosquitto.conf */
+#if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
+    mqttCtx.port = 18883;
+#else
+    mqttCtx.port = 11883;
+#endif
+
     rc = mqttclient_test(&mqttCtx);
 
     mqtt_free_ctx(&mqttCtx);

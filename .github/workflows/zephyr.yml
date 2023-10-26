@@ -1,4 +1,6 @@
 name: Zephyr tests
+env:
+  WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
 
 on:
   push:
@@ -17,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+
       - name: Install dependencies
         run: |
           # Don't prompt for anything
@@ -86,7 +89,7 @@ jobs:
           sudo service mosquitto stop
           mosquitto -c scripts/broker_test/mosquitto.conf &> broker.log &
           sleep 1 # let the broker set everything up
-          mosquitto_sub -t sensors &> sub.log &
+          mosquitto_sub -p 11883 -t sensors &> sub.log &
 
       # This is some debug info useful if something goes wrong
       - name: Show network status
