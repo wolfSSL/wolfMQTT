@@ -67,6 +67,7 @@
 
 /* Locals */
 static int mStopRead = 0;
+static int mTestDone = 0;
 
 /* Configuration */
 /* Reference:
@@ -160,6 +161,9 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
     if (msg_done) {
         PRINTF("MQTT Message: Done");
+        if (mqttCtx->test_mode) {
+            mTestDone = 1;
+        }
     }
 
     /* Return negative to terminate publish processing */
@@ -449,13 +453,6 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_WAIT_MSG;
 
             do {
-                /* check for test mode or stop */
-                if (mStopRead || mqttCtx->test_mode) {
-                    rc = MQTT_CODE_SUCCESS;
-                    PRINTF("MQTT Exiting...");
-                    break;
-                }
-
                 /* Try and read packet */
                 rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
 
@@ -469,8 +466,17 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
+
+                /* check for test mode or stop */
+                if (mStopRead || mTestDone) {
+                    rc = MQTT_CODE_SUCCESS;
+                    mqttCtx->stat = WMQ_DISCONNECT;
+                    PRINTF("MQTT Exiting...");
+                    goto disconn;
+                }
+
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if (rc == MQTT_CODE_STDIN_WAKE) {
+                if (rc == MQTT_CODE_STDIN_WAKE) {
                     /* Get data from STDIO */
                     XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
                     if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
@@ -493,38 +499,53 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                             MqttClient_ReturnCodeToString(rc), rc);
                     }
                 }
+                else
             #endif
-                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+                if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Keep Alive */
                     PRINTF("Keep-alive timeout, sending ping");
-
-                    rc = MqttClient_Ping_ex(&mqttCtx->client, &mqttCtx->ping);
-                    if (rc == MQTT_CODE_CONTINUE) {
-                        return rc;
-                    }
-                    else if (rc != MQTT_CODE_SUCCESS) {
-                        PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
-                            MqttClient_ReturnCodeToString(rc), rc);
-                        break;
-                    }
+                    mqttCtx->stat = WMQ_PING;
+                    break;
                 }
                 else if (rc != MQTT_CODE_SUCCESS) {
                     /* There was an error */
                     PRINTF("MQTT Message Wait: %s (%d)",
                         MqttClient_ReturnCodeToString(rc), rc);
-                    break;
+                    goto disconn;
                 }
             } while (1);
+        }
+        FALL_THROUGH;
 
-            /* Check for error */
-            if (rc != MQTT_CODE_SUCCESS) {
-                goto disconn;
+        case WMQ_PING:
+        {
+            mqttCtx->stat = WMQ_PING;
+
+            rc = MqttClient_Ping_ex(&mqttCtx->client, &mqttCtx->ping);
+            if (rc == MQTT_CODE_CONTINUE) {
+                return rc;
+            }
+            else if (rc != MQTT_CODE_SUCCESS) {
+                PRINTF("MQTT Ping Keep Alive Error: %s (%d)",
+                    MqttClient_ReturnCodeToString(rc), rc);
+                break;
+            }
+
+            if (mqttCtx->test_mode) {
+                PRINTF("MQTT Ping Done, exiting for test mode");
+                mTestDone = 1;
+            }
+            else {
+                mqttCtx->stat = WMQ_WAIT_MSG;
+                break;
             }
         }
         FALL_THROUGH;
 
         case WMQ_DISCONNECT:
         {
+            mqttCtx->stat = WMQ_DISCONNECT;
+
             /* Disconnect */
             rc = MqttClient_Disconnect(&mqttCtx->client);
             if (rc == MQTT_CODE_CONTINUE) {
@@ -559,7 +580,6 @@ int azureiothub_test(MQTTCtx *mqttCtx)
         }
 
         case WMQ_UNSUB: /* not used */
-        case WMQ_PING:
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;
@@ -659,7 +679,7 @@ exit:
     #ifdef ENABLE_AZUREIOTHUB_EXAMPLE
         do {
             rc = azureiothub_test(&mqttCtx);
-        } while (rc == MQTT_CODE_CONTINUE);
+        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
 
         mqtt_free_ctx(&mqttCtx);
     #else

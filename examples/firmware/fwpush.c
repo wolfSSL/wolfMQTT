@@ -121,12 +121,11 @@ static int mqtt_publish_cb(MqttPublish *publish) {
                 /* read a buffer of data from the file */
                 bytes_read = fread(publish->buffer, 1, publish->buffer_len,
                         cbData->fp);
-                if (bytes_read != 0) {
-                    ret = (int)bytes_read;
-                }
+                ret = (int)bytes_read;
             }
             if (cbData->fp && feof(cbData->fp)) {
                 fclose(cbData->fp);
+                cbData->fp = NULL;
             }
         }
     }
@@ -404,8 +403,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             }
 
             /* Calculate the total payload length and store the FirmwareHeader,
-               signature, and key in fwpushCBdata structure to be used by the
-               callback. */
+             * signature, and key in FwpushCBdata structure to be used by the
+             * callback. */
             cbData = (FwpushCBdata*)WOLFMQTT_MALLOC(sizeof(FwpushCBdata));
             if (cbData == NULL) {
                 rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
@@ -418,7 +417,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
                     (int*)&mqttCtx->publish.total_len);
 
             /* The publish->ctx is available for use by the application to pass
-               data to the callback routine. */
+             * data to the callback routine. */
             mqttCtx->publish.ctx = cbData;
 
             if (rc != 0) {
@@ -454,6 +453,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
 
         case WMQ_DISCONNECT:
         {
+            mqttCtx->stat = WMQ_DISCONNECT;
+
             /* Disconnect */
             rc = MqttClient_Disconnect(&mqttCtx->client);
             if (rc == MQTT_CODE_CONTINUE) {
@@ -505,6 +506,7 @@ exit:
 
     if (rc != MQTT_CODE_CONTINUE) {
         if (cbData) {
+            if (cbData->fp) fclose(cbData->fp);
             if (cbData->data) WOLFMQTT_FREE(cbData->data);
             WOLFMQTT_FREE(cbData);
         }
@@ -561,7 +563,9 @@ exit:
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
         mqttCtx.app_name = "fwpush";
-        mqttCtx.client_id = FIRMWARE_PUSH_CLIENT_ID;
+        mqttCtx.client_id = mqtt_append_random(FIRMWARE_PUSH_CLIENT_ID,
+            (word32)XSTRLEN(FIRMWARE_PUSH_CLIENT_ID));
+        mqttCtx.dynamicClientId = 1;
         mqttCtx.topic_name = FIRMWARE_TOPIC_NAME;
         mqttCtx.qos = FIRMWARE_MQTT_QOS;
         mqttCtx.pub_file = FIRMWARE_PUSH_DEF_FILE;
@@ -586,7 +590,7 @@ exit:
     #ifdef ENABLE_FIRMWARE_EXAMPLE
         do {
             rc = fwpush_test(&mqttCtx);
-        } while (rc == MQTT_CODE_CONTINUE);
+        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
 
         mqtt_free_ctx(&mqttCtx);
     #else

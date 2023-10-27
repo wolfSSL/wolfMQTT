@@ -59,6 +59,7 @@
 
 /* Locals */
 static int mStopRead = 0;
+static int mTestDone = 0;
 static byte* mFwBuf;
 
 
@@ -162,13 +163,13 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
     /* Verify this message is for the firmware topic */
     if (msg_new &&
-        XMEMCMP(msg->topic_name, FIRMWARE_TOPIC_NAME,
+        XSTRNCMP(msg->topic_name, mqttCtx->topic_name,
             msg->topic_name_len) == 0 &&
         !mFwBuf)
     {
         /* Allocate buffer for entire message */
         /* Note: On an embedded system this could just be a write to flash.
-                 If writting to flash change FIRMWARE_MAX_BUFFER to match
+                 If writing to flash change FIRMWARE_MAX_BUFFER to match
                  block size */
         mFwBuf = (byte*)WOLFMQTT_MALLOC(msg->total_len);
         if (mFwBuf == NULL) {
@@ -193,7 +194,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
             /* for test mode stop client */
             if (mqttCtx->test_mode) {
-                mStopRead = 1;
+                mTestDone = 1;
             }
         }
     }
@@ -325,8 +326,6 @@ int fwclient_test(MQTTCtx *mqttCtx)
             mqttCtx->subscribe.packet_id = mqtt_get_packetid();
             mqttCtx->subscribe.topic_count = 1;
             mqttCtx->subscribe.topics = mqttCtx->topics;
-            mqttCtx->topics[0].topic_filter = FIRMWARE_TOPIC_NAME;
-            mqttCtx->topics[0].qos = mqttCtx->qos;
         }
         FALL_THROUGH;
 
@@ -365,13 +364,6 @@ int fwclient_test(MQTTCtx *mqttCtx)
                 rc = MqttClient_WaitMessage(&mqttCtx->client,
                                                   mqttCtx->cmd_timeout_ms);
 
-                /* check for test mode */
-                if (mStopRead) {
-                    rc = MQTT_CODE_SUCCESS;
-                    PRINTF("MQTT Exiting...");
-                    break;
-                }
-
             #ifdef WOLFMQTT_NONBLOCK
                 /* Track elapsed time with no activity and trigger timeout */
                 rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
@@ -382,7 +374,20 @@ int fwclient_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
-                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+
+                /* check for test mode */
+                if (mStopRead || mTestDone) {
+                    rc = MQTT_CODE_SUCCESS;
+                    mqttCtx->stat = WMQ_DISCONNECT;
+                    PRINTF("MQTT Exiting...");
+                    break;
+                }
+
+                if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+                    if (mqttCtx->test_mode) {
+                        PRINTF("Timeout in test mode, exit early!");
+                        mTestDone = 1;
+                    }
                     /* Keep Alive */
                     PRINTF("Keep-alive timeout, sending ping");
 
@@ -523,7 +528,9 @@ exit:
         /* init defaults */
         mqtt_init_ctx(&mqttCtx);
         mqttCtx.app_name = "fwclient";
-        mqttCtx.client_id = FIRMWARE_CLIIENT_ID;
+        mqttCtx.client_id = mqtt_append_random(FIRMWARE_CLIIENT_ID,
+            (word32)XSTRLEN(FIRMWARE_CLIIENT_ID));
+        mqttCtx.dynamicClientId = 1;
         mqttCtx.topic_name = FIRMWARE_TOPIC_NAME;
         mqttCtx.qos = FIRMWARE_MQTT_QOS;
         mqttCtx.pub_file = FIRMWARE_DEF_SAVE_AS;
@@ -548,7 +555,7 @@ exit:
     #ifdef ENABLE_FIRMWARE_EXAMPLE
         do {
             rc = fwclient_test(&mqttCtx);
-        } while (rc == MQTT_CODE_CONTINUE);
+        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
 
         mqtt_free_ctx(&mqttCtx);
     #else

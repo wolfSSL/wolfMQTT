@@ -374,11 +374,10 @@ int pub_client(MQTTCtx *mqttCtx)
     #endif
 
         /* This loop allows payloads larger than the buffer to be sent by
-           repeatedly calling publish.
-        */
+         * repeatedly calling publish. */
         do {
             rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
-        } while(rc == MQTT_CODE_PUB_CONTINUE);
+        } while (rc == MQTT_CODE_PUB_CONTINUE);
 
         if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
             WOLFMQTT_FREE(mqttCtx->publish.buffer);

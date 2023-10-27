@@ -28,7 +28,7 @@ do_cleanup() {
 [ ! -x ./examples/firmware/fwpush ] && echo -e "\n\nMQTT Example fwpush doesn't exist" && exit 1
 [ ! -x ./examples/firmware/fwclient ] && echo -e "\n\nMQTT Example fwclient doesn't exist" && exit 1
 
-def_args="-t -T -C 2000"
+def_args="-t -T -C 5000 -n wolfMQTT/example/firmware_$((RANDOM))"
 filein=./examples/publish.dat
 fileout=./examples/publish.dat.trs
 
@@ -54,15 +54,18 @@ fi
 grep -F -e 'ENABLE_MQTT_TLS' ./wolfmqtt/options.h
 ENABLE_MQTT_TLS=$?
 
+# Start firmware client
+./examples/firmware/fwclient $def_args -f $fileout $1 &
+client_result=$?
+[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && do_cleanup "-1"
+
+# give some time for the client to connect and wait (it starts a new session)
+sleep 0.5
+
 # Start firmware push
 ./examples/firmware/fwpush $def_args -r -f $filein $1
 server_result=$?
 [ $server_result -ne 0 ] && echo -e "\n\nMQTT Example fwpush failed!" && do_cleanup "-1"
-
-# Start firmware client
-./examples/firmware/fwclient $def_args -f $fileout $1
-client_result=$?
-[ $client_result -ne 0 ] && echo -e "\n\nMQTT Example fwclient failed!" && do_cleanup "-1"
 
 if [ $ENABLE_MQTT_TLS -ne 1 ]; then
     # Compare files
@@ -74,7 +77,7 @@ fi
 
 # End broker
 do_cleanup "0"
- 
+
 echo -e "\n\nFirmware Example MQTT Client Tests Passed"
 
 exit 0

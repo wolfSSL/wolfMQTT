@@ -154,40 +154,56 @@ static int mqtt_get_rand(byte* data, word32 len)
     return ret;
 }
 
+int mqtt_fill_random_hexstr(char* buf, word32 bufLen)
+{
+    int rc = 0;
+    word32 pos = 0, sz, i;
+    const char kHexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
+                              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+    byte rndBytes[32]; /* fill up to x bytes at a time */
+
+    while (rc == 0 && pos < bufLen) {
+        sz = bufLen - pos;
+        if (sz > (int)sizeof(rndBytes))
+            sz = (int)sizeof(rndBytes);
+        sz /= 2; /* 1 byte expands to 2 bytes */
+
+        rc = mqtt_get_rand(rndBytes, sz);
+        if (rc == 0) {
+            /* Convert random to hex string */
+            for (i=0; i<sz; i++) {
+                byte in = rndBytes[i];
+                buf[pos + (i*2)] =   kHexChar[in >> 4];
+                buf[pos + (i*2)+1] = kHexChar[in & 0xf];
+            }
+            pos += sz*2;
+        }
+    }
+    return rc;
+}
+
 #ifndef TEST_RAND_SZ
 #define TEST_RAND_SZ 4
 #endif
-static char* mqtt_append_random(const char* inStr, word32 inLen)
+char* mqtt_append_random(const char* inStr, word32 inLen)
 {
-    int rc;
-    const char kHexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
-                              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
-    byte rndBytes[TEST_RAND_SZ], rndHexStr[TEST_RAND_SZ*2];
-    char *tmp = NULL;
+    int rc = 0;
+    char *tmp;
 
-    rc = mqtt_get_rand(rndBytes, (word32)sizeof(rndBytes));
-    if (rc == 0) {
-        /* Convert random to hex string */
-        int i;
-        for (i=0; i<(int)sizeof(rndBytes); i++) {
-            byte in = rndBytes[i];
-            rndHexStr[(i*2)] =   kHexChar[in >> 4];
-            rndHexStr[(i*2)+1] = kHexChar[in & 0xf];
-        }
-    }
-    if (rc == 0) {
-        /* Allocate topic name and client id */
-        tmp = (char*)WOLFMQTT_MALLOC(inLen + 1 + sizeof(rndHexStr) + 1);
-        if (tmp == NULL) {
-            rc = MQTT_CODE_ERROR_MEMORY;
-        }
+    tmp = (char*)WOLFMQTT_MALLOC(inLen + 1 + (TEST_RAND_SZ*2) + 1);
+    if (tmp == NULL) {
+        rc = MQTT_CODE_ERROR_MEMORY;
     }
     if (rc == 0) {
         /* Format: inStr + `_` randhex + null term */
         XMEMCPY(tmp, inStr, inLen);
         tmp[inLen] = '_';
-        XMEMCPY(tmp + inLen + 1, rndHexStr, sizeof(rndHexStr));
-        tmp[inLen + 1 + sizeof(rndHexStr)] = '\0';
+        rc = mqtt_fill_random_hexstr(tmp + inLen + 1, (TEST_RAND_SZ*2));
+        tmp[inLen + 1 + (TEST_RAND_SZ*2)] = '\0'; /* null term */
+    }
+    if (rc != 0) {
+        WOLFMQTT_FREE(tmp);
+        tmp = NULL;
     }
     return tmp;
 }
@@ -347,7 +363,6 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             break;
 
         case 'T':
-
             mqttCtx->test_mode = 1;
             break;
 
@@ -407,7 +422,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 
         /* Remove SNI functionality for sn-client */
         if(!XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
-        #ifdef HAVE_SNI    
+        #ifdef HAVE_SNI
             useSNI=0;
         #endif
         }

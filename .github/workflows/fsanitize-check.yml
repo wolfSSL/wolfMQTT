@@ -2,7 +2,7 @@ name: fsanitize check Test
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
 
@@ -88,4 +88,4 @@ jobs:
     - name: Show logs on failure
       if: failure() || cancelled()
       run: |
-        more test-suite.log
+        cat test-suite.log

@@ -33,19 +33,22 @@
 #include <stdint.h>
 
 
+#ifdef WOLFMQTT_MULTITHREAD
+
 /* Configuration */
+
+/* Number of publish tasks. Each will send a unique message to the broker. */
+#define NUM_PUB_TASKS   10
 
 /* Maximum size for network read/write callbacks. There is also a v5 define that
    describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
 #define MAX_BUFFER_SIZE 1024
-#define TEST_MESSAGE    "test00"
-/* Number of publish tasks. Each will send a unique message to the broker. */
-#define NUM_PUB_TASKS   10
 
-
-#ifdef WOLFMQTT_MULTITHREAD
+/* Total size of test message to build */
+#define TEST_MESSAGE_SIZE 1048 /* span more than one max packet */
 
 /* Locals */
+static char mTestMessage[TEST_MESSAGE_SIZE];
 static int mStopRead = 0;
 static int mNumMsgsRecvd;
 static int mNumMsgsDone;
@@ -100,7 +103,8 @@ static int mqtt_stop_get(void)
     return rc;
 }
 
-static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec, int packet_type)
+static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec,
+    int packet_type, word32 timeoutMs)
 {
     /* check for test mode */
     if (mqtt_stop_get()) {
@@ -114,12 +118,9 @@ static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec, int packet
         PRINTF("Test cancel by setting early timeout");
         return MQTT_CODE_ERROR_TIMEOUT;
     }
-    else
-#else
-        (void)packet_type;
 #endif
     /* Track elapsed time with no activity and trigger timeout */
-    rc = mqtt_check_timeout(rc, startSec, mqttCtx->cmd_timeout_ms/1000);
+    rc = mqtt_check_timeout(rc, startSec, timeoutMs/1000);
 
     /* check return code */
     if (rc == MQTT_CODE_CONTINUE) {
@@ -128,11 +129,13 @@ static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec, int packet
         usleep(100*1000);
     #endif
     }
-#else
-    (void)packet_type;
-    (void)startSec;
+#endif /* WOLFMQTT_NONBLOCK */
+
     (void)mqttCtx;
-#endif
+    (void)startSec;
+    (void)packet_type;
+    (void)timeoutMs;
+
     return rc;
 }
 
@@ -170,17 +173,6 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Id %d, Len %u, %u, %u",
             buf, msg->qos, msg->packet_id, msg->total_len, msg->buffer_len, msg->buffer_pos);
-
-        /* for test mode: count the number of TEST_MESSAGE matches received */
-        if (mqttCtx->test_mode) {
-            if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
-                /* Only compare the "test" part */
-                XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer,
-                         msg->buffer_len-2) == 0)
-            {
-                mNumMsgsRecvd++;
-            }
-        }
     }
 
     /* Print message payload */
@@ -194,6 +186,17 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
 
     if (msg_done) {
+        /* for test mode: count the number of messages received */
+        if (mqttCtx->test_mode) {
+            if (msg->buffer_pos + msg->buffer_len ==
+                    (word32)sizeof(mTestMessage) &&
+                XMEMCMP(&mTestMessage[msg->buffer_pos], msg->buffer,
+                    msg->buffer_len) == 0)
+            {
+                mNumMsgsRecvd++;
+            }
+        }
+
         PRINTF("MQTT Message: Done");
     }
     wm_SemUnlock(&mtLock);
@@ -311,7 +314,8 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     do {
         rc = MqttClient_NetConnect(&mqttCtx->client, mqttCtx->host,
            mqttCtx->port, DEFAULT_CON_TIMEOUT_MS, mqttCtx->use_tls, mqtt_tls_cb);
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_CONNECT);
+        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_CONNECT,
+            DEFAULT_CON_TIMEOUT_MS);
     } while (rc == MQTT_CODE_CONTINUE);
 
     PRINTF("MQTT Socket Connect: %s (%d)",
@@ -348,7 +352,8 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     startSec = 0;
     do {
         rc = MqttClient_Connect(&mqttCtx->client, &mqttCtx->connect);
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_CONNECT);
+        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_CONNECT,
+            DEFAULT_CON_TIMEOUT_MS);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
         MqttClient_CancelMessage(&mqttCtx->client,
@@ -421,7 +426,8 @@ static void *subscribe_task(void *param)
 
     do {
         rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_SUBSCRIBE);
+        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_SUBSCRIBE,
+            mqttCtx->cmd_timeout_ms);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
         MqttClient_CancelMessage(&mqttCtx->client,
@@ -499,12 +505,14 @@ static void *waitMessage_task(void *param)
         ){
             cmd_timeout_ms = 1000; /* short timeout */
         }
+
         /* Try and read packet */
         rc = MqttClient_WaitMessage(&mqttCtx->client, cmd_timeout_ms);
         if (mqttCtx->test_mode && rc == MQTT_CODE_ERROR_TIMEOUT) {
             rc = 0;
         }
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_ANY);
+        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_ANY,
+            cmd_timeout_ms);
 
         /* check return code */
         if (rc == MQTT_CODE_CONTINUE) {
@@ -528,8 +536,10 @@ static void *waitMessage_task(void *param)
                 mqttCtx->publish.packet_id = mqtt_get_packetid_threadsafe();
                 mqttCtx->publish.buffer = mqttCtx->rx_buf;
                 mqttCtx->publish.total_len = (word16)rc;
-                rc = MqttClient_Publish(&mqttCtx->client,
-                       &mqttCtx->publish);
+                do {
+                    rc = MqttClient_Publish(&mqttCtx->client,
+                        &mqttCtx->publish);
+                } while (rc == MQTT_CODE_CONTINUE);
                 PRINTF("MQTT Publish: Topic %s, %s (%d)",
                     mqttCtx->publish.topic_name,
                     MqttClient_ReturnCodeToString(rc), rc);
@@ -538,6 +548,7 @@ static void *waitMessage_task(void *param)
     #endif
         else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             if (mqttCtx->test_mode) {
+                mqtt_stop_set();
                 /* timeout in test mode should exit */
                 PRINTF("MQTT Exiting timeout...");
                 break;
@@ -571,7 +582,6 @@ static void *publish_task(void *param)
 #endif
 {
     int rc;
-    char buf[7];
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     MqttPublish publish;
     word32 startSec = 0;
@@ -583,15 +593,13 @@ static void *publish_task(void *param)
     publish.duplicate = 0;
     publish.topic_name = mqttCtx->topic_name;
     publish.packet_id = mqtt_get_packetid_threadsafe();
-    XSTRNCPY(buf, TEST_MESSAGE, sizeof(buf));
-    buf[4] = '0' + ((publish.packet_id / 10) % 10);
-    buf[5] = '0' + (publish.packet_id % 10);
-    publish.buffer = (byte*)buf;
-    publish.total_len = (word16)XSTRLEN(buf);
+    publish.buffer = (byte*)mTestMessage;
+    publish.total_len = sizeof(mTestMessage);
 
     do {
         rc = MqttClient_Publish_WriteOnly(&mqttCtx->client, &publish, NULL);
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_PUBLISH);
+        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_PUBLISH,
+            mqttCtx->cmd_timeout_ms);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
         MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish);
@@ -630,9 +638,11 @@ static void *ping_task(void *param)
 
         startSec = 0;
         XMEMSET(&ping, 0, sizeof(ping));
+
         do {
             rc = MqttClient_Ping_ex(&mqttCtx->client, &ping);
-            rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_PING_REQ);
+            rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_PING_REQ,
+                mqttCtx->cmd_timeout_ms);
         } while (rc == MQTT_CODE_CONTINUE);
         if (rc != MQTT_CODE_SUCCESS) {
             MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&ping);
@@ -663,7 +673,8 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
     /* Unsubscribe Topics */
     do {
         rc = MqttClient_Unsubscribe(&mqttCtx->client, &mqttCtx->unsubscribe);
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_UNSUBSCRIBE);
+        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_UNSUBSCRIBE,
+            mqttCtx->cmd_timeout_ms);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
         MqttClient_CancelMessage(&mqttCtx->client,
@@ -680,6 +691,12 @@ int multithread_test(MQTTCtx *mqttCtx)
 {
     int rc = 0, i, threadCount = 0;
     THREAD_T threadList[NUM_PUB_TASKS+3];
+
+    /* Build test message */
+    rc = mqtt_fill_random_hexstr(mTestMessage, (word32)sizeof(mTestMessage));
+    if (rc != 0) {
+        return rc;
+    }
 
     rc = multithread_test_init(mqttCtx);
     if (rc == 0) {
@@ -705,6 +722,7 @@ int multithread_test(MQTTCtx *mqttCtx)
             PRINTF("THREAD_CREATE failed: %d", errno);
             return -1;
         }
+
         /* Create threads that publish unique messages */
         for (i = 0; i < NUM_PUB_TASKS; i++) {
             if (THREAD_CREATE(&threadList[threadCount++], publish_task, mqttCtx)) {
