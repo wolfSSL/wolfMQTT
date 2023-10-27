@@ -11,11 +11,13 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/wiot/wiot \
                    examples/nbclient/nbclient \
                    examples/multithread/multithread \
-                   examples/sn-client/sn-client \
-                   examples/sn-client/sn-client_qos-1 \
-                   examples/sn-client/sn-multithread \
                    examples/pub-sub/mqtt-pub \
                    examples/pub-sub/mqtt-sub
+if BUILD_SN
+noinst_PROGRAMS += examples/sn-client/sn-client \
+                   examples/sn-client/sn-client_qos-1 \
+                   examples/sn-client/sn-multithread
+endif
 
 noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/mqttsimple/mqttsimple.h \
@@ -30,8 +32,10 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/mqttport.h \
                    examples/nbclient/nbclient.h \
                    examples/multithread/multithread.h \
-                   examples/sn-client/sn-client.h \
                    examples/pub-sub/mqtt-pub-sub.h
+if BUILD_SN
+noinst_HEADERS +=  examples/sn-client/sn-client.h
+endif
 
 # MQTT Client Example
 examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
@@ -108,7 +112,7 @@ examples_wiot_wiot_LDADD                    = src/libwolfmqtt.la
 examples_wiot_wiot_DEPENDENCIES             = src/libwolfmqtt.la
 examples_wiot_wiot_CPPFLAGS                 = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
-
+if BUILD_SN
 # MQTT-SN Examples
 examples_sn_client_sn_client_SOURCES        = examples/sn-client/sn-client.c \
                                               examples/mqttnet.c \
@@ -130,6 +134,7 @@ examples_sn_client_sn_multithread_SOURCES       = examples/sn-client/sn-multithr
 examples_sn_client_sn_multithread_LDADD         = src/libwolfmqtt.la
 examples_sn_client_sn_multithread_DEPENDENCIES  = src/libwolfmqtt.la
 examples_sn_client_sn_multithread_CPPFLAGS      = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+endif
 
 # MQTT pub and sub clients
 examples_pub_sub_mqtt_pub_SOURCES      = examples/pub-sub/mqtt-pub.c \
@@ -160,9 +165,11 @@ dist_example_DATA+= examples/mqttnet.c \
                     examples/wiot/wiot.c
 dist_example_DATA+= examples/nbclient/nbclient.c
 dist_example_DATA+= examples/multithread/multithread.c
+if BUILD_SN
 dist_example_DATA+= examples/sn-client/sn-client.c
 dist_example_DATA+= examples/sn-client/sn-client_qos-1.c
 dist_example_DATA+= examples/sn-client/sn-multithread.c
+endif
 dist_example_DATA+= examples/pub-sub/mqtt-pub.c
 dist_example_DATA+= examples/pub-sub/mqtt-sub.c
 
@@ -174,11 +181,13 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/wiot/.libs/wiot \
                    examples/nbclient/.libs/nbclient \
                    examples/multithread/.libs/multithread \
-                   examples/sn-client/.libs/sn-client \
-                   examples/sn-client/.libs/sn-client_qos-1 \
-                   examples/sn-client/.libs/sn-multithread \
                    examples/pub-sub/mqtt-pub \
                    examples/pub-sub/mqtt-sub
+if BUILD_SN
+DISTCLEANFILES+=   examples/sn-client/.libs/sn-client \
+                   examples/sn-client/.libs/sn-client_qos-1 \
+                   examples/sn-client/.libs/sn-multithread
+endif
 
 EXTRA_DIST+=       examples/mqttuart.c \
                    examples/publish.dat \
