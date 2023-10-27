@@ -2,7 +2,7 @@ name: Ubuntu Build Test
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
 
@@ -59,13 +59,13 @@ jobs:
       run: ./configure
     - name: wolfmqtt make
       run: make
+    # Note: this will run the external tests for this CI only
     - name: wolfmqtt make check
       run: make check
 
-      env: 
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-
     - name: wolfmqtt configure with SN Enabled
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-sn
     - name: wolfmqtt make
       run: make
@@ -73,6 +73,8 @@ jobs:
       run: make check
 
     - name: wolfmqtt configure with Non-Block
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: wolfmqtt make
       run: make
@@ -80,6 +82,8 @@ jobs:
       run: make check
 
     - name: wolfmqtt configure with Non-Block and Multi-threading
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: wolfmqtt make
       run: make
@@ -87,6 +91,8 @@ jobs:
       run: make check
 
     - name: configure with Multi-threading and WOLFMQTT_DYN_PROP
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-mt CFLAGS="-DWOLFMQTT_DYN_PROP"
     - name: make
       run: make
@@ -97,4 +103,4 @@ jobs:
     - name: Show logs on failure
       if: failure() || cancelled()
       run: |
-        more test-suite.log
+        cat test-suite.log

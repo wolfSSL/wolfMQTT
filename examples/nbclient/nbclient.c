@@ -33,6 +33,7 @@
 
 /* Locals */
 static int mStopRead = 0;
+static int mTestDone = 0;
 
 /* Configuration */
 
@@ -84,7 +85,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
                 XSTRNCMP(DEFAULT_MESSAGE, (char*)msg->buffer,
                          msg->buffer_len) == 0)
             {
-                mStopRead = 1;
+                mTestDone = 1;
             }
         }
     }
@@ -467,13 +468,6 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 rc = MqttClient_WaitMessage(&mqttCtx->client,
                                             mqttCtx->cmd_timeout_ms);
 
-                /* check for test mode */
-                if (mStopRead) {
-                    rc = MQTT_CODE_SUCCESS;
-                    PRINTF("MQTT Exiting...");
-                    break;
-                }
-
                 /* Track elapsed time with no activity and trigger timeout */
                 rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
                     mqttCtx->cmd_timeout_ms/1000);
@@ -482,8 +476,17 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
+
+                /* check for test mode */
+                if (mStopRead || mTestDone) {
+                    rc = MQTT_CODE_SUCCESS;
+                    mqttCtx->stat = WMQ_DISCONNECT;
+                    PRINTF("MQTT Exiting...");
+                    break;
+                }
+
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if (rc == MQTT_CODE_STDIN_WAKE) {
+                if (rc == MQTT_CODE_STDIN_WAKE) {
                     XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
                     if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
                             stdin) != NULL)
@@ -504,8 +507,9 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                         return rc;
                     }
                 }
+                else
             #endif
-                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+                if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Need to send keep-alive ping */
                     PRINTF("Keep-alive timeout, sending ping");
                     rc = MQTT_CODE_CONTINUE;
@@ -715,7 +719,7 @@ exit:
         #ifdef WOLFSSL_ASYNC_CRYPT
             wolfSSL_AsyncPoll(mqttCtx.client.tls.ssl, WOLF_POLL_FLAG_CHECK_HW);
         #endif
-        } while (rc == MQTT_CODE_CONTINUE);
+        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
 
         mqtt_free_ctx(&mqttCtx);
 #else

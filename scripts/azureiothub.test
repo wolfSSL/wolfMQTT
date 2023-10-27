@@ -8,10 +8,11 @@
 if test -n "$WOLFMQTT_NO_EXTERNAL_BROKER_TESTS"; then
     echo "WOLFMQTT_NO_EXTERNAL_BROKER_TESTS set, won't run"
 else
+    # Use short timeout here, since we can't get a publish response to complete test
+    # So use the timeout and ping response to complete test
     def_args="-T -C 2000"
 
     # Run with TLS and QoS 0-1
-
     ./examples/azure/azureiothub $def_args -t -q 0 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nAzureIotHub MQTT Client failed! TLS=On, QoS=0" && exit 1

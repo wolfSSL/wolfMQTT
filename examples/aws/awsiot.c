@@ -54,6 +54,7 @@
 
 /* Locals */
 static int mStopRead = 0;
+static int mTestDone = 0;
 
 /* Configuration */
 #define APP_HARDWARE         "wolf_aws_iot_demo"
@@ -66,8 +67,9 @@ static int mStopRead = 0;
 #define AWSIOT_KEEP_ALIVE_SEC   DEFAULT_KEEP_ALIVE_SEC
 #define AWSIOT_CMD_TIMEOUT_MS   DEFAULT_CMD_TIMEOUT_MS
 
-#define AWSIOT_SUBSCRIBE_TOPIC  "$aws/things/" AWSIOT_DEVICE_ID "/shadow/update/delta"
 #define AWSIOT_PUBLISH_TOPIC    "$aws/things/" AWSIOT_DEVICE_ID "/shadow/update"
+#define AWSIOT_SUBSCRIBE_TOPIC  AWSIOT_PUBLISH_TOPIC
+
 
 #define AWSIOT_PUBLISH_MSG_SZ   400
 
@@ -293,6 +295,9 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
     if (msg_done) {
         PRINTF("MQTT Message: Done");
+        if (mqttCtx->test_mode) {
+            mTestDone = 1;
+        }
     }
 
     /* Return negative to terminate publish processing */
@@ -626,13 +631,6 @@ int awsiot_test(MQTTCtx *mqttCtx)
             mqttCtx->stat = WMQ_WAIT_MSG;
 
             do {
-                /* check for test mode or stop */
-                if (mStopRead || mqttCtx->test_mode) {
-                    rc = MQTT_CODE_SUCCESS;
-                    PRINTF("MQTT Exiting...");
-                    break;
-                }
-
                 /* Try and read packet */
                 rc = MqttClient_WaitMessage(&mqttCtx->client, mqttCtx->cmd_timeout_ms);
 
@@ -646,8 +644,17 @@ int awsiot_test(MQTTCtx *mqttCtx)
                 if (rc == MQTT_CODE_CONTINUE) {
                     return rc;
                 }
+
+                /* check for test mode or stop */
+                if (mStopRead || mTestDone) {
+                    rc = MQTT_CODE_SUCCESS;
+                    mqttCtx->stat = WMQ_DISCONNECT;
+                    PRINTF("MQTT Exiting...");
+                    break;
+                }
+
             #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-                else if (rc == MQTT_CODE_STDIN_WAKE) {
+                if (rc == MQTT_CODE_STDIN_WAKE) {
                     /* Get data from STDIO */
                     XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
                     if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
@@ -672,8 +679,9 @@ int awsiot_test(MQTTCtx *mqttCtx)
                             MqttClient_ReturnCodeToString(rc), rc);
                     }
                 }
+                else
             #endif
-                else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+                if (rc == MQTT_CODE_ERROR_TIMEOUT) {
                     /* Keep Alive */
                     PRINTF("Keep-alive timeout, sending ping");
 
@@ -838,7 +846,7 @@ exit:
     #ifdef ENABLE_AWSIOT_EXAMPLE
         do {
             rc = awsiot_test(&mqttCtx);
-        } while (rc == MQTT_CODE_CONTINUE);
+        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
 
         mqtt_free_ctx(&mqttCtx);
     #else

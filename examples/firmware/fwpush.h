@@ -33,7 +33,7 @@ typedef struct FwpushCBdata_s {
     const char *filename;
     byte *data;
     FILE *fp;
-}FwpushCBdata;
+} FwpushCBdata;
 
 /* Exposed functions */
 int fwpush_test(MQTTCtx *mqttCtx);
