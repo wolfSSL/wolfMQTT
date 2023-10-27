@@ -235,9 +235,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         client->tls.sockRcRead = 0; /* init value */
         rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
-        #if defined(WOLFMQTT_DEBUG_SOCKET) || defined(WOLFSSL_ASYNC_CRYPT)
             int error = wolfSSL_get_error(client->tls.ssl, 0);
-        #endif
         #ifdef WOLFMQTT_DEBUG_SOCKET
             if (error != WOLFSSL_ERROR_WANT_READ &&
                 error != WC_PENDING_E) {
@@ -252,7 +250,12 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
             if (error == WC_PENDING_E) {
                 rc = MQTT_CODE_CONTINUE;
             }
+            else
         #endif
+            /* used with compatibility layer to communicate peer close */
+            if (error == WOLFSSL_ERROR_ZERO_RETURN) {
+                rc = MQTT_CODE_ERROR_NETWORK;
+            }
         }
     }
     else
