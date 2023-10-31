@@ -145,10 +145,14 @@
     <ClCompile Include="src\mqtt_client.c" />
     <ClCompile Include="src\mqtt_packet.c" />
     <ClCompile Include="src\mqtt_socket.c" />
+    <ClCompile Include="src\mqtt_sn_client.c" />
+    <ClCompile Include="src\mqtt_sn_packet.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="wolfmqtt\mqtt_client.h" />
     <ClInclude Include="wolfmqtt\mqtt_packet.h" />
+    <ClInclude Include="wolfmqtt\mqtt_sn_client.h" />
+    <ClInclude Include="wolfmqtt\mqtt_sn_packet.h" />
     <ClInclude Include="wolfmqtt\mqtt_socket.h" />
     <ClInclude Include="wolfmqtt\mqtt_types.h" />
     <ClInclude Include="wolfmqtt\visibility.h" />
