@@ -509,10 +509,6 @@ int sn_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT Waiting for message...");
 
     do {
-        /* Try and read packet */
-        rc = SN_Client_WaitMessage(&mqttCtx->client,
-                                   mqttCtx->cmd_timeout_ms);
-
         /* check for test mode */
         if (mStopRead) {
             rc = MQTT_CODE_SUCCESS;
@@ -520,9 +516,13 @@ int sn_test(MQTTCtx *mqttCtx)
             break;
         }
 
+        /* Try and read packet */
+        rc = SN_Client_WaitMessage(&mqttCtx->client,
+                                   mqttCtx->cmd_timeout_ms);
+
         /* check return code */
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-        else if (rc == MQTT_CODE_STDIN_WAKE) {
+        if (rc == MQTT_CODE_STDIN_WAKE) {
             XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
             if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
                     stdin) != NULL)
@@ -556,8 +556,9 @@ int sn_test(MQTTCtx *mqttCtx)
                 }
             }
         }
+        else
     #endif
-        else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+        if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             /* Keep Alive */
             PRINTF("Keep-alive timeout, sending ping");
 
@@ -743,6 +744,6 @@ int main(int argc, char** argv)
 #endif
 
 
-    return (rc == 0) ? 0 : EXIT_FAILURE;
+    return (rc == MQTT_CODE_SUCCESS) ? 0 : EXIT_FAILURE;
 }
 
