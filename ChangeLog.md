@@ -1,5 +1,24 @@
 ## Release Notes
 
+### v1.16.0 (11/2/2023)
+* Fix for declaration after executable block by @lealem47 in #341
+* Add QNX IDE, Makefile, and remove source code exec bit by @JacobBarthelmeh 
+  in #317
+* update for cmake after wolfssl added NAMESPACE by @JacobBarthelmeh in #343
+* Add mutex protection to MqttClient_NetDisconnect by @embhorn in #342
+* Add DTLS support to MQTT-SN client by @embhorn in #348
+* Tie zephyr tests to a release by @julek-wolfssl in #350
+* add documentation link to README by @gojimmypi in #355
+* Possible patch for POSIX conditional wait issue by @dgarske in #356
+* Fix publish with topic ID >=127 by @embhorn in #351
+* Adding publish and subscribe atomic client examples by @embhorn in #347
+* Allow disabling the posix conditional signal by @dgarske in #360
+* Exclude CI tests with external brokers by @embhorn in #362
+* Improvements for client property stack by @dgarske in #361
+* Add mosquitto to CI tests by @embhorn in #365
+* Fixes for non-blocking edge cases by @dgarske in #363
+* Refactor MQTT-SN code by @embhorn in #366
+
 ### v1.16.0 (6/29/2023)
 * Add testing for TLS mutual auth, and fsanitize gh test by @lealem47 in #321
 * Add support for pkcs8 keys to mqtt client by @lealem47 in #322
