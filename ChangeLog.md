@@ -1,6 +1,9 @@
 ## Release Notes
 
-### v1.16.0 (11/2/2023)
+### v1.17.0 (11/2/2023)
+Release 1.17.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
 * Fix for declaration after executable block by @lealem47 in #341
 * Add QNX IDE, Makefile, and remove source code exec bit by @JacobBarthelmeh 
   in #317

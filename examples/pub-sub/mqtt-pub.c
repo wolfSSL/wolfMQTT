@@ -461,7 +461,6 @@ exit:
         static BOOL CtrlHandler(DWORD fdwCtrlType)
         {
             if (fdwCtrlType == CTRL_C_EVENT) {
-                mStopRead = 1;
                 PRINTF("Received Ctrl+c");
                 return TRUE;
             }
