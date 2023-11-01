@@ -41,6 +41,12 @@
 #ifdef WOLFMQTT_NO_STDIO
     #undef WOLFMQTT_DEBUG_SOCKET
 #endif
+
+/* #define WOLFMQTT_TEST_NONBLOCK */
+#ifdef WOLFMQTT_TEST_NONBLOCK
+    #define WOLFMQTT_TEST_NONBLOCK_TIMES 1
+#endif
+
 /* lwip */
 #ifdef WOLFSSL_LWIP
     #undef read
@@ -125,8 +131,8 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
     static int testNbWriteAlt = 0;
-    if (!testNbWriteAlt) {
-        testNbWriteAlt = 1;
+    if (testNbWriteAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+        testNbWriteAlt++;
         return MQTT_CODE_CONTINUE;
     }
     testNbWriteAlt = 0;
@@ -247,8 +253,8 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
     static int testNbReadAlt = 0;
-    if (!testNbReadAlt) {
-        testNbReadAlt = 1;
+    if (testNbReadAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+        testNbReadAlt++;
         return MQTT_CODE_CONTINUE;
     }
     testNbReadAlt = 0;
