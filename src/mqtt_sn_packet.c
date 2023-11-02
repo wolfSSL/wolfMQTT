@@ -1488,7 +1488,7 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                         return MqttPacket_HandleNetError(client,
                                  MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
                     }
-                    rc += len;
+                    len += rc;
                 }
                 else {
                     rc = MqttSocket_Peek(client, rx_buf, 4, timeout_ms);

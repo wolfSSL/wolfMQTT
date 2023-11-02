@@ -67,6 +67,9 @@ sleep 0.5
 server_result=$?
 [ $server_result -ne 0 ] && echo -e "\n\nMQTT Example fwpush failed!" && do_cleanup "-1"
 
+# give some time for the client complete
+sleep 0.5
+
 if [ $ENABLE_MQTT_TLS -ne 1 ]; then
     # Compare files
     echo "Comparing files"
