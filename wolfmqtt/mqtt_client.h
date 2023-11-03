@@ -128,8 +128,9 @@ typedef struct _MqttPkRead {
 } MqttPkRead;
 
 typedef struct _MqttSk {
-    int pos;
-    int len;
+    int pos;   /* position inside current buffer */
+    int len;   /* length of current segment being sent */
+    int total; /* number bytes sent or received */
 } MqttSk;
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -496,9 +497,8 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
     MqttObject *msg,
     int timeout_ms);
 
-#if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
-/*! \brief      In a multi-threaded and non-blocking mode this allows you to
-                cancel an MQTT object that was previously submitted.
+/*! \brief      Cancel a partially sent message. Applies to multi-threaded or
+                non-blocking mode
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
@@ -508,7 +508,6 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 WOLFMQTT_API int MqttClient_CancelMessage(
     MqttClient *client,
     MqttObject *msg);
-#endif
 
 #ifdef WOLFMQTT_NONBLOCK
 /*! \brief      In a non-blocking mode this checks if the message has a read

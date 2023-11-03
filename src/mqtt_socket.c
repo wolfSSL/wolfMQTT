@@ -217,6 +217,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
         buf_len - client->write.pos, timeout_ms);
     if (rc >= 0) {
         client->write.pos += rc;
+        client->write.total += rc;
         if (client->write.pos < buf_len) {
             rc = MQTT_CODE_CONTINUE;
         }
@@ -233,6 +234,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
             break;
         }
         client->write.pos += rc;
+        client->write.total += rc;
     } while (client->write.pos < buf_len);
 #endif /* WOLFMQTT_NONBLOCK */
 
@@ -339,6 +341,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         buf_len - client->read.pos, timeout_ms);
     if (rc >= 0) {
         client->read.pos += rc;
+        client->read.total += rc;
         if (client->read.pos < buf_len) {
             rc = MQTT_CODE_CONTINUE;
         }
@@ -355,6 +358,7 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
             break;
         }
         client->read.pos += rc;
+        client->read.total += rc;
     } while (client->read.pos < buf_len);
 #endif /* WOLFMQTT_NONBLOCK */
 

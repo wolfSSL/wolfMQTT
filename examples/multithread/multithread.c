@@ -619,11 +619,11 @@ static void *publish_task(void *param)
         MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish);
     }
 
-    wm_SemLock(&mtLock);
     PRINTF("MQTT Publish: Topic %s, %s (%d)",
         publish.topic_name,
         MqttClient_ReturnCodeToString(rc), rc);
 
+    wm_SemLock(&mtLock);
     mNumMsgsDone++;
     wm_SemUnlock(&mtLock);
 
