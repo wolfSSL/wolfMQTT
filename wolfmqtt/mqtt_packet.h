@@ -254,7 +254,7 @@ enum MqttPacketFlags {
     MQTT_PACKET_FLAG_RETAIN = 0x1,
     MQTT_PACKET_FLAG_QOS_SHIFT = 0x1,
     MQTT_PACKET_FLAG_QOS_MASK = 0x6,
-    MQTT_PACKET_FLAG_DUPLICATE = 0x8,
+    MQTT_PACKET_FLAG_DUPLICATE = 0x8
 };
 
 /* Packet Header: Size is variable 2 - 5 bytes */
