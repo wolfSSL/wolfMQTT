@@ -800,7 +800,7 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
 
         if (do_read) {
             /* Try and read number of buf_len provided,
-                minus what's already been read */
+             * minus what's already been read */
             rc = (int)SOCK_RECV(sock->fd,
                            &buf[bytes],
                            buf_len - bytes,

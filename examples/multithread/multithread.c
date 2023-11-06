@@ -562,8 +562,8 @@ static void *waitMessage_task(void *param)
     #endif
         else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             if (mqttCtx->test_mode) {
-                mqtt_stop_set();
                 /* timeout in test mode should exit */
+                mqtt_stop_set();
                 PRINTF("MQTT Exiting timeout...");
                 break;
             }
@@ -748,11 +748,11 @@ int multithread_test(MQTTCtx *mqttCtx)
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__
-            /* %m is specific to glibc/uclibc/musl, and recently (2018)
-             * added to FreeBSD */
+            /* "%m" is specific to glibc/uclibc/musl, and FreeBSD (as of 2018).
+             * Uses errno and not argument required */
             PRINTF("THREAD_JOIN failed: %m");
 #else
-            PRINTF("THREAD_JOIN failed: %d",errno);
+            PRINTF("THREAD_JOIN failed: %d", errno);
 #endif
         }
 

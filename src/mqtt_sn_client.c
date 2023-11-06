@@ -506,7 +506,7 @@ wait_again:
                 PRINTF("SN_Client_WaitType recv lock error");
                 return rc;
             }
-            mms_stat->isReadLocked = 1;
+            mms_stat->isReadActive = 1;
             MQTT_TRACE_MSG("SN lockRecv");
         #endif
 
@@ -667,8 +667,8 @@ wait_again:
         mms_stat->read = MQTT_MSG_BEGIN;
 
     #ifdef WOLFMQTT_MULTITHREAD
-        if (mms_stat->isReadLocked) {
-            mms_stat->isReadLocked = 0;
+        if (mms_stat->isReadActive) {
+            mms_stat->isReadActive = 0;
             wm_SemUnlock(&client->lockRecv);
         }
     #endif
