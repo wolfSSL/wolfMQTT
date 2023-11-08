@@ -103,13 +103,14 @@ static int mqtt_stop_get(void)
     return rc;
 }
 
+#define MQTT_CODE_TEST_EXIT -200
 static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec,
     int packet_type, word32 timeoutMs)
 {
     /* check for test mode */
-    if (mqtt_stop_get()) {
+    if (mqtt_stop_get() && packet_type != MQTT_PACKET_TYPE_UNSUBSCRIBE) {
         PRINTF("MQTT Exiting Thread...");
-        return MQTT_CODE_ERROR_SYSTEM;
+        return MQTT_CODE_TEST_EXIT;
     }
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -387,7 +388,7 @@ static int multithread_test_finish(MQTTCtx *mqttCtx)
 
     PRINTF("MQTT Client Done: %d", mqttCtx->return_code);
 
-    if (mStopRead && mqttCtx->return_code == MQTT_CODE_ERROR_SYSTEM) {
+    if (mStopRead && mqttCtx->return_code == MQTT_CODE_TEST_EXIT) {
         /* this is okay, we requested termination */
         mqttCtx->return_code = MQTT_CODE_SUCCESS;
     }
