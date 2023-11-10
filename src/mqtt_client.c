@@ -1276,7 +1276,7 @@ wait_again:
             client->packetAck.protocol_level = client->protocol_level;
         #endif
 
-            mms_stat->write = MQTT_MSG_ACK;
+            mms_stat->ack = MQTT_MSG_ACK;
             break;
         }
 
@@ -1296,7 +1296,7 @@ wait_again:
         }
     } /* switch (mms_stat->read) */
 
-    switch (mms_stat->write)
+    switch (mms_stat->ack)
     {
         case MQTT_MSG_BEGIN:
         case MQTT_MSG_WAIT:
@@ -1321,7 +1321,7 @@ wait_again:
             client->write.len = rc;
             rc = MQTT_CODE_SUCCESS;
 
-            mms_stat->write = MQTT_MSG_HEADER;
+            mms_stat->ack = MQTT_MSG_HEADER;
         }
         FALL_THROUGH;
 
@@ -1343,7 +1343,7 @@ wait_again:
                 rc = MQTT_CODE_SUCCESS; /* success */
             }
 
-            mms_stat->write = MQTT_MSG_BEGIN; /* reset write state */
+            mms_stat->ack = MQTT_MSG_BEGIN; /* reset write state */
             break;
         }
 
@@ -1352,17 +1352,17 @@ wait_again:
         case MQTT_MSG_PAYLOAD2:
         default:
         #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("MqttClient_WaitType: Invalid write state %d!",
-                mms_stat->write);
+            PRINTF("MqttClient_WaitType: Invalid ack state %d!",
+                mms_stat->ack);
         #endif
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_STAT);
             break;
-    } /* switch (mms_stat->write) */
+    } /* switch (mms_stat->ack) */
 
 #ifdef WOLFMQTT_DEBUG_CLIENT
     if (rc != MQTT_CODE_CONTINUE) {
-        PRINTF("MqttClient_WaitType: rc %d, state %d-%d",
-            rc, mms_stat->read, mms_stat->write);
+        PRINTF("MqttClient_WaitType: rc %d, state %d-%d-%d",
+            rc, mms_stat->read, mms_stat->write, mms_stat->ack);
     }
 #endif
 

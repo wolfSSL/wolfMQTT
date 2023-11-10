@@ -291,6 +291,7 @@ typedef enum _MqttMsgState {
 typedef struct _MqttMsgStat {
     MqttMsgState read;
     MqttMsgState write;
+    MqttMsgState ack;
 
     byte isReadActive:1;
     byte isWriteActive:1;
