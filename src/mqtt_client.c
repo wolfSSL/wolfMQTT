@@ -2465,7 +2465,9 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
     }
 
 #if defined(WOLFMQTT_DISCONNECT_CB) && defined(WOLFMQTT_USE_CB_ON_DISCONNECT)
-    /* Trigger disconnect callback */
+    /* Trigger disconnect callback - for intentional disconnect
+     * This callback may occur on a network failure during an intentional
+     * disconnect if the transport/socket is not setup yet. */
     if (client->disconnect_cb
     #ifdef WOLFMQTT_NONBLOCK
         && rc != MQTT_CODE_CONTINUE
