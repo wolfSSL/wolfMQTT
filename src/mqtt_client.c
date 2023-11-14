@@ -2032,10 +2032,12 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     /* check if response already received from other thread */
                     rc = MqttClient_CheckPendResp(client, resp_type,
                         publish->packet_id);
+                #ifndef WOLFMQTT_NONBLOCK
                     if (rc == MQTT_CODE_CONTINUE) {
                         /* mark success, let other thread handle response */
                         rc = MQTT_CODE_SUCCESS;
                     }
+                #endif
                 }
                 else
             #endif
