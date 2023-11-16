@@ -22,6 +22,13 @@ do_cleanup() {
 # Check for application
 [ ! -x ./examples/multithread/multithread ] && echo -e "\n\nMultithread Client doesn't exist" && exit 1
 
+# Check for TLS support
+has_tls=no
+./examples/multithread/multithread -? 2>&1 | grep -- 'Enable TLS'
+if [ $? -eq 0 ]; then
+    has_tls=yes
+fi
+
 def_args="-T -C 2000"
 
 # Check for mosquitto
@@ -45,8 +52,8 @@ then
     port_args="-p 11883"
 fi
 
-# Run with and without TLS and QoS 0-2
 
+# Run without TLS and QoS 0-2
 ./examples/multithread/multithread $def_args $port_args -q 0 $1
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=0" && do_cleanup "-1"
@@ -59,21 +66,25 @@ RESULT=$?
 RESULT=$?
 [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=2" && do_cleanup "-1"
 
-./examples/multithread/multithread $def_args $tls_port_args -t -q 0 $1
-RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=0" && do_cleanup "-1"
+if test $has_tls == yes
+then
+    # Run with TLS and QoS 0-2
+    ./examples/multithread/multithread $def_args $tls_port_args -t -q 0 $1
+    RESULT=$?
+    [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=0" && do_cleanup "-1"
 
-./examples/multithread/multithread $def_args $tls_port_args -t -q 1 $1
-RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=1" && do_cleanup "-1"
+    ./examples/multithread/multithread $def_args $tls_port_args -t -q 1 $1
+    RESULT=$?
+    [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=1" && do_cleanup "-1"
 
-./examples/multithread/multithread $def_args $tls_port_args -t -q 2 $1
-RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=2" && do_cleanup "-1"
+    ./examples/multithread/multithread $def_args $tls_port_args -t -q 2 $1
+    RESULT=$?
+    [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=2" && do_cleanup "-1"
+fi
 
 # End broker
 do_cleanup "0"
- 
+
 echo -e "\n\nMultithread MQTT Client Tests Passed"
 
 exit 0

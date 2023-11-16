@@ -5,8 +5,15 @@
 # Check for application
 [ ! -x ./examples/azure/azureiothub ] && echo -e "\n\nAzureIotHub MQTT Client doesn't exist" && exit 1
 
-if test -n "$WOLFMQTT_NO_EXTERNAL_BROKER_TESTS"; then
-    echo "WOLFMQTT_NO_EXTERNAL_BROKER_TESTS set, won't run"
+# Check for TLS support
+has_tls=no
+./examples/azure/azureiothub -? 2>&1 | grep -- 'Enable TLS'
+if [ $? -eq 0 ]; then
+    has_tls=yes
+fi
+
+if test -n "$WOLFMQTT_NO_EXTERNAL_BROKER_TESTS" && test $has_tls == yes; then
+    echo "WOLFMQTT_NO_EXTERNAL_BROKER_TESTS set or no TLS, won't run"
 else
     # Use short timeout here, since we can't get a publish response to complete test
     # So use the timeout and ping response to complete test

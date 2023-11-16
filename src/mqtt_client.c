@@ -31,6 +31,10 @@
 /* forward declarations */
 static int MqttClient_Publish_ReadPayload(MqttClient* client,
     MqttPublish* publish, int timeout_ms);
+#if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
+#endif
+
 
 #ifdef WOLFMQTT_MULTITHREAD
 
@@ -2588,6 +2592,9 @@ int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
     return MqttClient_WaitMessage_ex(client, &client->msg, timeout_ms);
 }
 
+#if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+static
+#endif
 int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
 {
     int rc = MQTT_CODE_SUCCESS;
