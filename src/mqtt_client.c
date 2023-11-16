@@ -170,14 +170,6 @@ static int MqttWriteStart(MqttClient* client, MqttMsgStat* stat)
         MQTT_TRACE_MSG("Warning, send already locked!");
         rc = MQTT_CODE_ERROR_SYSTEM;
     }
-    /* detect if a write is already in progress */
-    if (wm_SemLock(&client->lockClient) == 0) {
-        if (client->write.total > 0) {
-            MQTT_TRACE_MSG("Partial write in progress!");
-            rc = MQTT_CODE_CONTINUE; /* can't write yet */
-        }
-        wm_SemUnlock(&client->lockClient);
-    }
     if (rc != 0) {
         return rc;
     }
