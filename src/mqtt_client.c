@@ -1315,7 +1315,10 @@ wait_again:
             }
 
             client->write.len = rc;
+            /* Note: static analyzer complains about set, but not used here.
+             * Keeping it to ensure no future issues with rc > 0 */
             rc = MQTT_CODE_SUCCESS;
+            (void)rc; /* inhibit clang-analyzer-deadcode.DeadStores */
 
             mms_stat->ack = MQTT_MSG_HEADER;
         }
