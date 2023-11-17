@@ -2649,13 +2649,6 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
-            if (tmpResp->packet_type == MQTT_PACKET_TYPE_PUBLISH) {
-                /* Also cancel any publish responses */
-                MqttPublish* publish = (MqttPublish*)msg;
-                if (publish) {
-                    MqttClient_RespList_Remove(client, &publish->resp.pendResp);
-                }
-            }
             MqttClient_RespList_Remove(client, tmpResp);
             break;
         }
