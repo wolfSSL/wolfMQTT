@@ -64,7 +64,7 @@ jobs:
       run: make check
 
     - name: configure without TLS
-      run: ./configure --disable-tls
+      run: ./configure --enable-all --disable-tls
     - name: make
       run: make
     - name: make check
