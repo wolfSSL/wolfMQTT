@@ -1087,7 +1087,8 @@ wait_again:
             if (rc <= 0) {
             #ifdef WOLFMQTT_NONBLOCK
                 if (rc == MQTT_CODE_CONTINUE &&
-                                          client->packet.stat > MQTT_PK_BEGIN) {
+                        (client->packet.stat > MQTT_PK_BEGIN ||
+                         client->read.total > 0)) {
                     /* advance state, since we received some data */
                     mms_stat->read = MQTT_MSG_HEADER;
                 }
