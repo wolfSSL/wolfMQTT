@@ -19,6 +19,18 @@ do_cleanup() {
     fi
 }
 
+generate_port() { # function to produce a random port number
+    if [[ "$OSTYPE" == "linux"* ]]; then
+        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
+    else
+        echo "Unknown OS TYPE"
+        exit 1
+    fi
+    echo -e "Using port $port"
+}
+
 # Check for application
 [ ! -x ./examples/multithread/multithread ] && echo -e "\n\nMultithread Client doesn't exist" && exit 1
 
@@ -34,22 +46,31 @@ def_args="-T -C 2000"
 # Check for mosquitto
 if command -v mosquitto
 then
-    # bwrap only if using a local mosquitto instance
-    if [ "${AM_BWRAPPED-}" != "yes" ]; then
-        bwrap_path="$(command -v bwrap)"
-        if [ -n "$bwrap_path" ]; then
-            echo "multithread test using bwrap"
+    bwrap_path="$(command -v bwrap)"
+    if [ -n "$bwrap_path" ]; then
+        # bwrap only if using a local mosquitto instance
+        if [ "${AM_BWRAPPED-}" != "yes" ]; then
+            echo "Using bwrap"
             export AM_BWRAPPED=yes
             exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
         fi
+
+        broker_args="-c scripts/broker_test/mosquitto.conf"
+        port=11883
+    else
+        # mosquitto broker custom port non-TLS only
+        has_tls=no
+        generate_port
+        broker_args="-p $port"
     fi
-    # Run mosquitto broker
-    mosquitto -c scripts/broker_test/mosquitto.conf &
+    mosquitto $broker_args &
     broker_pid=$!
     echo "Broker PID is $broker_pid"
+    sleep 0.1
+
     def_args="${def_args} -h localhost"
     tls_port_args="-p 18883"
-    port_args="-p 11883"
+    port_args="-p ${port}"
 fi
 
 echo -e "Base args: $def_args $port_args"
