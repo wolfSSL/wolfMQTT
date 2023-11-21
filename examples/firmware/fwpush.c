@@ -36,18 +36,19 @@
     /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
     #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
             && defined(HAVE_ECC) && !defined(NO_SIG_WRAPPER)
-        #undef ENABLE_FIRMWARE_EXAMPLE
-        #define ENABLE_FIRMWARE_EXAMPLE
+        #undef  ENABLE_FIRMWARE_SIG
+        #define ENABLE_FIRMWARE_SIG
     #endif
 #endif
 
 
-#if defined(ENABLE_FIRMWARE_EXAMPLE)
+#ifdef ENABLE_FIRMWARE_SIG
 
 #include <wolfssl/ssl.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/signature.h>
 #include <wolfssl/wolfcrypt/hash.h>
+#endif
 
 #include "fwpush.h"
 #include "firmware.h"
@@ -143,10 +144,12 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     int msgLen = 0, fwLen = 0;
     word32 keyLen = 0, sigLen = 0;
     FirmwareHeader *header;
+#ifdef ENABLE_FIRMWARE_SIG
     ecc_key eccKey;
     WC_RNG rng;
 
     wc_InitRng(&rng);
+#endif
 
     /* Verify file can be loaded */
     rc = mqtt_file_load(fwFile, &fwBuf, &fwLen);
@@ -157,6 +160,7 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     }
     PRINTF("Firmware File %s is %d bytes", fwFile, fwLen);
 
+#ifdef ENABLE_FIRMWARE_SIG
     /* Generate Key */
     /* Note: Real implementation would use previously exchanged/signed key */
     wc_ecc_init(&eccKey);
@@ -192,11 +196,13 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
         rc = EXIT_FAILURE;
         goto exit;
     }
+#endif
 
     /* Display lengths */
     PRINTF("Firmware Message: Sig %d bytes, Key %d bytes, File %d bytes",
         sigLen, keyLen, fwLen);
 
+#ifdef ENABLE_FIRMWARE_SIG
     /* Generate Signature */
     rc = wc_SignatureGenerate(
         FIRMWARE_HASH_TYPE, FIRMWARE_SIG_TYPE,
@@ -209,6 +215,7 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
         rc = EXIT_FAILURE;
         goto exit;
     }
+#endif
 
     /* Assemble message */
     msgLen = sizeof(FirmwareHeader) + sigLen + keyLen + fwLen;
@@ -225,8 +232,10 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     header->sigLen = sigLen;
     header->pubKeyLen = keyLen;
     header->fwLen = fwLen;
-    XMEMCPY(&msgBuf[sizeof(FirmwareHeader)], sigBuf, sigLen);
-    XMEMCPY(&msgBuf[sizeof(FirmwareHeader) + sigLen], keyBuf, keyLen);
+    if (sigLen > 0)
+        XMEMCPY(&msgBuf[sizeof(FirmwareHeader)], sigBuf, sigLen);
+    if (keyLen > 0)
+        XMEMCPY(&msgBuf[sizeof(FirmwareHeader) + sigLen], keyBuf, keyLen);
 
     rc = 0;
 
@@ -246,8 +255,10 @@ exit:
     if (sigBuf) WOLFMQTT_FREE(sigBuf);
     if (fwBuf) WOLFMQTT_FREE(fwBuf);
 
+#ifdef ENABLE_FIRMWARE_SIG
     wc_ecc_free(&eccKey);
     wc_FreeRng(&rng);
+#endif
 
     return rc;
 }
@@ -272,7 +283,7 @@ int fwpush_test(MQTTCtx *mqttCtx)
         goto disconn;
     }
 
-    switch(mqttCtx->stat)
+    switch (mqttCtx->stat)
     {
         case WMQ_BEGIN:
         {
@@ -522,87 +533,76 @@ exit:
 
     return rc;
 }
-#endif /* ENABLE_FIRMWARE_EXAMPLE */
 
 
 /* so overall tests can pull in test function */
-#ifndef NO_MAIN_DRIVER
-    #ifdef USE_WINDOWS_API
-        #include <windows.h> /* for ctrl handler */
+#ifdef USE_WINDOWS_API
+    #include <windows.h> /* for ctrl handler */
 
-        static BOOL CtrlHandler(DWORD fdwCtrlType)
-        {
-            if (fdwCtrlType == CTRL_C_EVENT) {
-            #if defined(ENABLE_FIRMWARE_EXAMPLE)
-                mStopRead = 1;
-            #endif
-                PRINTF("Received Ctrl+c");
-                return TRUE;
-            }
-            return FALSE;
-        }
-    #elif HAVE_SIGNAL
-        #include <signal.h>
-        static void sig_handler(int signo)
-        {
-            if (signo == SIGINT) {
-            #if defined(ENABLE_FIRMWARE_EXAMPLE)
-                mStopRead = 1;
-            #endif
-                PRINTF("Received SIGINT");
-            }
-        }
-    #endif
-
-    int main(int argc, char** argv)
+    static BOOL CtrlHandler(DWORD fdwCtrlType)
     {
-        int rc;
-    #ifdef ENABLE_FIRMWARE_EXAMPLE
-        MQTTCtx mqttCtx;
-
-        /* init defaults */
-        mqtt_init_ctx(&mqttCtx);
-        mqttCtx.app_name = "fwpush";
-        mqttCtx.client_id = mqtt_append_random(FIRMWARE_PUSH_CLIENT_ID,
-            (word32)XSTRLEN(FIRMWARE_PUSH_CLIENT_ID));
-        mqttCtx.dynamicClientId = 1;
-        mqttCtx.topic_name = FIRMWARE_TOPIC_NAME;
-        mqttCtx.qos = FIRMWARE_MQTT_QOS;
-        mqttCtx.pub_file = FIRMWARE_PUSH_DEF_FILE;
-
-        /* parse arguments */
-        rc = mqtt_parse_args(&mqttCtx, argc, argv);
-        if (rc != 0) {
-            return rc;
+        if (fdwCtrlType == CTRL_C_EVENT) {
+        #if defined(ENABLE_FIRMWARE_SIG)
+            mStopRead = 1;
+        #endif
+            PRINTF("Received Ctrl+c");
+            return TRUE;
         }
-    #endif
-
-    #ifdef USE_WINDOWS_API
-        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
-            PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
+        return FALSE;
+    }
+#elif HAVE_SIGNAL
+    #include <signal.h>
+    static void sig_handler(int signo)
+    {
+        if (signo == SIGINT) {
+        #if defined(ENABLE_FIRMWARE_SIG)
+            mStopRead = 1;
+        #endif
+            PRINTF("Received SIGINT");
         }
-    #elif HAVE_SIGNAL
-        if (signal(SIGINT, sig_handler) == SIG_ERR) {
-            PRINTF("Can't catch SIGINT");
-        }
-    #endif
+    }
+#endif
 
-    #ifdef ENABLE_FIRMWARE_EXAMPLE
-        do {
-            rc = fwpush_test(&mqttCtx);
-        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
+#if defined(NO_MAIN_DRIVER)
+int fwpush_main(int argc, char** argv)
+#else
+int main(int argc, char** argv)
+#endif
+{
+    int rc;
+    MQTTCtx mqttCtx;
 
-        mqtt_free_ctx(&mqttCtx);
-    #else
-        (void)argc;
-        (void)argv;
+    /* init defaults */
+    mqtt_init_ctx(&mqttCtx);
+    mqttCtx.app_name = "fwpush";
+    mqttCtx.client_id = mqtt_append_random(FIRMWARE_PUSH_CLIENT_ID,
+        (word32)XSTRLEN(FIRMWARE_PUSH_CLIENT_ID));
+    mqttCtx.dynamicClientId = 1;
+    mqttCtx.topic_name = FIRMWARE_TOPIC_NAME;
+    mqttCtx.qos = FIRMWARE_MQTT_QOS;
+    mqttCtx.pub_file = FIRMWARE_PUSH_DEF_FILE;
 
-        /* This example requires wolfSSL after 3.7.1 for signature wrapper */
-        PRINTF("Example not compiled in!");
-        rc = 0; /* return success, so make check passes with TLS disabled */
-    #endif
-
-        return (rc == 0) ? 0 : EXIT_FAILURE;
+    /* parse arguments */
+    rc = mqtt_parse_args(&mqttCtx, argc, argv);
+    if (rc != 0) {
+        return rc;
     }
 
-#endif /* NO_MAIN_DRIVER */
+#ifdef USE_WINDOWS_API
+    if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
+        PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
+    }
+#elif HAVE_SIGNAL
+    if (signal(SIGINT, sig_handler) == SIG_ERR) {
+        PRINTF("Can't catch SIGINT");
+    }
+#endif
+
+    do {
+        rc = fwpush_test(&mqttCtx);
+    } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
+
+    mqtt_free_ctx(&mqttCtx);
+
+    return (rc == 0) ? 0 : EXIT_FAILURE;
+}

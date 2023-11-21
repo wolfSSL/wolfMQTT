@@ -64,7 +64,12 @@ then
         fi
 
         broker_args="-c scripts/broker_test/mosquitto.conf"
-        port=11883
+        if test $has_tls == yes
+        then
+            port=18883
+        else
+            port=11883
+        fi
     else
         # mosquitto broker custom port non-TLS only
         has_tls=no
