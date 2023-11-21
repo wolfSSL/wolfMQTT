@@ -54,6 +54,8 @@ then
     port_args="-p 11883"
 fi
 
+echo -e "Base args: $def_args $port_args"
+
 # Run without TLS and QoS 0-2
 ./examples/nbclient/nbclient $def_args $port_args -q 0 $1
 RESULT=$?

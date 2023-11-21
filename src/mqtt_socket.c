@@ -173,9 +173,8 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
     #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
         static int testSmallerWrite = 0;
         if (!testSmallerWrite) {
-            if (buf_len > 100) {
+            if (buf_len > 1)
                 buf_len /= 2;
-            }
             testSmallerWrite = 1;
         }
         else {
@@ -300,9 +299,8 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
     #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
         static int testSmallerRead = 0;
         if (!testSmallerRead) {
-            if (buf_len > 100) {
+            if (buf_len > 1)
                 buf_len /= 2;
-            }
             testSmallerRead = 1;
         }
         else {

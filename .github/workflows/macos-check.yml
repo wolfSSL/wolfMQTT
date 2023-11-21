@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ '*' ]
 
+env:
+  WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+
 jobs:
   build:
 
@@ -17,7 +20,10 @@ jobs:
         repository: wolfssl/wolfssl
         path: wolfssl
     - name: brew
-      run: brew install automake libtool md5sha1sum
+      run: |
+        brew install automake libtool md5sha1sum mosquitto
+        echo "/usr/local/sbin/" >> $GITHUB_PATH
+        echo "/usr/local/opt/mosquitto/sbin/" >> $GITHUB_PATH
 
     - name: wolfssl autogen
       working-directory: ./wolfssl
@@ -44,17 +50,13 @@ jobs:
       run: make check
 
     - name: configure without TLS
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-all --disable-tls
+      run: ./configure --enable-all --disable-tls CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make
     - name: make check
       run: make check
 
     - name: configure with SN Enabled
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-sn
     - name: make
       run: make
@@ -62,8 +64,6 @@ jobs:
       run: make check
 
     - name: configure with Non-Block
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make
@@ -71,8 +71,6 @@ jobs:
       run: make check
 
     - name: configure with Non-Block and Multi-threading
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make

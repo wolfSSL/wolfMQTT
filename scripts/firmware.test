@@ -66,6 +66,8 @@ fi
 grep -F -e 'ENABLE_MQTT_TLS' ./wolfmqtt/options.h
 ENABLE_MQTT_TLS=$?
 
+echo -e "Base args: $def_args"
+
 # Start firmware client
 ./examples/firmware/fwclient $def_args -f $fileout $1 &
 client_result=$?

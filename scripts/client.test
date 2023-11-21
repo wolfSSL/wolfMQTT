@@ -54,6 +54,8 @@ then
     ecc_mutual_auth_args="-c certs/client-ecc-cert.pem -K certs/ecc-client-key.pem"
 fi
 
+echo -e "Base args: $def_args $port_args"
+
 # Run without TLS and QoS 0-2
 ./examples/mqttclient/mqttclient $def_args $port_args -q 0 $1
 RESULT=$?
