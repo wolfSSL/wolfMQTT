@@ -1381,8 +1381,16 @@ wait_again:
 
 #ifdef WOLFMQTT_NONBLOCK
     #ifdef WOLFMQTT_DEBUG_CLIENT
-    client->lastRc = rc;
+    #ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0)
     #endif
+    {
+        client->lastRc = rc;
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockClient);
+    #endif
+    }
+    #endif /* WOLFMQTT_DEBUG_CLIENT */
     if (rc == MQTT_CODE_CONTINUE) {
         return rc;
     }
