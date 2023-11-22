@@ -62,6 +62,7 @@ then
             export AM_BWRAPPED=yes
             exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
         fi
+        unset AM_BWRAPPED
 
         broker_args="-c scripts/broker_test/mosquitto.conf"
         if test $has_tls == yes
