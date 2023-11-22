@@ -50,7 +50,7 @@ jobs:
       run: make check
 
     - name: configure without TLS
-      run: ./configure --enable-all --disable-tls CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+      run: ./configure --enable-all --disable-tls
     - name: make
       run: make
     - name: make check

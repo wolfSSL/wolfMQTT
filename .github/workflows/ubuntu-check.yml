@@ -66,7 +66,7 @@ jobs:
     - name: wolfmqtt configure without TLS
       env:
         WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-all --disable-tls CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+      run: ./configure --enable-all --disable-tls
     - name: wolfmqtt make
       run: make
     - name: wolfmqtt make check

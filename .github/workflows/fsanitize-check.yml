@@ -64,7 +64,7 @@ jobs:
       run: make check
 
     - name: configure without TLS
-      run: ./configure CC="gcc -fsanitize=address" --enable-all --disable-tls CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+      run: ./configure CC="gcc -fsanitize=address" --enable-all --disable-tls
     - name: make
       run: make
     - name: make check
