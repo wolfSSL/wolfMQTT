@@ -291,11 +291,10 @@ typedef enum _MqttMsgState {
 typedef struct _MqttMsgStat {
     MqttMsgState read;
     MqttMsgState write;
+    MqttMsgState ack;
 
-#ifdef WOLFMQTT_MULTITHREAD
-    byte isReadLocked:1;
-    byte isWriteLocked:1;
-#endif
+    byte isReadActive:1;
+    byte isWriteActive:1;
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD

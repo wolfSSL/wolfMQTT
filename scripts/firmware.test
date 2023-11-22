@@ -6,10 +6,8 @@ no_pid=-1
 broker_pid=$no_pid
 
 do_cleanup() {
-    if [ $ENABLE_MQTT_TLS -ne 1 ]; then
-        # Delete file
-        rm $fileout
-    fi
+    # Delete file
+    rm $fileout
 
     if  [ $broker_pid != $no_pid ]
     then
@@ -24,35 +22,75 @@ do_cleanup() {
     fi
 }
 
+generate_port() { # function to produce a random port number
+    if [[ "$OSTYPE" == "linux"* ]]; then
+        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
+    else
+        echo "Unknown OS TYPE"
+        exit 1
+    fi
+    echo -e "Using port $port"
+}
+
+
 # Check for application
 [ ! -x ./examples/firmware/fwpush ] && echo -e "\n\nMQTT Example fwpush doesn't exist" && exit 1
 [ ! -x ./examples/firmware/fwclient ] && echo -e "\n\nMQTT Example fwclient doesn't exist" && exit 1
 
-def_args="-t -T -C 5000 -n wolfMQTT/example/firmware_$((RANDOM))"
+# Check for TLS support
+has_tls=no
+./examples/mqttclient/mqttclient -? 2>&1 | grep -- 'Enable TLS'
+if [ $? -eq 0 ]; then
+    has_tls=yes
+fi
+
+def_args="-T -C 5000 -n wolfMQTT/example/firmware_$((RANDOM))"
 filein=./examples/publish.dat
 fileout=./examples/publish.dat.trs
+
 
 # Check for mosquitto
 if command -v mosquitto
 then
-    # bwrap only if using a local mosquitto instance
-    if [ "${AM_BWRAPPED-}" != "yes" ]; then
-        bwrap_path="$(command -v bwrap)"
-        if [ -n "$bwrap_path" ]; then
-            echo "Firmware test using bwrap"
+    bwrap_path="$(command -v bwrap)"
+    if [ -n "$bwrap_path" ]; then
+        # bwrap only if using a local mosquitto instance
+        if [ "${AM_BWRAPPED-}" != "yes" ]; then
+            echo "Using bwrap"
             export AM_BWRAPPED=yes
             exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
         fi
+        unset AM_BWRAPPED
+
+        broker_args="-c scripts/broker_test/mosquitto.conf"
+        if test $has_tls == yes
+        then
+            port=18883
+        else
+            port=11883
+        fi
+    else
+        # mosquitto broker custom port non-TLS only
+        has_tls=no
+        generate_port
+        broker_args="-p $port"
     fi
-    # Run mosquitto broker
-    mosquitto -c scripts/broker_test/mosquitto.conf &
+    mosquitto $broker_args &
     broker_pid=$!
     echo "Broker PID is $broker_pid"
-    def_args="${def_args} -h localhost -p 18883"
+    sleep 0.1
+
+    def_args="${def_args} -h localhost -p ${port}"
 fi
 
-grep -F -e 'ENABLE_MQTT_TLS' ./wolfmqtt/options.h
-ENABLE_MQTT_TLS=$?
+if test $has_tls == yes
+then
+    def_args="${def_args} -t"
+fi
+
+echo -e "Base args: $def_args"
 
 # Start firmware client
 ./examples/firmware/fwclient $def_args -f $fileout $1 &
@@ -70,13 +108,11 @@ server_result=$?
 # give some time for the client complete
 sleep 0.5
 
-if [ $ENABLE_MQTT_TLS -ne 1 ]; then
-    # Compare files
-    echo "Comparing files"
-    md5sum -b $filein $fileout
-    compare_result=$?
-    [ $compare_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && do_cleanup "-1"
-fi
+# Compare files
+echo "Comparing files"
+md5sum -b $filein $fileout
+compare_result=$?
+[ $compare_result -ne 0 ] && echo -e "\n\nMQTT Example firmware compare failed!" && do_cleanup "-1"
 
 # End broker
 do_cleanup "0"

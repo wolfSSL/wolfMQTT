@@ -103,13 +103,14 @@ static int mqtt_stop_get(void)
     return rc;
 }
 
+#define MQTT_CODE_TEST_EXIT -200
 static int check_response(MQTTCtx* mqttCtx, int rc, word32* startSec,
     int packet_type, word32 timeoutMs)
 {
     /* check for test mode */
-    if (mqtt_stop_get()) {
+    if (mqtt_stop_get() && packet_type != MQTT_PACKET_TYPE_UNSUBSCRIBE) {
         PRINTF("MQTT Exiting Thread...");
-        return MQTT_CODE_SUCCESS;
+        return MQTT_CODE_TEST_EXIT;
     }
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -387,6 +388,11 @@ static int multithread_test_finish(MQTTCtx *mqttCtx)
 
     PRINTF("MQTT Client Done: %d", mqttCtx->return_code);
 
+    if (mStopRead && mqttCtx->return_code == MQTT_CODE_TEST_EXIT) {
+        /* this is okay, we requested termination */
+        mqttCtx->return_code = MQTT_CODE_SUCCESS;
+    }
+
     return mqttCtx->return_code;
 }
 
@@ -507,12 +513,17 @@ static void *waitMessage_task(void *param)
         }
 
         /* Try and read packet */
-        rc = MqttClient_WaitMessage(&mqttCtx->client, cmd_timeout_ms);
+        rc = MqttClient_WaitMessage_ex(&mqttCtx->client, &mqttCtx->client.msg,
+            cmd_timeout_ms);
         if (mqttCtx->test_mode && rc == MQTT_CODE_ERROR_TIMEOUT) {
             rc = 0;
         }
         rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_ANY,
             cmd_timeout_ms);
+        if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
+            MqttClient_CancelMessage(&mqttCtx->client,
+                (MqttObject*)&mqttCtx->client.msg);
+        }
 
         /* check return code */
         if (rc == MQTT_CODE_CONTINUE) {
@@ -540,6 +551,10 @@ static void *waitMessage_task(void *param)
                     rc = MqttClient_Publish(&mqttCtx->client,
                         &mqttCtx->publish);
                 } while (rc == MQTT_CODE_CONTINUE);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    MqttClient_CancelMessage(&mqttCtx->client,
+                        (MqttObject*)&mqttCtx->publish);
+                }
                 PRINTF("MQTT Publish: Topic %s, %s (%d)",
                     mqttCtx->publish.topic_name,
                     MqttClient_ReturnCodeToString(rc), rc);
@@ -548,8 +563,8 @@ static void *waitMessage_task(void *param)
     #endif
         else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             if (mqttCtx->test_mode) {
-                mqtt_stop_set();
                 /* timeout in test mode should exit */
+                mqtt_stop_set();
                 PRINTF("MQTT Exiting timeout...");
                 break;
             }
@@ -605,11 +620,11 @@ static void *publish_task(void *param)
         MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish);
     }
 
-    wm_SemLock(&mtLock);
     PRINTF("MQTT Publish: Topic %s, %s (%d)",
         publish.topic_name,
         MqttClient_ReturnCodeToString(rc), rc);
 
+    wm_SemLock(&mtLock);
     mNumMsgsDone++;
     wm_SemUnlock(&mtLock);
 
@@ -734,11 +749,11 @@ int multithread_test(MQTTCtx *mqttCtx)
         /* Join threads - wait for completion */
         if (THREAD_JOIN(threadList, threadCount)) {
 #ifdef __GLIBC__
-            /* %m is specific to glibc/uclibc/musl, and recently (2018)
-             * added to FreeBSD */
+            /* "%m" is specific to glibc/uclibc/musl, and FreeBSD (as of 2018).
+             * Uses errno and not argument required */
             PRINTF("THREAD_JOIN failed: %m");
 #else
-            PRINTF("THREAD_JOIN failed: %d",errno);
+            PRINTF("THREAD_JOIN failed: %d", errno);
 #endif
         }
 

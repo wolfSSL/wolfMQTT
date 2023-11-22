@@ -1963,7 +1963,6 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     {
         case MQTT_PK_BEGIN:
         {
-            client->read.pos = 0;
             client->packet.header_len = MQTT_PACKET_HEADER_MIN_SIZE;
             client->packet.remain_len = 0;
 

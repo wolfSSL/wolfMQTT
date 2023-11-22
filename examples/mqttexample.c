@@ -150,6 +150,7 @@ static int mqtt_get_rand(byte* data, word32 len)
     for (i = 0; i<len; i++) {
         data[i] = (byte)rand();
     }
+    ret = 0; /* success */
 #endif
     return ret;
 }
@@ -177,6 +178,9 @@ int mqtt_fill_random_hexstr(char* buf, word32 bufLen)
                 buf[pos + (i*2)+1] = kHexChar[in & 0xf];
             }
             pos += sz*2;
+        }
+        else {
+            PRINTF("MQTT Fill Random Failed! %d", rc);
         }
     }
     return rc;
@@ -217,7 +221,8 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
 #ifdef ENABLE_MQTT_TLS
         PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
                 MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
-        PRINTF("-t          Enable TLS");
+        PRINTF("-t          Enable TLS"); /* Note: this string is used in test
+                                           * scripts to detect TLS feature */
         PRINTF("-A <file>   Load CA (validate peer)");
         PRINTF("-K <key>    Use private key (for TLS mutual auth)");
         PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");

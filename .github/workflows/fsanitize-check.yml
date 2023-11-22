@@ -63,22 +63,29 @@ jobs:
     - name: make check
       run: make check
 
+    - name: configure without TLS
+      run: ./configure CC="gcc -fsanitize=address" --enable-all --disable-tls
+    - name: make
+      run: make
+    - name: make check
+      run: make check
+
     - name: configure with SN Enabled
-      run: ./configure --enable-sn CC="gcc -fsanitize=address"
+      run: ./configure CC="gcc -fsanitize=address" --enable-sn
     - name: make
       run: make
     - name: make check
       run: make check
 
     - name: configure with Non-Block
-      run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" CC="gcc -fsanitize=address"
+      run: ./configure CC="gcc -fsanitize=address" --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make
     - name: make check
       run: make check
 
     - name: configure with Non-Block and Multi-threading
-      run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" CC="gcc -fsanitize=address"
+      run: ./configure CC="gcc -fsanitize=address" --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
     - name: make
       run: make
     - name: make check
@@ -89,3 +96,4 @@ jobs:
       if: failure() || cancelled()
       run: |
         cat test-suite.log
+        cat scripts/*.log

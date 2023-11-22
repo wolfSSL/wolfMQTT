@@ -128,8 +128,9 @@ typedef struct _MqttPkRead {
 } MqttPkRead;
 
 typedef struct _MqttSk {
-    int pos;
-    int len;
+    int pos;   /* position inside current buffer */
+    int len;   /* length of current segment being sent */
+    int total; /* number bytes sent or received */
 } MqttSk;
 
 #ifdef WOLFMQTT_DISCONNECT_CB

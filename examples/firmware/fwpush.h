@@ -38,4 +38,8 @@ typedef struct FwpushCBdata_s {
 /* Exposed functions */
 int fwpush_test(MQTTCtx *mqttCtx);
 
+#if defined(NO_MAIN_DRIVER)
+int fwpush_main(int argc, char** argv);
+#endif
+
 #endif /* WOLFMQTT_FWPUSH_H */

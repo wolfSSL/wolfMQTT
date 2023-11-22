@@ -36,18 +36,18 @@
     /* The signature wrapper for this example was added in wolfSSL after 3.7.1 */
     #if defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX > 0x03007001 \
             && defined(HAVE_ECC) && !defined(NO_SIG_WRAPPER)
-        #undef ENABLE_FIRMWARE_EXAMPLE
-        #define ENABLE_FIRMWARE_EXAMPLE
+        #undef  ENABLE_FIRMWARE_SIG
+        #define ENABLE_FIRMWARE_SIG
     #endif
 #endif
 
 
-#if defined(ENABLE_FIRMWARE_EXAMPLE)
-
+#if defined(ENABLE_FIRMWARE_SIG)
 #include <wolfssl/ssl.h>
 #include <wolfssl/wolfcrypt/ecc.h>
 #include <wolfssl/wolfcrypt/signature.h>
 #include <wolfssl/wolfcrypt/hash.h>
+#endif
 
 #include "fwclient.h"
 #include "firmware.h"
@@ -109,10 +109,12 @@ exit:
 
 static int fw_message_process(MQTTCtx *mqttCtx, byte* buffer, word32 len)
 {
-    int rc;
+    int rc = 0;
     FirmwareHeader* header = (FirmwareHeader*)buffer;
     byte *sigBuf, *pubKeyBuf, *fwBuf;
+#ifdef ENABLE_FIRMWARE_SIG
     ecc_key eccKey;
+#endif
     word32 check_len = sizeof(FirmwareHeader) + header->sigLen +
         header->pubKeyLen + header->fwLen;
 
@@ -129,6 +131,7 @@ static int fw_message_process(MQTTCtx *mqttCtx, byte* buffer, word32 len)
     fwBuf = (buffer + sizeof(FirmwareHeader) + header->sigLen +
         header->pubKeyLen);
 
+#ifdef ENABLE_FIRMWARE_SIG
     /* Import the public key */
     wc_ecc_init(&eccKey);
     rc = wc_ecc_import_x963(pubKeyBuf, header->pubKeyLen, &eccKey);
@@ -141,17 +144,22 @@ static int fw_message_process(MQTTCtx *mqttCtx, byte* buffer, word32 len)
             &eccKey, sizeof(eccKey));
         PRINTF("Firmware Signature Verification: %s (%d)",
             (rc == 0) ? "Pass" : "Fail", rc);
-
+#else
+        (void)pubKeyBuf;
+        (void)sigBuf;
+#endif
         if (rc == 0) {
             /* TODO: Process firmware image */
             /* For example, save to disk using topic name */
             fwfile_save(mqttCtx->pub_file, fwBuf, header->fwLen);
         }
+#ifdef ENABLE_FIRMWARE_SIG
     }
     else {
         PRINTF("ECC public key import failed! %d", rc);
     }
     wc_ecc_free(&eccKey);
+#endif
 
     return rc;
 }
@@ -484,89 +492,76 @@ exit:
 
     return rc;
 }
-#endif /* ENABLE_FIRMWARE_EXAMPLE */
 
 
 /* so overall tests can pull in test function */
-    #ifdef USE_WINDOWS_API
-        #include <windows.h> /* for ctrl handler */
+#ifdef USE_WINDOWS_API
+    #include <windows.h> /* for ctrl handler */
 
-        static BOOL CtrlHandler(DWORD fdwCtrlType)
-        {
-            if (fdwCtrlType == CTRL_C_EVENT) {
-            #if defined(ENABLE_FIRMWARE_EXAMPLE)
-                mStopRead = 1;
-            #endif
-                PRINTF("Received Ctrl+c");
-                return TRUE;
-            }
-            return FALSE;
+    static BOOL CtrlHandler(DWORD fdwCtrlType)
+    {
+        if (fdwCtrlType == CTRL_C_EVENT) {
+        #if defined(ENABLE_FIRMWARE_SIG)
+            mStopRead = 1;
+        #endif
+            PRINTF("Received Ctrl+c");
+            return TRUE;
         }
-    #elif HAVE_SIGNAL
-        #include <signal.h>
-        static void sig_handler(int signo)
-        {
-            if (signo == SIGINT) {
-            #if defined(ENABLE_FIRMWARE_EXAMPLE)
-                mStopRead = 1;
-            #endif
-                PRINTF("Received SIGINT");
-            }
+        return FALSE;
+    }
+#elif HAVE_SIGNAL
+    #include <signal.h>
+    static void sig_handler(int signo)
+    {
+        if (signo == SIGINT) {
+        #if defined(ENABLE_FIRMWARE_SIG)
+            mStopRead = 1;
+        #endif
+            PRINTF("Received SIGINT");
         }
-    #endif
+    }
+#endif
 
 #if defined(NO_MAIN_DRIVER)
-    int fwclient_main(int argc, char** argv)
+int fwclient_main(int argc, char** argv)
 #else
-    int main(int argc, char** argv)
+int main(int argc, char** argv)
 #endif
-    {
-        int rc;
-    #ifdef ENABLE_FIRMWARE_EXAMPLE
-        MQTTCtx mqttCtx;
+{
+    int rc;
+    MQTTCtx mqttCtx;
 
-        /* init defaults */
-        mqtt_init_ctx(&mqttCtx);
-        mqttCtx.app_name = "fwclient";
-        mqttCtx.client_id = mqtt_append_random(FIRMWARE_CLIIENT_ID,
-            (word32)XSTRLEN(FIRMWARE_CLIIENT_ID));
-        mqttCtx.dynamicClientId = 1;
-        mqttCtx.topic_name = FIRMWARE_TOPIC_NAME;
-        mqttCtx.qos = FIRMWARE_MQTT_QOS;
-        mqttCtx.pub_file = FIRMWARE_DEF_SAVE_AS;
+    /* init defaults */
+    mqtt_init_ctx(&mqttCtx);
+    mqttCtx.app_name = "fwclient";
+    mqttCtx.client_id = mqtt_append_random(FIRMWARE_CLIIENT_ID,
+        (word32)XSTRLEN(FIRMWARE_CLIIENT_ID));
+    mqttCtx.dynamicClientId = 1;
+    mqttCtx.topic_name = FIRMWARE_TOPIC_NAME;
+    mqttCtx.qos = FIRMWARE_MQTT_QOS;
+    mqttCtx.pub_file = FIRMWARE_DEF_SAVE_AS;
 
-        /* parse arguments */
-        rc = mqtt_parse_args(&mqttCtx, argc, argv);
-        if (rc != 0) {
-            return rc;
-        }
-    #endif
-
-    #ifdef USE_WINDOWS_API
-        if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
-            PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
-        }
-    #elif HAVE_SIGNAL
-        if (signal(SIGINT, sig_handler) == SIG_ERR) {
-            PRINTF("Can't catch SIGINT");
-        }
-    #endif
-
-    #ifdef ENABLE_FIRMWARE_EXAMPLE
-        do {
-            rc = fwclient_test(&mqttCtx);
-        } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
-
-        mqtt_free_ctx(&mqttCtx);
-    #else
-        (void)argc;
-        (void)argv;
-
-        /* This example requires wolfSSL after 3.7.1 for signature wrapper */
-        PRINTF("Example not compiled in!");
-        rc = 0; /* return success, so make check passes with TLS disabled */
-    #endif
-
-        return (rc == 0) ? 0 : EXIT_FAILURE;
+    /* parse arguments */
+    rc = mqtt_parse_args(&mqttCtx, argc, argv);
+    if (rc != 0) {
+        return rc;
     }
 
+#ifdef USE_WINDOWS_API
+    if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler, TRUE) == FALSE) {
+        PRINTF("Error setting Ctrl Handler! Error %d", (int)GetLastError());
+    }
+#elif HAVE_SIGNAL
+    if (signal(SIGINT, sig_handler) == SIG_ERR) {
+        PRINTF("Can't catch SIGINT");
+    }
+#endif
+
+    do {
+        rc = fwclient_test(&mqttCtx);
+    } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
+
+    mqtt_free_ctx(&mqttCtx);
+
+    return (rc == 0) ? 0 : EXIT_FAILURE;
+}
