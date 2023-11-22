@@ -60,7 +60,9 @@ static int mTestDone = 0;
 #define APP_HARDWARE         "wolf_aws_iot_demo"
 #define APP_FIRMWARE_VERSION LIBWOLFMQTT_VERSION_STRING
 
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE         512    /* Maximum size for network read/write callbacks */
+#endif
 #define AWSIOT_HOST             "a2dujmi05ideo2-ats.iot.us-west-2.amazonaws.com"
 #define AWSIOT_DEVICE_ID        "demoDevice"
 #define AWSIOT_QOS              MQTT_QOS_1

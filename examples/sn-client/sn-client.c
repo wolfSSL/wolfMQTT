@@ -36,7 +36,9 @@ static int mStopRead = 0;
 
 /* Configuration */
 /* Maximum size for network read/write callbacks. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 #define TEST_MESSAGE    "test"
 #define SHORT_TOPIC_NAME "s1"
 
@@ -215,11 +217,11 @@ int sn_test(MQTTCtx *mqttCtx)
         /* Send Connect and wait for Connect Ack */
         rc = SN_Client_Connect(&mqttCtx->client, connect);
 
-        if (rc != MQTT_CODE_SUCCESS) {                                          
-            PRINTF("MQTT-SN Connect: %s (%d)",                                  
-                MqttClient_ReturnCodeToString(rc), rc);                         
-            goto disconn;                                                       
-        }    
+        if (rc != MQTT_CODE_SUCCESS) {
+            PRINTF("MQTT-SN Connect: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+            goto disconn;
+        }
 
         /* Validate Connect Ack info */
         PRINTF("....MQTT-SN Connect Ack: Return Code %u",

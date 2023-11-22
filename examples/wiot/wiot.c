@@ -41,7 +41,9 @@ static int mStopRead = 0;
 static int mTestDone = 0;
 
 /* Configuration */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024 /* Maximum size for network read/write callbacks */
+#endif
 
 /* Undefine if using an IBM WIOT Platform account that you created. */
 #define WIOT_USE_QUICKSTART

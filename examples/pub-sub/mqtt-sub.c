@@ -33,8 +33,10 @@ static int mStopRead = 0;
 /* Configuration */
 
 /* Maximum size for network read/write callbacks. There is also a v5 define that
-   describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
+ * describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 
 #ifdef WOLFMQTT_PROPERTY_CB
 #define MAX_CLIENT_ID_LEN 64

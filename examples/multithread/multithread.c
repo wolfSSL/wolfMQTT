@@ -42,7 +42,9 @@
 
 /* Maximum size for network read/write callbacks. There is also a v5 define that
    describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 
 /* Total size of test message to build */
 #define TEST_MESSAGE_SIZE 1048 /* span more than one max packet */

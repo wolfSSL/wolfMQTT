@@ -40,7 +40,9 @@ static int mStopRead = 0;
 
 /* Configuration */
 /* Maximum size for network read/write callbacks. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 #define TEST_MESSAGE    "QoS-1 test message"
 char    SHORT_TOPIC_NAME[] = {1};
 
