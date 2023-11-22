@@ -1984,7 +1984,9 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
             int i;
             client->packet.stat = MQTT_PK_READ_HEAD;
 
-            for (i = 0; i < MQTT_PACKET_MAX_LEN_BYTES; i++) {
+            for (i = (client->packet.header_len - MQTT_PACKET_HEADER_MIN_SIZE);
+                 i < MQTT_PACKET_MAX_LEN_BYTES;
+                 i++) {
                 /* Check if another byte is needed */
                 if ((header->len[i] & MQTT_PACKET_LEN_ENCODE_MASK) == 0) {
                     /* Variable byte length can be determined */
