@@ -32,6 +32,10 @@ typedef struct MulticastCtx {
 } MulticastCtx;
 #endif
 
+#ifndef WOLFMQTT_TEST_NONBLOCK_TIMES
+#define WOLFMQTT_TEST_NONBLOCK_TIMES 1
+#endif
+
 /* Private functions */
 
 /* -------------------------------------------------------------------------- */
@@ -643,10 +647,15 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
     SocketContext *sock = (SocketContext*)context;
+    MQTTCtx* mqttCtx;
     int rc;
     SOERROR_T so_error = 0;
 #ifndef WOLFMQTT_NO_TIMEOUT
     struct timeval tv;
+#endif
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    static int testNbWriteAlt = 0;
+    static int testSmallerWrite = 0;
 #endif
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
@@ -655,6 +664,27 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 
     if (sock->fd == SOCKET_INVALID)
         return MQTT_CODE_ERROR_BAD_ARG;
+
+    mqttCtx = sock->mqttCtx;
+    (void)mqttCtx;
+
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    if (mqttCtx->useNonBlockMode) {
+        if (testNbWriteAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+            testNbWriteAlt++;
+            return MQTT_CODE_CONTINUE;
+        }
+        testNbWriteAlt = 0;
+        if (!testSmallerWrite) {
+            if (buf_len > 2)
+                buf_len /= 2;
+            testSmallerWrite = 1;
+        }
+        else {
+            testSmallerWrite = 0;
+        }
+    }
+#endif
 
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */
@@ -706,6 +736,10 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     fd_set errfds;
     struct timeval tv;
 #endif
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    static int testNbReadAlt = 0;
+    static int testSmallerRead = 0;
+#endif
 
     if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -720,6 +754,24 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
 
     mqttCtx = sock->mqttCtx;
     (void)mqttCtx;
+
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    if (mqttCtx->useNonBlockMode) {
+        if (testNbReadAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+            testNbReadAlt++;
+            return MQTT_CODE_CONTINUE;
+        }
+        testNbReadAlt = 0;
+        if (!testSmallerRead) {
+            if (buf_len > 2)
+                buf_len /= 2;
+            testSmallerRead = 1;
+        }
+        else {
+            testSmallerRead = 0;
+        }
+    }
+#endif
 
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */

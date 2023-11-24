@@ -42,11 +42,6 @@
     #undef WOLFMQTT_DEBUG_SOCKET
 #endif
 
-/* #define WOLFMQTT_TEST_NONBLOCK */
-#ifdef WOLFMQTT_TEST_NONBLOCK
-    #define WOLFMQTT_TEST_NONBLOCK_TIMES 1
-#endif
-
 /* lwip */
 #ifdef WOLFSSL_LWIP
     #undef read
@@ -63,18 +58,6 @@ int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     int rc;
     MqttClient *client = (MqttClient*)ptr;
     (void)ssl; /* Not used */
-
-#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
-    static int testSmallerTlsRead = 0;
-    if (!testSmallerTlsRead) {
-        if (sz > 2)
-            sz /= 2;
-        testSmallerTlsRead = 1;
-    }
-    else {
-        testSmallerTlsRead = 0;
-    }
-#endif
 
     rc = client->net->read(client->net->context, (byte*)buf, sz,
         client->tls.timeout_ms);
@@ -98,18 +81,6 @@ int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     int rc;
     MqttClient *client = (MqttClient*)ptr;
     (void)ssl; /* Not used */
-
-#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
-    static int testSmallerTlsWrite = 0;
-    if (!testSmallerTlsWrite) {
-        if (sz > 2)
-            sz /= 2;
-        testSmallerTlsWrite = 1;
-    }
-    else {
-        testSmallerTlsWrite = 0;
-    }
-#endif
 
     rc = client->net->write(client->net->context, (byte*)buf, sz,
         client->tls.timeout_ms);
@@ -153,15 +124,6 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 {
     int rc;
 
-#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
-    static int testNbWriteAlt = 0;
-    if (testNbWriteAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
-        testNbWriteAlt++;
-        return MQTT_CODE_CONTINUE;
-    }
-    testNbWriteAlt = 0;
-#endif
-
 #ifdef ENABLE_MQTT_TLS
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;
@@ -194,18 +156,6 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
     else
 #endif /* ENABLE_MQTT_TLS */
     {
-    #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
-        static int testSmallerWrite = 0;
-        if (!testSmallerWrite) {
-            if (buf_len > 2)
-                buf_len /= 2;
-            testSmallerWrite = 1;
-        }
-        else {
-            testSmallerWrite = 0;
-        }
-    #endif
-
         rc = client->net->write(client->net->context, buf, buf_len,
             timeout_ms);
     }
@@ -276,15 +226,6 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 {
     int rc;
 
-#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
-    static int testNbReadAlt = 0;
-    if (testNbReadAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
-        testNbReadAlt++;
-        return MQTT_CODE_CONTINUE;
-    }
-    testNbReadAlt = 0;
-#endif
-
 #ifdef ENABLE_MQTT_TLS
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;
@@ -320,17 +261,6 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
     else
 #endif /* ENABLE_MQTT_TLS */
     {
-    #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
-        static int testSmallerRead = 0;
-        if (!testSmallerRead) {
-            if (buf_len > 2)
-                buf_len /= 2;
-            testSmallerRead = 1;
-        }
-        else {
-            testSmallerRead = 0;
-        }
-    #endif
         rc = client->net->read(client->net->context, buf, buf_len, timeout_ms);
     }
 
