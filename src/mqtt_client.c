@@ -195,15 +195,27 @@ static int MqttWriteStart(MqttClient* client, MqttMsgStat* stat)
     int rc = MQTT_CODE_SUCCESS;
 
 #ifdef WOLFMQTT_MULTITHREAD
+  #if defined(WOLFMQTT_DEBUG_CLIENT) || !defined(WOLFMQTT_ALLOW_NODATA_UNLOCK)
     #ifdef WOLFMQTT_DEBUG_CLIENT
     if (stat->isWriteActive) {
         MQTT_TRACE_MSG("Warning, send already locked!");
         rc = MQTT_CODE_ERROR_SYSTEM;
     }
+    #endif /* WOLFMQTT_DEBUG_CLIENT */
+    #ifndef WOLFMQTT_ALLOW_NODATA_UNLOCK
+    /* detect if a write is already in progress */
+    if (wm_SemLock(&client->lockClient) == 0) {
+        if (client->write.total > 0) {
+            MQTT_TRACE_MSG("Partial write in progress!");
+            rc = MQTT_CODE_CONTINUE; /* can't write yet */
+        }
+        wm_SemUnlock(&client->lockClient);
+    }
+    #endif /* WOLFMQTT_ALLOW_NODATA_UNLOCK */
     if (rc != 0) {
         return rc;
     }
-    #endif /* WOLFMQTT_DEBUG_CLIENT */
+  #endif
 
     rc = wm_SemLock(&client->lockSend);
 #endif /* WOLFMQTT_MULTITHREAD */
