@@ -38,7 +38,8 @@
 /* Configuration */
 
 /* Number of publish tasks. Each will send a unique message to the broker. */
-#define NUM_PUB_TASKS   10
+#define NUM_PUB_TASKS    5
+#define NUM_PUB_PER_TASK 2
 
 /* Maximum size for network read/write callbacks. There is also a v5 define that
    describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
@@ -470,7 +471,8 @@ static int TestIsDone(int rc, MQTTCtx* mqttCtx)
     /* check if we are in test mode and done */
     wm_SemLock(&mtLock);
     if ((rc == 0 || rc == MQTT_CODE_CONTINUE) && mqttCtx->test_mode &&
-            mNumMsgsDone == NUM_PUB_TASKS && mNumMsgsRecvd == NUM_PUB_TASKS
+            mNumMsgsDone == (NUM_PUB_TASKS * NUM_PUB_PER_TASK) &&
+            mNumMsgsRecvd == (NUM_PUB_TASKS * NUM_PUB_PER_TASK)
         #ifdef WOLFMQTT_NONBLOCK
             && !MqttClient_IsMessageActive(&mqttCtx->client, NULL)
         #endif
@@ -598,37 +600,51 @@ static DWORD WINAPI publish_task( LPVOID param )
 static void *publish_task(void *param)
 #endif
 {
-    int rc;
+    int rc[NUM_PUB_PER_TASK], i;
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
-    MqttPublish publish;
-    word32 startSec = 0;
+    MqttPublish publish[NUM_PUB_PER_TASK];
+    word32 startSec[NUM_PUB_PER_TASK];
 
-    /* Publish Topic */
-    XMEMSET(&publish, 0, sizeof(MqttPublish));
-    publish.retain = 0;
-    publish.qos = mqttCtx->qos;
-    publish.duplicate = 0;
-    publish.topic_name = mqttCtx->topic_name;
-    publish.packet_id = mqtt_get_packetid_threadsafe();
-    publish.buffer = (byte*)mTestMessage;
-    publish.total_len = sizeof(mTestMessage);
+    /* Build publish */
+    for (i=0; i<NUM_PUB_PER_TASK; i++) {
+        /* Publish Topic */
+        XMEMSET(&publish[i], 0, sizeof(MqttPublish));
+        publish[i].retain = 0;
+        publish[i].qos = mqttCtx->qos;
+        publish[i].duplicate = 0;
+        publish[i].topic_name = mqttCtx->topic_name;
+        publish[i].packet_id = mqtt_get_packetid_threadsafe();
+        publish[i].buffer = (byte*)mTestMessage;
+        publish[i].total_len = sizeof(mTestMessage);
 
-    do {
-        rc = MqttClient_Publish_WriteOnly(&mqttCtx->client, &publish, NULL);
-        rc = check_response(mqttCtx, rc, &startSec, MQTT_PACKET_TYPE_PUBLISH,
-            mqttCtx->cmd_timeout_ms);
-    } while (rc == MQTT_CODE_CONTINUE);
-    if (rc != MQTT_CODE_SUCCESS) {
-        MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish);
+        rc[i] = MQTT_CODE_CONTINUE;
+        startSec[i] = 0;
     }
 
-    PRINTF("MQTT Publish: Topic %s, %s (%d)",
-        publish.topic_name,
-        MqttClient_ReturnCodeToString(rc), rc);
+    /* Send until != continue */
+    for (i=0; i<NUM_PUB_PER_TASK; i++) {
+        while (rc[i] == MQTT_CODE_CONTINUE) {
+            rc[i] = MqttClient_Publish_WriteOnly(&mqttCtx->client, &publish[i],
+                NULL);
+            rc[i] = check_response(mqttCtx, rc[i], &startSec[i],
+                MQTT_PACKET_TYPE_PUBLISH, mqttCtx->cmd_timeout_ms);
+        }
+    }
 
-    wm_SemLock(&mtLock);
-    mNumMsgsDone++;
-    wm_SemUnlock(&mtLock);
+    /* Report result */
+    for (i=0; i<NUM_PUB_PER_TASK; i++) {
+        if (rc[i] != MQTT_CODE_SUCCESS) {
+            MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish[i]);
+        }
+
+        PRINTF("MQTT Publish: Topic %s, %s (%d)",
+            publish[i].topic_name,
+            MqttClient_ReturnCodeToString(rc[i]), rc[i]);
+
+        wm_SemLock(&mtLock);
+        mNumMsgsDone++;
+        wm_SemUnlock(&mtLock);
+    }
 
     THREAD_EXIT(0);
 }

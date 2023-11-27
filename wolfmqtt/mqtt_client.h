@@ -131,6 +131,9 @@ typedef struct _MqttSk {
     int pos;   /* position inside current buffer */
     int len;   /* length of current segment being sent */
     int total; /* number bytes sent or received */
+
+    /* status bit for if client read or write is active */
+    byte isActive:1;
 } MqttSk;
 
 #ifdef WOLFMQTT_DISCONNECT_CB
