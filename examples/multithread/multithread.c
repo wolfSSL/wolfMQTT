@@ -559,8 +559,8 @@ static void *waitMessage_task(void *param)
                     MqttClient_CancelMessage(&mqttCtx->client,
                         (MqttObject*)&mqttCtx->publish);
                 }
-                PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                    mqttCtx->publish.topic_name,
+                PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                    mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                     MqttClient_ReturnCodeToString(rc), rc);
             }
         }
@@ -637,8 +637,8 @@ static void *publish_task(void *param)
             MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish[i]);
         }
 
-        PRINTF("MQTT Publish: Topic %s, %s (%d)",
-            publish[i].topic_name,
+        PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+            publish[i].topic_name, publish[i].packet_id,
             MqttClient_ReturnCodeToString(rc[i]), rc[i]);
 
         wm_SemLock(&mtLock);

@@ -387,8 +387,8 @@ int pub_client(MQTTCtx *mqttCtx)
             mqttCtx->pub_file = NULL; /* don't try and send file again */
         }
         if (mqttCtx->debug_on) {
-            PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name,
+            PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                 MqttClient_ReturnCodeToString(rc), rc);
         }
         if (rc != MQTT_CODE_SUCCESS) {

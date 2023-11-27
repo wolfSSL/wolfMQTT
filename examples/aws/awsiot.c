@@ -617,8 +617,9 @@ int awsiot_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
-            PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+            PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
+                MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
@@ -676,8 +677,8 @@ int awsiot_test(MQTTCtx *mqttCtx)
                         mqttCtx->publish.buffer = (byte*)mqttCtx->app_ctx;
                         mqttCtx->publish.total_len = (word32)XSTRLEN((char*)mqttCtx->app_ctx);
                         rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
-                        PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                            mqttCtx->publish.topic_name,
+                        PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                            mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                             MqttClient_ReturnCodeToString(rc), rc);
                     }
                 }

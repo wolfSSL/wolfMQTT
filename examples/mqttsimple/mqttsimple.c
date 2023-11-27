@@ -424,8 +424,9 @@ int mqttsimple_test(void)
     if (rc != MQTT_CODE_SUCCESS) {
         goto exit;
     }
-    PRINTF("MQTT Publish: Topic %s, Qos %d, Message %s",
-        mqttObj.publish.topic_name, mqttObj.publish.qos, mqttObj.publish.buffer);
+    PRINTF("MQTT Publish: Topic %s, ID %d, Qos %d, Message %s",
+        mqttObj.publish.topic_name, mqttObj.publish.packet_id,
+        mqttObj.publish.qos, mqttObj.publish.buffer);
 
     /* Wait for messages */
     while (1) {
