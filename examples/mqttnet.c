@@ -219,6 +219,20 @@ static int NetDisconnect(void *context)
 /* -------------------------------------------------------------------------- */
 #elif defined(MICROCHIP_MPLAB_HARMONY)
 
+static int NetDisconnect(void *context)
+{
+    SocketContext *sock = (SocketContext*)context;
+    if (sock) {
+        if (sock->fd != SOCKET_INVALID) {
+            closesocket(sock->fd);
+            sock->fd = SOCKET_INVALID;
+        }
+
+        sock->stat = SOCK_BEGIN;
+    }
+    return 0;
+}
+
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
@@ -287,6 +301,7 @@ exit:
         if (errno == EINPROGRESS || errno == EWOULDBLOCK) {
             return MQTT_CODE_CONTINUE;
         }
+        NetDisconnect(context);
 
         /* Show error */
         PRINTF("NetConnect: Rc=%d, ErrNo=%d", rc, errno);
@@ -358,20 +373,6 @@ static int NetRead(void *context, byte* buf, int buf_len,
     return rc;
 }
 
-static int NetDisconnect(void *context)
-{
-    SocketContext *sock = (SocketContext*)context;
-    if (sock) {
-        if (sock->fd != SOCKET_INVALID) {
-            closesocket(sock->fd);
-            sock->fd = SOCKET_INVALID;
-        }
-
-        sock->stat = SOCK_BEGIN;
-    }
-    return 0;
-}
-
 /* -------------------------------------------------------------------------- */
 /* GENERIC BSD SOCKET TCP NETWORK CALLBACK EXAMPLE */
 /* -------------------------------------------------------------------------- */
@@ -409,6 +410,20 @@ static void tcp_set_nonblocking(SOCKET_T* sockfd)
 }
 #endif /* WOLFMQTT_NONBLOCK */
 #endif /* !WOLFMQTT_NO_TIMEOUT */
+
+static int NetDisconnect(void *context)
+{
+    SocketContext *sock = (SocketContext*)context;
+    if (sock) {
+        if (sock->fd != SOCKET_INVALID) {
+            SOCK_CLOSE(sock->fd);
+            sock->fd = SOCKET_INVALID;
+        }
+
+        sock->stat = SOCK_BEGIN;
+    }
+    return 0;
+}
 
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
@@ -539,9 +554,9 @@ static int NetConnect(void *context, const char* host, word16 port,
     (void)timeout_ms;
 
 exit:
-    /* Show error */
-    if (rc != 0) {
-        PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error);
+    if ((rc != 0) && (rc != MQTT_CODE_CONTINUE)) {
+        NetDisconnect(context);
+        PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error); /* Show error */
     }
 
     return rc;
@@ -630,8 +645,8 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
 
   exit:
     /* Show error */
-    if (rc != 0) {
-        SOCK_CLOSE(sock->fd);
+    if ((rc != 0) && (rc != MQTT_CODE_CONTINUE)) {
+        NetDisconnect(context);
         PRINTF("NetConnect: Rc=%d, SoErr=%d", rc, so_error);
     }
 
@@ -872,20 +887,6 @@ static int NetPeek(void *context, byte* buf, int buf_len, int timeout_ms)
     return NetRead_ex(context, buf, buf_len, timeout_ms, 1);
 }
 #endif
-
-static int NetDisconnect(void *context)
-{
-    SocketContext *sock = (SocketContext*)context;
-    if (sock) {
-        if (sock->fd != SOCKET_INVALID) {
-            SOCK_CLOSE(sock->fd);
-            sock->fd = -1;
-        }
-
-        sock->stat = SOCK_BEGIN;
-    }
-    return 0;
-}
 
 #endif
 
