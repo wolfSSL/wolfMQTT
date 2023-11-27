@@ -115,7 +115,7 @@ enum MqttClientFlags {
 WOLFMQTT_API word32 MqttClient_Flags(struct _MqttClient *client,  word32 mask, word32 flags);
 
 typedef enum _MqttPkStat {
-    MQTT_PK_BEGIN,
+    MQTT_PK_BEGIN = 0,
     MQTT_PK_READ_HEAD,
     MQTT_PK_READ
 } MqttPkStat;

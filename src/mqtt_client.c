@@ -307,7 +307,12 @@ static int MqttReadStart(MqttClient* client, MqttMsgStat* stat)
         if (wm_SemLock(&client->lockClient) == 0)
     #endif
         {
+            /* mark read active */
             client->read.isActive = 1;
+
+            /* reset the packet state used by MqttPacket_Read */
+            client->packet.stat = MQTT_PK_BEGIN;
+
         #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockClient);
         #endif
@@ -1155,9 +1160,6 @@ wait_again:
                 return rc;
             }
 
-            /* reset the packet state used by MqttPacket_Read */
-            client->packet.stat = MQTT_PK_BEGIN;
-
             mms_stat->read = MQTT_MSG_WAIT;
         }
         FALL_THROUGH;
@@ -1311,6 +1313,10 @@ wait_again:
             if (rc >= 0) {
                 rc = MQTT_CODE_SUCCESS;
             }
+            else {
+                /* error, break */
+                break;
+            }
 
         #ifdef WOLFMQTT_MULTITHREAD
             if (pendResp) {
@@ -1327,39 +1333,21 @@ wait_again:
             }
         #endif /* WOLFMQTT_MULTITHREAD */
 
-            /* are we sending ACK or done with message? */
+            /* Determine if we are sending ACK or done */
             if (MqttIsPubRespPacket(resp.packet_type)) {
+                /* if we get here, then we are sending an ACK */
                 mms_stat->read = MQTT_MSG_ACK;
-            }
-            else {
-                mms_stat->read = MQTT_MSG_BEGIN;
+                mms_stat->ack = MQTT_MSG_WAIT;
+
+                /* setup ACK in shared context */
+                XMEMCPY(&client->packetAck, &resp, sizeof(MqttPublishResp));
+            #ifdef WOLFMQTT_V5
+                client->packetAck.protocol_level = client->protocol_level;
+            #endif
             }
 
             /* done reading */
             MqttReadStop(client, mms_stat);
-
-            /* if error, leave */
-            if (rc != MQTT_CODE_SUCCESS) {
-                break;
-            }
-
-            /* if not sending an ACK, we are done */
-            if (!MqttIsPubRespPacket(resp.packet_type)) {
-                break;
-            }
-
-            /* Flag write active / lock mutex */
-            if ((rc = MqttWriteStart(client, mms_stat)) != 0) {
-                break;
-            }
-
-            /* setup ACK in shared context */
-            XMEMCPY(&client->packetAck, &resp, sizeof(MqttPublishResp));
-        #ifdef WOLFMQTT_V5
-            client->packetAck.protocol_level = client->protocol_level;
-        #endif
-
-            mms_stat->ack = MQTT_MSG_ACK;
             break;
         }
 
@@ -1382,9 +1370,18 @@ wait_again:
     switch (mms_stat->ack)
     {
         case MQTT_MSG_BEGIN:
-        case MQTT_MSG_WAIT:
             /* wait for read to set ack */
             break;
+
+        case MQTT_MSG_WAIT:
+        {
+            /* Flag write active / lock mutex */
+            if ((rc = MqttWriteStart(client, mms_stat)) != 0) {
+                break;
+            }
+            mms_stat->ack = MQTT_MSG_ACK;
+        }
+        FALL_THROUGH;
 
         case MQTT_MSG_ACK:
         {
@@ -1453,7 +1450,7 @@ wait_again:
 #endif
 
     /* no data read or ack done, then reset state */
-    if (mms_stat->read == MQTT_MSG_WAIT || mms_stat->read == MQTT_MSG_ACK) {
+    if (mms_stat->read == MQTT_MSG_WAIT) {
         mms_stat->read = MQTT_MSG_BEGIN;
     }
 
