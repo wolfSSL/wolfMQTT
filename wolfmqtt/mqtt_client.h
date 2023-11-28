@@ -115,7 +115,7 @@ enum MqttClientFlags {
 WOLFMQTT_API word32 MqttClient_Flags(struct _MqttClient *client,  word32 mask, word32 flags);
 
 typedef enum _MqttPkStat {
-    MQTT_PK_BEGIN,
+    MQTT_PK_BEGIN = 0,
     MQTT_PK_READ_HEAD,
     MQTT_PK_READ
 } MqttPkStat;
@@ -131,6 +131,9 @@ typedef struct _MqttSk {
     int pos;   /* position inside current buffer */
     int len;   /* length of current segment being sent */
     int total; /* number bytes sent or received */
+
+    /* status bit for if client read or write is active */
+    byte isActive:1;
 } MqttSk;
 
 #ifdef WOLFMQTT_DISCONNECT_CB

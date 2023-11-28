@@ -34,7 +34,9 @@ static int mStopRead = 0;
 
 /* Maximum size for network read/write callbacks. There is also a v5 define that
    describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 
 #ifdef WOLFMQTT_PROPERTY_CB
 #define MAX_CLIENT_ID_LEN 64
@@ -504,10 +506,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
         if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
             WOLFMQTT_FREE(mqttCtx->publish.buffer);
+            mqttCtx->publish.buffer = NULL;
+            mqttCtx->pub_file = NULL; /* don't try and send file again */
         }
 
-        PRINTF("MQTT Publish: Topic %s, %s (%d)",
-            mqttCtx->publish.topic_name,
+        PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+            mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
             MqttClient_ReturnCodeToString(rc), rc);
     #ifdef WOLFMQTT_V5
         if (mqttCtx->qos > 0) {
@@ -572,8 +576,8 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 mqttCtx->publish.total_len = (word16)rc;
                 rc = MqttClient_Publish(&mqttCtx->client,
                        &mqttCtx->publish);
-                PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                    mqttCtx->publish.topic_name,
+                PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                    mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                     MqttClient_ReturnCodeToString(rc), rc);
             }
         }

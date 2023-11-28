@@ -55,7 +55,9 @@
 #include "examples/mqttnet.h"
 
 /* Configuration */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE         FIRMWARE_MAX_PACKET
+#endif
 
 /* Locals */
 static int mStopRead = 0;

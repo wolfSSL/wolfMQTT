@@ -56,7 +56,9 @@
 #include "examples/mqttnet.h"
 
 /* Configuration */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE         FIRMWARE_MAX_PACKET
+#endif
 
 /* Locals */
 static int mStopRead = 0;
@@ -453,8 +455,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
                 return rc;
             }
 
-            PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name,
+            PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                 MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;

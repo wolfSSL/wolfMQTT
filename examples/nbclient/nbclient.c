@@ -38,7 +38,9 @@ static int mTestDone = 0;
 /* Configuration */
 
 /* Maximum size for network read/write callbacks. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 
 #ifdef WOLFMQTT_PROPERTY_CB
 #define MAX_CLIENT_ID_LEN 64
@@ -444,10 +446,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
                 if ((mqttCtx->pub_file) && (mqttCtx->publish.buffer)) {
                     WOLFMQTT_FREE(mqttCtx->publish.buffer);
+                    mqttCtx->publish.buffer = NULL;
+                    mqttCtx->pub_file = NULL; /* don't try and send file again */
                 }
 
-                PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                    mqttCtx->publish.topic_name,
+                PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                    mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                     MqttClient_ReturnCodeToString(rc), rc);
                 if (rc != MQTT_CODE_SUCCESS) {
                     goto disconn;

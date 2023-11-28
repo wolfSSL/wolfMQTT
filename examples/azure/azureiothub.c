@@ -76,7 +76,9 @@ static int mTestDone = 0;
  * https://azure.microsoft.com/en-us/documentation/articles/iot-hub-sas-tokens/#using-sas-tokens-as-a-device
  * https://docs.microsoft.com/en-us/azure/iot-hub/iot-hub-mqtt-support
  */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE         1024    /* Maximum size for network read/write callbacks */
+#endif
 #define AZURE_API_VERSION       "?api-version=2018-06-30"
 #define AZURE_HOST              "wolfMQTT.azure-devices.net"
 #define AZURE_DEVICE_ID         "demoDevice"
@@ -437,8 +439,9 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             if (rc == MQTT_CODE_CONTINUE) {
                 return rc;
             }
-            PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                mqttCtx->publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+            PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
+                MqttClient_ReturnCodeToString(rc), rc);
             if (rc != MQTT_CODE_SUCCESS) {
                 goto disconn;
             }
@@ -494,8 +497,8 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                         mqttCtx->publish.total_len = (word16)rc;
 
                         rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
-                        PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                            mqttCtx->publish.topic_name,
+                        PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                            mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                             MqttClient_ReturnCodeToString(rc), rc);
                     }
                 }
