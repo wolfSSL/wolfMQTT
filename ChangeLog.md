@@ -1,6 +1,15 @@
 ## Release Notes
 ### v1.17.1 (11/29/2023)
+Release 1.17.1 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
 
+* Include stdint.h in userio_template.h by @lealem47 in #371
+* Improvements to multithread locking and tests. by @dgarske in #369
+* Cleanup executable status on src files. by @philljj in #372
+* Close socket on error in NetConnect by @embhorn in #375
+* Fixes for non-blocking with larger payload and improvements to the test and examples by @dgarske in #373
+* Add MQTT-SN CI tests by @embhorn in #376
+* Fix Wild read in MqttProps_Free by @embhorn in #377
 
 ### v1.17.0 (11/2/2023)
 Release 1.17.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
