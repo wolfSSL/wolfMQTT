@@ -1,4 +1,6 @@
 ## Release Notes
+### v1.17.1 (11/29/2023)
+
 
 ### v1.17.0 (11/2/2023)
 Release 1.17.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
