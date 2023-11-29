@@ -10,6 +10,8 @@ https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assur
 * Fixes for non-blocking with larger payload and improvements to the test and examples by @dgarske in #373
 * Add MQTT-SN CI tests by @embhorn in #376
 * Fix Wild read in MqttProps_Free by @embhorn in #377
+* Fix fuzzer issues in MqttDecode_Props by @embhorn in #378
+
 
 ### v1.17.0 (11/2/2023)
 Release 1.17.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
