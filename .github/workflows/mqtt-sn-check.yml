@@ -1,0 +1,103 @@
+name: MQTT-SN Build Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Install dependencies
+      run: |
+        # Don't prompt for anything
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        # Install mosquitto
+        sudo apt-get install -y mosquitto bubblewrap
+
+    - name: Setup mosquitto broker
+      run: |
+        # Disable default broker daemon
+        sudo service mosquitto stop
+        sleep 1
+        mosquitto -v &> ~/broker.log &
+        sleep 1
+
+    - uses: actions/checkout@master
+      with:
+        repository: eclipse/paho.mqtt-sn.embedded-c
+        path: gateway
+    - name: Build gateway
+      working-directory: ./gateway/MQTTSNGateway
+      run: ./build.sh udp -DDEBUG -DDEBUG_NW
+    - name: Write config to change broker
+      working-directory: ./gateway/MQTTSNGateway/bin
+      run: |
+        printf "GatewayID=1\nGatewayName=PahoGateway-01\nMaxNumberOfClients=30\nKeepAlive=60\nBrokerName=localhost\nBrokerPortNo=1883\nAggregatingGateway=NO\nQoS-1=NO\nForwarder=NO\nPredefinedTopic=NO\nClientAuthentication=NO\nGatewayPortNo=10000\nMulticastPortNo=1883\nMulticastIP=225.1.1.1\nMulticastTTL=1\n" > gateway.conf
+    - name: Display gateway config
+      working-directory: ./gateway/MQTTSNGateway/bin
+      run: more gateway.conf
+    - name: Run gateway
+      working-directory: ./gateway/MQTTSNGateway/bin
+      run: sudo ./MQTT-SNGateway &> ~/gateway.log &
+           sleep 1
+
+    # This is some debug info useful if something goes wrong
+    - name: Show network status
+      run: |
+        sudo ifconfig
+        sudo route
+        sudo netstat -tulpan
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl
+      run: ./configure --enable-enckeys
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+
+    - uses: actions/checkout@master
+    - name: wolfmqtt autogen
+      run: ./autogen.sh
+
+    - name: wolfmqtt configure with SN Enabled
+      run: |
+        export WOLFMQTT_NO_EXTERNAL_BROKER_TESTS=1
+        ./configure --enable-sn
+    - name: wolfmqtt make
+      run: make
+
+    - name: test SN Client
+      run: ./examples/sn-client/sn-client -T
+
+    # Cleanup
+    - name: Stop gateway
+      if: failure() || cancelled()
+      run: |
+        sudo kill -2 $(pgrep -f "MQTT-SNGateway")
+        sleep 3
+        sudo kill -2 $(pgrep -f "mosquitto")
+        sleep 1
+
+    # capture logs on failure
+    - name: Show logs on failure
+      if: failure() || cancelled()
+      run: |
+        sudo cat ~/gateway.log
+        sudo cat ~/broker.log
