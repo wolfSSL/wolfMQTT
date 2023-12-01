@@ -245,7 +245,13 @@ exit:
 
     if (rc == 0) {
         /* Return values */
-        if (p_msgBuf) *p_msgBuf = msgBuf;
+        if (p_msgBuf) {
+            *p_msgBuf = msgBuf;
+        }
+        else {
+            if (msgBuf) WOLFMQTT_FREE(msgBuf);
+        }
+
         if (p_msgLen) *p_msgLen = msgLen;
     }
     else {

@@ -454,6 +454,110 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
     return rc;
 }
 
+/* Helper for clearing the contents of an object buffer based on packet type */
+static void MqttSNClient_PacketReset(SN_MsgType packet_type, void* packet_obj)
+{
+    size_t objSz = 0;
+    size_t offset = sizeof(MqttMsgStat);
+    switch (packet_type) {
+        case SN_MSG_TYPE_ADVERTISE:
+            objSz = sizeof(SN_Advertise);
+            break;
+        case SN_MSG_TYPE_SEARCHGW:
+            objSz = sizeof(SN_SearchGw);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_GWINFO:
+            objSz = sizeof(SN_GwInfo);
+            break;
+        case SN_MSG_TYPE_CONNECT:
+            objSz = sizeof(SN_Connect);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_CONNACK:
+            objSz = sizeof(SN_ConnectAck);
+            break;
+        case SN_MSG_TYPE_WILLTOPICREQ:
+        case SN_MSG_TYPE_WILLTOPIC:
+        case SN_MSG_TYPE_WILLMSGREQ:
+        case SN_MSG_TYPE_WILLMSG:
+            objSz = sizeof(SN_Will);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_REGISTER:
+            objSz = sizeof(SN_Register);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_REGACK:
+            objSz = sizeof(SN_RegAck);
+            break;
+        case SN_MSG_TYPE_PUBLISH:
+            objSz = sizeof(SN_Publish);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_PUBACK:
+        case SN_MSG_TYPE_PUBCOMP:
+        case SN_MSG_TYPE_PUBREC:
+        case SN_MSG_TYPE_PUBREL:
+            objSz = sizeof(SN_PublishResp);
+            break;
+        case SN_MSG_TYPE_SUBSCRIBE:
+            objSz = sizeof(SN_Subscribe);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_SUBACK:
+            objSz = sizeof(SN_SubAck);
+            break;
+        case SN_MSG_TYPE_UNSUBSCRIBE:
+            objSz = sizeof(SN_Unsubscribe);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_UNSUBACK:
+            objSz = sizeof(SN_UnsubscribeAck);
+            break;
+        case SN_MSG_TYPE_PING_REQ:
+        case SN_MSG_TYPE_PING_RESP:
+            objSz = sizeof(SN_PingReq);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_DISCONNECT:
+            objSz = sizeof(SN_Disconnect);
+            break;
+        case SN_MSG_TYPE_WILLTOPICUPD:
+        case SN_MSG_TYPE_WILLTOPICRESP:
+        case SN_MSG_TYPE_WILLMSGUPD:
+        case SN_MSG_TYPE_WILLMSGRESP:
+            objSz = sizeof(SN_Will);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
+            break;
+        case SN_MSG_TYPE_ENCAPMSG:
+        case SN_MSG_TYPE_ANY:
+        default:
+            break;
+    } /* switch (packet_type) */
+    if (objSz > offset) {
+        XMEMSET((byte*)packet_obj + offset, 0, objSz - offset);
+    }
+}
+
 static int SN_Client_WaitType(MqttClient *client, void* packet_obj,
     byte wait_type, word16 wait_packet_id, int timeout_ms)
 {
@@ -561,6 +665,9 @@ wait_again:
             if (rc < 0) {
                 break;
             }
+
+            /* Clear shared union for next call */
+            MqttSNClient_PacketReset(packet_type, &client->msg);
 
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Read Packet: Len %d, Type %d, ID %d",
@@ -682,13 +789,6 @@ wait_again:
         return rc;
     }
 #endif
-
-    /* Clear shared union for next call */
-    if ((MqttObject*)use_packet_obj == &client->msg) {
-        /* reset the members, but not the stat */
-        XMEMSET(((byte*)&client->msg.stat) + sizeof(client->msg.stat), 0,
-            sizeof(client->msg)-sizeof(client->msg.stat));
-    }
 
     if (rc < 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT
