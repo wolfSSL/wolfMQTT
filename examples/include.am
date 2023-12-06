@@ -36,11 +36,20 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
 if BUILD_SN
 noinst_HEADERS +=  examples/sn-client/sn-client.h
 endif
+if HAVE_LIBCURL
+noinst_HEADERS +=  examples/mqttcurl.h
+endif
 
 # MQTT Client Example
+if HAVE_LIBCURL
+examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
+                                              examples/mqttcurl.c \
+                                              examples/mqttexample.c
+else
 examples_mqttclient_mqttclient_SOURCES      = examples/mqttclient/mqttclient.c \
                                               examples/mqttnet.c \
                                               examples/mqttexample.c
+endif
 examples_mqttclient_mqttclient_LDADD        = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_DEPENDENCIES = src/libwolfmqtt.la
 examples_mqttclient_mqttclient_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)

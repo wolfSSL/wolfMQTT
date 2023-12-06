@@ -2944,6 +2944,10 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (System resource failed)";
         case MQTT_CODE_ERROR_NOT_FOUND:
             return "Error (Not found)";
+#if defined(ENABLE_MQTT_CURL)
+        case MQTT_CODE_ERROR_CURL:
+            return "Error (libcurl)";
+#endif
 
 #ifdef WOLFMQTT_V5
         /* MQTT v5 Reason code strings */

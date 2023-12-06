@@ -194,6 +194,10 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_ERROR_CALLBACK = -13,
     MQTT_CODE_ERROR_SYSTEM = -14,
     MQTT_CODE_ERROR_NOT_FOUND = -15,
+#if defined(ENABLE_MQTT_CURL)
+    MQTT_CODE_ERROR_CURL = -16, /* An error in libcurl that is not clearly
+                                 * a network, memory, TLS, or system error. */
+#endif
 
     MQTT_CODE_CONTINUE = -101,
     MQTT_CODE_STDIN_WAKE = -102,

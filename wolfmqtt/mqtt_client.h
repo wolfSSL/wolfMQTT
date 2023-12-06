@@ -40,7 +40,11 @@
 #endif
 #include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_packet.h"
-#include "wolfmqtt/mqtt_socket.h"
+#ifdef ENABLE_MQTT_CURL
+    #include "wolfmqtt/mqtt_curl.h"
+#else
+    #include "wolfmqtt/mqtt_socket.h"
+#endif
 
 #ifdef WOLFMQTT_SN
 #include "wolfmqtt/mqtt_sn_packet.h"

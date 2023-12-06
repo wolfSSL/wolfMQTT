@@ -169,6 +169,24 @@ AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required a
 
 fi
 
+# libcurl support
+AC_ARG_ENABLE([curl],
+    [AS_HELP_STRING([--enable-curl],[Enable curl easy socket backend  (default: disabled)])],
+    [ ENABLED_CURL=$enableval ],
+    [ ENABLED_CURL=no ]
+    )
+
+if test "x$ENABLED_CURL" = "xyes"; then
+    if test "x$ENABLED_TLS" = "xyes"; then
+        AC_MSG_ERROR([--enable-tls and --enable-curl are incompatible])
+    fi
+
+    AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_CURL"
+
+    AC_CHECK_LIB([curl],[curl_easy_init],,[AC_MSG_ERROR([libcurl is required and wasn't found on the system. It can be obtained from https://curl.se/download.html.])])
+
+fi
+
 
 # Non-Blocking support
 AC_ARG_ENABLE([nonblock],
@@ -310,6 +328,7 @@ fi
 
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
+AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])

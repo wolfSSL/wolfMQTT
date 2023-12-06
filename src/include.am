@@ -4,9 +4,16 @@
 
 
 lib_LTLIBRARIES+=  src/libwolfmqtt.la
+
+if HAVE_LIBCURL
+src_libwolfmqtt_la_SOURCES = src/mqtt_client.c \
+                             src/mqtt_packet.c \
+                             src/mqtt_curl.c
+else
 src_libwolfmqtt_la_SOURCES = src/mqtt_client.c \
                              src/mqtt_packet.c \
                              src/mqtt_socket.c
+endif
 
 if BUILD_SN
 src_libwolfmqtt_la_SOURCES += src/mqtt_sn_client.c \

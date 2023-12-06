@@ -235,6 +235,10 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
     #ifdef HAVE_PQC
         PRINTF("-Q <str>    Use Key Share with post-quantum algorithm");
     #endif
+#elif defined (ENABLE_MQTT_CURL)
+        PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
+                MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
+        PRINTF("-A <file>   Load CA (validate peer)");
 #else
         PRINTF("-p <num>    Port to connect on, default: %d",
              MQTT_DEFAULT_PORT);
@@ -287,6 +291,9 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
 #ifdef WOLFMQTT_DEFAULT_TLS
     mqttCtx->use_tls = WOLFMQTT_DEFAULT_TLS;
 #endif
+#ifdef ENABLE_MQTT_CURL
+    mqttCtx->ca_file = NULL;
+#endif
     mqttCtx->app_name = "mqttclient";
     mqttCtx->message = DEFAULT_MESSAGE;
 }
@@ -295,6 +302,11 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 {
     int rc;
 
+    #ifdef ENABLE_MQTT_CURL
+        #define MQTT_CURL_ARGS "A:"
+    #else
+        #define MQTT_CURL_ARGS ""
+    #endif
     #ifdef ENABLE_MQTT_TLS
         #define MQTT_TLS_ARGS "c:A:K:S;Q:"
     #else
@@ -307,7 +319,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     #endif
 
     while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rtd" \
-            MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
+            MQTT_CURL_ARGS MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
         switch ((char)rc) {
         case '?' :
             mqtt_show_usage(mqttCtx);
@@ -387,6 +399,11 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             mqttCtx->debug_on = 1;
             break;
 
+    #if defined (ENABLE_MQTT_CURL)
+        case 'A':
+            mqttCtx->ca_file = myoptarg;
+            break;
+    #endif /* ENABLE_MQTT_CURL */
     #ifdef ENABLE_MQTT_TLS
         case 'A':
             mTlsCaFile = myoptarg;
@@ -412,7 +429,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             PRINTF("To use '-Q', build wolfSSL with --with-liboqs");
         #endif
             break;
-    #endif
+    #endif /* ENABLE_MQTT_TLS */
 
     #ifdef WOLFMQTT_V5
         case 'P':
