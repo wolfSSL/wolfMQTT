@@ -441,6 +441,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
 
     if (port == MQTT_SECURE_PORT) { use_tls = 1; }
 
+    /* Toggle with option, or put behind debug define? */
     res = curl_easy_setopt(ctx->curl, CURLOPT_VERBOSE, 1L);
 
     if (res != CURLE_OK) {
@@ -636,7 +637,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 
 #if defined(WOLFMQTT_DEBUG_SOCKET)
-    PRINTF("ctx->curl = %lld, sockfd = %d", (long long) ctx->curl, sockfd);
+    PRINTF("ctx->curl = %p, sockfd = %d", (void *)ctx->curl, sockfd);
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
@@ -703,7 +704,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
 
 #if defined(WOLFMQTT_DEBUG_SOCKET)
-    PRINTF("ctx->curl = %lld, sockfd = %d", (long long) ctx->curl, sockfd);
+    PRINTF("ctx->curl = %p, sockfd = %d", (void *)ctx->curl, sockfd);
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire

@@ -26,6 +26,10 @@
     extern "C" {
 #endif
 
+#ifdef ENABLE_MQTT_CURL
+    #include <curl/curl.h>
+#endif
+
 #include "examples/mqttexample.h"
 #include "examples/mqttport.h"
 

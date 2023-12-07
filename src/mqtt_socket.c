@@ -34,6 +34,10 @@
     #include <errno.h>
 #endif
 
+#ifdef ENABLE_MQTT_CURL
+    #include <curl/curl.h>
+#endif
+
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_socket.h"
 
@@ -102,6 +106,10 @@ int MqttSocket_Init(MqttClient *client, MqttNet *net)
 {
     int rc = MQTT_CODE_ERROR_BAD_ARG;
     if (client) {
+    #ifdef ENABLE_MQTT_CURL
+        curl_global_init(CURL_GLOBAL_DEFAULT);
+    #endif
+
         client->net = net;
         MqttClient_Flags(client, (MQTT_CLIENT_FLAG_IS_CONNECTED |
             MQTT_CLIENT_FLAG_IS_TLS), 0);;
@@ -534,6 +542,10 @@ int MqttSocket_Disconnect(MqttClient *client)
             rc = client->net->disconnect(client->net->context);
         }
         MqttClient_Flags(client, MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
+
+    #ifdef ENABLE_MQTT_CURL
+        curl_global_cleanup();
+    #endif
     }
 #ifdef WOLFMQTT_DEBUG_SOCKET
     PRINTF("MqttSocket_Disconnect: Rc=%d", rc);

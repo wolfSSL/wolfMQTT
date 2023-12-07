@@ -32,11 +32,7 @@
 #endif
 
 #include "wolfmqtt/mqtt_types.h"
-#ifdef ENABLE_MQTT_CURL
-    #include "wolfmqtt/mqtt_curl.h"
-#else
-    #include "wolfmqtt/mqtt_socket.h"
-#endif
+#include "wolfmqtt/mqtt_socket.h"
 
 
 /* Size of a data length elements in protocol */

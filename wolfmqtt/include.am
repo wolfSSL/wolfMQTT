@@ -11,9 +11,6 @@ nobase_include_HEADERS+= \
                          wolfmqtt/visibility.h \
                          wolfmqtt/options.h \
                          wolfmqtt/vs_settings.h
-if HAVE_LIBCURL
-nobase_include_HEADERS+= wolfmqtt/mqtt_curl.h
-endif
 
 if BUILD_SN
 nobase_include_HEADERS+= wolfmqtt/mqtt_sn_client.h \
