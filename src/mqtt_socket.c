@@ -55,7 +55,7 @@
 
 
 /* Public Functions */
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
 int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     void *ptr)
 {
@@ -100,7 +100,7 @@ int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     }
     return rc;
 }
-#endif
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
 
 int MqttSocket_Init(MqttClient *client, MqttNet *net)
 {
@@ -113,7 +113,7 @@ int MqttSocket_Init(MqttClient *client, MqttNet *net)
         client->net = net;
         MqttClient_Flags(client, (MQTT_CLIENT_FLAG_IS_CONNECTED |
             MQTT_CLIENT_FLAG_IS_TLS), 0);;
-    #ifdef ENABLE_MQTT_TLS
+    #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
         client->tls.ctx = NULL;
         client->tls.ssl = NULL;
         client->tls.timeout_ms = client->cmd_timeout_ms;
@@ -132,7 +132,7 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 {
     int rc;
 
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;
         client->tls.sockRcWrite = 0; /* init value */
@@ -162,7 +162,7 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
         }
     }
     else
-#endif /* ENABLE_MQTT_TLS */
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
     {
         rc = client->net->write(client->net->context, buf, buf_len,
             timeout_ms);
@@ -234,7 +234,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 {
     int rc;
 
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms = timeout_ms;
         client->tls.sockRcRead = 0; /* init value */
@@ -267,7 +267,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         }
     }
     else
-#endif /* ENABLE_MQTT_TLS */
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
     {
         rc = client->net->read(client->net->context, buf, buf_len, timeout_ms);
     }
@@ -394,7 +394,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
     }
 
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
     if (use_tls) {
         if (client->tls.ctx == NULL) {
         #ifdef DEBUG_WOLFSSL
@@ -510,7 +510,7 @@ exit:
 
 #else
     (void)cb;
-#endif /* ENABLE_MQTT_TLS */
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
     PRINTF("MqttSocket_Connect: Rc=%d", rc);
@@ -523,7 +523,8 @@ int MqttSocket_Disconnect(MqttClient *client)
 {
     int rc = MQTT_CODE_SUCCESS;
     if (client) {
-    #ifdef ENABLE_MQTT_TLS
+    #if defined(ENABLE_MQTT_TLS)
+        #if !defined(ENABLE_MQTT_CURL)
         if (client->tls.ssl) {
             wolfSSL_free(client->tls.ssl);
             client->tls.ssl = NULL;
@@ -533,6 +534,7 @@ int MqttSocket_Disconnect(MqttClient *client)
             client->tls.ctx = NULL;
         }
         wolfSSL_Cleanup();
+        #endif
         MqttClient_Flags(client,
                 (MQTT_CLIENT_FLAG_IS_TLS | MQTT_CLIENT_FLAG_IS_DTLS), 0);
     #endif

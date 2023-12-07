@@ -148,7 +148,7 @@ typedef struct _MQTTCtx {
     const char* message;
     const char* pub_file;
     const char* client_id;
-#if defined (ENABLE_MQTT_CURL)
+#if defined (ENABLE_MQTT_TLS)
     const char* ca_file;
 #endif
     byte *tx_buf, *rx_buf;

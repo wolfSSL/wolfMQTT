@@ -429,20 +429,17 @@ mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms)
 }
 
 static int
-mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
+mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
     int timeout_ms)
 {
     CURLcode res = 0;
-    int      use_tls = 0;
 
-    if (ctx == NULL) {
+    if (sock == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (port == MQTT_SECURE_PORT) { use_tls = 1; }
-
     /* Toggle with option, or put behind debug define? */
-    res = curl_easy_setopt(ctx->curl, CURLOPT_VERBOSE, 1L);
+    res = curl_easy_setopt(sock->curl, CURLOPT_VERBOSE, 1L);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_setopt(VERBOSE, 1L) returned: %d, %s",
@@ -451,7 +448,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
     }
 
     if (timeout_ms != 0) {
-        res = curl_easy_setopt(ctx->curl, CURLOPT_CONNECTTIMEOUT_MS,
+        res = curl_easy_setopt(sock->curl, CURLOPT_CONNECTTIMEOUT_MS,
                                timeout_ms);
 
         if (res != CURLE_OK) {
@@ -460,7 +457,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
             return MQTT_CODE_ERROR_CURL;
         }
 
-        res = curl_easy_setopt(ctx->curl, CURLOPT_TIMEOUT_MS,
+        res = curl_easy_setopt(sock->curl, CURLOPT_TIMEOUT_MS,
                                timeout_ms);
 
         if (res != CURLE_OK) {
@@ -470,7 +467,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         }
     }
 
-    res = curl_easy_setopt(ctx->curl, CURLOPT_URL, host);
+    res = curl_easy_setopt(sock->curl, CURLOPT_URL, host);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_setopt(URL, %s) returned: %d",
@@ -478,7 +475,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         return MQTT_CODE_ERROR_CURL;
     }
 
-    res = curl_easy_setopt(ctx->curl, CURLOPT_PORT, port);
+    res = curl_easy_setopt(sock->curl, CURLOPT_PORT, port);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_setopt(PORT, %d) returned: %d",
@@ -486,9 +483,10 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         return MQTT_CODE_ERROR_CURL;
     }
 
-    if (use_tls) {
+    #ifdef ENABLE_MQTT_TLS
+    if (sock->mqttCtx->use_tls) {
         /* Set TLS specific options. */
-        res = curl_easy_setopt(ctx->curl, CURLOPT_SSLVERSION,
+        res = curl_easy_setopt(sock->curl, CURLOPT_SSLVERSION,
                                CURL_SSLVERSION_TLSv1_2);
 
         if (res != CURLE_OK) {
@@ -498,7 +496,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         }
 
         /* With CURLOPT_CONNECT_ONLY this means do TLS by default. */
-        res = curl_easy_setopt(ctx->curl, CURLOPT_DEFAULT_PROTOCOL,
+        res = curl_easy_setopt(sock->curl, CURLOPT_DEFAULT_PROTOCOL,
                                "https");
 
         if (res != CURLE_OK) {
@@ -508,9 +506,9 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         }
 
         /* Set path to Certificate Authority (CA) file bundle. */
-        if (ctx->mqttCtx->ca_file != NULL) {
-            res = curl_easy_setopt(ctx->curl, CURLOPT_CAINFO,
-                                   ctx->mqttCtx->ca_file);
+        if (sock->mqttCtx->ca_file != NULL) {
+            res = curl_easy_setopt(sock->curl, CURLOPT_CAINFO,
+                                   sock->mqttCtx->ca_file);
 
             if (res != CURLE_OK) {
                 PRINTF("error: curl_easy_setopt(CAINFO) returned: %d",
@@ -522,9 +520,9 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         /* Set path to dir holding CA files.
          * Unused at the moment. */
         /*
-        if (ctx->mqttCtx->ca_path != NULL) {
-            res = curl_easy_setopt(ctx->curl, CURLOPT_CAPATH,
-                                   ctx->mqttCtx->ca_path);
+        if (sock->mqttCtx->ca_path != NULL) {
+            res = curl_easy_setopt(sock->curl, CURLOPT_CAPATH,
+                                   sock->mqttCtx->ca_path);
 
             if (res != CURLE_OK) {
                 PRINTF("error: curl_easy_setopt(CAPATH) returned: %d",
@@ -535,7 +533,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
         */
 
         /* Require peer and host verification. */
-        res = curl_easy_setopt(ctx->curl, CURLOPT_SSL_VERIFYPEER, 1);
+        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYPEER, 1);
 
         if (res != CURLE_OK) {
             PRINTF("error: curl_easy_setopt(SSL_VERIFYPEER) returned: %d",
@@ -543,7 +541,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
             return MQTT_CODE_ERROR_CURL;
         }
 
-        res = curl_easy_setopt(ctx->curl, CURLOPT_SSL_VERIFYHOST, 2);
+        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2);
 
         if (res != CURLE_OK) {
             PRINTF("error: curl_easy_setopt(SSL_VERIFYHOST) returned: %d",
@@ -551,8 +549,9 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
             return MQTT_CODE_ERROR_CURL;
         }
     }
+    #endif /* ENABLE_MQTT_TLS */
 
-    res = curl_easy_setopt(ctx->curl, CURLOPT_CONNECT_ONLY, 1);
+    res = curl_easy_setopt(sock->curl, CURLOPT_CONNECT_ONLY, 1);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_setopt(CONNECT_ONLY, 1) returned: %d",
@@ -561,7 +560,7 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
     }
 
     /* Finally do the connection. */
-    res = curl_easy_perform(ctx->curl);
+    res = curl_easy_perform(sock->curl);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_perform returned: %d, %s", res,
@@ -575,38 +574,38 @@ mqttcurl_connect(SocketContext * ctx, const char* host, word16 port,
 static int NetConnect(void *context, const char* host, word16 port,
     int timeout_ms)
 {
-    SocketContext * ctx = (SocketContext*)context;
+    SocketContext * sock = (SocketContext*)context;
     int             rc = 0;
 
     if (context == NULL || host == NULL || *host == '\0') {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (ctx->mqttCtx == NULL) {
+    if (sock->mqttCtx == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
 #if defined(WOLFMQTT_DEBUG_SOCKET)
     PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, Use TLS %d",
-           host, port, timeout_ms, port == MQTT_SECURE_PORT);
+           host, port, timeout_ms, sock->mqttCtx->use_tls);
 #endif
 
-    ctx->curl = curl_easy_init();
+    sock->curl = curl_easy_init();
 
-    if (ctx->curl == NULL) {
+    if (sock->curl == NULL) {
         PRINTF("error: curl_easy_init returned NULL");
         return MQTT_CODE_ERROR_MEMORY;
     }
 
-    rc = mqttcurl_connect(ctx, host, port, timeout_ms);
+    rc = mqttcurl_connect(sock, host, port, timeout_ms);
 
     if (rc != MQTT_CODE_SUCCESS) {
-        curl_easy_cleanup(ctx->curl);
-        ctx->curl = NULL;
+        curl_easy_cleanup(sock->curl);
+        sock->curl = NULL;
         return rc;
     }
 
-    ctx->stat = SOCK_CONN;
+    sock->stat = SOCK_CONN;
     return MQTT_CODE_SUCCESS;
 }
 
@@ -614,7 +613,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
     CURLcode        res = 0;
-    SocketContext * ctx = (SocketContext*)context;
+    SocketContext * sock = (SocketContext*)context;
     size_t          sent = 0;
     curl_socket_t   sockfd = 0;
 
@@ -623,7 +622,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 
     /* get the active socket from libcurl */
-    res = curl_easy_getinfo(ctx->curl, CURLINFO_ACTIVESOCKET, &sockfd);
+    res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_getinfo(CURLINFO_ACTIVESOCKET) returned %d",
                res);
@@ -637,13 +636,13 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 
 #if defined(WOLFMQTT_DEBUG_SOCKET)
-    PRINTF("ctx->curl = %p, sockfd = %d", (void *)ctx->curl, sockfd);
+    PRINTF("sock->curl = %p, sockfd = %d", (void *)sock->curl, sockfd);
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
      * payload will be transfered in a single shot without buffering. */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
-        res = curl_easy_send(ctx->curl, buf, buf_len, &sent);
+        res = curl_easy_send(sock->curl, buf, buf_len, &sent);
 
         if (res == CURLE_OK) {
 #if defined(WOLFMQTT_DEBUG_SOCKET)
@@ -681,7 +680,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
     CURLcode        res = 0;
-    SocketContext * ctx = (SocketContext*)context;
+    SocketContext * sock = (SocketContext*)context;
     size_t          recvd = 0;
     curl_socket_t   sockfd = 0;
 
@@ -690,7 +689,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
 
     /* get the active socket from libcurl */
-    res = curl_easy_getinfo(ctx->curl, CURLINFO_ACTIVESOCKET, &sockfd);
+    res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_getinfo(CURLINFO_ACTIVESOCKET) returned %d",
                res);
@@ -704,13 +703,13 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
 
 #if defined(WOLFMQTT_DEBUG_SOCKET)
-    PRINTF("ctx->curl = %p, sockfd = %d", (void *)ctx->curl, sockfd);
+    PRINTF("sock->curl = %p, sockfd = %d", (void *)sock->curl, sockfd);
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
      * payload will be transfered in a single shot without buffering. */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
-        res = curl_easy_recv(ctx->curl, buf, buf_len, &recvd);
+        res = curl_easy_recv(sock->curl, buf, buf_len, &recvd);
 
         if (res == CURLE_OK) {
 #if defined(WOLFMQTT_DEBUG_SOCKET)
@@ -746,18 +745,18 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
 static int NetDisconnect(void *context)
 {
-    SocketContext * ctx = (SocketContext*)context;
+    SocketContext * sock = (SocketContext*)context;
 
-    if (ctx == NULL) {
+    if (sock == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    if (ctx->curl != NULL) {
+    if (sock->curl != NULL) {
 #if defined(WOLFMQTT_DEBUG_SOCKET)
         PRINTF("info: curl_easy_cleanup");
 #endif
-        curl_easy_cleanup(ctx->curl);
-        ctx->curl = NULL;
+        curl_easy_cleanup(sock->curl);
+        sock->curl = NULL;
     }
 
     return 0;

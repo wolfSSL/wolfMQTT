@@ -26,7 +26,9 @@
 
 #include "wolfmqtt/mqtt_client.h"
 
-#if defined(ENABLE_MQTT_TLS)
+/* This example only works with ENABLE_MQTT_TLS (wolfSSL library),
+ * and without ENABLE_MQTT_CURL. */
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
     #if !defined(WOLFSSL_USER_SETTINGS) && !defined(USE_WINDOWS_API)
         #include <wolfssl/options.h>
     #endif

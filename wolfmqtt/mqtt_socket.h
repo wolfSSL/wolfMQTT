@@ -104,12 +104,12 @@ WOLFMQTT_LOCAL int MqttSocket_Connect(struct _MqttClient *client,
         MqttTlsCb cb);
 WOLFMQTT_LOCAL int MqttSocket_Disconnect(struct _MqttClient *client);
 
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
 /* make these public for cases where user needs to create
  * WOLFSSL_CTX context and WOLFSSL object in the TLS callback */
 WOLFMQTT_API int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz, void *ptr);
 WOLFMQTT_API int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz, void *ptr);
-#endif
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
 
 #ifdef __cplusplus
     } /* extern "C" */

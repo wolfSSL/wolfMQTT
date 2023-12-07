@@ -177,14 +177,9 @@ AC_ARG_ENABLE([curl],
     )
 
 if test "x$ENABLED_CURL" = "xyes"; then
-    if test "x$ENABLED_TLS" = "xyes"; then
-        AC_MSG_ERROR([--enable-tls and --enable-curl are incompatible])
-    fi
-
     AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_CURL"
 
     AC_CHECK_LIB([curl],[curl_easy_init],,[AC_MSG_ERROR([libcurl is required and wasn't found on the system. It can be obtained from https://curl.se/download.html.])])
-
 fi
 
 
