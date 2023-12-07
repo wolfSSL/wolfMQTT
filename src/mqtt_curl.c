@@ -47,6 +47,8 @@
     #define WOLFMQTT_TEST_NONBLOCK_TIMES 1
 #endif
 
+#ifdef ENABLE_MQTT_CURL
+
 /* Public Functions */
 
 int MqttSocket_Init(MqttClient *client, MqttNet *net)
@@ -237,3 +239,5 @@ int MqttSocket_Disconnect(MqttClient *client)
 
     return rc;
 }
+
+#endif /* defined ENABLE_MQTT_CURL */

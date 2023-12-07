@@ -46,6 +46,9 @@ typedef struct _SocketContext {
     /* "self pipe" -> signal wake sleep() */
     SOCKET_T pfd[2];
 #endif
+#ifdef ENABLE_MQTT_CURL
+    CURL  *  curl;
+#endif
     MQTTCtx* mqttCtx;
 } SocketContext;
 
