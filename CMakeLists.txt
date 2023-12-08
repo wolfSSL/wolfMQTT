@@ -24,10 +24,14 @@ cmake_minimum_required(VERSION 3.16)
 project(wolfMQTT VERSION 1.17.1 LANGUAGES C)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/functions.cmake)
+
 set(MQTT_SOURCES
     src/mqtt_client.c
     src/mqtt_packet.c
     src/mqtt_socket.c
+    src/mqtt_sn_client.c
+    src/mqtt_sn_packet.c
     )
 
 # default to build shared library
@@ -79,17 +83,6 @@ else()
 endif()
 
 
-# TODO: add options
-# * tls
-# * sn
-# * nonblock
-# * timeout
-# * errorstrings
-# * stdincap
-# * v5
-# * discb
-# * mt
-
 set(WOLFMQTT_EXAMPLES "yes" CACHE BOOL
     "Build examples")
 
@@ -102,8 +95,124 @@ target_compile_definitions(wolfmqtt PRIVATE
     "BUILDING_CMAKE"
     )
 
-#TODO generate options file
-configure_file(wolfmqtt/options.h.in wolfmqtt/options.h)
+add_option(WOLFMQTT_TLS
+           "Enable TLS support with wolfSSL"
+           "yes" "yes;no")
+if (WOLFMQTT_TLS)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
+endif()
+
+add_option("WOLFMQTT_SN"
+           "Enable MQTT-SN support"
+           "no" "yes;no")
+if (WOLFMQTT_SN)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_SN")
+endif()
+
+add_option("WOLFMQTT_NONBLOCK"
+           "Enable non-blocking support"
+           "no" "yes;no")
+if (WOLFMQTT_NONBLOCK)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_NONBLOCK")
+endif()
+
+add_option(WOLFMQTT_TIMEOUT
+           "Enable timeout support"
+           "yes" "yes;no")
+if (NOT WOLFMQTT_TIMEOUT)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_NO_TIMEOUT")
+endif()
+           
+add_option(WOLFMQTT_ERRORSTRINGS
+           "Enable error strings"
+           "yes" "yes;no")
+if (NOT WOLFMQTT_ERRORSTRINGS)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_NO_ERROR_STRINGS")
+endif()
+
+add_option(WOLFMQTT_STDINCAP
+           "Enable examples STDIN capture"
+           "yes" "yes;no")
+if (NOT WOLFMQTT_STDINCAP)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_NO_STDIN_CAP")
+endif()
+
+add_option("WOLFMQTT_V5"
+           "Enable MQTT v5.0 support"
+           "no" "yes;no")
+if (WOLFMQTT_V5)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_V5")
+endif()
+
+add_option(WOLFMQTT_DISCB
+           "Enable disconnect callback"
+           "yes" "yes;no")
+if (WOLFMQTT_DISCB)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_DISCONNECT_CB")
+endif()
+
+add_option(WOLFMQTT_MT
+           "Enable multiple thread support"
+           "no" "yes;no")
+if (WOLFMQTT_MT)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_MULTITHREAD")
+endif()
+
+add_option(WOLFMQTT_CURL
+           "Enable curl easy socket backend"
+           "no" "yes;no")
+if (WOLFMQTT_CURL)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_CURL")
+endif()
+
+
+# generate options file
+message("Generating user options header...")
+if (${CMAKE_DISABLE_SOURCE_CHANGES})
+    set(WOLFMQTT_BUILD_OUT_OF_TREE_DEFAULT "${CMAKE_DISABLE_SOURCE_CHANGES}")
+else()
+    set(WOLFMQTT_BUILD_OUT_OF_TREE_DEFAULT "no")
+endif()
+
+set(WOLFMQTT_BUILD_OUT_OF_TREE "${WOLFMQTT_BUILD_OUT_OF_TREE_DEFAULT}" CACHE STRING
+    "Don't generate files in the source tree (default: ${WOLFMQTT_BUILD_OUT_OF_TREE_DEFAULT})")
+set_property(CACHE WOLFMQTT_BUILD_OUT_OF_TREE
+    PROPERTY STRINGS "yes;no")
+
+if (${WOLFMQTT_BUILD_OUT_OF_TREE})
+   set(WOLFMQTT_OUTPUT_BASE ${CMAKE_CURRENT_BINARY_DIR})
+else()
+   set(WOLFMQTT_OUTPUT_BASE ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+set(OPTION_FILE "${WOLFMQTT_OUTPUT_BASE}/wolfmqtt/options.h")
+
+file(REMOVE ${OPTION_FILE})
+
+file(APPEND ${OPTION_FILE} "/* wolfmqtt options.h\n")
+file(APPEND ${OPTION_FILE} " * generated from cmake configure options\n")
+file(APPEND ${OPTION_FILE} " *\n")
+file(APPEND ${OPTION_FILE} " * Copyright (C) 2006-2024 wolfSSL Inc.\n")
+file(APPEND ${OPTION_FILE} " *\n")
+file(APPEND ${OPTION_FILE} " * This file is part of wolfSSL.\n")
+file(APPEND ${OPTION_FILE} " *\n")
+file(APPEND ${OPTION_FILE} " */\n\n")
+file(APPEND ${OPTION_FILE} "#ifndef WOLFMQTT_OPTIONS_H\n")
+file(APPEND ${OPTION_FILE} "#define WOLFMQTT_OPTIONS_H\n\n\n")
+file(APPEND ${OPTION_FILE} "#ifdef __cplusplus\n")
+file(APPEND ${OPTION_FILE} "extern \"C\" {\n")
+file(APPEND ${OPTION_FILE} "#endif\n\n")
+
+add_to_options_file("${WOLFMQTT_DEFINITIONS}" "${OPTION_FILE}")
+# CMAKE_C_FLAGS is just a string of space-separated flags to pass to the C
+# compiler. We need to replace those spaces with semicolons in order to treat it
+# as a CMake list.
+string(REPLACE " " ";" CMAKE_C_FLAGS_LIST "${CMAKE_C_FLAGS}")
+add_to_options_file("${CMAKE_C_FLAGS_LIST}" "${OPTION_FILE}")
+
+file(APPEND ${OPTION_FILE} "\n#ifdef __cplusplus\n")
+file(APPEND ${OPTION_FILE} "}\n")
+file(APPEND ${OPTION_FILE} "#endif\n\n\n")
+file(APPEND ${OPTION_FILE} "#endif /* WOLFMQTT_OPTIONS_H */\n\n")
 
 if(WIN32)
     target_compile_definitions(wolfmqtt PRIVATE
