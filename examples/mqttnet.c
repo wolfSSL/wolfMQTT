@@ -432,7 +432,7 @@ static int
 mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
     int timeout_ms)
 {
-    CURLcode res = 0;
+    CURLcode res = CURLE_OK;
 
     if (sock == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -644,7 +644,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 static int NetWrite(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
-    CURLcode        res = 0;
+    CURLcode        res = CURLE_OK;
     SocketContext * sock = (SocketContext*)context;
     size_t          sent = 0;
     curl_socket_t   sockfd = 0;
@@ -711,7 +711,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 static int NetRead(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
-    CURLcode        res = 0;
+    CURLcode        res = CURLE_OK;
     SocketContext * sock = (SocketContext*)context;
     size_t          recvd = 0;
     curl_socket_t   sockfd = 0;
