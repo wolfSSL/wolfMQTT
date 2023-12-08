@@ -150,6 +150,8 @@ typedef struct _MQTTCtx {
     const char* client_id;
 #if defined (ENABLE_MQTT_TLS)
     const char* ca_file;
+    const char* mtls_keyfile;
+    const char* mtls_certfile;
 #endif
     byte *tx_buf, *rx_buf;
     int return_code;

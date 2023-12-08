@@ -517,6 +517,30 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
             }
         }
 
+        /* Set path to mutual TLS keyfile. */
+        if (sock->mqttCtx->mtls_keyfile != NULL) {
+            res = curl_easy_setopt(sock->curl, CURLOPT_SSLKEY,
+                                   sock->mqttCtx->mtls_keyfile);
+
+            if (res != CURLE_OK) {
+                PRINTF("error: curl_easy_setopt(CURLOPT_SSLKEY) returned: %d",
+                       res);
+                return MQTT_CODE_ERROR_CURL;
+            }
+        }
+
+        /* Set path to mutual TLS certfile. */
+        if (sock->mqttCtx->mtls_certfile != NULL) {
+            res = curl_easy_setopt(sock->curl, CURLOPT_SSLCERT,
+                                   sock->mqttCtx->mtls_certfile);
+
+            if (res != CURLE_OK) {
+                PRINTF("error: curl_easy_setopt(CURLOPT_SSLCERT) returned: %d",
+                       res);
+                return MQTT_CODE_ERROR_CURL;
+            }
+        }
+
         /* Set path to dir holding CA files.
          * Unused at the moment. */
         /*
@@ -532,7 +556,7 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
         }
         */
 
-        /* Require peer and host verification. */
+        /* Set peer and host verification. */
         res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYPEER, 1);
 
         if (res != CURLE_OK) {
@@ -541,7 +565,14 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
             return MQTT_CODE_ERROR_CURL;
         }
 
-        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2);
+        /* Only do server host verification when not running against
+         * localhost broker. */
+        if (XSTRCMP(host, "localhost") == 0) {
+            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 0);
+        }
+        else {
+            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2);
+        }
 
         if (res != CURLE_OK) {
             PRINTF("error: curl_easy_setopt(SSL_VERIFYHOST) returned: %d",

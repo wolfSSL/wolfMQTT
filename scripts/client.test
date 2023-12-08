@@ -73,6 +73,7 @@ then
     def_args="${def_args} -h localhost"
     tls_port_args="-p 18883"
     port_args="-p ${port}"
+    cacert_args="-A scripts/broker_test/ca-cert.pem"
     mutual_auth_args="-c certs/client-cert.pem -K certs/client-key.pem"
     ecc_mutual_auth_args="-c certs/client-ecc-cert.pem -K certs/ecc-client-key.pem"
 fi
@@ -95,23 +96,23 @@ RESULT=$?
 if test $has_tls == yes
 then
     # Run with TLS and QoS 0-2
-    ./examples/mqttclient/mqttclient $def_args $tls_port_args -t -q 0 $1
+    ./examples/mqttclient/mqttclient $def_args $cacert_args $tls_port_args -t -q 0 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0" && do_cleanup "-1"
 
-    ./examples/mqttclient/mqttclient $def_args $tls_port_args -t -q 1 $1
+    ./examples/mqttclient/mqttclient $def_args $cacert_args $tls_port_args -t -q 1 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=1" && do_cleanup "-1"
 
-    ./examples/mqttclient/mqttclient $def_args $tls_port_args -t -q 2 $1
+    ./examples/mqttclient/mqttclient $def_args $cacert_args $tls_port_args -t -q 2 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=2" && do_cleanup "-1"
 
-    ./examples/mqttclient/mqttclient $def_args $mutual_auth_args $tls_port_args -t -q 0 $1
+    ./examples/mqttclient/mqttclient $def_args $cacert_args $mutual_auth_args $tls_port_args -t -q 0 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0, RSA mutual auth" && do_cleanup "-1"
 
-    ./examples/mqttclient/mqttclient $def_args $ecc_mutual_auth_args $tls_port_args -t -q 0 $1
+    ./examples/mqttclient/mqttclient $def_args $cacert_args $ecc_mutual_auth_args $tls_port_args -t -q 0 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nMQTT Client failed! TLS=On, QoS=0, ECC mutual auth" && do_cleanup "-1"
 fi
