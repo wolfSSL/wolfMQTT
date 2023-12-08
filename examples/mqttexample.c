@@ -659,7 +659,8 @@ int mqtt_tls_cb(MqttClient* client)
             rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
                 sock->mqttCtx->mtls_certfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading certificate %s: %d (%s)", sock->mqttCtx->mtls_certfile,
+                PRINTF("Error loading certificate %s: %d (%s)",
+                    sock->mqttCtx->mtls_certfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
@@ -673,7 +674,8 @@ int mqtt_tls_cb(MqttClient* client)
             rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
                 sock->mqttCtx->mtls_keyfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading key %s: %d (%s)", sock->mqttCtx->mtls_keyfile,
+                PRINTF("Error loading key %s: %d (%s)",
+                    sock->mqttCtx->mtls_keyfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
@@ -782,7 +784,8 @@ int mqtt_dtls_cb(MqttClient* client) {
             rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
                 sock->mqttCtx->mtls_certfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading certificate %s: %d (%s)", sock->mqttCtx->mtls_certfile,
+                PRINTF("Error loading certificate %s: %d (%s)",
+                    sock->mqttCtx->mtls_certfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
@@ -790,7 +793,8 @@ int mqtt_dtls_cb(MqttClient* client) {
             rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
                 sock->mqttCtx->mtls_keyfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading key %s: %d (%s)", sock->mqttCtx->mtls_keyfile,
+                PRINTF("Error loading key %s: %d (%s)",
+                    sock->mqttCtx->mtls_keyfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }

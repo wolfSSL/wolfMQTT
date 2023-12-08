@@ -404,7 +404,7 @@ mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms)
 
     FD_SET(sockfd, &errfd);
 
-    if(for_recv) {
+    if (for_recv) {
         FD_SET(sockfd, &infd);
     }
     else {
@@ -438,7 +438,7 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* Toggle with option, or put behind debug define? */
+#ifdef DEBUG_WOLFMQTT
     res = curl_easy_setopt(sock->curl, CURLOPT_VERBOSE, 1L);
 
     if (res != CURLE_OK) {
@@ -446,6 +446,7 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
                res, curl_easy_strerror(res));
         return MQTT_CODE_ERROR_CURL;
     }
+#endif
 
     if (timeout_ms != 0) {
         res = curl_easy_setopt(sock->curl, CURLOPT_CONNECTTIMEOUT_MS,
@@ -671,7 +672,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
-     * payload will be transfered in a single shot without buffering. */
+     * payload will be transferred in a single shot without buffering. */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
         res = curl_easy_send(sock->curl, buf, buf_len, &sent);
 
@@ -738,7 +739,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
-     * payload will be transfered in a single shot without buffering. */
+     * payload will be transferred in a single shot without buffering. */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
         res = curl_easy_recv(sock->curl, buf, buf_len, &recvd);
 
