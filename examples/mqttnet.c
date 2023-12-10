@@ -387,7 +387,8 @@ static int NetRead(void *context, byte* buf, int buf_len,
 #define MQTT_CURL_NUM_RETRY (2)
 
 static int
-mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms)
+mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms,
+              int test_mode)
 {
     struct timeval tv;
     fd_set         infd;
@@ -406,6 +407,11 @@ mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms)
 
     if (for_recv) {
         FD_SET(sockfd, &infd);
+        #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+        if (!test_mode) {
+            FD_SET(STDIN, &infd);
+        }
+        #endif /* WOLFMQTT_ENABLE_STDIN_CAP */
     }
     else {
         FD_SET(sockfd, &outfd);
@@ -415,17 +421,25 @@ mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms)
 
     if (rc > 0) {
         if (for_recv && FD_ISSET(sockfd, &infd)) {
-            rc = 1;
+            return MQTT_CODE_CONTINUE;
         }
         else if (!for_recv && FD_ISSET(sockfd, &outfd)) {
-            rc = 1;
+            return MQTT_CODE_CONTINUE;
         }
+        #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+        else if (for_recv && !test_mode && FD_ISSET(STDIN, &infd)) {
+            return MQTT_CODE_STDIN_WAKE;
+        }
+        #endif /* WOLFMQTT_ENABLE_STDIN_CAP */
         else if (FD_ISSET(sockfd, &errfd)) {
-            rc = -1;
+            return MQTT_CODE_ERROR_NETWORK;
         }
     }
+    else if (rc == 0) {
+        return MQTT_CODE_ERROR_TIMEOUT;
+    }
 
-    return rc;
+    return MQTT_CODE_ERROR_NETWORK;
 }
 
 static int
@@ -434,7 +448,7 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
 {
     CURLcode res = CURLE_OK;
 
-    if (sock == NULL) {
+    if (sock == NULL || sock->curl == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
@@ -583,6 +597,34 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
     }
     #endif /* ENABLE_MQTT_TLS */
 
+    #if 0
+    /* Set proxy options.
+     * Unused at the moment. */
+    if (sock->mqttCtx->use_proxy != NULL) {
+        /* Set the proxy hostname or ip address string. Append
+         * ":[port num]" to the string to specify a port. */
+        res = curl_easy_setopt(sock->curl, CURLOPT_PROXY,
+                               sock->mqttCtx->proxy_str);
+
+        if (res != CURLE_OK) {
+            PRINTF("error: curl_easy_setopt(CURLOPT_PROXY, %s) returned: %d",
+                   res, sock->mqttCtx->proxy_str);
+            return MQTT_CODE_ERROR_CURL;
+        }
+
+        /* Set the proxy type. E.g. CURLPROXY_HTTP, CURLPROXY_HTTPS,
+         * CURLPROXY_HTTPS2, etc. */
+        res = curl_easy_setopt(sock->curl, CURLOPT_PROXYTYPE,
+                               CURLPROXY_HTTP);
+
+        if (res != CURLE_OK) {
+            PRINTF("error: curl_easy_setopt(CURLOPT_PROXYTYPE) returned: %d",
+                   res);
+            return MQTT_CODE_ERROR_CURL;
+        }
+    }
+    #endif
+
     res = curl_easy_setopt(sock->curl, CURLOPT_CONNECT_ONLY, 1);
 
     if (res != CURLE_OK) {
@@ -648,6 +690,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     SocketContext * sock = (SocketContext*)context;
     size_t          sent = 0;
     curl_socket_t   sockfd = 0;
+    int             wait_rc = 0;
 
     if (context == NULL || buf == NULL || buf_len == 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -672,26 +715,33 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
-     * payload will be transferred in a single shot without buffering. */
+     * payload will be transferred in a single shot without buffering.
+     * todo: add buffering? */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
         res = curl_easy_send(sock->curl, buf, buf_len, &sent);
 
         if (res == CURLE_OK) {
-#if defined(WOLFMQTT_DEBUG_SOCKET)
+            #if defined(WOLFMQTT_DEBUG_SOCKET)
             PRINTF("info: curl_easy_send(%d) returned: %d, %s", buf_len, res,
                    curl_easy_strerror(res));
-#endif
+            #endif
             break;
         }
 
         if (res == CURLE_AGAIN) {
-#if defined(WOLFMQTT_DEBUG_SOCKET)
+            #if defined(WOLFMQTT_DEBUG_SOCKET)
             PRINTF("info: curl_easy_send(%d) returned: %d, %s", buf_len, res,
                    curl_easy_strerror(res));
-#endif
+            #endif
 
-            if (mqttcurl_wait(sockfd, 0, timeout_ms) >= 0) {
+            wait_rc = mqttcurl_wait(sockfd, 0, timeout_ms,
+                                    sock->mqttCtx->test_mode);
+
+            if (wait_rc == MQTT_CODE_CONTINUE) {
                 continue;
+            }
+            else {
+                return wait_rc;
             }
         }
 
@@ -715,6 +765,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     SocketContext * sock = (SocketContext*)context;
     size_t          recvd = 0;
     curl_socket_t   sockfd = 0;
+    int             wait_rc = 0;
 
     if (context == NULL || buf == NULL || buf_len == 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -739,26 +790,33 @@ static int NetRead(void *context, byte* buf, int buf_len,
 #endif
 
     /* A very simple retry with timeout example. This assumes the entire
-     * payload will be transferred in a single shot without buffering. */
+     * payload will be transferred in a single shot without buffering.
+     * todo: add buffering? */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
         res = curl_easy_recv(sock->curl, buf, buf_len, &recvd);
 
         if (res == CURLE_OK) {
-#if defined(WOLFMQTT_DEBUG_SOCKET)
+            #if defined(WOLFMQTT_DEBUG_SOCKET)
             PRINTF("info: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
                    curl_easy_strerror(res));
-#endif
+            #endif
             break;
         }
 
         if (res == CURLE_AGAIN) {
-#if defined(WOLFMQTT_DEBUG_SOCKET)
+            #if defined(WOLFMQTT_DEBUG_SOCKET)
             PRINTF("info: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
                    curl_easy_strerror(res));
-#endif
+            #endif
 
-            if (mqttcurl_wait(sockfd, 1, timeout_ms) >= 0) {
+            wait_rc = mqttcurl_wait(sockfd, 1, timeout_ms,
+                                    sock->mqttCtx->test_mode);
+
+            if (wait_rc == MQTT_CODE_CONTINUE) {
                 continue;
+            }
+            else {
+                return wait_rc;
             }
         }
 
