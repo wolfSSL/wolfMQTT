@@ -368,3 +368,15 @@ To use wolfMQTT with libcurl and wolfSSL:
 - build libcurl with `--with-wolfssl` and install to `/usr/local`.
 
 Finally, build wolfMQTT with `--enable-curl`.
+
+### Supported Build Options
+
+The `--enable-curl` option works with these combinations:
+- `--enable-mt`
+- `--enable-nonblock`
+- `--enable-tls` (default enabled)
+- `--enable-timeout` (default enabled)
+
+However `--enable-curl` is incompatible and not supported with these options:
+- `--enable-all`
+- `--enable-sn`
