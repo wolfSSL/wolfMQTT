@@ -87,7 +87,7 @@ fi
 
 if test $has_tls == yes
 then
-    def_args="${def_args} -t"
+    def_args="${def_args} -A scripts/broker_test/ca-cert.pem -t"
 fi
 
 echo -e "Base args: $def_args"

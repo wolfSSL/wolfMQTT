@@ -242,6 +242,28 @@ then
 fi
 
 
+# libcurl support
+AC_ARG_ENABLE([curl],
+    [AS_HELP_STRING([--enable-curl],[Enable curl easy socket backend  (default: disabled)])],
+    [ ENABLED_CURL=$enableval ],
+    [ ENABLED_CURL=no ]
+    )
+
+if test "x$ENABLED_CURL" = "xyes"; then
+    if test "x$ENABLED_ALL" = "xyes"; then
+        AC_MSG_ERROR([--enable-all and --enable-curl are incompatible])
+    fi
+
+    if test "x$ENABLED_SN" = "xyes"; then
+        AC_MSG_ERROR([--enable-sn and --enable-curl are incompatible])
+    fi
+
+    AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_CURL"
+
+    AC_CHECK_LIB([curl],[curl_easy_init],,[AC_MSG_ERROR([libcurl is required and wasn't found on the system. It can be obtained from https://curl.se/download.html.])])
+fi
+
+
 # MQTT v5.0
 AC_ARG_ENABLE([v5],
     [AS_HELP_STRING([--enable-v5],[Enable MQTT v5.0 support (default: disabled)])],
@@ -310,6 +332,7 @@ fi
 
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
+AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
@@ -440,4 +463,5 @@ echo "   * Examples:                  $ENABLED_EXAMPLES"
 echo "   * Non-Blocking:              $ENABLED_NONBLOCK"
 echo "   * STDIN Capture:             $ENABLED_STDINCAP"
 echo "   * TLS:                       $ENABLED_TLS"
+echo "   * CURL:                      $ENABLED_CURL"
 echo "   * Multi-thread:              $ENABLED_MULTITHREAD"

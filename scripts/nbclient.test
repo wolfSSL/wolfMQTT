@@ -36,7 +36,7 @@ generate_port() { # function to produce a random port number
 
 # Check for TLS support
 has_tls=no
-./examples/multithread/multithread -? 2>&1 | grep -- 'Enable TLS'
+./examples/nbclient/nbclient -? 2>&1 | grep -- 'Enable TLS'
 if [ $? -eq 0 ]; then
     has_tls=yes
 fi
@@ -74,6 +74,7 @@ then
     def_args="${def_args} -h localhost"
     tls_port_args="-p 18883"
     port_args="-p ${port}"
+    cacert_args="-A scripts/broker_test/ca-cert.pem"
 fi
 
 echo -e "Base args: $def_args $port_args"
@@ -94,15 +95,15 @@ RESULT=$?
 if test $has_tls == yes
 then
     # Run with TLS and QoS 0-2
-    ./examples/nbclient/nbclient $def_args $tls_port_args -t -q 0 $1
+    ./examples/nbclient/nbclient $def_args $cacert_args $tls_port_args -t -q 0 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && do_cleanup "-1"
 
-    ./examples/nbclient/nbclient $def_args $tls_port_args -t -q 1 $1
+    ./examples/nbclient/nbclient $def_args $cacert_args $tls_port_args -t -q 1 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && do_cleanup "-1"
 
-    ./examples/nbclient/nbclient $def_args $tls_port_args -t -q 2 $1
+    ./examples/nbclient/nbclient $def_args $cacert_args $tls_port_args -t -q 2 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && do_cleanup "-1"
 fi

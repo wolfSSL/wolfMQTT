@@ -351,3 +351,32 @@ Since the broker and subscriber are still running, you can use `mqttclient` to p
 
 Congratulations! You have just published an MQTT message using TLS 1.3 with the `KYBER_LEVEL1` KEM and `FALCON_LEVEL1` signature scheme. To use the hybrid group, replace `KYBER_LEVEL1` with `P256_KYBER_LEVEL1`.
 
+
+## Curl Easy Socket Support
+
+wolfMQTT now supports using libcurl's easy socket interface as a backend.
+When enabled, wolfMQTT will use the libcurl API for the socket backend,
+and libcurl will use wolfSSL to negotiate TLS.
+This can be enabled with `--enable-curl`.
+
+At this time wolfMQTT's libcurl option supports both TLS and mTLS, but not Post-Quantum TLS.
+
+### How to use libcurl with wolfMQTT
+
+To use wolfMQTT with libcurl and wolfSSL:
+- build wolfssl with `--enable-curl` and install to `/usr/local`.
+- build libcurl with `--with-wolfssl` and install to `/usr/local`.
+
+Finally, build wolfMQTT with `--enable-curl`.
+
+### Supported Build Options
+
+The `--enable-curl` option works with these combinations:
+- `--enable-mt`
+- `--enable-nonblock`
+- `--enable-tls` (default enabled)
+- `--enable-timeout` (default enabled)
+
+However `--enable-curl` is incompatible and not supported with these options:
+- `--enable-all`
+- `--enable-sn`

@@ -26,6 +26,10 @@
     extern "C" {
 #endif
 
+#ifdef ENABLE_MQTT_CURL
+    #include <curl/curl.h>
+#endif
+
 #include "examples/mqttexample.h"
 #include "examples/mqttport.h"
 
@@ -45,6 +49,9 @@ typedef struct _SocketContext {
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
     /* "self pipe" -> signal wake sleep() */
     SOCKET_T pfd[2];
+#endif
+#ifdef ENABLE_MQTT_CURL
+    CURL  *  curl;
 #endif
     MQTTCtx* mqttCtx;
 } SocketContext;

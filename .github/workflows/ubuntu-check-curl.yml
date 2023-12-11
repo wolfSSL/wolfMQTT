@@ -1,0 +1,106 @@
+name: Ubuntu Build Test with Curl Support
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Install dependencies
+      run: |
+        # Don't prompt for anything
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        # Install mosquitto
+        sudo apt-get install -y mosquitto bubblewrap
+
+    - name: Setup mosquitto broker
+      run: |
+        # Disable default broker daemon
+        sudo service mosquitto stop
+        sleep 1
+
+    # This is some debug info useful if something goes wrong
+    - name: Show network status
+      run: |
+        sudo ifconfig
+        sudo route
+        sudo netstat -tulpan
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl
+      run: ./configure --enable-curl
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+
+    - uses: actions/checkout@master
+      with:
+        repository: curl/curl
+        path: curl
+    - name: curl autoreconf
+      working-directory: ./curl
+      run: autoreconf -fi
+    - name: curl configure
+      working-directory: ./curl
+      run: ./configure --with-wolfssl
+    - name: curl make
+      working-directory: ./curl
+      run: make
+    - name: curl make install
+      working-directory: ./curl
+      run: sudo make install
+
+    - uses: actions/checkout@master
+    - name: wolfmqtt autogen
+      run: ./autogen.sh
+
+    - name: wolfmqtt configure
+      run: ./configure
+    - name: wolfmqtt make
+      run: make
+    # Note: this will run the external tests for this CI only
+    - name: wolfmqtt make check
+      run: make check
+
+    - name: wolfmqtt configure with libCurl Enabled
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+      run: ./configure --enable-curl
+    - name: wolfmqtt make
+      run: make
+    - name: wolfmqtt make check
+      run: make check
+
+    - name: wolfmqtt configure with libCurl Enabled without TLS
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+      run: ./configure --enable-curl --disable-tls
+    - name: wolfmqtt make
+      run: make
+    - name: wolfmqtt make check
+      run: make check
+
+      # capture logs on failure
+    - name: Show logs on failure
+      if: failure() || cancelled()
+      run: |
+        cat test-suite.log
+        cat scripts/*.log
