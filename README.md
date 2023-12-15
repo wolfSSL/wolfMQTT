@@ -195,6 +195,17 @@ More about MQTT-SN examples in [examples/sn-client/README.md](examples/sn-client
 ### Multithread Example
 This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (10 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
 
+The multi-threading feature can also be used with the non-blocking socket (--enable-nb).
+
+If you are having issues with thread synchronization on Linux consider using not the conditional signal (`WOLFMQTT_NO_COND_SIGNAL`).
+
+### Atomic publish and subscribe examples
+In the `examples/pub-sub` folder, there are two simple client examples:
+* mqtt-pub - publishes to a topic
+* mqtt-sub - subscribes to a topic and waits for messages
+
+These examples are useful for quickly testing or scripting.
+
 ## Example Options
 The command line examples can be executed with optional parameters. To see a list of the available parameters, add the `-?`
 
@@ -340,3 +351,32 @@ Since the broker and subscriber are still running, you can use `mqttclient` to p
 
 Congratulations! You have just published an MQTT message using TLS 1.3 with the `KYBER_LEVEL1` KEM and `FALCON_LEVEL1` signature scheme. To use the hybrid group, replace `KYBER_LEVEL1` with `P256_KYBER_LEVEL1`.
 
+
+## Curl Easy Socket Support
+
+wolfMQTT now supports using libcurl's easy socket interface as a backend.
+When enabled, wolfMQTT will use the libcurl API for the socket backend,
+and libcurl will use wolfSSL to negotiate TLS.
+This can be enabled with `--enable-curl`.
+
+At this time wolfMQTT's libcurl option supports both TLS and mTLS, but not Post-Quantum TLS.
+
+### How to use libcurl with wolfMQTT
+
+To use wolfMQTT with libcurl and wolfSSL:
+- build wolfssl with `--enable-curl` and install to `/usr/local`.
+- build libcurl with `--with-wolfssl` and install to `/usr/local`.
+
+Finally, build wolfMQTT with `--enable-curl`.
+
+### Supported Build Options
+
+The `--enable-curl` option works with these combinations:
+- `--enable-mt`
+- `--enable-nonblock`
+- `--enable-tls` (default enabled)
+- `--enable-timeout` (default enabled)
+
+However `--enable-curl` is incompatible and not supported with these options:
+- `--enable-all`
+- `--enable-sn`

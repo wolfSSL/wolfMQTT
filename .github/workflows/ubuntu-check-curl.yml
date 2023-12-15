@@ -1,4 +1,4 @@
-name: Ubuntu Build Test
+name: Ubuntu Build Test with Curl Support
 
 on:
   push:
@@ -43,12 +43,29 @@ jobs:
       run: ./autogen.sh
     - name: wolfssl configure
       working-directory: ./wolfssl
-      run: ./configure --enable-enckeys
+      run: ./configure --enable-curl
     - name: wolfssl make
       working-directory: ./wolfssl
       run: make
     - name: wolfssl make install
       working-directory: ./wolfssl
+      run: sudo make install
+
+    - uses: actions/checkout@master
+      with:
+        repository: curl/curl
+        path: curl
+    - name: curl autoreconf
+      working-directory: ./curl
+      run: autoreconf -fi
+    - name: curl configure
+      working-directory: ./curl
+      run: ./configure --with-wolfssl
+    - name: curl make
+      working-directory: ./curl
+      run: make
+    - name: curl make install
+      working-directory: ./curl
       run: sudo make install
 
     - uses: actions/checkout@master
@@ -63,49 +80,22 @@ jobs:
     - name: wolfmqtt make check
       run: make check
 
-    - name: wolfmqtt configure without TLS
+    - name: wolfmqtt configure with libCurl Enabled
       env:
         WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-all --disable-tls
+      run: ./configure --enable-curl
     - name: wolfmqtt make
       run: make
     - name: wolfmqtt make check
       run: make check
 
-    - name: wolfmqtt configure with SN Enabled
+    - name: wolfmqtt configure with libCurl Enabled without TLS
       env:
         WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-sn
+      run: ./configure --enable-curl --disable-tls
     - name: wolfmqtt make
       run: make
     - name: wolfmqtt make check
-      run: make check
-
-    - name: wolfmqtt configure with Non-Block
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
-    - name: wolfmqtt make
-      run: make
-    - name: wolfmqtt make check
-      run: make check
-
-    - name: wolfmqtt configure with Non-Block and Multi-threading
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
-    - name: wolfmqtt make
-      run: make
-    - name: wolfmqtt make check
-      run: make check
-
-    - name: configure with Multi-threading and WOLFMQTT_DYN_PROP
-      env:
-        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
-      run: ./configure --enable-mt CFLAGS="-DWOLFMQTT_DYN_PROP"
-    - name: make
-      run: make
-    - name: make check
       run: make check
 
       # capture logs on failure

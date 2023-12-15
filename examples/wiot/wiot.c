@@ -38,9 +38,12 @@
 
 /* Locals */
 static int mStopRead = 0;
+static int mTestDone = 0;
 
 /* Configuration */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024 /* Maximum size for network read/write callbacks */
+#endif
 
 /* Undefine if using an IBM WIOT Platform account that you created. */
 #define WIOT_USE_QUICKSTART
@@ -101,7 +104,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         if (mqttCtx->test_mode) {
             if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
                 XSTRNCMP(TEST_MESSAGE, (char*)msg->buffer, msg->buffer_len) == 0) {
-                mStopRead = 1;
+                mTestDone = 1;
             }
         }
     }
@@ -262,8 +265,9 @@ int wiot_test(MQTTCtx *mqttCtx)
 
     rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
 
-    PRINTF("MQTT Publish: Topic %s, %s (%d)",
-        mqttCtx->publish.topic_name, MqttClient_ReturnCodeToString(rc), rc);
+    PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+        mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
+        MqttClient_ReturnCodeToString(rc), rc);
     if (rc != MQTT_CODE_SUCCESS) {
         goto disconn;
     }
@@ -276,16 +280,28 @@ int wiot_test(MQTTCtx *mqttCtx)
         rc = MqttClient_WaitMessage(&mqttCtx->client,
                                             mqttCtx->cmd_timeout_ms);
 
+    #ifdef WOLFMQTT_NONBLOCK
+        /* Track elapsed time with no activity and trigger timeout */
+        rc = mqtt_check_timeout(rc, &mqttCtx->start_sec,
+            mqttCtx->cmd_timeout_ms/1000);
+    #endif
+
+        /* check return code */
+        if (rc == MQTT_CODE_CONTINUE) {
+            return rc;
+        }
+
         /* check for test mode */
-        if (mStopRead) {
+        if (mStopRead || mTestDone) {
             rc = MQTT_CODE_SUCCESS;
+            mqttCtx->stat = WMQ_DISCONNECT;
             PRINTF("MQTT Exiting...");
             break;
         }
 
         /* check return code */
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-        else if (rc == MQTT_CODE_STDIN_WAKE) {
+        if (rc == MQTT_CODE_STDIN_WAKE) {
             XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
             if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1, stdin) != NULL) {
                 rc = (int)XSTRLEN((char*)mqttCtx->rx_buf);
@@ -301,13 +317,14 @@ int wiot_test(MQTTCtx *mqttCtx)
                 mqttCtx->publish.buffer = mqttCtx->rx_buf;
                 mqttCtx->publish.total_len = (word16)rc;
                 rc = MqttClient_Publish(&mqttCtx->client, &mqttCtx->publish);
-                PRINTF("MQTT Publish: Topic %s, %s (%d)",
-                    mqttCtx->publish.topic_name,
+                PRINTF("MQTT Publish: Topic %s, ID %d, %s (%d)",
+                    mqttCtx->publish.topic_name, mqttCtx->publish.packet_id,
                     MqttClient_ReturnCodeToString(rc), rc);
             }
         }
+        else
     #endif
-        else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+        if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             /* Keep Alive */
             PRINTF("Keep-alive timeout, sending ping");
 
@@ -437,7 +454,7 @@ int main(int argc, char** argv)
 
     do {
         rc = wiot_test(&mqttCtx);
-    } while (rc == MQTT_CODE_CONTINUE);
+    } while (!mStopRead && rc == MQTT_CODE_CONTINUE);
 
     mqtt_free_ctx(&mqttCtx);
 

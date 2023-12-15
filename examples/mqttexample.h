@@ -160,6 +160,11 @@ typedef struct _MQTTCtx {
     const char* message;
     const char* pub_file;
     const char* client_id;
+#if defined (ENABLE_MQTT_TLS)
+    const char* ca_file;
+    const char* mtls_keyfile;
+    const char* mtls_certfile;
+#endif
     byte *tx_buf, *rx_buf;
     int return_code;
     int use_tls;
@@ -180,6 +185,7 @@ typedef struct _MQTTCtx {
 #endif
     byte    clean_session;
     byte    test_mode;
+    byte    debug_on:1; /* enable debug messages in example */
 #ifdef WOLFMQTT_V5
     byte    subId_not_avail; /* Server property */
     byte    enable_eauth; /* Enhanced authentication */
@@ -210,6 +216,9 @@ word16 mqtt_get_packetid(void);
 #ifdef WOLFMQTT_NONBLOCK
 int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec);
 #endif
+
+int mqtt_fill_random_hexstr(char* buf, word32 bufLen);
+char* mqtt_append_random(const char* inStr, word32 inLen);
 
 int mqtt_file_load(const char* filePath, byte** fileBuf, int *fileLen);
 

@@ -40,15 +40,12 @@ static int myoptind = 0;
 static char* myoptarg = NULL;
 
 #ifdef ENABLE_MQTT_TLS
-static const char* mTlsCaFile;
-static const char* mTlsCertFile;
-static const char* mTlsKeyFile;
 #ifdef HAVE_SNI
 static int useSNI;
-static const char* mTlsSniHostName;
+static const char* mTlsSniHostName = NULL;
 #endif
 #ifdef HAVE_PQC
-static const char* mTlsPQAlg;
+static const char* mTlsPQAlg = NULL;
 #endif
 #endif /* ENABLE_MQTT_TLS */
 
@@ -150,44 +147,64 @@ static int mqtt_get_rand(byte* data, word32 len)
     for (i = 0; i<len; i++) {
         data[i] = (byte)rand();
     }
+    ret = 0; /* success */
 #endif
     return ret;
+}
+
+int mqtt_fill_random_hexstr(char* buf, word32 bufLen)
+{
+    int rc = 0;
+    word32 pos = 0, sz, i;
+    const char kHexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
+                              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+    byte rndBytes[32]; /* fill up to x bytes at a time */
+
+    while (rc == 0 && pos < bufLen) {
+        sz = bufLen - pos;
+        if (sz > (int)sizeof(rndBytes))
+            sz = (int)sizeof(rndBytes);
+        sz /= 2; /* 1 byte expands to 2 bytes */
+
+        rc = mqtt_get_rand(rndBytes, sz);
+        if (rc == 0) {
+            /* Convert random to hex string */
+            for (i=0; i<sz; i++) {
+                byte in = rndBytes[i];
+                buf[pos + (i*2)] =   kHexChar[in >> 4];
+                buf[pos + (i*2)+1] = kHexChar[in & 0xf];
+            }
+            pos += sz*2;
+        }
+        else {
+            PRINTF("MQTT Fill Random Failed! %d", rc);
+        }
+    }
+    return rc;
 }
 
 #ifndef TEST_RAND_SZ
 #define TEST_RAND_SZ 4
 #endif
-static char* mqtt_append_random(const char* inStr, word32 inLen)
+char* mqtt_append_random(const char* inStr, word32 inLen)
 {
-    int rc;
-    const char kHexChar[] = { '0', '1', '2', '3', '4', '5', '6', '7',
-                              '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
-    byte rndBytes[TEST_RAND_SZ], rndHexStr[TEST_RAND_SZ*2];
-    char *tmp = NULL;
+    int rc = 0;
+    char *tmp;
 
-    rc = mqtt_get_rand(rndBytes, (word32)sizeof(rndBytes));
-    if (rc == 0) {
-        /* Convert random to hex string */
-        int i;
-        for (i=0; i<(int)sizeof(rndBytes); i++) {
-            byte in = rndBytes[i];
-            rndHexStr[(i*2)] =   kHexChar[in >> 4];
-            rndHexStr[(i*2)+1] = kHexChar[in & 0xf];
-        }
-    }
-    if (rc == 0) {
-        /* Allocate topic name and client id */
-        tmp = (char*)WOLFMQTT_MALLOC(inLen + 1 + sizeof(rndHexStr) + 1);
-        if (tmp == NULL) {
-            rc = MQTT_CODE_ERROR_MEMORY;
-        }
+    tmp = (char*)WOLFMQTT_MALLOC(inLen + 1 + (TEST_RAND_SZ*2) + 1);
+    if (tmp == NULL) {
+        rc = MQTT_CODE_ERROR_MEMORY;
     }
     if (rc == 0) {
         /* Format: inStr + `_` randhex + null term */
         XMEMCPY(tmp, inStr, inLen);
         tmp[inLen] = '_';
-        XMEMCPY(tmp + inLen + 1, rndHexStr, sizeof(rndHexStr));
-        tmp[inLen + 1 + sizeof(rndHexStr)] = '\0';
+        rc = mqtt_fill_random_hexstr(tmp + inLen + 1, (TEST_RAND_SZ*2));
+        tmp[inLen + 1 + (TEST_RAND_SZ*2)] = '\0'; /* null term */
+    }
+    if (rc != 0) {
+        WOLFMQTT_FREE(tmp);
+        tmp = NULL;
     }
     return tmp;
 }
@@ -201,20 +218,22 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
 #ifdef ENABLE_MQTT_TLS
         PRINTF("-p <num>    Port to connect on, default: Normal %d, TLS %d",
                 MQTT_DEFAULT_PORT, MQTT_SECURE_PORT);
-        PRINTF("-t          Enable TLS");
+        PRINTF("-t          Enable TLS"); /* Note: this string is used in test
+                                           * scripts to detect TLS feature */
         PRINTF("-A <file>   Load CA (validate peer)");
         PRINTF("-K <key>    Use private key (for TLS mutual auth)");
         PRINTF("-c <cert>   Use certificate (for TLS mutual auth)");
-    #ifdef HAVE_SNI
+    #ifndef ENABLE_MQTT_CURL
+        #ifdef HAVE_SNI
         /* Remove SNI args for sn-client */
         if(XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
             PRINTF("-S <str>    Use Host Name Indication, blank defaults to host");
         }
-    #endif
-    #ifdef HAVE_PQC
+        #endif /* HAVE_SNI */
+        #ifdef HAVE_PQC
         PRINTF("-Q <str>    Use Key Share with post-quantum algorithm");
-    #endif
-#else
+        #endif /* HAVE_PQC */
+    #endif /* !ENABLE_MQTT_CURL */
         PRINTF("-p <num>    Port to connect on, default: %d",
              MQTT_DEFAULT_PORT);
 #endif
@@ -242,6 +261,9 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
 #endif
     PRINTF("-T          Test mode");
     PRINTF("-f <file>   Use file contents for publish");
+    if (!mqttCtx->debug_on) {
+        PRINTF("-d          Enable example debug messages");
+    }
 }
 
 void mqtt_init_ctx(MQTTCtx* mqttCtx)
@@ -254,6 +276,7 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->client_id = kDefClientId;
     mqttCtx->topic_name = kDefTopicName;
     mqttCtx->cmd_timeout_ms = DEFAULT_CMD_TIMEOUT_MS;
+    mqttCtx->debug_on = 1;
 #ifdef WOLFMQTT_V5
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
     mqttCtx->topic_alias = 1;
@@ -261,6 +284,11 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
 #endif
 #ifdef WOLFMQTT_DEFAULT_TLS
     mqttCtx->use_tls = WOLFMQTT_DEFAULT_TLS;
+#endif
+#ifdef ENABLE_MQTT_TLS
+    mqttCtx->ca_file = NULL;
+    mqttCtx->mtls_keyfile = NULL;
+    mqttCtx->mtls_certfile = NULL;
 #endif
     mqttCtx->app_name = "mqttclient";
     mqttCtx->message = DEFAULT_MESSAGE;
@@ -271,7 +299,11 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     int rc;
 
     #ifdef ENABLE_MQTT_TLS
-        #define MQTT_TLS_ARGS "c:A:K:S;Q:"
+        #ifdef ENABLE_MQTT_CURL
+            #define MQTT_TLS_ARGS "c:A:K:"
+        #else
+            #define MQTT_TLS_ARGS "c:A:K:S;Q:"
+        #endif
     #else
         #define MQTT_TLS_ARGS ""
     #endif
@@ -281,7 +313,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         #define MQTT_V5_ARGS ""
     #endif
 
-    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rt" \
+    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rtd" \
             MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
         switch ((char)rc) {
         case '?' :
@@ -343,7 +375,6 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             break;
 
         case 'T':
-
             mqttCtx->test_mode = 1;
             break;
 
@@ -359,16 +390,21 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             mqttCtx->use_tls = 1;
             break;
 
+        case 'd':
+            mqttCtx->debug_on = 1;
+            break;
+
     #ifdef ENABLE_MQTT_TLS
         case 'A':
-            mTlsCaFile = myoptarg;
+            mqttCtx->ca_file = myoptarg;
             break;
         case 'c':
-            mTlsCertFile = myoptarg;
+            mqttCtx->mtls_certfile = myoptarg;
             break;
         case 'K':
-            mTlsKeyFile = myoptarg;
+            mqttCtx->mtls_keyfile = myoptarg;
             break;
+    #ifndef ENABLE_MQTT_CURL
         case 'S':
         #ifdef HAVE_SNI
             useSNI = 1;
@@ -384,7 +420,8 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
             PRINTF("To use '-Q', build wolfSSL with --with-liboqs");
         #endif
             break;
-    #endif
+    #endif /* !ENABLE_MQTT_CURL */
+    #endif /* ENABLE_MQTT_TLS */
 
     #ifdef WOLFMQTT_V5
         case 'P':
@@ -399,7 +436,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 
         /* Remove SNI functionality for sn-client */
         if(!XSTRNCMP(mqttCtx->app_name, "sn-client", 10)){
-        #ifdef HAVE_SNI    
+        #ifdef HAVE_SNI
             useSNI=0;
         #endif
         }
@@ -592,6 +629,7 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 int mqtt_tls_cb(MqttClient* client)
 {
     int rc = WOLFSSL_FAILURE;
+    SocketContext * sock = (SocketContext *)client->net->context;
 
     /* Use highest available and allow downgrade. If wolfSSL is built with
      * old TLS support, it is possible for a server to force a downgrade to
@@ -606,22 +644,23 @@ int mqtt_tls_cb(MqttClient* client)
 
 #if !defined(NO_CERT)
     #if !defined(NO_FILESYSTEM)
-        if (mTlsCaFile) {
+        if (sock->mqttCtx->ca_file) {
             /* Load CA certificate file */
             rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx,
-                mTlsCaFile, NULL);
+                sock->mqttCtx->ca_file, NULL);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading CA %s: %d (%s)", mTlsCaFile,
+                PRINTF("Error loading CA %s: %d (%s)", sock->mqttCtx->ca_file,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
         }
-        if (mTlsCertFile && mTlsKeyFile) {
+        if (sock->mqttCtx->mtls_certfile && sock->mqttCtx->mtls_keyfile) {
             /* Load If using a mutual authentication */
             rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
-                mTlsCertFile, WOLFSSL_FILETYPE_PEM);
+                sock->mqttCtx->mtls_certfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading certificate %s: %d (%s)", mTlsCertFile,
+                PRINTF("Error loading certificate %s: %d (%s)",
+                    sock->mqttCtx->mtls_certfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
@@ -633,9 +672,10 @@ int mqtt_tls_cb(MqttClient* client)
         #endif
 
             rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
-                mTlsKeyFile, WOLFSSL_FILETYPE_PEM);
+                sock->mqttCtx->mtls_keyfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading key %s: %d (%s)", mTlsKeyFile,
+                PRINTF("Error loading key %s: %d (%s)",
+                    sock->mqttCtx->mtls_keyfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
@@ -705,6 +745,10 @@ int mqtt_tls_cb(MqttClient* client)
 #endif /* HAVE_PQC */
     }
 
+#if defined(NO_CERT) || defined(NO_FILESYSTEM)
+    (void)sock;
+#endif
+
     PRINTF("MQTT TLS Setup (%d)", rc);
 
     return rc;
@@ -714,6 +758,7 @@ int mqtt_tls_cb(MqttClient* client)
 int mqtt_dtls_cb(MqttClient* client) {
 #ifdef WOLFSSL_DTLS
     int rc = WOLFSSL_FAILURE;
+    SocketContext * sock = (SocketContext *)client->net->context;
 
     client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_2_client_method());
     if (client->tls.ctx) {
@@ -724,34 +769,38 @@ int mqtt_dtls_cb(MqttClient* client) {
         rc = WOLFSSL_SUCCESS;
 
 #if !defined(NO_CERT) && !defined(NO_FILESYSTEM)
-        if (mTlsCaFile) {
+        if (sock->mqttCtx->ca_file) {
             /* Load CA certificate file */
             rc = wolfSSL_CTX_load_verify_locations(client->tls.ctx,
-                mTlsCaFile, NULL);
+                sock->mqttCtx->ca_file, NULL);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading CA %s: %d (%s)", mTlsCaFile,
+                PRINTF("Error loading CA %s: %d (%s)", sock->mqttCtx->ca_file,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
         }
-        if (mTlsCertFile && mTlsKeyFile) {
+        if (sock->mqttCtx->mtls_certfile && sock->mqttCtx->mtls_keyfile) {
             /* Load If using a mutual authentication */
             rc = wolfSSL_CTX_use_certificate_file(client->tls.ctx,
-                mTlsCertFile, WOLFSSL_FILETYPE_PEM);
+                sock->mqttCtx->mtls_certfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading certificate %s: %d (%s)", mTlsCertFile,
+                PRINTF("Error loading certificate %s: %d (%s)",
+                    sock->mqttCtx->mtls_certfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
 
             rc = wolfSSL_CTX_use_PrivateKey_file(client->tls.ctx,
-                mTlsKeyFile, WOLFSSL_FILETYPE_PEM);
+                sock->mqttCtx->mtls_keyfile, WOLFSSL_FILETYPE_PEM);
             if (rc != WOLFSSL_SUCCESS) {
-                PRINTF("Error loading key %s: %d (%s)", mTlsKeyFile,
+                PRINTF("Error loading key %s: %d (%s)",
+                    sock->mqttCtx->mtls_keyfile,
                     rc, wolfSSL_ERR_reason_error_string(rc));
                 return rc;
             }
         }
+#else
+    (void)sock;
 #endif
 
         client->tls.ssl = wolfSSL_new(client->tls.ctx);

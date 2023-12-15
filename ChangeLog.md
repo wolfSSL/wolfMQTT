@@ -1,4 +1,39 @@
 ## Release Notes
+### v1.17.1 (11/29/2023)
+Release 1.17.1 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* Include stdint.h in userio_template.h by @lealem47 in #371
+* Improvements to multithread locking and tests. by @dgarske in #369
+* Cleanup executable status on src files. by @philljj in #372
+* Close socket on error in NetConnect by @embhorn in #375
+* Fixes for non-blocking with larger payload and improvements to the test and examples by @dgarske in #373
+* Add MQTT-SN CI tests by @embhorn in #376
+* Fix Wild read in MqttProps_Free by @embhorn in #377
+* Fix fuzzer issues in MqttDecode_Props by @embhorn in #378
+
+
+### v1.17.0 (11/2/2023)
+Release 1.17.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* Fix for declaration after executable block by @lealem47 in #341
+* Add QNX IDE, Makefile, and remove source code exec bit by @JacobBarthelmeh 
+  in #317
+* update for cmake after wolfssl added NAMESPACE by @JacobBarthelmeh in #343
+* Add mutex protection to MqttClient_NetDisconnect by @embhorn in #342
+* Add DTLS support to MQTT-SN client by @embhorn in #348
+* Tie zephyr tests to a release by @julek-wolfssl in #350
+* add documentation link to README by @gojimmypi in #355
+* Possible patch for POSIX conditional wait issue by @dgarske in #356
+* Fix publish with topic ID >=127 by @embhorn in #351
+* Adding publish and subscribe atomic client examples by @embhorn in #347
+* Allow disabling the posix conditional signal by @dgarske in #360
+* Exclude CI tests with external brokers by @embhorn in #362
+* Improvements for client property stack by @dgarske in #361
+* Add mosquitto to CI tests by @embhorn in #365
+* Fixes for non-blocking edge cases by @dgarske in #363
+* Refactor MQTT-SN code by @embhorn in #366
 
 ### v1.16.0 (6/29/2023)
 * Add testing for TLS mutual auth, and fsanitize gh test by @lealem47 in #321

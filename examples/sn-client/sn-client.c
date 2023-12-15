@@ -36,7 +36,9 @@ static int mStopRead = 0;
 
 /* Configuration */
 /* Maximum size for network read/write callbacks. */
+#ifndef MAX_BUFFER_SIZE
 #define MAX_BUFFER_SIZE 1024
+#endif
 #define TEST_MESSAGE    "test"
 #define SHORT_TOPIC_NAME "s1"
 
@@ -49,13 +51,22 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
     if (msg_new) {
-        /* Topic ID or short topic name */
-        topicId = (word16)(msg->topic_name[0] << 8 | msg->topic_name[1]);
+        if (!(msg->topic_type & SN_TOPIC_ID_TYPE_SHORT)) {
+            /* Topic ID name */
+            topicId = (word16)((byte)msg->topic_name[0] << 8 |
+                               (byte)msg->topic_name[1]);
 
-        /* Print incoming message */
-        PRINTF("MQTT-SN Message: Topic ID %d, Qos %d, Id %d, Len %u",
-                topicId, msg->qos, msg->packet_id, msg->total_len);
-
+            /* Print incoming message */
+            PRINTF("MQTT-SN Message: Topic ID %hu, Qos %d, Id %d, Len %u",
+                    topicId, msg->qos, msg->packet_id, msg->total_len);
+        }
+        else {
+            /* Topic short name */
+            /* Print incoming message */
+            PRINTF("MQTT-SN Message: Topic ID %c%c, Qos %d, Id %d, Len %u",
+                    msg->topic_name[0], msg->topic_name[1],
+                    msg->qos, msg->packet_id, msg->total_len);
+        }
         /* for test mode: check if TEST_MESSAGE was received */
         if (mqttCtx != NULL && mqttCtx->test_mode) {
             if (XSTRLEN(TEST_MESSAGE) == msg->buffer_len &&
@@ -89,7 +100,7 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
    assigns a new topic ID to a topic name. */
 static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
 {
-    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId, topicName);
+    PRINTF("MQTT-SN Register CB: New topic ID: %hu : \"%s\"", topicId, topicName);
     (void)ctx;
 
     return(MQTT_CODE_SUCCESS);
@@ -112,7 +123,9 @@ int sn_test(MQTTCtx *mqttCtx)
     int rc = MQTT_CODE_SUCCESS;
     word16 topicID;
 
-    PRINTF("MQTT-SN Client: QoS %d", mqttCtx->qos);
+    PRINTF("MQTT-SN Client: Client ID %s, QoS %d",
+            mqttCtx->client_id,
+            mqttCtx->qos);
 
     /* Initialize Network */
     rc = SN_ClientNet_Init(&mqttCtx->net, mqttCtx);
@@ -204,11 +217,11 @@ int sn_test(MQTTCtx *mqttCtx)
         /* Send Connect and wait for Connect Ack */
         rc = SN_Client_Connect(&mqttCtx->client, connect);
 
-        if (rc != MQTT_CODE_SUCCESS) {                                          
-            PRINTF("MQTT-SN Connect: %s (%d)",                                  
-                MqttClient_ReturnCodeToString(rc), rc);                         
-            goto disconn;                                                       
-        }    
+        if (rc != MQTT_CODE_SUCCESS) {
+            PRINTF("MQTT-SN Connect: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+            goto disconn;
+        }
 
         /* Validate Connect Ack info */
         PRINTF("....MQTT-SN Connect Ack: Return Code %u",
@@ -232,7 +245,7 @@ int sn_test(MQTTCtx *mqttCtx)
             /* Topic ID is returned in RegAck */
             topicID = regist->regack.topicId;
         }
-        PRINTF("....MQTT-SN Register Ack: rc = %d, topic id = %d",
+        PRINTF("....MQTT-SN Register Ack: rc = %d, topic id = %hu",
                 regist->regack.return_code, regist->regack.topicId);
     }
 
@@ -251,7 +264,7 @@ int sn_test(MQTTCtx *mqttCtx)
         PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
-        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+        PRINTF("....MQTT-SN Subscribe Ack: topic id = %hu, rc = %d",
                 subscribe.subAck.topicId, subscribe.subAck.return_code);
 
         if ((rc == 0) && (subscribe.subAck.return_code == SN_RC_ACCEPTED)) {
@@ -278,7 +291,7 @@ int sn_test(MQTTCtx *mqttCtx)
         PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
-        PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
+        PRINTF("....MQTT-SN Subscribe Ack: topic id = %hu, rc = %d",
                 subscribe.subAck.topicId,
                 (rc == 0) ? subscribe.subAck.return_code : rc);
     }
@@ -305,8 +318,8 @@ int sn_test(MQTTCtx *mqttCtx)
 
         rc = SN_Client_Publish(&mqttCtx->client, &mqttCtx->publishSN);
 
-        PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
-            (word16)*mqttCtx->publishSN.topic_name,
+        PRINTF("MQTT-SN Publish: topic id = %hu, rc = %d\r\nPayload = %s",
+                *(word16*)mqttCtx->publishSN.topic_name,
                 mqttCtx->publishSN.return_code,
                 mqttCtx->publishSN.buffer);
         if (rc != MQTT_CODE_SUCCESS) {
@@ -343,12 +356,12 @@ int sn_test(MQTTCtx *mqttCtx)
         subscribe.topicNameId = pd_topic_id;
         subscribe.packet_id = mqtt_get_packetid();
 
-        PRINTF("MQTT-SN Predefined Subscribe: topic id = %d",
+        PRINTF("MQTT-SN Predefined Subscribe: topic id = %hu",
                 subscribe.topicNameId[1]);
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
 
         if (rc == MQTT_CODE_SUCCESS) {
-            PRINTF("....MQTT-SN Predefined Subscribe Ack: topic id = %d, rc = %d",
+            PRINTF("....MQTT-SN Predefined Subscribe Ack: topic id = %hu, rc = %d",
                     subscribe.subAck.topicId, subscribe.subAck.return_code);
         }
         if ((rc == MQTT_CODE_SUCCESS) && (subscribe.subAck.return_code != 0)) {
@@ -376,7 +389,7 @@ int sn_test(MQTTCtx *mqttCtx)
 
         rc = SN_Client_Publish(&mqttCtx->client, &publish);
 
-        PRINTF("MQTT-SN Predefined Publish: topic id = %d, rc = %d\r\nPayload = %s",
+        PRINTF("MQTT-SN Predefined Publish: topic id = %hu, rc = %d\r\nPayload = %s",
                 publish.topic_name[1],
                 publish.return_code,
                 publish.buffer);
@@ -392,7 +405,7 @@ int sn_test(MQTTCtx *mqttCtx)
         unsub.topicNameId = pd_topic_id;
         unsub.packet_id = mqtt_get_packetid();
 
-        PRINTF("MQTT-SN Unsubscribe Predefined Topic: topic ID = %d",
+        PRINTF("MQTT-SN Unsubscribe Predefined Topic: topic id = %hu",
                 unsub.topicNameId[1]);
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsub);
         PRINTF("....MQTT-SN Unsubscribe Predefined Topic Ack: rc = %d", rc);
@@ -496,10 +509,6 @@ int sn_test(MQTTCtx *mqttCtx)
     PRINTF("MQTT Waiting for message...");
 
     do {
-        /* Try and read packet */
-        rc = SN_Client_WaitMessage(&mqttCtx->client,
-                                   mqttCtx->cmd_timeout_ms);
-
         /* check for test mode */
         if (mStopRead) {
             rc = MQTT_CODE_SUCCESS;
@@ -507,9 +516,13 @@ int sn_test(MQTTCtx *mqttCtx)
             break;
         }
 
+        /* Try and read packet */
+        rc = SN_Client_WaitMessage(&mqttCtx->client,
+                                   mqttCtx->cmd_timeout_ms);
+
         /* check return code */
     #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-        else if (rc == MQTT_CODE_STDIN_WAKE) {
+        if (rc == MQTT_CODE_STDIN_WAKE) {
             XMEMSET(mqttCtx->rx_buf, 0, MAX_BUFFER_SIZE);
             if (XFGETS((char*)mqttCtx->rx_buf, MAX_BUFFER_SIZE - 1,
                     stdin) != NULL)
@@ -534,7 +547,7 @@ int sn_test(MQTTCtx *mqttCtx)
                 mqttCtx->publishSN.total_len = (word16)rc;
                 rc = SN_Client_Publish(&mqttCtx->client,
                        &mqttCtx->publishSN);
-                PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
+                PRINTF("MQTT-SN Publish: topic id = %hu, rc = %d\r\nPayload = %s",
                     (word16)*mqttCtx->publishSN.topic_name,
                         mqttCtx->publishSN.return_code,
                         mqttCtx->publishSN.buffer);
@@ -543,8 +556,9 @@ int sn_test(MQTTCtx *mqttCtx)
                 }
             }
         }
+        else
     #endif
-        else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+        if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             /* Keep Alive */
             PRINTF("Keep-alive timeout, sending ping");
 
@@ -730,6 +744,6 @@ int main(int argc, char** argv)
 #endif
 
 
-    return (rc == 0) ? 0 : EXIT_FAILURE;
+    return (rc == MQTT_CODE_SUCCESS) ? 0 : EXIT_FAILURE;
 }
 

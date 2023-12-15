@@ -1,4 +1,4 @@
-/* client.c
+/* mqtt-pub-sub
  *
  * Copyright (C) 2006-2023 wolfSSL Inc.
  *
@@ -19,32 +19,25 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
 
-#include "wolfmqtt/mqtt_client.h"
-#include "examples/mqttclient/mqttclient.h"
+#ifndef WOLFMQTT_PUB_SUB_H
+#define WOLFMQTT_PUB_SUB_H
 
-int main(void)
-{
-    int rc;
-    MQTTCtx mqttCtx;
-
-    /* init defaults */
-    mqtt_init_ctx(&mqttCtx);
-
-    mqttCtx.test_mode = 1;
-
-    /* Set port as configured in scripts/broker_test/mosquitto.conf */
-#if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
-    mqttCtx.port = 18883;
-#else
-    mqttCtx.port = 11883;
+#ifdef __cplusplus
+extern "C" {
 #endif
 
-    rc = mqttclient_test(&mqttCtx);
 
-    mqtt_free_ctx(&mqttCtx);
+/* Exposed functions */
+int pub_client(MQTTCtx *mqttCtx);
+int sub_client(MQTTCtx *mqttCtx);
 
-    if (rc == 0)
-        PRINTF("Zephyr MQTT test passed");
+#if defined(NO_MAIN_DRIVER)
+int mqttPub_main(int argc, char** argv);
+int mqttSub_main(int argc, char** argv);
+#endif
 
-    return (rc == 0) ? 0 : EXIT_FAILURE;
+#ifdef __cplusplus
 }
+#endif
+
+#endif /* WOLFMQTT_PUB_SUB_H */

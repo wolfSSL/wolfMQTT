@@ -21,7 +21,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-project(wolfMQTT VERSION 1.16.0 LANGUAGES C)
+project(wolfMQTT VERSION 1.17.1 LANGUAGES C)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 set(MQTT_SOURCES
@@ -147,6 +147,8 @@ if (WOLFMQTT_EXAMPLES)
     add_mqtt_example(azureiothub azure/azureiothub.c)
     add_mqtt_example(fwpush firmware/fwpush.c)
     add_mqtt_example(fwclient firmware/fwclient.c)
+    add_mqtt_example(mqtt-pub pub-sub/mqtt-pub.c)
+    add_mqtt_example(mqtt-sub pub-sub/mqtt-sub.c)
 endif()
 
 ####################################################
