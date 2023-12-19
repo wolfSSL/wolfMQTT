@@ -195,7 +195,7 @@ More about MQTT-SN examples in [examples/sn-client/README.md](examples/sn-client
 ### Multithread Example
 This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (10 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
 
-The multi-threading feature can also be used with the non-blocking socket (--enable-nb).
+The multi-threading feature can also be used with the non-blocking socket (--enable-nonblock).
 
 If you are having issues with thread synchronization on Linux consider using not the conditional signal (`WOLFMQTT_NO_COND_SIGNAL`).
 

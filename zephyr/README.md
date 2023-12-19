@@ -51,7 +51,7 @@ CMakeFiles.txt in the build system.
 
 ## Build and Run Samples
 
-Follow the [instructions](https://docs.zephyrproject.org/latest/connectivity/networking/qemu_setup.html) to setup the infratructure to enable networking in QEMU. Run the following commands in parallel in this order in the `net-tools` directory to allow comunication between the QEMU instance and the host. Make sure to disable any software that modifies the local network like VPN's.
+Follow the [instructions](https://docs.zephyrproject.org/latest/connectivity/networking/qemu_setup.html) to setup the infratructure to enable networking in QEMU. Run the following commands in parallel in this order in the `net-tools` directory to allow communication between the QEMU instance and the host. Make sure to disable any software that modifies the local network like VPN's.
 
 ```bash
 ./loop-socat.sh
