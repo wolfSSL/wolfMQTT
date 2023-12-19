@@ -43,41 +43,30 @@ if (WITH_WOLFSSL)
     target_link_libraries(wolfmqtt PUBLIC wolfssl)
     target_include_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/include)
     target_link_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/lib)
-    target_compile_definitions(wolfmqtt PUBLIC
-        "ENABLE_MQTT_TLS"
-        )
+    list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 elseif (WITH_WOLFSSL_TREE)
     set(WOLFSSL_EXAMPLES "no" CACHE STRING "")
     set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "")
 
     add_subdirectory(${WITH_WOLFSSL_TREE} wolfssl)
     target_link_libraries(wolfmqtt PUBLIC wolfssl)
-    target_compile_definitions(wolfmqtt PUBLIC
-        "ENABLE_MQTT_TLS"
-        )
+    list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 else()
     find_package(PkgConfig)
     pkg_check_modules(WOLFSSL wolfssl)
 
     if (WOLFSSL_FOUND)
-        target_compile_definitions(wolfmqtt PUBLIC
-            "ENABLE_MQTT_TLS"
-            )
+        list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
         target_link_libraries(wolfmqtt PUBLIC ${WOLFSSL_LIBRARIES})
         target_include_directories(wolfmqtt PUBLIC ${WOLFSSL_INCLUDE_DIRS})
         target_link_directories(wolfmqtt PUBLIC ${WOLFSSL_LIBRARY_DIRS})
         target_compile_options(wolfmqtt PUBLIC ${WOLFSSL_CFLAGS_OTHER})
     else()
         # For support with vcpkg
-        find_package(wolfssl CONFIG)
+        find_package(wolfssl CONFIG REQUIRED)
         if (wolfssl_FOUND)
-            find_path(WOLFSSL_INCLUDE_DIR NAMES wolfssl/ssl.h)
-            find_library(WOLFSSL_LIBRARY_PATH NAMES wolfssl)
-            target_compile_definitions(wolfmqtt PUBLIC
-                "ENABLE_MQTT_TLS"
-                )
-            include_directories(${WOLFSSL_INCLUDE_DIR})
-            target_link_libraries(wolfmqtt PUBLIC ${WOLFSSL_LIBRARY_PATH})
+            list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
+            target_link_libraries(wolfmqtt PUBLIC wolfssl::wolfssl)
         endif()
     endif()
 endif()
