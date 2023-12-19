@@ -79,10 +79,11 @@ static MQTTCtx gMqttCtx;
 
 static word16 mqtt_get_packetid_threadsafe(void)
 {
-    word16 packet_id;
-    wm_SemLock(&packetIdLock);
-    packet_id = mqtt_get_packetid();
-    wm_SemUnlock(&packetIdLock);
+    word16 packet_id = 0;
+    if (wm_SemLock(&packetIdLock) == 0) {
+        packet_id = mqtt_get_packetid();
+        wm_SemUnlock(&packetIdLock);
+    }
     return packet_id;
 }
 
@@ -243,7 +244,9 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         wm_SemFree(&packetIdLock);
         client_exit(mqttCtx);
     }
-    wm_SemLock(&pingSignal); /* default to locked */
+    if (wm_SemLock(&pingSignal) != 0) { /* default to locked */
+        client_exit(mqttCtx);
+    }
 
     PRINTF("MQTT-SN Client: QoS %d, Use TLS %d", mqttCtx->qos,
             mqttCtx->use_tls);
@@ -518,7 +521,9 @@ static void *ping_task(void *param)
     XMEMSET(&ping, 0, sizeof(ping));
 
     do {
-        wm_SemLock(&pingSignal);
+        if (wm_SemLock(&pingSignal) != 0)
+            break;
+
         if (mStopRead)
             break;
 

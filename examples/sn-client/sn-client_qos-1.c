@@ -111,11 +111,6 @@ int sn_testQoSn1(MQTTCtx *mqttCtx)
         }
     }
 
-    /* Check for error */
-    if (rc != MQTT_CODE_SUCCESS) {
-        goto disconn;
-    }
-
 disconn:
 
     rc = MqttClient_NetDisconnect(&mqttCtx->client);
