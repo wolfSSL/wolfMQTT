@@ -1179,7 +1179,8 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
-    setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    (void)setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv,
+            sizeof(tv));
 #endif
 
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);

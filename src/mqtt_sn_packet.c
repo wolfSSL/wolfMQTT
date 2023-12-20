@@ -300,22 +300,12 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
 
     total_len += id_len;
 
-    if (total_len > SN_PACKET_MAX_SMALL_SIZE) {
-        total_len += 2; /* Store len in three bytes */
-    }
-
     if (total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
-    /* Encode length */
-    if (total_len <= SN_PACKET_MAX_SMALL_SIZE) {
-        *tx_payload++ = (byte)total_len;
-    }
-    else {
-        *tx_payload++ = SN_PACKET_LEN_IND;
-        tx_payload += MqttEncode_Num(tx_payload, total_len);
-    }
+    /* Encode length (max size is 29 bytes, so no need for var len check) */
+    *tx_payload++ = (byte)total_len;
 
     /* Encode message type */
     *tx_payload++ = SN_MSG_TYPE_CONNECT;

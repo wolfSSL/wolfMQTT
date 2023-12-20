@@ -82,27 +82,30 @@ static MQTTCtx gMqttCtx;
 
 static word16 mqtt_get_packetid_threadsafe(void)
 {
-    word16 packet_id;
-    wm_SemLock(&mtLock);
-    packet_id = mqtt_get_packetid();
-    wm_SemUnlock(&mtLock);
+    word16 packet_id = 0;
+    if (wm_SemLock(&mtLock) == 0) {
+        packet_id = mqtt_get_packetid();
+        wm_SemUnlock(&mtLock);
+    }
     return packet_id;
 }
 
 static void mqtt_stop_set(void)
 {
-    wm_SemLock(&mtLock);
-    PRINTF("MQTT Stopping");
-    mStopRead = 1;
-    wm_SemUnlock(&mtLock);
+    if (wm_SemLock(&mtLock) == 0) {
+        PRINTF("MQTT Stopping");
+        mStopRead = 1;
+        wm_SemUnlock(&mtLock);
+    }
 }
 
 static int mqtt_stop_get(void)
 {
-    int rc;
-    wm_SemLock(&mtLock);
-    rc = mStopRead;
-    wm_SemUnlock(&mtLock);
+    int rc = 0;
+    if (wm_SemLock(&mtLock) == 0) {
+        rc = mStopRead;
+        wm_SemUnlock(&mtLock);
+    }
     return rc;
 }
 
@@ -164,47 +167,48 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
     (void)mqttCtx;
 
-    wm_SemLock(&mtLock);
-    if (msg_new) {
-        /* Determine min size to dump */
-        len = msg->topic_name_len;
+    if (wm_SemLock(&mtLock) == 0) {
+        if (msg_new) {
+            /* Determine min size to dump */
+            len = msg->topic_name_len;
+            if (len > PRINT_BUFFER_SIZE) {
+                len = PRINT_BUFFER_SIZE;
+            }
+            XMEMCPY(buf, msg->topic_name, len);
+            buf[len] = '\0'; /* Make sure its null terminated */
+
+            /* Print incoming message */
+            PRINTF("MQTT Message: Topic %s, Qos %d, Id %d, Len %u, %u, %u",
+                buf, msg->qos, msg->packet_id, msg->total_len, msg->buffer_len,
+                msg->buffer_pos);
+        }
+
+        /* Print message payload */
+        len = msg->buffer_len;
         if (len > PRINT_BUFFER_SIZE) {
             len = PRINT_BUFFER_SIZE;
         }
-        XMEMCPY(buf, msg->topic_name, len);
+        XMEMCPY(buf, msg->buffer, len);
         buf[len] = '\0'; /* Make sure its null terminated */
+        PRINTF("Payload (%d - %d) printing %d bytes:" LINE_END "%s",
+            msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
 
-        /* Print incoming message */
-        PRINTF("MQTT Message: Topic %s, Qos %d, Id %d, Len %u, %u, %u",
-            buf, msg->qos, msg->packet_id, msg->total_len, msg->buffer_len, msg->buffer_pos);
-    }
-
-    /* Print message payload */
-    len = msg->buffer_len;
-    if (len > PRINT_BUFFER_SIZE) {
-        len = PRINT_BUFFER_SIZE;
-    }
-    XMEMCPY(buf, msg->buffer, len);
-    buf[len] = '\0'; /* Make sure its null terminated */
-    PRINTF("Payload (%d - %d) printing %d bytes:" LINE_END "%s",
-        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
-
-    if (msg_done) {
-        /* for test mode: count the number of messages received */
-        if (mqttCtx->test_mode) {
-            if (msg->buffer_pos + msg->buffer_len ==
-                    (word32)sizeof(mTestMessage) &&
-                XMEMCMP(&mTestMessage[msg->buffer_pos], msg->buffer,
-                    msg->buffer_len) == 0)
-            {
-                mNumMsgsRecvd++;
+        if (msg_done) {
+            /* for test mode: count the number of messages received */
+            if (mqttCtx->test_mode) {
+                if (msg->buffer_pos + msg->buffer_len ==
+                        (word32)sizeof(mTestMessage) &&
+                    XMEMCMP(&mTestMessage[msg->buffer_pos], msg->buffer,
+                        msg->buffer_len) == 0)
+                {
+                    mNumMsgsRecvd++;
+                }
             }
+
+            PRINTF("MQTT Message: Done");
         }
-
-        PRINTF("MQTT Message: Done");
+        wm_SemUnlock(&mtLock);
     }
-    wm_SemUnlock(&mtLock);
-
     /* Return negative to terminate publish processing */
     return MQTT_CODE_SUCCESS;
 }
@@ -266,7 +270,9 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         wm_SemFree(&mtLock);
         client_exit(mqttCtx);
     }
-    wm_SemLock(&pingSignal); /* default to locked */
+    if (wm_SemLock(&pingSignal) != 0) { /* default to locked */
+        client_exit(mqttCtx);
+    }
 
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
             mqttCtx->use_tls);
@@ -469,19 +475,20 @@ static int TestIsDone(int rc, MQTTCtx* mqttCtx)
 {
     int isDone = 0;
     /* check if we are in test mode and done */
-    wm_SemLock(&mtLock);
-    if ((rc == 0 || rc == MQTT_CODE_CONTINUE) && mqttCtx->test_mode &&
-            mNumMsgsDone == (NUM_PUB_TASKS * NUM_PUB_PER_TASK) &&
-            mNumMsgsRecvd == (NUM_PUB_TASKS * NUM_PUB_PER_TASK)
-        #ifdef WOLFMQTT_NONBLOCK
-            && !MqttClient_IsMessageActive(&mqttCtx->client, NULL)
-        #endif
-        ) {
+    if (wm_SemLock(&mtLock) == 0) {
+        if ((rc == 0 || rc == MQTT_CODE_CONTINUE) && mqttCtx->test_mode &&
+                mNumMsgsDone == (NUM_PUB_TASKS * NUM_PUB_PER_TASK) &&
+                mNumMsgsRecvd == (NUM_PUB_TASKS * NUM_PUB_PER_TASK)
+            #ifdef WOLFMQTT_NONBLOCK
+                && !MqttClient_IsMessageActive(&mqttCtx->client, NULL)
+            #endif
+            ) {
+            wm_SemUnlock(&mtLock);
+            mqtt_stop_set();
+            isDone = 1; /* done */
+        }
         wm_SemUnlock(&mtLock);
-        mqtt_stop_set();
-        isDone = 1; /* done */
     }
-    wm_SemUnlock(&mtLock);
     return isDone;
 }
 
@@ -661,7 +668,9 @@ static void *ping_task(void *param)
     word32 startSec;
 
     do {
-        wm_SemLock(&pingSignal);
+        if (wm_SemLock(&pingSignal) != 0) {
+            break;
+        }
         if (mqtt_stop_get()) {
             break;
         }

@@ -134,7 +134,7 @@ static int socket_get_error(int sockFd)
 {
     int so_error = 0;
     socklen_t len = sizeof(so_error);
-    getsockopt(sockFd, SOL_SOCKET, SO_ERROR, &so_error, &len);
+    (void)getsockopt(sockFd, SOL_SOCKET, SO_ERROR, &so_error, &len);
     return so_error;
 }
 
@@ -169,16 +169,15 @@ static int mqtt_net_connect(void *context, const char* host, word16 port,
         /* prefer ip4 addresses */
         while (res) {
             if (res->ai_family == AF_INET) {
-                result = res;
                 break;
             }
             res = res->ai_next;
         }
-        if (result->ai_family == AF_INET) {
+        if (res) {
             addr.sin_port = htons(port);
             addr.sin_family = AF_INET;
             addr.sin_addr =
-                ((struct sockaddr_in*)(result->ai_addr))->sin_addr;
+                ((struct sockaddr_in*)(res->ai_addr))->sin_addr;
         }
         else {
             rc = -1;
@@ -222,7 +221,8 @@ static int mqtt_net_read(void *context, byte* buf, int buf_len, int timeout_ms)
 
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
-    setsockopt(*pSockFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv));
+    (void)setsockopt(*pSockFd, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv,
+            sizeof(tv));
 
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
@@ -257,7 +257,8 @@ static int mqtt_net_write(void *context, const byte* buf, int buf_len,
 
     /* Setup timeout */
     setup_timeout(&tv, timeout_ms);
-    setsockopt(*pSockFd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv, sizeof(tv));
+    (void)setsockopt(*pSockFd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv,
+            sizeof(tv));
 
     rc = (int)send(*pSockFd, buf, buf_len, 0);
     if (rc < 0) {

@@ -2844,6 +2844,7 @@ int MqttClient_NetDisconnect(MqttClient *client)
 {
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp *tmpResp;
+    int rc;
 #endif
 
     if (client == NULL) {
@@ -2852,24 +2853,28 @@ int MqttClient_NetDisconnect(MqttClient *client)
 
 #ifdef WOLFMQTT_MULTITHREAD
     /* Get client lock on to ensure no other threads are active */
-    wm_SemLock(&client->lockClient);
-
-#ifdef WOLFMQTT_DEBUG_CLIENT
-    PRINTF("Net Disconnect: Removing pending responses");
-#endif
-    for (tmpResp = client->firstPendResp;
-         tmpResp != NULL;
-         tmpResp = tmpResp->next) {
+    rc = wm_SemLock(&client->lockClient);
+    if (rc == 0) {
     #ifdef WOLFMQTT_DEBUG_CLIENT
-        PRINTF("\tPendResp: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
-            tmpResp, tmpResp->packet_obj,
-            MqttPacket_TypeDesc(tmpResp->packet_type),
-            tmpResp->packet_type, tmpResp->packet_id,
-            tmpResp->packetProcessing, tmpResp->packetDone);
+        PRINTF("Net Disconnect: Removing pending responses");
     #endif
-        MqttClient_RespList_Remove(client, tmpResp);
+        for (tmpResp = client->firstPendResp;
+             tmpResp != NULL;
+             tmpResp = tmpResp->next) {
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("\tPendResp: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
+                tmpResp, tmpResp->packet_obj,
+                MqttPacket_TypeDesc(tmpResp->packet_type),
+                tmpResp->packet_type, tmpResp->packet_id,
+                tmpResp->packetProcessing, tmpResp->packetDone);
+        #endif
+            MqttClient_RespList_Remove(client, tmpResp);
+        }
+        wm_SemUnlock(&client->lockClient);
     }
-    wm_SemUnlock(&client->lockClient);
+    else {
+        return rc;
+    }
 #endif
 
     return MqttSocket_Disconnect(client);
@@ -3033,14 +3038,16 @@ word32 MqttClient_Flags(MqttClient *client,  word32 mask, word32 flags)
     if (client != NULL) {
 #ifdef WOLFMQTT_MULTITHREAD
         /* Get client lock on to ensure no other threads are active */
-        wm_SemLock(&client->lockClient);
+        if (wm_SemLock(&client->lockClient) == 0)
 #endif
-        client->flags &= ~mask;
-        client->flags |= flags;
-        ret = client->flags;
+        {
+            client->flags &= ~mask;
+            client->flags |= flags;
+            ret = client->flags;
 #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockClient);
+            wm_SemUnlock(&client->lockClient);
 #endif
+        }
     }
     return ret;
 }
