@@ -31,6 +31,10 @@ generate_port() { # function to produce a random port number
     echo -e "Using port $port"
 }
 
+check_broker() {
+    timeout 10 sh -c 'until nc -v -z $0 $1; do sleep 1; done' localhost $port
+}
+
 # Check for application
 [ ! -x ./examples/nbclient/nbclient ] && echo -e "\n\nNon-blocking Client doesn't exist" && exit 1
 
@@ -69,8 +73,9 @@ then
     mosquitto $broker_args &
     broker_pid=$!
     echo "Broker PID is $broker_pid"
-    sleep 0.1
 
+    check_broker
+    
     def_args="${def_args} -h localhost"
     tls_port_args="-p 18883"
     port_args="-p ${port}"
