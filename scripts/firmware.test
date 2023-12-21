@@ -34,6 +34,9 @@ generate_port() { # function to produce a random port number
     echo -e "Using port $port"
 }
 
+check_broker() {
+    timeout 10 sh -c 'until nc -v -z $0 $1; do sleep 1; done' localhost $port
+}
 
 # Check for application
 [ ! -x ./examples/firmware/fwpush ] && echo -e "\n\nMQTT Example fwpush doesn't exist" && exit 1
@@ -80,8 +83,9 @@ then
     mosquitto $broker_args &
     broker_pid=$!
     echo "Broker PID is $broker_pid"
-    sleep 0.1
-
+    
+    check_broker
+    
     def_args="${def_args} -h localhost -p ${port}"
 fi
 
