@@ -26,6 +26,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/functions.cmake)
 
+find_package(Threads)
+
 set(MQTT_SOURCES
     src/mqtt_client.c
     src/mqtt_packet.c
