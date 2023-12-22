@@ -1,0 +1,2 @@
+EXTRA_DIST += cmake/README.md
+EXTRA_DIST += cmake/functions.cmake
