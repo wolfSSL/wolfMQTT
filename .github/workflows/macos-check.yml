@@ -21,7 +21,7 @@ jobs:
         path: wolfssl
     - name: brew
       run: |
-        brew install automake libtool md5sha1sum mosquitto
+        brew install automake libtool mosquitto coreutils
         echo "/usr/local/sbin/" >> $GITHUB_PATH
         echo "/usr/local/opt/mosquitto/sbin/" >> $GITHUB_PATH
 

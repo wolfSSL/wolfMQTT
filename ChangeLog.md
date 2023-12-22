@@ -1,4 +1,15 @@
 ## Release Notes
+### v1.18.0 (12/22/2023)
+Release 1.18.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* Add curl easy socket backend. by @philljj in #380
+* WOLFMQTT_EXAMPLE_CERT allowing static or extern cert assignment by @gojimmypi in #354
+* Tiny readme cleanup. by @philljj in #381
+* Fix high coverity issues by @embhorn in #379
+* Add broker check to scripts by @embhorn in #385
+* Cmake build fixes by @embhorn in #384
+
 ### v1.17.1 (11/29/2023)
 Release 1.17.1 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
 https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
@@ -11,7 +22,6 @@ https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assur
 * Add MQTT-SN CI tests by @embhorn in #376
 * Fix Wild read in MqttProps_Free by @embhorn in #377
 * Fix fuzzer issues in MqttDecode_Props by @embhorn in #378
-
 
 ### v1.17.0 (11/2/2023)
 Release 1.17.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
