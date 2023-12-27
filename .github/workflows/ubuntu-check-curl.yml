@@ -2,7 +2,7 @@ name: Ubuntu Build Test with Curl Support
 
 on:
   push:
-    branches: [ 'master', 'main', 'release/**' ]
+    branches: [ '*' ]
   pull_request:
     branches: [ '*' ]
 
@@ -93,6 +93,15 @@ jobs:
       env:
         WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
       run: ./configure --enable-curl --disable-tls
+    - name: wolfmqtt make
+      run: make
+    - name: wolfmqtt make check
+      run: make check
+
+    - name: wolfmqtt configure with libCurl and Stress
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+      run: ./configure --enable-curl --enable-stress
     - name: wolfmqtt make
       run: make
     - name: wolfmqtt make check

@@ -563,6 +563,8 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
         return rc;
     }
 
+    if (timeout_sec == 0) { timeout_sec = 2; }
+
     elapsed_sec = mqtt_get_timer_seconds();
     if (*start_sec < elapsed_sec) {
         elapsed_sec -= *start_sec;

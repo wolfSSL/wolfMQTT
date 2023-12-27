@@ -83,9 +83,9 @@ then
     mosquitto $broker_args &
     broker_pid=$!
     echo "Broker PID is $broker_pid"
-    
+
     check_broker
-    
+
     def_args="${def_args} -h localhost -p ${port}"
 fi
 
