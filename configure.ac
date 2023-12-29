@@ -335,7 +335,31 @@ AC_ARG_ENABLE([stress],
     [ ENABLED_STRESS=no ]
     )
 
-if test "x$ENABLED_STRESS" = "xyes"; then
+# Set defaults of t5,p4 if unset (5 tasks, 4 pubs per task).
+NUM_TASKS=5
+NUM_PUBS=4
+
+for v in `echo $ENABLED_STRESS | tr "," " "`; do
+    case $v in
+    yes)
+        ENABLED_STRESS="yes"
+        ;;
+    no)
+        ENABLED_STRESS="no"
+        ;;
+    t*)
+        NUM_TASKS=`echo $v | cut -c 2-`
+        ;;
+    p*)
+        NUM_PUBS=`echo $v | cut -c 2-`
+        ;;
+    *)
+        AC_MSG_ERROR([enable-stress: arg $v not supported])
+        ;;
+    esac
+done
+
+if test "x$ENABLED_STRESS" != "xno"; then
     if test "x$ENABLED_ALL" = "xyes"; then
         AC_MSG_ERROR([--enable-all and --enable-stress are incompatible])
     fi
@@ -352,13 +376,14 @@ if test "x$ENABLED_STRESS" = "xyes"; then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_TEST_NONBLOCK"
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_TEST_NONBLOCK_TIMES=2"
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_MULTITHREAD"
-    AM_CFLAGS="$AM_CFLAGS -DNUM_PUB_TASKS=5 -DNUM_PUB_PER_TASK=4"
+    AM_CFLAGS="$AM_CFLAGS -DNUM_PUB_TASKS=$NUM_TASKS"
+    AM_CFLAGS="$AM_CFLAGS -DNUM_PUB_PER_TASK=$NUM_PUBS"
 fi
 
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
-AM_CONDITIONAL([BUILD_STRESS], [test "x$ENABLED_STRESS" = "xyes"])
+AM_CONDITIONAL([BUILD_STRESS], [test "x$ENABLED_STRESS" != "xno"])
 AM_CONDITIONAL([BUILD_EXAMPLES], [test "x$ENABLED_EXAMPLES" = "xyes"])
 AM_CONDITIONAL([BUILD_STDINCAP], [test "x$ENABLED_STDINCAP" = "xyes"])
 AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
