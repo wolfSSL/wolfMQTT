@@ -230,10 +230,12 @@ else()
         message(STATUS "Remove either the local project component: ${WOLFSSL_PROJECT_DIR} ")
         message(STATUS "or the Espressif shared component installed at: $ENV{IDF_PATH}/components/wolfssl/ ")
         message(STATUS "")
-        message(FATAL_ERROR "Please use wolfSSL in either local project or Espressif components, but not both.")
         message(STATUS "")
         message(STATUS "**************************************************************************************")
         message(STATUS "")
+
+        message(FATAL_ERROR "Please use wolfSSL in either local project or Espressif components, but not both.")
+        # Abort CMake after fatal error.
 
         # Optional: if you change the above FATAL_ERROR to STATUS you can warn at runtime with this macro definition:
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_MULTI_INSTALL_WARNING")
@@ -284,6 +286,7 @@ else()
                         message(FATAL_ERROR "Found stray wolfSSL user_settings.h in "
                                             "${WOLFSSL_ROOT}/include/user_settings.h "
                                             " (please move it to ${WOLFSSL_PROJECT_DIR}/include/user_settings.h )")
+                        # Abort CMake after fatal error.
                     else()
                         # we won't overwrite an existing user settings file, just note that we already have one:
                         if( EXISTS "${WOLFSSL_PROJECT_DIR}/include/user_settings.h" )
@@ -354,16 +357,17 @@ else()
         endif()
     endif()
 
-
+    # wolfSSL-specific include directories
     set(COMPONENT_ADD_INCLUDEDIRS
-        "./include" # this is the location of wolfssl user_settings.h
+        "./include" # this is the location of local project wolfssl user_settings.h
         "\"${WOLFSSL_ROOT}/\""
         "\"${WOLFSSL_ROOT}/wolfssl/\""
         "\"${WOLFSSL_ROOT}/wolfssl/wolfcrypt/\""
+        "\"${WOLFSSL_ROOT}/wolfssl/wolfcrypt/port/Espressif\""
         "\"${RTOS_IDF_PATH}/\""
         )
 
-
+    # Optionally include cryptoauthlib if present
     if(IS_DIRECTORY ${IDF_PATH}/components/cryptoauthlib)
         list(APPEND COMPONENT_ADD_INCLUDEDIRS "../cryptoauthlib/lib")
     endif()
@@ -372,7 +376,7 @@ else()
     list(APPEND COMPONENT_ADD_INCLUDEDIRS "\"${WOLFSSL_ROOT}/wolfssl/wolfcrypt/\"")
 
 
-
+    # Some files are known to be included elsewhere, or not used for Espressif
     set(COMPONENT_SRCEXCLUDE
         "\"${WOLFSSL_ROOT}/src/bio.c\""
         "\"${WOLFSSL_ROOT}/src/conf.c\""
@@ -431,7 +435,21 @@ else()
         message(STATUS "ALL VARIABLES BEGIN")
         message(STATUS "")
         foreach (_variableName ${_variableNames})
-            message(STATUS "${_variableName}=${${_variableName}}")
+            if (      ("${_variableName}" STREQUAL "bootloader_binary_files")
+                    OR ("${_variableName}" STREQUAL "Component paths")
+                    OR ("${_variableName}" STREQUAL "component_targets")
+                    OR ("${_variableName}" STREQUAL "__COMPONENT_TARGETS")
+                    OR ("${_variableName}" STREQUAL "CONFIGS_LIST")
+                    OR ("${_variableName}" STREQUAL "__CONFIG_VARIABLES")
+                    OR ("${_variableName}" STREQUAL "val")
+                    OR ("${_variableName}" MATCHES "^__idf_")
+               )
+                # Truncate the displayed value:
+                string(SUBSTRING "${${_variableName}}" 0 70 truncatedValue)
+                message(STATUS "${_variableName} = ${truncatedValue} ... (truncated)")
+            else()
+                message(STATUS "${_variableName}=${${_variableName}}")
+            endif()
         endforeach()
         message(STATUS "")
         message(STATUS "ALL VARIABLES END")
@@ -517,6 +535,8 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     # LIBWOLFSSL_VERSION_GIT_HASH_DATE git show --no-patch --no-notes --pretty=\'\%cd\'
     execute_process(WORKING_DIRECTORY ${WOLFSSL_ROOT} COMMAND ${git_cmd} "show" "--no-patch" "--no-notes" "--pretty=\'\%cd\'" OUTPUT_VARIABLE TMP_OUT RESULT_VARIABLE TMP_RES  )
     LIBWOLFSSL_SAVE_INFO(LIBWOLFSSL_VERSION_GIT_HASH_DATE "${TMP_OUT}" "${TMP_RES}")
+
+    LIBWOLFSSL_SAVE_INFO(LIBWOLFSSL_VERSION_WOLFSSL_ROOT "${WOLFSSL_ROOT}" "${TMP_RES}")
 
     message(STATUS "************************************************************************************************")
     message(STATUS "wolfssl component config complete!")

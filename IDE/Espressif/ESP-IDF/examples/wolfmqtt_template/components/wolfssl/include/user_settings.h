@@ -214,10 +214,12 @@
     /*  #define NO_WOLFSSL_ESP32_CRYPT_RSA_PRI_EXPTMOD */
 
     /*  These are defined automatically in esp32-crypt.h, here for clarity:  */
-    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA224 /* no SHA224 HW on ESP32  */
+    /* no SHA224 HW on ESP32  */
+    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA224
 
+    /* TODO add compile-time warning for appropriate size: */
     #undef  ESP_RSA_MULM_BITS
-    #define ESP_RSA_MULM_BITS 16 /* TODO add compile-time warning */
+    #define ESP_RSA_MULM_BITS 16
     /***** END CONFIG_IDF_TARGET_ESP32 *****/
 
 #elif defined(CONFIG_IDF_TARGET_ESP32S2)
@@ -277,8 +279,10 @@
     /*  #define NO_WOLFSSL_ESP32_CRYPT_HASH    */ /* to disable all SHA HW   */
 
     /* These are defined automatically in esp32-crypt.h, here for clarity:  */
-    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA384    /* no SHA384 HW on C6  */
-    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA512    /* no SHA512 HW on C6  */
+    /* no SHA384 HW on C3  */
+    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA384
+    /* no SHA512 HW on C3  */
+    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA512
 
     /*  #define NO_WOLFSSL_ESP32_CRYPT_AES             */
     /*  #define NO_WOLFSSL_ESP32_CRYPT_RSA_PRI         */
@@ -293,8 +297,10 @@
     /*  #define NO_ESP32_CRYPT                 */
     /*  #define NO_WOLFSSL_ESP32_CRYPT_HASH    */
     /*  These are defined automatically in esp32-crypt.h, here for clarity:  */
-    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA384    /* no SHA384 HW on C6  */
-    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA512    /* no SHA512 HW on C6  */
+    /* no SHA384 HW on C6  */
+    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA384
+    /* no SHA512 HW on C6  */
+    #define NO_WOLFSSL_ESP32_CRYPT_HASH_SHA512
 
     /*  #define NO_WOLFSSL_ESP32_CRYPT_AES             */
     /*  #define NO_WOLFSSL_ESP32_CRYPT_RSA_PRI         */
@@ -312,7 +318,7 @@
     /***** END CONFIG_IDF_TARGET_ESP32H2 *****/
 
 #elif defined(CONFIG_IDF_TARGET_ESP8266)
-    /*  TODO: Revisit ESP8266 */
+    /* There's no hardware accleration on the ESP8266 */
     #define NO_ESP32_CRYPT
     #define NO_WOLFSSL_ESP32_CRYPT_HASH
     #define NO_WOLFSSL_ESP32_CRYPT_AES
@@ -435,60 +441,62 @@
 #if defined(HAVE_CONFIG_H)
     #warning  "Unexpected use of config.h"
 #else
-/* TLS Support */
-#undef  ENABLE_MQTT_TLS
-#define ENABLE_MQTT_TLS
+    /* TLS Support */
+    #undef  ENABLE_MQTT_TLS
+    #define ENABLE_MQTT_TLS
 
-/* MQTT-SN Support */
-#undef  WOLFMQTT_SN
-#define WOLFMQTT_SN
+    /* MQTT-SN Support */
+    #undef  WOLFMQTT_SN
+    #define WOLFMQTT_SN
 
-/* MQTT v5.0 support */
-#undef  WOLFMQTT_V5
-#define WOLFMQTT_V5
+    /* MQTT v5.0 support */
+    #undef  WOLFMQTT_V5
+    #define WOLFMQTT_V5
 
-/* Enable property callback support */
-#ifdef WOLFMQTT_V5
-    #undef  WOLFMQTT_PROPERTY_CB
-    #define WOLFMQTT_PROPERTY_CB
-#endif
+    /* Enable property callback support */
+    #ifdef WOLFMQTT_V5
+        #undef  WOLFMQTT_PROPERTY_CB
+        #define WOLFMQTT_PROPERTY_CB
+    #endif
 
-/* Non-blocking support */
-#undef  WOLFMQTT_NONBLOCK
-#define WOLFMQTT_NONBLOCK
+    /* Non-blocking support */
+    #undef  WOLFMQTT_NONBLOCK
+    #define WOLFMQTT_NONBLOCK
 
-/* Disable socket timeout code */
-//#undef  WOLFMQTT_NO_TIMEOUT
-//#define WOLFMQTT_NO_TIMEOUT
+    /* Disable socket timeout code */
+    /*
+    #undef  WOLFMQTT_NO_TIMEOUT
+    #define WOLFMQTT_NO_TIMEOUT
+    */
 
-/* Disconnect callback support */
-#undef  WOLFMQTT_DISCONNECT_CB
-#define WOLFMQTT_DISCONNECT_CB
+    /* Disconnect callback support */
+    #undef  WOLFMQTT_DISCONNECT_CB
+    #define WOLFMQTT_DISCONNECT_CB
 
-/* Multi-threading */
-#undef  WOLFMQTT_MULTITHREAD
-#define WOLFMQTT_MULTITHREAD
+    /* Multi-threading */
+    #undef  WOLFMQTT_MULTITHREAD
+    #define WOLFMQTT_MULTITHREAD
 
-/* Debugging */
-/*
-#undef  DEBUG_WOLFMQTT
-#define DEBUG_WOLFMQTT
+    /* Debugging */
+    /*
+    #undef  DEBUG_WOLFMQTT
+    #define DEBUG_WOLFMQTT
 
-#undef  WOLFMQTT_DEBUG_CLIENT
-#define WOLFMQTT_DEBUG_CLIENT
+    #undef  WOLFMQTT_DEBUG_CLIENT
+    #define WOLFMQTT_DEBUG_CLIENT
 
-#undef  WOLFMQTT_DEBUG_SOCKET
-#define WOLFMQTT_DEBUG_SOCKET
+    #undef  WOLFMQTT_DEBUG_SOCKET
+    #define WOLFMQTT_DEBUG_SOCKET
 
-#undef  WOLFMQTT_DEBUG_THREAD
-#define WOLFMQTT_DEBUG_THREAD
-*/
+    #undef  WOLFMQTT_DEBUG_THREAD
+    #define WOLFMQTT_DEBUG_THREAD
+    */
 
-/* Disable error strings */
-/*
-#undef  WOLFMQTT_NO_ERROR_STRINGS
-#define WOLFMQTT_NO_ERROR_STRINGS
-*/
+    /* Disable error strings */
+    /*
+    #undef  WOLFMQTT_NO_ERROR_STRINGS
+    #define WOLFMQTT_NO_ERROR_STRINGS
+    */
 
 #endif /* !HAVE_CONFIG_H */
 

@@ -3,6 +3,21 @@
 #
 message(STATUS "main cmake found WOLFSSL_COMPONENT_NAME = ${WOLFSSL_COMPONENT_NAME}")
 
+# find the user name to search for possible "wolfssl-username"
+message(STATUS "USERNAME = $ENV{USERNAME}")
+if(  "$ENV{USER}" STREQUAL "" ) # the bash user
+    if(  "$ENV{USERNAME}" STREQUAL "" ) # the Windows user
+        message(STATUS "could not find USER or USERNAME")
+    else()
+        # the bash user is not blank, so we'll use it.
+        set(THIS_USER "$ENV{USERNAME}")
+    endif()
+else()
+    # the bash user is not blank, so we'll use it.
+    set(THIS_USER "$ENV{USER}")
+endif()
+message(STATUS "THIS_USER (main) = ${THIS_USER}")
+
 if(WIN32)
     # Windows-specific configuration here
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DWOLFSSL_CMAKE_SYSTEM_NAME_WINDOWS")
@@ -42,6 +57,16 @@ if( EXISTS "${CMAKE_HOME_DIRECTORY}/components/wolfssl/" AND EXISTS "$ENV{IDF_PA
 endif()
 
 if( "$ENV{IDF_COMPONENT_REGISTRY_URL}" STREQUAL "https://components-staging.espressif.com" )
+    # Currently the only staging namespace is the gojimmypi developer, but allow for override.
+    # See https://components-staging.espressif.com/components?q=namespace:gojimmypi
+    #
+    if(  "$ENV{WOLFSSL_STAGING_NAMESPACE}" STREQUAL "" )
+        set(WOLFSSL_STAGING_NAMESPACE "gojimmypi")
+    else()
+        set(WOLFSSL_STAGING_NAMESPACE "$ENV{WOLFSSL_STAGING_NAMESPACE}")
+    endif()
+    message(STATUS "Using namespace: ${WOLFSSL_STAGING_NAMESPACE}")
+
     if( ("${managed_components}" STREQUAL "") AND ("${component_manager_interface_version}" STREQUAL "") )
         # We've found a staging component, but did not detect the component manager
         if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/../components/mywolfmqtt/CMakeLists.txt)
@@ -50,7 +75,7 @@ if( "$ENV{IDF_COMPONENT_REGISTRY_URL}" STREQUAL "https://components-staging.espr
             set(WOLFSSL_COMPONENT_NAME "mywolfssl")
             set(WOLFMQTT_COMPONENT_NAME "mywolfmqtt")
         else()
-            if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/../managed_components/gojimmypi__mywolfmqtt/CMakeLists.txt)
+            if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/../managed_components/${WOLFSSL_STAGING_NAMESPACE}__mywolfmqtt/CMakeLists.txt")
                 # This is typically upon creating a project from managed component examples
                 message(STATUS "Set name mywolfmqtt (2)")
                 set(WOLFSSL_COMPONENT_NAME "mywolfssl")

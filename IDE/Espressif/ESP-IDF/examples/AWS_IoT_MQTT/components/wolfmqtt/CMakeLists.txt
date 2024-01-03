@@ -17,9 +17,9 @@ cmake_minimum_required(VERSION 3.5)
 #
 # When editing component CMake files, consider the following :
 #
-# NO Managed Componenets: Normal stand-alone app, "as cloned" from github.
+# NO Managed Components: Normal stand-alone app, "as cloned" from github.
 #   There's no notion of staging names (e.g. mywolfmqtt) regardless of environment settings.
-#   All of the component source is locall. See settings such s WOLFSSL_ROOT=[your path]
+#   All of the component source is local. See settings such s WOLFSSL_ROOT=[your path]
 #
 # Partially Managed Components. This one is tricky. When publishing a component with examples,
 #    those examples will have a chicken-and-egg problem: the required component is not yet published.
@@ -34,7 +34,7 @@ cmake_minimum_required(VERSION 3.5)
 #
 #       idf.py add-dependency "wolfssl/wolfssh^1.4.15-stable"
 #
-# Fully Managaged Componenets. This is the typical example as created from the Component Registry:
+# Fully Managed Components. This is the typical example as created from the Component Registry:
 #    For example:
 #
 #       idf.py create-project-from-example "wolfssl/wolfssh^1.4.15-stable:wolfssh_server"
