@@ -391,7 +391,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
  * MQTT_CODE_CONTINUE, or proceed with a smaller buffer read/write.
  * Used for testing nonblocking. */
 static int
-mqttcurl_test_nonblock(int * buf_len, int for_recv)
+mqttcurl_test_nonblock(int* buf_len, int for_recv)
 {
     static int testNbAlt = 0;
     static int testSmallerBuf = 0;
@@ -414,10 +414,10 @@ mqttcurl_test_nonblock(int * buf_len, int for_recv)
         if (*buf_len > 2) {
             *buf_len /= 2;
             testSmallerBuf = 1;
-            #if defined(WOLFMQTT_DEBUG_SOCKET)
+        #if defined(WOLFMQTT_DEBUG_SOCKET)
             PRINTF("mqttcurl_test_nonblock(%d): testing small buff: %d",
                    for_recv, *buf_len);
-            #endif
+        #endif
         }
     }
     else {
@@ -427,7 +427,7 @@ mqttcurl_test_nonblock(int * buf_len, int for_recv)
     return MQTT_CODE_SUCCESS;
 }
 
-#endif /* defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK) */
+#endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
 static int
 mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms,
@@ -490,7 +490,7 @@ mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms,
 }
 
 static int
-mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
+mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
     int timeout_ms)
 {
     CURLcode res = CURLE_OK;
@@ -749,7 +749,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             return MQTT_CODE_CONTINUE;
         }
     }
-#endif /* defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK) */
+#endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
     /* get the active socket from libcurl */
     res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
@@ -832,7 +832,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
             return MQTT_CODE_CONTINUE;
         }
     }
-#endif /* defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK) */
+#endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
     /* get the active socket from libcurl */
     res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
@@ -933,21 +933,21 @@ static void tcp_setup_timeout(struct timeval* tv, int timeout_ms)
     }
 }
 
-static void tcp_set_fds(SocketContext * sock, fd_set * recvfds, fd_set * errfds)
+static void tcp_set_fds(SocketContext* sock, fd_set* recvfds, fd_set* errfds)
 {
     /* Setup select file descriptors to watch */
     FD_ZERO(errfds);
     FD_SET(sock->fd, errfds);
     FD_ZERO(recvfds);
     FD_SET(sock->fd, recvfds);
-    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+#ifdef WOLFMQTT_ENABLE_STDIN_CAP
     #ifdef WOLFMQTT_MULTITHREAD
         FD_SET(sock->pfd[0], recvfds);
     #endif
     if (!sock->mqttCtx->test_mode) {
         FD_SET(STDIN, recvfds);
     }
-    #endif /* WOLFMQTT_ENABLE_STDIN_CAP */
+#endif /* WOLFMQTT_ENABLE_STDIN_CAP */
 }
 
 #ifdef WOLFMQTT_NONBLOCK

@@ -193,7 +193,7 @@ The Sensor Network client implements the MQTT-SN protocol for low-bandwidth netw
 More about MQTT-SN examples in [examples/sn-client/README.md](examples/sn-client/README.md)
 
 ### Multithread Example
-This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (10 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
+This example exercises the multithreading capabilities of the client library. The client implements two tasks: one that publishes to the broker; and another that waits for messages from the broker. The publish thread is created `NUM_PUB_TASKS` times (5 by default) and sends unique messages to the broker. This feature is enabled using the `--enable-mt` configuration option. The example is located in `/examples/multithread/`.
 
 The multi-threading feature can also be used with the non-blocking socket (--enable-nonblock).
 
@@ -380,3 +380,18 @@ The `--enable-curl` option works with these combinations:
 However `--enable-curl` is incompatible and not supported with these options:
 - `--enable-all`
 - `--enable-sn`
+
+## Stress Build Option
+
+To simplify testing a stress build option has been added, `--enable-stress=[args]`.
+The Stress option enables multithreading and nonblocking, and adds defines for
+`TEST_NONBLOCK`, `NUM_PUB_TASKS`, and `NUM_PUB_PER_TASK`.
+
+Examples of useage:
+- `--enable-stress`: stress with default options.
+- `--enable-stress=t7,p8`: stress with 7 threads, and 8 publishes per thread.
+- `--enable-stress=t7,p8 --enable-curl`: same as above, but with curl backend.
+
+Note: When stress is enabled, the Multithread Example becomes localhost only
+and will not connect to remote servers. Additionally the test `scripts/stress.test`
+is added to `make check`, and all other tests are disabled.

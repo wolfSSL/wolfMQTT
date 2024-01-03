@@ -38,7 +38,7 @@
 /* Configuration */
 
 /* Number of publish tasks. Each will send a unique message to the broker. */
-#if !defined NUM_PUB_TASKS && !defined NUM_PUB_PER_TASK
+#if !defined(NUM_PUB_TASKS) && !defined(NUM_PUB_PER_TASK)
     #define NUM_PUB_TASKS    5
     #define NUM_PUB_PER_TASK 2
 #endif
