@@ -38,13 +38,15 @@
 /* Configuration */
 
 /* Number of publish tasks. Each will send a unique message to the broker. */
-#define NUM_PUB_TASKS    5
-#define NUM_PUB_PER_TASK 2
+#if !defined(NUM_PUB_TASKS) && !defined(NUM_PUB_PER_TASK)
+    #define NUM_PUB_TASKS    5
+    #define NUM_PUB_PER_TASK 2
+#endif
 
 /* Maximum size for network read/write callbacks. There is also a v5 define that
    describes the max MQTT control packet size, DEFAULT_MAX_PKT_SZ. */
 #ifndef MAX_BUFFER_SIZE
-#define MAX_BUFFER_SIZE 1024
+    #define MAX_BUFFER_SIZE 1024
 #endif
 
 /* Total size of test message to build */
@@ -841,6 +843,14 @@ int main(int argc, char** argv)
     if (rc != 0) {
         return rc;
     }
+    #ifdef WOLFMQTT_STRESS
+    /* Forbid running stress test against anything but localhost. */
+    if (XSTRCMP(gMqttCtx.host, "localhost") != 0) {
+        PRINTF("error: stress build may only run against localhost: host=%s",
+               gMqttCtx.host);
+        return -1;
+    }
+    #endif
 #endif
 #ifdef USE_WINDOWS_API
     if (SetConsoleCtrlHandler((PHANDLER_ROUTINE)CtrlHandler,

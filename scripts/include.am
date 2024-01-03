@@ -5,6 +5,7 @@
 include scripts/broker_test/include.am
 
 if BUILD_EXAMPLES
+if !BUILD_STRESS
 dist_noinst_SCRIPTS += scripts/client.test \
                        scripts/firmware.test \
                        scripts/azureiothub.test \
@@ -12,8 +13,13 @@ dist_noinst_SCRIPTS += scripts/client.test \
                        scripts/nbclient.test
 # WIOT test broker disabled 31MAY2021
 #                      scripts/wiot.test
+
 if BUILD_MULTITHREAD
 dist_noinst_SCRIPTS += scripts/multithread.test
-endif
+endif # BUILD_MULTITHREAD
 
-endif
+else
+# Disable all other tests if checking stress.
+dist_noinst_SCRIPTS += scripts/stress.test
+endif # BUILD_STRESS
+endif # BUILD_EXAMPLES

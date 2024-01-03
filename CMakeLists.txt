@@ -156,6 +156,9 @@ if (WOLFMQTT_CURL)
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_CURL")
 endif()
 
+# Note: not adding stress option to cmake build as of yet. stress is for
+# testing only and requires the scripts/ dir to be useful.
+
 
 # generate options file
 message("Generating user options header...")

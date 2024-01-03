@@ -2,45 +2,15 @@
 
 # MQTT Multithread Client test
 
+name="Multithread Client"
+prog="examples/multithread/multithread"
 no_pid=-1
 broker_pid=$no_pid
 
-do_cleanup() {
-    if  [ $broker_pid != $no_pid ]
-    then
-        kill -9 $broker_pid
-        echo "Killed broker PID $broker_pid"
-        broker_pid=$no_pid
-    fi
+source scripts/test_common.sh
 
-    if  [ $1 -ne 0 ]
-    then
-        exit 1
-    fi
-}
-
-generate_port() { # function to produce a random port number
-    if [[ "$OSTYPE" == "linux"* ]]; then
-        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
-    else
-        echo "Unknown OS TYPE"
-        exit 1
-    fi
-    echo -e "Using port $port"
-}
-
-# Check for application
-[ ! -x ./examples/multithread/multithread ] && echo -e "\n\nMultithread Client doesn't exist" && exit 1
-
-# Check for TLS support
-has_tls=no
-./examples/multithread/multithread -? 2>&1 | grep -- 'Enable TLS'
-if [ $? -eq 0 ]; then
-    has_tls=yes
-fi
-
+# Use minimum of 2 seconds
+# The check timout will sometimes incorrectly trigger if 1 second is used
 def_args="-T -C 2000"
 
 # Check for mosquitto
@@ -78,32 +48,32 @@ fi
 echo -e "Base args: $def_args $port_args"
 
 # Run without TLS and QoS 0-2
-./examples/multithread/multithread $def_args $port_args -q 0 $1
+./$prog $def_args $port_args -q 0 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=0" && do_cleanup "-1"
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=0" && do_cleanup "-1"
 
-./examples/multithread/multithread $def_args $port_args -q 1 $1
+./$prog $def_args $port_args -q 1 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=1" && do_cleanup "-1"
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=1" && do_cleanup "-1"
 
-./examples/multithread/multithread $def_args $port_args -q 2 $1
+./$prog $def_args $port_args -q 2 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=Off, QoS=2" && do_cleanup "-1"
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=2" && do_cleanup "-1"
 
 if test $has_tls == yes
 then
     # Run with TLS and QoS 0-2
-    ./examples/multithread/multithread $def_args $cacert_args $tls_port_args -t -q 0 $1
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 0 $1
     RESULT=$?
-    [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=0" && do_cleanup "-1"
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=0" && do_cleanup "-1"
 
-    ./examples/multithread/multithread $def_args $cacert_args $tls_port_args -t -q 1 $1
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 1 $1
     RESULT=$?
-    [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=1" && do_cleanup "-1"
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=1" && do_cleanup "-1"
 
-    ./examples/multithread/multithread $def_args $cacert_args $tls_port_args -t -q 2 $1
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 2 $1
     RESULT=$?
-    [ $RESULT -ne 0 ] && echo -e "\n\nMultithread Client failed! TLS=On, QoS=2" && do_cleanup "-1"
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=2" && do_cleanup "-1"
 fi
 
 # End broker

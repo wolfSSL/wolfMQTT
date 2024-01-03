@@ -563,6 +563,12 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
         return rc;
     }
 
+    /* Default to 2s timeout. This function sometimes incorrectly
+     * triggers if 1s is used because of rounding. */
+    if (timeout_sec == 0) {
+        timeout_sec = DEFAULT_CHK_TIMEOUT_S;
+    }
+
     elapsed_sec = mqtt_get_timer_seconds();
     if (*start_sec < elapsed_sec) {
         elapsed_sec -= *start_sec;

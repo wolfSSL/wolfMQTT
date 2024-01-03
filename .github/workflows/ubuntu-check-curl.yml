@@ -98,6 +98,15 @@ jobs:
     - name: wolfmqtt make check
       run: make check
 
+    - name: wolfmqtt configure with libCurl and Stress
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+      run: ./configure --enable-curl --enable-stress
+    - name: wolfmqtt make
+      run: make
+    - name: wolfmqtt make check
+      run: make check
+
       # capture logs on failure
     - name: Show logs on failure
       if: failure() || cancelled()

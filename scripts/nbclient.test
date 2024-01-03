@@ -2,48 +2,12 @@
 
 # Non-blocking Client test
 
+name="Non-blocking Client"
+prog="examples/nbclient/nbclient"
 no_pid=-1
 broker_pid=$no_pid
 
-do_cleanup() {
-    if  [ $broker_pid != $no_pid ]
-    then
-        kill -9 $broker_pid
-        echo "Killed broker PID $broker_pid"
-        broker_pid=$no_pid
-    fi
-
-    if  [ $1 -ne 0 ]
-    then
-        exit 1
-    fi
-}
-
-generate_port() { # function to produce a random port number
-    if [[ "$OSTYPE" == "linux"* ]]; then
-        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
-    else
-        echo "Unknown OS TYPE"
-        exit 1
-    fi
-    echo -e "Using port $port"
-}
-
-check_broker() {
-    timeout 10 sh -c 'until nc -v -z $0 $1; do sleep 1; done' localhost $port
-}
-
-# Check for application
-[ ! -x ./examples/nbclient/nbclient ] && echo -e "\n\nNon-blocking Client doesn't exist" && exit 1
-
-# Check for TLS support
-has_tls=no
-./examples/nbclient/nbclient -? 2>&1 | grep -- 'Enable TLS'
-if [ $? -eq 0 ]; then
-    has_tls=yes
-fi
+source scripts/test_common.sh
 
 # Use minimum of 2 seconds
 # The check timout will sometimes incorrectly trigger if 1 second is used
@@ -75,7 +39,7 @@ then
     echo "Broker PID is $broker_pid"
 
     check_broker
-    
+
     def_args="${def_args} -h localhost"
     tls_port_args="-p 18883"
     port_args="-p ${port}"
@@ -85,32 +49,32 @@ fi
 echo -e "Base args: $def_args $port_args"
 
 # Run without TLS and QoS 0-2
-./examples/nbclient/nbclient $def_args $port_args -q 0 $1
+./$prog $def_args $port_args -q 0 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=0" && do_cleanup "-1"
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=0" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args $port_args -q 1 $1
+./$prog $def_args $port_args -q 1 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=1" && do_cleanup "-1"
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=1" && do_cleanup "-1"
 
-./examples/nbclient/nbclient $def_args $port_args -q 2 $1
+./$prog $def_args $port_args -q 2 $1
 RESULT=$?
-[ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=Off, QoS=2" && do_cleanup "-1"
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=2" && do_cleanup "-1"
 
 if test $has_tls == yes
 then
     # Run with TLS and QoS 0-2
-    ./examples/nbclient/nbclient $def_args $cacert_args $tls_port_args -t -q 0 $1
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 0 $1
     RESULT=$?
-    [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=0" && do_cleanup "-1"
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=0" && do_cleanup "-1"
 
-    ./examples/nbclient/nbclient $def_args $cacert_args $tls_port_args -t -q 1 $1
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 1 $1
     RESULT=$?
-    [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=1" && do_cleanup "-1"
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=1" && do_cleanup "-1"
 
-    ./examples/nbclient/nbclient $def_args $cacert_args $tls_port_args -t -q 2 $1
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 2 $1
     RESULT=$?
-    [ $RESULT -ne 0 ] && echo -e "\n\nNon-blocking Client failed! TLS=On, QoS=2" && do_cleanup "-1"
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=2" && do_cleanup "-1"
 fi
 
 # End broker

@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# MQTT Stress Client test
+
+name="Stress Client"
+prog="examples/multithread/multithread"
+timeout_ms=250
+no_pid=-1
+broker_pid=$no_pid
+
+if [ $# -eq 1 ]; then
+  timeout_ms=$1
+fi
+
+# Require mosquitto to run.
+if ! command -v mosquitto; then
+  echo "error: this test requires local mosquitto broker"
+  exit 1
+fi
+
+source scripts/test_common.sh
+
+# This test is local host only!
+def_args="-h localhost -T -C $timeout_ms"
+
+bwrap_path="$(command -v bwrap)"
+if [ -n "$bwrap_path" ]; then
+    # bwrap only if using a local mosquitto instance
+    if [ "${AM_BWRAPPED-}" != "yes" ]; then
+        echo "Using bwrap"
+        export AM_BWRAPPED=yes
+        exec "$bwrap_path" --unshare-net --dev-bind / / "$0" "$@"
+    fi
+    unset AM_BWRAPPED
+
+    broker_args="-c scripts/broker_test/mosquitto.conf"
+    port=11883
+else
+    # mosquitto broker custom port non-TLS only
+    has_tls=no
+    generate_port
+    broker_args="-p $port"
+fi
+mosquitto $broker_args &
+broker_pid=$!
+echo "Broker PID is $broker_pid"
+sleep 0.1
+
+tls_port_args="-p 18883"
+port_args="-p ${port}"
+cacert_args="-A scripts/broker_test/ca-cert.pem"
+
+echo -e "Base args: $def_args $port_args"
+
+# Run without TLS and QoS 0-2
+./$prog $def_args $port_args -q 0
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=0" && do_cleanup "-1"
+
+./$prog $def_args $port_args -q 1
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=1" && do_cleanup "-1"
+
+./$prog $def_args $port_args -q 2
+RESULT=$?
+[ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=Off, QoS=2" && do_cleanup "-1"
+
+if test $has_tls == yes
+then
+    # Run with TLS and QoS 0-2
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 0
+    RESULT=$?
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=0" && do_cleanup "-1"
+
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 1
+    RESULT=$?
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=1" && do_cleanup "-1"
+
+    ./$prog $def_args $cacert_args $tls_port_args -t -q 2
+    RESULT=$?
+    [ $RESULT -ne 0 ] && echo -e "\n\n$name failed! TLS=On, QoS=2" && do_cleanup "-1"
+fi
+
+# End broker
+do_cleanup "0"
+
+echo -e "\n\nStress MQTT Client Tests Passed"
+
+exit 0

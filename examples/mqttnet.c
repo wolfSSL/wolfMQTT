@@ -33,7 +33,7 @@ typedef struct MulticastCtx {
 #endif
 
 #ifndef WOLFMQTT_TEST_NONBLOCK_TIMES
-#define WOLFMQTT_TEST_NONBLOCK_TIMES 1
+    #define WOLFMQTT_TEST_NONBLOCK_TIMES 1
 #endif
 
 /* Private functions */
@@ -386,6 +386,49 @@ static int NetRead(void *context, byte* buf, int buf_len,
 /* How many times to retry after a timeout. */
 #define MQTT_CURL_NUM_RETRY (2)
 
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+/* Tells the calling function to either return early with
+ * MQTT_CODE_CONTINUE, or proceed with a smaller buffer read/write.
+ * Used for testing nonblocking. */
+static int
+mqttcurl_test_nonblock(int* buf_len, int for_recv)
+{
+    static int testNbAlt = 0;
+    static int testSmallerBuf = 0;
+    #if !defined(WOLFMQTT_DEBUG_SOCKET)
+    (void)for_recv;
+    #endif
+
+    if (testNbAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+        testNbAlt++;
+        #if defined(WOLFMQTT_DEBUG_SOCKET)
+        PRINTF("mqttcurl_test_nonblock(%d): returning early with CONTINUE",
+               for_recv);
+        #endif
+        return MQTT_CODE_CONTINUE;
+    }
+
+    testNbAlt = 0;
+
+    if (!testSmallerBuf) {
+        if (*buf_len > 2) {
+            *buf_len /= 2;
+            testSmallerBuf = 1;
+        #if defined(WOLFMQTT_DEBUG_SOCKET)
+            PRINTF("mqttcurl_test_nonblock(%d): testing small buff: %d",
+                   for_recv, *buf_len);
+        #endif
+        }
+    }
+    else {
+        testSmallerBuf = 0;
+    }
+
+    return MQTT_CODE_SUCCESS;
+}
+
+#endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
+
 static int
 mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms,
               int test_mode)
@@ -439,11 +482,15 @@ mqttcurl_wait(curl_socket_t sockfd, int for_recv, int timeout_ms,
         return MQTT_CODE_ERROR_TIMEOUT;
     }
 
+    #ifndef WOLFMQTT_ENABLE_STDIN_CAP
+    (void)test_mode;
+    #endif
+
     return MQTT_CODE_ERROR_NETWORK;
 }
 
 static int
-mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
+mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
     int timeout_ms)
 {
     CURLcode res = CURLE_OK;
@@ -600,7 +647,7 @@ mqttcurl_connect(SocketContext * sock, const char* host, word16 port,
     #if 0
     /* Set proxy options.
      * Unused at the moment. */
-    if (sock->mqttCtx->use_proxy != NULL) {
+    if (sock->mqttCtx->use_proxy) {
         /* Set the proxy hostname or ip address string. Append
          * ":[port num]" to the string to specify a port. */
         res = curl_easy_setopt(sock->curl, CURLOPT_PROXY,
@@ -692,9 +739,17 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     curl_socket_t   sockfd = 0;
     int             wait_rc = 0;
 
-    if (context == NULL || buf == NULL || buf_len == 0) {
+    if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    if (sock->mqttCtx->useNonBlockMode) {
+        if (mqttcurl_test_nonblock(&buf_len, 0)) {
+            return MQTT_CODE_CONTINUE;
+        }
+    }
+#endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
     /* get the active socket from libcurl */
     res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
@@ -767,9 +822,17 @@ static int NetRead(void *context, byte* buf, int buf_len,
     curl_socket_t   sockfd = 0;
     int             wait_rc = 0;
 
-    if (context == NULL || buf == NULL || buf_len == 0) {
+    if (context == NULL || buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
+    if (sock->mqttCtx->useNonBlockMode) {
+        if (mqttcurl_test_nonblock(&buf_len, 1)) {
+            return MQTT_CODE_CONTINUE;
+        }
+    }
+#endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
     /* get the active socket from libcurl */
     res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
@@ -858,7 +921,7 @@ static int NetDisconnect(void *context)
 #else
 
 #ifndef WOLFMQTT_NO_TIMEOUT
-static void setup_timeout(struct timeval* tv, int timeout_ms)
+static void tcp_setup_timeout(struct timeval* tv, int timeout_ms)
 {
     tv->tv_sec = timeout_ms / 1000;
     tv->tv_usec = (timeout_ms % 1000) * 1000;
@@ -868,6 +931,23 @@ static void setup_timeout(struct timeval* tv, int timeout_ms)
         tv->tv_sec = 0;
         tv->tv_usec = 100;
     }
+}
+
+static void tcp_set_fds(SocketContext* sock, fd_set* recvfds, fd_set* errfds)
+{
+    /* Setup select file descriptors to watch */
+    FD_ZERO(errfds);
+    FD_SET(sock->fd, errfds);
+    FD_ZERO(recvfds);
+    FD_SET(sock->fd, recvfds);
+#ifdef WOLFMQTT_ENABLE_STDIN_CAP
+    #ifdef WOLFMQTT_MULTITHREAD
+        FD_SET(sock->pfd[0], recvfds);
+    #endif
+    if (!sock->mqttCtx->test_mode) {
+        FD_SET(STDIN, recvfds);
+    }
+#endif /* WOLFMQTT_ENABLE_STDIN_CAP */
 }
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -982,7 +1062,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             struct timeval tv;
 
             /* Setup timeout and FD's */
-            setup_timeout(&tv, timeout_ms);
+            tcp_setup_timeout(&tv, timeout_ms);
             FD_ZERO(&fdset);
             FD_SET(sock->fd, &fdset);
         #endif /* !WOLFMQTT_NO_TIMEOUT */
@@ -1110,7 +1190,7 @@ static int SN_NetConnect(void *context, const char* host, word16 port,
         struct timeval tv;
 
         /* Setup timeout and FD's */
-        setup_timeout(&tv, timeout_ms);
+        tcp_setup_timeout(&tv, timeout_ms);
         FD_ZERO(&fdset);
         FD_SET(sock->fd, &fdset);
     #else
@@ -1166,8 +1246,9 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
         }
         testNbWriteAlt = 0;
         if (!testSmallerWrite) {
-            if (buf_len > 2)
+            if (buf_len > 2) {
                 buf_len /= 2;
+            }
             testSmallerWrite = 1;
         }
         else {
@@ -1178,12 +1259,16 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 
 #ifndef WOLFMQTT_NO_TIMEOUT
     /* Setup timeout */
-    setup_timeout(&tv, timeout_ms);
+    tcp_setup_timeout(&tv, timeout_ms);
     (void)setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&tv,
             sizeof(tv));
 #endif
 
     rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
+    #if defined(WOLFMQTT_DEBUG_SOCKET)
+    PRINTF("info: SOCK_SEND(%d) returned %d, buf_len is %d",
+           buf_len, rc, buf_len);
+    #endif
     if (rc == -1) {
         {
             /* Get error */
@@ -1226,6 +1311,8 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     fd_set recvfds;
     fd_set errfds;
     struct timeval tv;
+#else
+    (void)timeout_ms;
 #endif
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
     static int testNbReadAlt = 0;
@@ -1254,8 +1341,9 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
         }
         testNbReadAlt = 0;
         if (!testSmallerRead) {
-            if (buf_len > 2)
+            if (buf_len > 2) {
                 buf_len /= 2;
+            }
             testSmallerRead = 1;
         }
         else {
@@ -1264,27 +1352,6 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     }
 #endif
 
-#ifndef WOLFMQTT_NO_TIMEOUT
-    /* Setup timeout */
-    setup_timeout(&tv, timeout_ms);
-
-    /* Setup select file descriptors to watch */
-    FD_ZERO(&errfds);
-    FD_SET(sock->fd, &errfds);
-    FD_ZERO(&recvfds);
-    FD_SET(sock->fd, &recvfds);
-    #ifdef WOLFMQTT_ENABLE_STDIN_CAP
-    #ifdef WOLFMQTT_MULTITHREAD
-        FD_SET(sock->pfd[0], &recvfds);
-    #endif
-    if (!mqttCtx->test_mode) {
-        FD_SET(STDIN, &recvfds);
-    }
-    #endif /* WOLFMQTT_ENABLE_STDIN_CAP */
-#else
-    (void)timeout_ms;
-#endif /* !WOLFMQTT_NO_TIMEOUT */
-
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
         int do_read = 0;
@@ -1292,9 +1359,13 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     #ifndef WOLFMQTT_NO_TIMEOUT
         #ifdef WOLFMQTT_NONBLOCK
         if (mqttCtx->useNonBlockMode) {
-        #ifdef WOLFMQTT_ENABLE_STDIN_CAP
+            #ifdef WOLFMQTT_ENABLE_STDIN_CAP
             /* quick no timeout check if data is available on stdin */
-            setup_timeout(&tv, 0);
+            tcp_setup_timeout(&tv, 0);
+
+            /* Setup select file descriptors to watch */
+            tcp_set_fds(sock, &recvfds, &errfds);
+
             rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
             if (rc > 0) {
                 if (FD_ISSET(sock->fd, &recvfds)) {
@@ -1304,14 +1375,19 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                     return MQTT_CODE_STDIN_WAKE;
                 }
             }
-        #else
+            #else
             do_read = 1;
-        #endif
+            #endif
         }
         else
-        #endif
+        #endif /* WOLFMQTT_NONBLOCK */
         {
             /* Wait for rx data to be available */
+            tcp_setup_timeout(&tv, timeout_ms);
+
+            /* Setup select file descriptors to watch */
+            tcp_set_fds(sock, &recvfds, &errfds);
+
             rc = select((int)SELECT_FD(sock->fd), &recvfds, NULL, &errfds, &tv);
             if (rc > 0) {
                 if (FD_ISSET(sock->fd, &recvfds)) {
@@ -1348,6 +1424,10 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                            &buf[bytes],
                            buf_len - bytes,
                            flags);
+            #if defined(WOLFMQTT_DEBUG_SOCKET)
+            PRINTF("info: SOCK_RECV(%d) returned %d, buf_len - bytes is %d",
+                   bytes, rc, buf_len - bytes);
+            #endif
             if (rc <= 0) {
                 rc = -1;
                 goto exit; /* Error */
