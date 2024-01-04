@@ -26,8 +26,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/functions.cmake)
 
-find_package(Threads)
-
 set(MQTT_SOURCES
     src/mqtt_client.c
     src/mqtt_packet.c
@@ -147,6 +145,7 @@ add_option(WOLFMQTT_MT
            "no" "yes;no")
 if (WOLFMQTT_MT)
     list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_MULTITHREAD")
+    find_package(Threads REQUIRED)
 endif()
 
 add_option(WOLFMQTT_CURL
@@ -227,7 +226,11 @@ if (WOLFMQTT_EXAMPLES)
         examples/mqttexample.c
         examples/mqttnet.c
         )
-    target_link_libraries(mqtt_test_lib wolfmqtt)
+    if (WOLFMQTT_MT)
+        target_link_libraries(mqtt_test_lib wolfmqtt pthread)
+    else()
+        target_link_libraries(mqtt_test_lib wolfmqtt)
+    endif()
 
     function(add_mqtt_example name src)
         add_executable(${name}

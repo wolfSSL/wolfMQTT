@@ -1,0 +1,44 @@
+name: wolfMQTT CMake Build Tests
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+# Install cmake
+    - name: Install cmake
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake
+
+#pull and build wolfssl
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: Build wolfssl
+      working-directory: ./wolfssl
+      run: |
+        mkdir build
+        cd build
+        cmake ..
+        cmake --build .
+        sudo cmake --install .
+
+#pull wolfMQTT
+    - uses: actions/checkout@master
+
+#build wolfMQTT
+    - name: Build wolfMQTT
+      run: |
+        mkdir build
+        cd build
+        cmake ..
+        cmake --build .
