@@ -1,0 +1,23 @@
+name: Espressif tests
+
+on:
+  push:
+#    branches: [ 'master', 'main', 'release/**' ]
+    branches: [ '*' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  espressif_latest:
+    name: latest Docker container
+    runs-on: ubuntu-latest
+    # This should be a safe limit for the tests to run.
+    timeout-minutes: 12
+    container:
+      image: espressif/idf:latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Initialize Espressif IDE and build examples
+        # WSL does not properly honor `chmod +x` so we'll do it manually here:
+        run: . /opt/esp/idf/export.sh; chmod +x IDE/Espressif/ESP-IDF/compileAllExamples.sh; IDE/Espressif/ESP-IDF/compileAllExamples.sh
+
