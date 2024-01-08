@@ -86,3 +86,39 @@ examples/pub-sub/mqtt-sub
 .project
 .settings
 
+# All backup files
+*.bak
+
+# auto-created CMake backups
+**/CMakeLists.txt.old
+**/CMakeLists.txt.bak
+
+# VisualGDB
+**/.visualgdb
+**/*.vgdbproj.*.user
+
+# Espressif sdk config default should be saved in sdkconfig.defaults
+# we won't track the actual working sdkconfig files
+/IDE/Espressif/**/out/
+/IDE/Espressif/**/sdkconfig
+/IDE/Espressif/**/sdkconfig.old
+
+# Espressif managed components to exclude:
+/IDE/Espressif/**/managed_components/**
+
+# Espressif managed component lock files to exclude.
+# "In general, it's ok to have it under version control, however, it ties
+# the solution to the exact version of ESP-IDF and will be ignored if an
+# example is built against another IDF version or for a different target.
+# So it's better to git ignore it for the examples."
+/IDE/Espressif/**/dependencies.lock
+
+# exclude any local oqs components
+/IDE/Espressif/ESP-IDF/examples/**/components/oqs
+
+# The only ESP Registry Files specific to this location
+/IDE/Espressif/ESP-IDF/examples/wolfssl_test/**/components/cryptoauthlib
+
+# Never exclude Espressif config.h files
+!/IDE/Espressif/**/config.h
+

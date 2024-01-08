@@ -6,7 +6,7 @@ For details on wolfMQTT [see the wolfMQTT Manual](https://www.wolfssl.com/docume
 
 ## Component Manager
 
-[These files](./component-manager/README.md) are use internally by wolfSSL to publish components to the [Espressif ESP Registry](https://components.espressif.com/).
+[These files](./component-manager/README.md) are used internally by wolfSSL to publish components to the [Espressif ESP Registry](https://components.espressif.com/).
 
 The publishing process is documented in the [INSTALL.md](./component-manager/INSTALL.md) file.
 
