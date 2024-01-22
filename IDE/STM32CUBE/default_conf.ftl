@@ -109,7 +109,7 @@ extern ${variable.value} ${variable.name};
 /* ------------------------------------------------------------------------- */
 /* wolfMQTT IO */
 /* ------------------------------------------------------------------------- */
-#if defined(WOLFMQTT_CONF_IO) && WOLFSSH_MQTT_IO == 2
+#if defined(WOLFMQTT_CONF_IO) && WOLFMQTT_CONF_IO == 2
     #define WOLFSSL_LWIP
 #else
     #define WOLFMQTT_USER_IO
@@ -126,6 +126,10 @@ extern ${variable.value} ${variable.name};
 typedef unsigned int size_t;
 
 #define NO_MAIN_DRIVER
+
+#ifdef WOLFSSL_LWIP
+    #define HAVE_SOCKET
+#endif
 
 #ifdef __cplusplus
 }

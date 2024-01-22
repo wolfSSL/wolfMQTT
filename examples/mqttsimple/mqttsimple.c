@@ -27,15 +27,17 @@
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
+#include "examples/mqttport.h"
 #include "mqttsimple.h"
 
 /* Requires BSD Style Socket */
 #ifdef HAVE_SOCKET
-
 #ifndef ENABLE_MQTT_TLS
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
+#ifndef WOLFSSL_LWIP
+    #include <netinet/in.h>
+#endif
 #include <netdb.h>
 #include <unistd.h>
 #endif
