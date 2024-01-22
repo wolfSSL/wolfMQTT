@@ -18,8 +18,8 @@ jobs:
         # Don't prompt for anything
         export DEBIAN_FRONTEND=noninteractive
         sudo apt-get update
-        # Install mosquitto
-        sudo apt-get install -y mosquitto bubblewrap
+        # Install Dependencies
+        sudo apt-get install -y mosquitto bubblewrap libpsl5 libpsl-dev
 
     - name: Setup mosquitto broker
       run: |
