@@ -549,7 +549,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp = MqttDecode_String(buf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len);
-                if (cur_prop->data_str.len <= (buf_len - (buf - pbuf))) {
+                if ((tmp >= 0) && ((word32)tmp <= (buf_len - (buf - pbuf)))) {
                     buf += tmp;
                     total += tmp;
                     prop_len -= (word32)tmp;
@@ -600,8 +600,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp = MqttDecode_String(buf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len);
-                if (cur_prop->data_str.len <=
-                    (buf_len - (buf - pbuf))) {
+                if ((tmp >= 0) && ((word32)tmp <= (buf_len - (buf - pbuf)))) {
                     buf += tmp;
                     total += tmp;
                     prop_len -= (word32)tmp;
@@ -609,8 +608,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                         tmp = MqttDecode_String(buf,
                                 (const char**)&cur_prop->data_str2.str,
                                 &cur_prop->data_str2.len);
-                        if (cur_prop->data_str2.len <=
-                            (buf_len - (buf - pbuf))) {
+                        if ((tmp >= 0) && ((word32)tmp <=
+                            (buf_len - (buf - pbuf)))) {
                             buf += tmp;
                             total += tmp;
                             prop_len -= (word32)tmp;
