@@ -64,7 +64,7 @@ int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     (void)ssl; /* Not used */
 
     rc = client->net->read(client->net->context, (byte*)buf, sz,
-        client->tls.timeout_ms);
+        client->tls.timeout_ms_read);
 
     /* save network read response */
     client->tls.sockRcRead = rc;
@@ -87,7 +87,7 @@ int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     (void)ssl; /* Not used */
 
     rc = client->net->write(client->net->context, (byte*)buf, sz,
-        client->tls.timeout_ms);
+        client->tls.timeout_ms_write);
 
     /* save network write response */
     client->tls.sockRcWrite = rc;
@@ -116,7 +116,8 @@ int MqttSocket_Init(MqttClient *client, MqttNet *net)
     #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
         client->tls.ctx = NULL;
         client->tls.ssl = NULL;
-        client->tls.timeout_ms = client->cmd_timeout_ms;
+        client->tls.timeout_ms_read = client->cmd_timeout_ms;
+        client->tls.timeout_ms_write = client->cmd_timeout_ms;
     #endif
 
         /* Validate callbacks are not null! */
@@ -134,8 +135,16 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 
 #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
-        client->tls.timeout_ms = timeout_ms;
+        client->tls.timeout_ms_write = timeout_ms;
         client->tls.sockRcWrite = 0; /* init value */
+
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+        rc = wm_SemLock(&client->lockSSL);
+        if (rc != 0) {
+            return rc;
+        }
+    #endif
+
         rc = wolfSSL_write(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
         #if defined(WOLFMQTT_DEBUG_SOCKET) || defined(WOLFSSL_ASYNC_CRYPT)
@@ -160,6 +169,10 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
             }
         #endif
         }
+
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+        wm_SemUnlock(&client->lockSSL);
+    #endif
     }
     else
 #endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
@@ -236,8 +249,16 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 
 #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
-        client->tls.timeout_ms = timeout_ms;
+        client->tls.timeout_ms_read = timeout_ms;
         client->tls.sockRcRead = 0; /* init value */
+
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+        rc = wm_SemLock(&client->lockSSL);
+        if (rc != 0) {
+            return rc;
+        }
+    #endif
+
         rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
             int error = wolfSSL_get_error(client->tls.ssl, 0);
@@ -265,6 +286,10 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
                 rc = MQTT_CODE_ERROR_NETWORK;
             }
         }
+
+    #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+        wm_SemUnlock(&client->lockSSL);
+    #endif
     }
     else
 #endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/

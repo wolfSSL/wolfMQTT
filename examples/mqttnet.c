@@ -391,37 +391,66 @@ static int NetRead(void *context, byte* buf, int buf_len,
  * MQTT_CODE_CONTINUE, or proceed with a smaller buffer read/write.
  * Used for testing nonblocking. */
 static int
-mqttcurl_test_nonblock(int* buf_len, int for_recv)
+mqttcurl_test_nonblock_read(int* buf_len)
 {
-    static int testNbAlt = 0;
-    static int testSmallerBuf = 0;
-    #if !defined(WOLFMQTT_DEBUG_SOCKET)
-    (void)for_recv;
-    #endif
+    static int testNbReadAlt = 0;
+    static int testSmallerRead = 0;
 
-    if (testNbAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
-        testNbAlt++;
+    if (testNbReadAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+        testNbReadAlt++;
         #if defined(WOLFMQTT_DEBUG_SOCKET)
-        PRINTF("mqttcurl_test_nonblock(%d): returning early with CONTINUE",
-               for_recv);
+        PRINTF("mqttcurl_test_nonblock_read: returning early with CONTINUE");
         #endif
         return MQTT_CODE_CONTINUE;
     }
 
-    testNbAlt = 0;
+    testNbReadAlt = 0;
 
-    if (!testSmallerBuf) {
+    if (!testSmallerRead) {
         if (*buf_len > 2) {
             *buf_len /= 2;
-            testSmallerBuf = 1;
+            testSmallerRead = 1;
         #if defined(WOLFMQTT_DEBUG_SOCKET)
-            PRINTF("mqttcurl_test_nonblock(%d): testing small buff: %d",
-                   for_recv, *buf_len);
+            PRINTF("mqttcurl_test_nonblock_read: testing small buff: %d",
+                   *buf_len);
         #endif
         }
     }
     else {
-        testSmallerBuf = 0;
+        testSmallerRead = 0;
+    }
+
+    return MQTT_CODE_SUCCESS;
+}
+
+static int
+mqttcurl_test_nonblock_write(int* buf_len)
+{
+    static int testNbWriteAlt = 0;
+    static int testSmallerWrite = 0;
+
+    if (testNbWriteAlt < WOLFMQTT_TEST_NONBLOCK_TIMES) {
+        testNbWriteAlt++;
+        #if defined(WOLFMQTT_DEBUG_SOCKET)
+        PRINTF("mqttcurl_test_nonblock_write: returning early with CONTINUE");
+        #endif
+        return MQTT_CODE_CONTINUE;
+    }
+
+    testNbWriteAlt = 0;
+
+    if (!testSmallerWrite) {
+        if (*buf_len > 2) {
+            *buf_len /= 2;
+            testSmallerWrite = 1;
+        #if defined(WOLFMQTT_DEBUG_SOCKET)
+            PRINTF("mqttcurl_test_nonblock_write: testing small buff: %d",
+                   *buf_len);
+        #endif
+        }
+    }
+    else {
+        testSmallerWrite = 0;
     }
 
     return MQTT_CODE_SUCCESS;
@@ -745,7 +774,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
     if (sock->mqttCtx->useNonBlockMode) {
-        if (mqttcurl_test_nonblock(&buf_len, 0)) {
+        if (mqttcurl_test_nonblock_write(&buf_len)) {
             return MQTT_CODE_CONTINUE;
         }
     }
@@ -773,7 +802,18 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
      * payload will be transferred in a single shot without buffering.
      * todo: add buffering? */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
+        if (rc != 0) {
+            return rc;
+        }
+    #endif
+
         res = curl_easy_send(sock->curl, buf, buf_len, &sent);
+
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+    #endif
 
         if (res == CURLE_OK) {
             #if defined(WOLFMQTT_DEBUG_SOCKET)
@@ -828,7 +868,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
     if (sock->mqttCtx->useNonBlockMode) {
-        if (mqttcurl_test_nonblock(&buf_len, 1)) {
+        if (mqttcurl_test_nonblock_read(&buf_len)) {
             return MQTT_CODE_CONTINUE;
         }
     }
@@ -856,7 +896,18 @@ static int NetRead(void *context, byte* buf, int buf_len,
      * payload will be transferred in a single shot without buffering.
      * todo: add buffering? */
     for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
+        if (rc != 0) {
+            return rc;
+        }
+    #endif
+
         res = curl_easy_recv(sock->curl, buf, buf_len, &recvd);
+
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+    #endif
 
         if (res == CURLE_OK) {
             #if defined(WOLFMQTT_DEBUG_SOCKET)

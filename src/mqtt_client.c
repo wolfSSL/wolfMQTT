@@ -1551,6 +1551,16 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     if (rc == 0) {
         rc = wm_SemInit(&client->lockClient);
     }
+    #ifdef ENABLE_MQTT_TLS
+    if (rc == 0) {
+        rc = wm_SemInit(&client->lockSSL);
+    }
+    #endif
+    #ifdef ENABLE_MQTT_CURL
+    if (rc == 0) {
+        rc = wm_SemInit(&client->lockCURL);
+    }
+    #endif
 #endif
 
     if (rc == 0) {
@@ -1573,6 +1583,12 @@ void MqttClient_DeInit(MqttClient *client)
         (void)wm_SemFree(&client->lockSend);
         (void)wm_SemFree(&client->lockRecv);
         (void)wm_SemFree(&client->lockClient);
+    #ifdef ENABLE_MQTT_TLS
+        (void)wm_SemFree(&client->lockSSL);
+    #endif
+    #ifdef ENABLE_MQTT_CURL
+        (void)wm_SemFree(&client->lockCURL);
+    #endif
 #endif
     }
 #ifdef WOLFMQTT_V5
