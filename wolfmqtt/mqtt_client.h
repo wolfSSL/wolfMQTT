@@ -209,6 +209,9 @@ typedef struct _MqttClient {
     wm_Sem lockSend;
     wm_Sem lockRecv;
     wm_Sem lockClient;
+    #ifdef ENABLE_MQTT_CURL
+    wm_Sem lockCURL;
+    #endif
     struct _MqttPendResp* firstPendResp; /* protected with client lock */
     struct _MqttPendResp* lastPendResp;  /* protected with client lock */
 #endif

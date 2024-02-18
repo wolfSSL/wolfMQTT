@@ -71,7 +71,8 @@ typedef struct _MqttTls {
     WOLFSSL             *ssl;
     int                 sockRcRead;
     int                 sockRcWrite;
-    int                 timeout_ms;
+    int                 timeout_ms_read;
+    int                 timeout_ms_write;
 } MqttTls;
 #endif
 
