@@ -500,6 +500,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         }
 
         /* Decode the Identifier */
+        if (buf_len < (word32)(buf - pbuf)) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            break;
+        }
         rc = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
                 (word32)(buf_len - (buf - pbuf)));
         if (rc < 0) {
@@ -562,6 +566,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_VAR_INT:
             {
+                if (buf_len < (word32)(buf - pbuf)) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                    break;
+                }
                 tmp = MqttDecode_Vbi(buf, &cur_prop->data_int,
                         (word32)(buf_len - (buf - pbuf)));
                 if (tmp < 0) {
@@ -829,6 +837,9 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
             word32 props_len = 0;
             int tmp;
             /* Decode Length of Properties */
+            if (rx_buf_len < (rx_payload - rx_buf)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
                     (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0) {
@@ -1011,6 +1022,9 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         int tmp;
 
         /* Decode Length of Properties */
+        if (rx_buf_len < (rx_payload - rx_buf)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         tmp = MqttDecode_Vbi(rx_payload, &props_len,
                 (word32)(rx_buf_len - (rx_payload - rx_buf)));
         if (tmp < 0)
@@ -1169,6 +1183,9 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
                 int tmp;
 
                 /* Decode Length of Properties */
+                if (rx_buf_len < (rx_payload - rx_buf)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
                 tmp = MqttDecode_Vbi(rx_payload, &props_len,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)));
                 if (tmp < 0)
@@ -1313,6 +1330,9 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             int tmp;
 
             /* Decode Length of Properties */
+            if (rx_buf_len < (rx_payload - rx_buf)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
                     (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0)
@@ -1452,6 +1472,9 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                 int tmp;
 
                 /* Decode Length of Properties */
+                if (rx_buf_len < (rx_payload - rx_buf)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
                 tmp = MqttDecode_Vbi(rx_payload, &props_len,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)));
                 if (tmp < 0)
@@ -1635,6 +1658,9 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
         if (remain_len > 1) {
             /* Decode Length of Properties */
+            if (rx_buf_len < (rx_payload - rx_buf)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
                     (word32)(rx_buf_len - (rx_payload - rx_buf)));
             if (tmp < 0)
@@ -1750,6 +1776,9 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
         auth->props = NULL;
 
         /* Decode Length of Properties */
+        if (rx_buf_len < (rx_payload - rx_buf)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         tmp = MqttDecode_Vbi(rx_payload, &props_len,
                 (word32)(rx_buf_len - (rx_payload - rx_buf)));
         if (tmp < 0)
@@ -2018,6 +2047,9 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
             }
 
             /* Try and decode remaining length */
+            if (rx_buf_len < (client->packet.header_len - (i + 1))) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             rc = MqttDecode_Vbi(header->len,
                     (word32*)&client->packet.remain_len,
                     rx_buf_len - (client->packet.header_len - (i + 1)));
