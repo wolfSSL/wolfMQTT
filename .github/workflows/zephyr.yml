@@ -1,10 +1,11 @@
 name: Zephyr tests
+
 env:
   WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
 
 on:
   push:
-    branches: [ '*' ]
+    branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
 
