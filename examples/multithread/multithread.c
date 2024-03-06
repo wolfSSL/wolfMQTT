@@ -272,9 +272,6 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
         wm_SemFree(&mtLock);
         client_exit(mqttCtx);
     }
-    if (wm_SemLock(&pingSignal) != 0) { /* default to locked */
-        client_exit(mqttCtx);
-    }
 
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
             mqttCtx->use_tls);
@@ -485,12 +482,16 @@ static int TestIsDone(int rc, MQTTCtx* mqttCtx)
                 && !MqttClient_IsMessageActive(&mqttCtx->client, NULL)
             #endif
             ) {
-            wm_SemUnlock(&mtLock);
-            mqtt_stop_set();
             isDone = 1; /* done */
         }
+
         wm_SemUnlock(&mtLock);
+
+        if (isDone) {
+            mqtt_stop_set();
+        }
     }
+
     return isDone;
 }
 
@@ -505,6 +506,13 @@ static void *waitMessage_task(void *param)
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     word32 startSec;
     word32 cmd_timeout_ms = mqttCtx->cmd_timeout_ms;
+    int    needsUnlock = 0;
+
+    if (wm_SemLock(&pingSignal) != 0) { /* default to locked */
+        THREAD_EXIT(0);
+    }
+
+    needsUnlock = 1;
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
@@ -585,6 +593,7 @@ static void *waitMessage_task(void *param)
             /* Keep Alive handled in ping thread */
             /* Signal keep alive thread */
             wm_SemUnlock(&pingSignal);
+            needsUnlock = 0;
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
@@ -596,7 +605,10 @@ static void *waitMessage_task(void *param)
     } while (!mqtt_stop_get());
 
     mqttCtx->return_code = rc;
-    wm_SemUnlock(&pingSignal); /* wake ping thread */
+    if (needsUnlock) {
+        wm_SemUnlock(&pingSignal); /* wake ping thread */
+        needsUnlock = 0;
+    }
 
     THREAD_EXIT(0);
 }
@@ -697,6 +709,8 @@ static void *ping_task(void *param)
                 MqttClient_ReturnCodeToString(rc), rc);
             break;
         }
+
+        wm_SemUnlock(&pingSignal);
     } while (!mqtt_stop_get());
 
     THREAD_EXIT(0);
