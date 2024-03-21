@@ -100,7 +100,6 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
         s->sem = NULL;
         return 0;
     }
-
     int wm_SemLock(wm_Sem *s) {
         dispatch_semaphore_wait(s->sem, DISPATCH_TIME_FOREVER);
         return 0;
@@ -275,11 +274,14 @@ static int MqttReadStart(MqttClient* client, MqttMsgStat* stat)
 {
     int rc = MQTT_CODE_SUCCESS;
 
-#ifdef WOLFMQTT_DEBUG_CLIENT
+#if defined(WOLFMQTT_DEBUG_CLIENT) || !defined(WOLFMQTT_ALLOW_NODATA_UNLOCK)
+  #ifdef WOLFMQTT_DEBUG_CLIENT
     if (stat->isReadActive) {
         MQTT_TRACE_MSG("Warning, recv already locked!");
         rc = MQTT_CODE_ERROR_SYSTEM;
     }
+  #endif /* WOLFMQTT_DEBUG_CLIENT */
+  #ifndef WOLFMQTT_ALLOW_NODATA_UNLOCK
     /* detect if a read is already in progress */
     #ifdef WOLFMQTT_MULTITHREAD
     if (wm_SemLock(&client->lockClient) == 0)
@@ -293,9 +295,11 @@ static int MqttReadStart(MqttClient* client, MqttMsgStat* stat)
         wm_SemUnlock(&client->lockClient);
     #endif
     }
-    if (rc != 0)
+  #endif /* WOLFMQTT_ALLOW_NODATA_UNLOCK */
+    if (rc != MQTT_CODE_SUCCESS) {
         return rc;
-#endif /* WOLFMQTT_DEBUG_CLIENT */
+    }
+#endif /* WOLFMQTT_DEBUG_CLIENT || !WOLFMQTT_ALLOW_NODATA_UNLOCK */
 
 #ifdef WOLFMQTT_MULTITHREAD
     rc = wm_SemLock(&client->lockRecv);
