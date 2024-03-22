@@ -1,6 +1,6 @@
 /* multithread.c
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2024 wolfSSL Inc.
  *
  * This file is part of wolfMQTT.
  *
@@ -607,7 +607,6 @@ static void *waitMessage_task(void *param)
     mqttCtx->return_code = rc;
     if (needsUnlock) {
         wm_SemUnlock(&pingSignal); /* wake ping thread */
-        needsUnlock = 0;
     }
 
     THREAD_EXIT(0);

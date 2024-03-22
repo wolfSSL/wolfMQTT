@@ -1,4 +1,20 @@
 ## Release Notes
+
+### v1.19.0 (3/22/2024)
+Release 1.19.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* Add stress test. by @philljj in #387
+* Add cmake CI test and fix pthread detection by @embhorn in #389
+* Initial wolfMQTT Espressif ESP32 template and AWS IoT examples by @gojimmypi in #388
+* Add curl test dependencies by @lealem47 in #392
+* Improving and fixing typos for STM32CUBE build by @lealem47 in #391
+* Fix string prop OOB read by @embhorn in #394
+* Fix some Helgrind thread errors with enable-tls, and enable-curl. by @philljj in #396
+* Initial Espressif CI; limit Zepher CI by @gojimmypi in #390
+* Fix double unlock and double lock in multithread example. by @philljj in #397
+* Fix double lock of lockRecv. by @philljj in #398
+
 ### v1.18.0 (12/22/2023)
 Release 1.18.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
 https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
