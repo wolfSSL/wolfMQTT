@@ -5,8 +5,9 @@
 extern "C" {
 #endif
 
-#ifdef CONFIG_WOLFSSL_SETTINGS_FILE
-#include CONFIG_WOLFSSL_SETTINGS_FILE
+/* If a custom user_settings file is provided use it instead */
+#ifdef WOLFMQTT_SETTINGS_FILE
+#include WOLFMQTT_SETTINGS_FILE
 #endif
 
 #undef NO_FILESYSTEM
