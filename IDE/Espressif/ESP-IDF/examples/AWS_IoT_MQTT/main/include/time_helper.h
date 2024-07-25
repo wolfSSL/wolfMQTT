@@ -31,21 +31,23 @@
 extern "C" {
 #endif
 
+#include <esp_err.h>
+
 /* a function to show the current data and time */
-int esp_show_current_datetime();
+esp_err_t esp_show_current_datetime();
 
 /* worst case, if GitHub time not available, used fixed time */
-int set_fixed_default_time(void);
+esp_err_t set_fixed_default_time(void);
 
 /* set time from string (e.g. GitHub commit time) */
-int set_time_from_string(char* time_buffer);
+esp_err_t set_time_from_string(const char* time_buffer);
 
 /* set time from NTP servers,
  * also initially calls set_fixed_default_time or set_time_from_string */
-int set_time(void);
+esp_err_t set_time(void);
 
 /* wait NTP_RETRY_COUNT seconds before giving up on NTP time */
-int set_time_wait_for_ntp(void);
+esp_err_t set_time_wait_for_ntp(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

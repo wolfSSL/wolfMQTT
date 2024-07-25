@@ -15,7 +15,7 @@ if  [[ "$IDF_PATH" == "" ]]; then
 fi
 
 # See https://components.espressif.com/components/wolfssl/wolfssl
-WOLFSSL_COMPONENT=wolfssl/wolfssl^5.6.6-stable-update2-esp32
+WOLFSSL_COMPONENT=wolfssl/wolfssl^5.7.2
 
 SCRIPT_DIR=$(builtin cd "${BASH_SOURCE%/*}" || exit 1; pwd)
 RUN_SETUP=$1
@@ -38,7 +38,7 @@ if [ $BUILD_PUBLISHED_EXAMPLES -ne 0 ]; then
     echo "************************************************************************"
 
     # See https://components.espressif.com/components/wolfssl/wolfmqtt
-    idf.py create-project-from-example "wolfssl/wolfssl^5.6.6-stable-update2-esp32:template"
+    idf.py create-project-from-example "wolfssl/wolfssl^5.7.2:template"
 
     THIS_ERROR_CODE=$?
     if [ $THIS_ERROR_CODE -ne 0 ]; then
