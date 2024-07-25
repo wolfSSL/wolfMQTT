@@ -251,7 +251,6 @@ WOLFMQTT_API int MqttClient_Init(
 
 /*! \brief      Cleans up resources allocated to the MqttClient structure
  *  \param      client      Pointer to MqttClient structure
- *  \return     none
  */
 WOLFMQTT_API void MqttClient_DeInit(MqttClient *client);
 
@@ -360,6 +359,7 @@ WOLFMQTT_API int MqttClient_Publish_ex(
                             with message data
  *                          Note: MqttPublish and MqttMessage are same
                             structure.
+ *  \param      pubCb       Function pointer to callback routine
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking) or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish
