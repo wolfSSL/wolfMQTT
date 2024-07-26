@@ -92,7 +92,7 @@ char* ntpServerList[NTP_SERVER_COUNT] = NTP_SERVER_LIST;
 extern char* ntpServerList[NTP_SERVER_COUNT];
 
 /* Show the current date and time */
-int esp_show_current_datetime()
+esp_err_t esp_show_current_datetime()
 {
     time_t now;
     char strftime_buf[64];
@@ -109,7 +109,7 @@ int esp_show_current_datetime()
 }
 
 /* the worst-case scenario is a hard-coded date/time */
-int set_fixed_default_time(void)
+esp_err_t set_fixed_default_time(void)
 {
     /* ideally, we'd like to set time from network,
      * but let's set a default time, just in case */
@@ -139,7 +139,7 @@ int set_fixed_default_time(void)
  *
  * returns 0 = success if able to set the time from the provided string
  * error for any other value, typically -1 */
-int set_time_from_string(char* time_buffer)
+esp_err_t set_time_from_string(const char* time_buffer)
 {
     /* expecting github default formatting: 'Thu Aug 31 12:41:45 2023 -0700' */
     const char *format = "%3s %3s %d %d:%d:%d %d %s";
@@ -223,7 +223,7 @@ int set_time_from_string(char* time_buffer)
 }
 
 /* set time; returns 0 if succecssfully configured with NTP */
-int set_time(void)
+esp_err_t set_time(void)
 {
 #ifndef NTP_SERVER_COUNT
     ESP_LOGW(TAG, "Warning: no sntp server names defined. "
@@ -320,7 +320,7 @@ int set_time(void)
 }
 
 /* wait for NTP to actually set the time */
-int set_time_wait_for_ntp(void)
+esp_err_t set_time_wait_for_ntp(void)
 {
     int ret = 0;
 #ifdef HAS_ESP_NETIF_SNTP
