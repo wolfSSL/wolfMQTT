@@ -141,10 +141,27 @@ extern "C" {
 
     #define SOCKET_INVALID (-1)
 
+    typedef zsock_fd_set fd_set;
+    #define FD_ZERO ZSOCK_FD_ZERO
+    #define FD_SET  ZSOCK_FD_SET
+    #define FD_ISSET  ZSOCK_FD_ISSET
+    #define select zsock_select
+
     #ifdef WOLFSSL_ZEPHYR
         /* wolfSSL takes care of most defines */
         #include <wolfssl/wolfcrypt/wc_port.h>
     #else
+        #define addrinfo   zsock_addrinfo
+        #define getaddrinfo   zsock_getaddrinfo
+        #define freeaddrinfo   zsock_freeaddrinfo
+        #define socket zsock_socket
+        #define close zsock_close
+        #define SOCK_CONNECT zsock_connect
+        #define getsockopt zsock_getsockopt
+        #define setsockopt zsock_setsockopt
+        #define send zsock_send
+        #define recv zsock_recv
+        #define MSG_PEEK ZSOCK_MSG_PEEK
         #ifndef NO_FILESYSTEM
             #define XFOPEN              z_fs_open
             #define XFCLOSE             z_fs_close
