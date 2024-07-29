@@ -5,6 +5,13 @@
 extern "C" {
 #endif
 
+#include <zephyr/net/socket_select.h>
+
+/* If a custom user_settings file is provided use it instead */
+#ifdef WOLFMQTT_SETTINGS_FILE
+#include WOLFMQTT_SETTINGS_FILE
+#endif
+
 #undef NO_FILESYSTEM
 #define NO_FILESYSTEM
 

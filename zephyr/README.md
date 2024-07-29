@@ -58,11 +58,11 @@ Follow the [instructions](https://docs.zephyrproject.org/latest/connectivity/net
 sudo ./loop-slip-tap.sh
 ```
 
-Run the following commands in parallel in this order in the `zephyrproject` directory to setup a MQTT broker and subscriber.
+Run the following commands in parallel in this order in the `zephyrproject` directory to setup a MQTT broker and subscriber (on port 11883 as defined in the mosquitto config).
 
 ```bash
 cd modules/lib/wolfmqtt && mosquitto -c scripts/broker_test/mosquitto.conf
-mosquitto_sub -t sensors
+mosquitto_sub -p 11883 -t sensors
 ```
 
 ### Build and Run client Test Application
@@ -76,6 +76,8 @@ west build -t run
 ```
 
 ### Build and Run client TLS Test Application
+Prerequisite:
+Add wolfSSL Zephyr module: https://github.com/wolfSSL/wolfssl/blob/master/zephyr/README.md
 
 build and execute `client TLS`
 

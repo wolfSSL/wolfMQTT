@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@master
+    - uses: actions/checkout@master
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
@@ -30,7 +31,7 @@ jobs:
       run: ./autogen.sh
     - name: wolfssl configure
       working-directory: ./wolfssl
-      run: ./configure --enable-enckeys
+      run: ./configure --enable-enckeys --prefix=$GITHUB_WORKSPACE/build-dir
     - name: wolfssl make
       working-directory: ./wolfssl
       run: make
@@ -38,12 +39,14 @@ jobs:
       working-directory: ./wolfssl
       run: make install
 
-    - uses: actions/checkout@master
+    - name: Check wolfSSL install dir
+      run: ls $GITHUB_WORKSPACE/build-dir
+
     - name: autogen
       run: ./autogen.sh
 
     - name: configure
-      run: ./configure
+      run: ./configure --with-libwolfssl-prefix=$GITHUB_WORKSPACE/build-dir
     - name: make
       run: make
     - name: make check
@@ -57,21 +60,21 @@ jobs:
       run: make check
 
     - name: configure with SN Enabled
-      run: ./configure --enable-sn
+      run: ./configure --enable-sn --with-libwolfssl-prefix=$GITHUB_WORKSPACE/build-dir
     - name: make
       run: make
     - name: make check
       run: make check
 
     - name: configure with Non-Block
-      run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+      run: ./configure --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" --with-libwolfssl-prefix=$GITHUB_WORKSPACE/build-dir
     - name: make
       run: make
     - name: make check
       run: make check
 
     - name: configure with Non-Block and Multi-threading
-      run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK"
+      run: ./configure --enable-mt --enable-nonblock CFLAGS="-DWOLFMQTT_TEST_NONBLOCK" --with-libwolfssl-prefix=$GITHUB_WORKSPACE/build-dir
     - name: make
       run: make
     - name: make check
