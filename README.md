@@ -387,7 +387,7 @@ To simplify testing a stress build option has been added, `--enable-stress=[args
 The Stress option enables multithreading and nonblocking, and adds defines for
 `TEST_NONBLOCK`, `NUM_PUB_TASKS`, and `NUM_PUB_PER_TASK`.
 
-Examples of useage:
+Examples of usage:
 - `--enable-stress`: stress with default options.
 - `--enable-stress=t7,p8`: stress with 7 threads, and 8 publishes per thread.
 - `--enable-stress=t7,p8 --enable-curl`: same as above, but with curl backend.

@@ -310,7 +310,7 @@
     /***** END CONFIG_IDF_TARGET_ESP32C6 *****/
 
 #elif defined(CONFIG_IDF_TARGET_ESP32H2)
-    /*  wolfSSL Hardware Acceleration not yet implemented */
+    /*  wolfSSL hardware acceleration not yet implemented */
     #define NO_ESP32_CRYPT
     #define NO_WOLFSSL_ESP32_CRYPT_HASH
     #define NO_WOLFSSL_ESP32_CRYPT_AES
@@ -318,7 +318,7 @@
     /***** END CONFIG_IDF_TARGET_ESP32H2 *****/
 
 #elif defined(CONFIG_IDF_TARGET_ESP8266)
-    /* There's no hardware accleration on the ESP8266 */
+    /* There's no hardware acceleration on the ESP8266 */
     #define NO_ESP32_CRYPT
     #define NO_WOLFSSL_ESP32_CRYPT_HASH
     #define NO_WOLFSSL_ESP32_CRYPT_AES
@@ -326,7 +326,7 @@
     /***** END CONFIG_IDF_TARGET_ESP266 *****/
 
 #elif defined(CONFIG_IDF_TARGET_ESP8684)
-    /*  There's no Hardware Acceleration available on ESP8684 */
+    /*  There's no hardware acceleration available on ESP8684 */
     #define NO_ESP32_CRYPT
     #define NO_WOLFSSL_ESP32_CRYPT_HASH
     #define NO_WOLFSSL_ESP32_CRYPT_AES
@@ -334,7 +334,7 @@
     /***** END CONFIG_IDF_TARGET_ESP8684 *****/
 
 #else
-    /* Anything else encountered, disable HW accleration */
+    /* Anything else encountered, disable HW acceleration */
     #define NO_ESP32_CRYPT
     #define NO_WOLFSSL_ESP32_CRYPT_HASH
     #define NO_WOLFSSL_ESP32_CRYPT_AES
@@ -362,7 +362,7 @@
 
 /* #define HASH_SIZE_LIMIT */ /* for test.c */
 
-/* #define NO_HW_MATH_TEST */ /* Optionall turn off HW math checks */
+/* #define NO_HW_MATH_TEST */ /* Optionally turn off HW math checks */
 
 /* Optionally include alternate HW test library: alt_hw_test.h */
 /* When enabling, the ./components/wolfssl/CMakeLists.txt file

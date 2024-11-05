@@ -3,7 +3,7 @@
 # All right reserved.
 
 AC_COPYRIGHT([Copyright (C) 2014-2024 wolfSSL Inc.])
-AC_INIT([wolfmqtt],[1.19.0],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
+AC_INIT([wolfmqtt],[1.19.1],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmqtt],[http://www.wolfssl.com])
 
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
@@ -24,7 +24,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=17:1:0
+WOLFMQTT_LIBRARY_VERSION=17:2:0
 #                        | | |
 #                 +------+ | +---+
 #                 |        |     |
@@ -456,7 +456,7 @@ for option in $OPTION_FLAGS; do
             continue
         fi
 
-        # allow user to igonore system options
+        # allow user to ignore system options
         ignoresys=no
         if [[[ $noequalsign == _* ]]] ;
         then

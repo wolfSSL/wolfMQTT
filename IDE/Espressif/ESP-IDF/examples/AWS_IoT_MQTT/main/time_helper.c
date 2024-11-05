@@ -167,7 +167,7 @@ esp_err_t set_time_from_string(const char* time_buffer)
 
 
     if (ret == 8) {
-        /* we found a match for all componets */
+        /* we found a match for all components */
 
         const char *months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
@@ -203,7 +203,7 @@ esp_err_t set_time_from_string(const char* time_buffer)
                 ESP_LOGI(TAG, "Time updated to %s", time_buffer);
             }
             else {
-                ESP_LOGE(TAG, "Failed to set system time with strig: %s",
+                ESP_LOGE(TAG, "Failed to set system time with string: %s",
                                time_buffer);
             }
         }
@@ -250,7 +250,7 @@ esp_err_t set_time(void)
     esp_show_current_datetime();
 
 #ifdef LIBWOLFSSL_VERSION_GIT_HASH_DATE
-    /* initialy set a default approximate time from recent git commit */
+    /* Initially set a default approximate time from recent git commit */
     ESP_LOGI(TAG, "Found git hash date, attempting to set system date.");
     set_time_from_string(LIBWOLFSSL_VERSION_GIT_HASH_DATE);
     esp_show_current_datetime();
@@ -349,7 +349,7 @@ esp_err_t set_time_wait_for_ntp(void)
 #endif
 
     if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Successfuly set time via NTP servers.");
+        ESP_LOGI(TAG, "Successfully set time via NTP servers.");
         }
     else {
         ESP_LOGW(TAG, "Warning: Failed to set time with NTP: "

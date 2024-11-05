@@ -210,7 +210,7 @@ static int SasTokenCreate(char* sasToken, int sasTokenLen)
     /* URL encode uri (device name) */
     url_encode(mRfc3986, (byte*)AZURE_DEVICE_NAME, deviceName);
 
-    /* Build signature sting "uri \n expiration" */
+    /* Build signature string "uri \n expiration" */
     XSNPRINTF(sigData, sizeof(sigData), AZURE_SIG_FMT, deviceName, lTime);
 
     /* HMAC-SHA256 Hash sigData using decoded key */

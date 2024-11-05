@@ -1,5 +1,12 @@
 ## Release Notes
 
+### v1.19.1 (11/05/2024)
+Release 1.19.1 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* wolfssl 5.7.2 time_helper type adjustments for Espressif example by @gojimmypi in #404
+* Fix Doxygen issues by @embhorn in #403
+
 ### v1.19.0 (3/22/2024)
 Release 1.19.0 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
 https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
@@ -314,7 +321,7 @@ https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assur
 * Refactor to use new `MQTT_CODE_STDIN_WAKE` return code for examples using STDIN to send publish messages (normal blocking mode only).
 
 ### v0.12 (12/20/16)
-* Fixes issue with read timeout in non-blocking mode with TLS enabled being teated as socket error.
+* Fixes issue with read timeout in non-blocking mode with TLS enabled being treated as socket error.
 * Fixed issue with “msg->stat” not getting reset on failure or timeout.
 * Fix to not link libwolfssl with ./configure --disable-tls.
 * Added AWS IoT Example and test script.

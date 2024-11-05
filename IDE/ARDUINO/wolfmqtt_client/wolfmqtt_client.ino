@@ -132,7 +132,7 @@ static int mqttclient_message_cb(MqttClient *client, MqttMessage *msg,
   byte buf[PRINT_BUFFER_SIZE + 1];
   word32 len;
 
-  (void)client; /* Supress un-used argument */
+  (void)client; /* Suppress un-used argument */
 
   if (msg_new) {
     /* Determine min size to dump */
