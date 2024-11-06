@@ -14,7 +14,7 @@ The wolfMQTT Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-C
 
 4. In the `Software Packs` configuration category of the `.ioc` file, click on the wolfMQTT pack and enable the library by checking the box.
 
-5. The Pack defaults to using custom IO provided by the user. Modify `IDE/STM32CUBE/userio_template.h` to supply the custom IO. If you'd like to use LwIP instead, configure the wolfMQTT IO settings in the `.ioc` to enable LwIP compatibilty. You'll also have to enable LwIP in the `Middleware` configuration category of the project. Make sure that `LWIP_DNS (DNS Module)` is enabled in the LwIP general settings.
+5. The Pack defaults to using custom IO provided by the user. Modify `IDE/STM32CUBE/userio_template.h` to supply the custom IO. If you'd like to use LwIP instead, configure the wolfMQTT IO settings in the `.ioc` to enable LwIP compatibility. You'll also have to enable LwIP in the `Middleware` configuration category of the project. Make sure that `LWIP_DNS (DNS Module)` is enabled in the LwIP general settings.
 
 6. Save your changes and select yes to the prompt asking about generating code.
 

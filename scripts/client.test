@@ -10,7 +10,7 @@ broker_pid=$no_pid
 source scripts/test_common.sh
 
 # Use minimum of 2 seconds
-# The check timout will sometimes incorrectly trigger if 1 second is used
+# The check timeout will sometimes incorrectly trigger if 1 second is used
 def_args="-T -C 2000"
 
 # Check for mosquitto

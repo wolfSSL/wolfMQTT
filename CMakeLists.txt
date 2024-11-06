@@ -21,7 +21,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-project(wolfMQTT VERSION 1.19.0 LANGUAGES C)
+project(wolfMQTT VERSION 1.19.1 LANGUAGES C)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/functions.cmake)
