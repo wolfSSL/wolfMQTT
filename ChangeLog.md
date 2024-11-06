@@ -1,6 +1,6 @@
 ## Release Notes
 
-### v1.19.1 (11/05/2024)
+### v1.19.1 (11/06/2024)
 Release 1.19.1 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
 https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
 

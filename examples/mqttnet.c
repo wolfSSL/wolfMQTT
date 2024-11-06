@@ -384,7 +384,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
 #elif defined(ENABLE_MQTT_CURL)
 
 /* How many times to retry after a timeout. */
-#define MQTT_CURL_NUM_RETRY (2)
+#define MQTT_CURL_NUM_RETRY (3)
 
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_TEST_NONBLOCK)
 /* Tells the calling function to either return early with
