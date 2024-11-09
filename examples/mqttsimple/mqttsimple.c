@@ -235,6 +235,8 @@ static int mqtt_net_read(void *context, byte* buf, int buf_len, int timeout_ms)
                 break; /* timeout */
             PRINTF("NetRead: Error %d", rc);
             return MQTT_CODE_ERROR_NETWORK;
+        } else if (rc == 0) {
+            break; /* peer closed */
         }
         bytes += rc; /* Data */
     }
