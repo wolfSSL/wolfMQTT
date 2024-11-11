@@ -229,7 +229,7 @@ static int mqtt_net_read(void *context, byte* buf, int buf_len, int timeout_ms)
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
         rc = (int)recv(*pSockFd, &buf[bytes], buf_len - bytes, 0);
-        if (rc < 0) {
+        if (rc <= 0) {
             rc = socket_get_error(*pSockFd);
             if (rc == 0)
                 break; /* timeout */
