@@ -39,6 +39,23 @@ option(BUILD_SHARED_LIBS "Build shared libraries (.dll/.so) instead of static on
 add_library(wolfmqtt ${MQTT_SOURCES})
 
 
+
+set(WOLFMQTT_EXAMPLES "yes" CACHE BOOL
+    "Build examples")
+
+target_compile_definitions(wolfmqtt PRIVATE
+    "BUILDING_WOLFMQTT"
+    )
+
+    # Tell mqtt_types.h we are using a ./configure like output / options.h
+target_compile_definitions(wolfmqtt PRIVATE
+    "BUILDING_CMAKE"
+    )
+
+add_option(WOLFMQTT_TLS
+           "Enable TLS support with wolfSSL"
+           "yes" "yes;no")
+if (WOLFMQTT_TLS)
 if (WITH_WOLFSSL)
     target_link_libraries(wolfmqtt PUBLIC wolfssl)
     target_include_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/include)
@@ -71,23 +88,6 @@ else()
     endif()
 endif()
 
-
-set(WOLFMQTT_EXAMPLES "yes" CACHE BOOL
-    "Build examples")
-
-target_compile_definitions(wolfmqtt PRIVATE
-    "BUILDING_WOLFMQTT"
-    )
-
-    # Tell mqtt_types.h we are using a ./configure like output / options.h
-target_compile_definitions(wolfmqtt PRIVATE
-    "BUILDING_CMAKE"
-    )
-
-add_option(WOLFMQTT_TLS
-           "Enable TLS support with wolfSSL"
-           "yes" "yes;no")
-if (WOLFMQTT_TLS)
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 endif()
 
