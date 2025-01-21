@@ -1209,8 +1209,12 @@ wait_again:
                 client->packet.buf_len, packet_type, packet_id);
         #endif
 
+            /* Ping response is special case, no payload */
             if (packet_type != MQTT_PACKET_TYPE_PING_RESP) {
                 mms_stat->read = MQTT_MSG_PAYLOAD;
+            }
+            else {
+                mms_stat->read = MQTT_MSG_WAIT;
             }
         }
         FALL_THROUGH;
@@ -1449,8 +1453,7 @@ wait_again:
     } /* switch (mms_stat->ack) */
 
     /* no data read or ack done, then reset state */
-    if (mms_stat->read == MQTT_MSG_WAIT ||
-        mms_stat->read == MQTT_MSG_HEADER) {
+    if (mms_stat->read == MQTT_MSG_WAIT) {
         mms_stat->read = MQTT_MSG_BEGIN;
     }
 
