@@ -9,7 +9,7 @@ on:
 jobs:
   build:
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     env:
       WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1

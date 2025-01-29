@@ -1209,7 +1209,13 @@ wait_again:
                 client->packet.buf_len, packet_type, packet_id);
         #endif
 
-            mms_stat->read = MQTT_MSG_PAYLOAD;
+            /* Ping response is special case, no payload */
+            if (packet_type != MQTT_PACKET_TYPE_PING_RESP) {
+                mms_stat->read = MQTT_MSG_PAYLOAD;
+            }
+            else {
+                mms_stat->read = MQTT_MSG_WAIT;
+            }
         }
         FALL_THROUGH;
 
@@ -1446,13 +1452,6 @@ wait_again:
             break;
     } /* switch (mms_stat->ack) */
 
-#ifdef WOLFMQTT_DEBUG_CLIENT
-    if (rc != MQTT_CODE_CONTINUE) {
-        PRINTF("MqttClient_WaitType: rc %d, state %d-%d-%d",
-            rc, mms_stat->read, mms_stat->write, mms_stat->ack);
-    }
-#endif
-
     /* no data read or ack done, then reset state */
     if (mms_stat->read == MQTT_MSG_WAIT) {
         mms_stat->read = MQTT_MSG_BEGIN;
@@ -1507,6 +1506,13 @@ wait_again:
         MQTT_TRACE_MSG("Wait Again");
         goto wait_again;
     }
+#ifdef WOLFMQTT_DEBUG_CLIENT
+    if (rc != MQTT_CODE_CONTINUE) {
+        PRINTF("MqttClient_WaitType: rc %d, state %d-%d-%d",
+            rc, mms_stat->read, mms_stat->write, mms_stat->ack);
+    }
+#endif
+
 
     return rc;
 }
