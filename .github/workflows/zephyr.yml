@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload failure logs
         if: ${{ failure() && (steps.client-test.outcome == 'failure' || steps.client-tls-test.outcome == 'failure') }}
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: zephyr-client-test-logs
           path: logs.zip
