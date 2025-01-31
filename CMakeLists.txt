@@ -21,7 +21,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-project(wolfMQTT VERSION 1.19.1 LANGUAGES C)
+project(wolfMQTT VERSION 1.19.2 LANGUAGES C)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/functions.cmake)
@@ -38,38 +38,6 @@ set(MQTT_SOURCES
 option(BUILD_SHARED_LIBS "Build shared libraries (.dll/.so) instead of static ones (.lib/.a)" ON)
 add_library(wolfmqtt ${MQTT_SOURCES})
 
-
-if (WITH_WOLFSSL)
-    target_link_libraries(wolfmqtt PUBLIC wolfssl)
-    target_include_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/include)
-    target_link_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/lib)
-    list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
-elseif (WITH_WOLFSSL_TREE)
-    set(WOLFSSL_EXAMPLES "no" CACHE STRING "")
-    set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "")
-
-    add_subdirectory(${WITH_WOLFSSL_TREE} wolfssl)
-    target_link_libraries(wolfmqtt PUBLIC wolfssl)
-    list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
-else()
-    find_package(PkgConfig)
-    pkg_check_modules(WOLFSSL wolfssl)
-
-    if (WOLFSSL_FOUND)
-        list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
-        target_link_libraries(wolfmqtt PUBLIC ${WOLFSSL_LIBRARIES})
-        target_include_directories(wolfmqtt PUBLIC ${WOLFSSL_INCLUDE_DIRS})
-        target_link_directories(wolfmqtt PUBLIC ${WOLFSSL_LIBRARY_DIRS})
-        target_compile_options(wolfmqtt PUBLIC ${WOLFSSL_CFLAGS_OTHER})
-    else()
-        # For support with vcpkg
-        find_package(wolfssl CONFIG REQUIRED)
-        if (wolfssl_FOUND)
-            list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
-            target_link_libraries(wolfmqtt PUBLIC wolfssl::wolfssl)
-        endif()
-    endif()
-endif()
 
 
 set(WOLFMQTT_EXAMPLES "yes" CACHE BOOL
@@ -88,6 +56,38 @@ add_option(WOLFMQTT_TLS
            "Enable TLS support with wolfSSL"
            "yes" "yes;no")
 if (WOLFMQTT_TLS)
+    if (WITH_WOLFSSL)
+        target_link_libraries(wolfmqtt PUBLIC wolfssl)
+        target_include_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/include)
+        target_link_directories(wolfmqtt PUBLIC ${WITH_WOLFSSL}/lib)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
+    elseif (WITH_WOLFSSL_TREE)
+        set(WOLFSSL_EXAMPLES "no" CACHE STRING "")
+        set(WOLFSSL_CRYPT_TESTS "no" CACHE STRING "")
+    
+        add_subdirectory(${WITH_WOLFSSL_TREE} wolfssl)
+        target_link_libraries(wolfmqtt PUBLIC wolfssl)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
+    else()
+        find_package(PkgConfig)
+        pkg_check_modules(WOLFSSL wolfssl)
+    
+        if (WOLFSSL_FOUND)
+            list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
+            target_link_libraries(wolfmqtt PUBLIC ${WOLFSSL_LIBRARIES})
+            target_include_directories(wolfmqtt PUBLIC ${WOLFSSL_INCLUDE_DIRS})
+            target_link_directories(wolfmqtt PUBLIC ${WOLFSSL_LIBRARY_DIRS})
+            target_compile_options(wolfmqtt PUBLIC ${WOLFSSL_CFLAGS_OTHER})
+        else()
+            # For support with vcpkg
+            find_package(wolfssl CONFIG REQUIRED)
+            if (wolfssl_FOUND)
+                list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
+                target_link_libraries(wolfmqtt PUBLIC wolfssl::wolfssl)
+            endif()
+        endif()
+    endif()
+
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 endif()
 
