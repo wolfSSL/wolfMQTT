@@ -1,5 +1,13 @@
 ## Release Notes
 
+### v1.19.2 (01/31/2025)
+Release 1.19.2 has been developed according to wolfSSL's development and QA
+process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* Handle connection error in mqttsimple client by @embhorn in #407
+* Fix stat reset for ping response by @embhorn in #414
+
 ### v1.19.1 (11/06/2024)
 Release 1.19.1 has been developed according to wolfSSL's development and QA process (see link below) and successfully passed the quality criteria.
 https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
