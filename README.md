@@ -328,29 +328,11 @@ Follow all the instructions in README.md and USAGE.md. This allows you to create
 
 NOTE: Do not stop the broker and the subscriber instances.
 
-### Building and Running Post-Quantum wolfMQTT Publisher
+### Building and Running Post-Quantum wolfMQTT Publisher [DEPRECATED]
 
-Follow the instructions for obtaining and building liboqs and building wolfSSL in section 15 of the following document:
+Please see the following issue on Open Quantum Safe's oqs-demo repo:
 
-https://github.com/wolfSSL/wolfssl/blob/master/INSTALL
-
-No special flags are required for building wolfMQTT. Simply do the following:
-
-```
-./autogen.sh (if obtained from github)
-./configure
-make all
-make check
-```
-
-Since the broker and subscriber are still running, you can use `mqttclient` to publish using post-quantum algorithms in TLS 1.3 by doing the following:
-
-```
-./examples/mqttclient/mqttclient -h 172.18.0.2 -t -A CA.crt -K publisher.key -c publisher.crt -m "Hello from post-quantum wolfMQTT!!" -n test/sensor1 -Q KYBER_LEVEL1
-```
-
-Congratulations! You have just published an MQTT message using TLS 1.3 with the `KYBER_LEVEL1` KEM and `FALCON_LEVEL1` signature scheme. To use the hybrid group, replace `KYBER_LEVEL1` with `P256_KYBER_LEVEL1`.
-
+https://github.com/open-quantum-safe/oqs-demos/issues/346
 
 ## Curl Easy Socket Support
 

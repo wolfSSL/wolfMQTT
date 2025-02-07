@@ -417,7 +417,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         #ifdef HAVE_PQC
             mTlsPQAlg = myoptarg;
         #else
-            PRINTF("To use '-Q', build wolfSSL with --with-liboqs");
+            PRINTF("To use '-Q', build wolfSSL with --enable-kyber --enable-dilithium");
         #endif
             break;
     #endif /* !ENABLE_MQTT_CURL */
@@ -726,10 +726,10 @@ int mqtt_tls_cb(MqttClient* client)
 #ifdef HAVE_PQC
         if ((rc == WOLFSSL_SUCCESS) && (mTlsPQAlg != NULL)) {
             int group = 0;
-            if (XSTRCMP(mTlsPQAlg, "KYBER_LEVEL1") == 0) {
-                group = WOLFSSL_KYBER_LEVEL1;
-            } else if (XSTRCMP(mTlsPQAlg, "P256_KYBER_LEVEL1") == 0) {
-                group = WOLFSSL_P256_KYBER_LEVEL1;
+            if (XSTRCMP(mTlsPQAlg, "ML_KEM_512") == 0) {
+                group = WOLFSSL_ML_KEM_512;
+            } else if (XSTRCMP(mTlsPQAlg, "P256_ML_KEM_512") == 0) {
+                group = WOLFSSL_P256_ML_KEM_512;
             } else {
                 PRINTF("Invalid post-quantum KEM specified");
             }
