@@ -5,6 +5,8 @@ on:
     branches: [ 'master', 'main', 'release/**' ]
   pull_request:
     branches: [ '*' ]
+  schedule:
+    - cron: "0 0 * * *"
 
 env:
   # Path to the solution file relative to the root of the project.
