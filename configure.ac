@@ -380,6 +380,24 @@ if test "x$ENABLED_STRESS" != "xno"; then
     AM_CFLAGS="$AM_CFLAGS -DNUM_PUB_PER_TASK=$NUM_PUBS"
 fi
 
+# WebSocket
+if test "x$enable_websocket" = "xyes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_WEBSOCKET"
+    
+    # Check for libwebsockets
+    PKG_CHECK_MODULES([LIBWEBSOCKETS], [libwebsockets >= 2.0.0],
+        [
+            AM_CFLAGS="$AM_CFLAGS $LIBWEBSOCKETS_CFLAGS"
+            LIBS="$LIBS $LIBWEBSOCKETS_LIBS"
+        ],
+        [
+            AC_CHECK_LIB([websockets], [lws_create_context],
+                [LIBS="$LIBS -lwebsockets"],
+                [AC_MSG_ERROR([libwebsockets not found. Install libwebsockets or use --disable-websocket])])
+        ])
+fi
+AM_CONDITIONAL([ENABLE_WEBSOCKET], [test "x$enable_websocket" = "xyes"])
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
@@ -517,3 +535,4 @@ echo "   * TLS:                       $ENABLED_TLS"
 echo "   * CURL:                      $ENABLED_CURL"
 echo "   * Multi-thread:              $ENABLED_MULTITHREAD"
 echo "   * Stress:                    $ENABLED_STRESS"
+

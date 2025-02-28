@@ -53,6 +53,9 @@ typedef struct _SocketContext {
 #ifdef ENABLE_MQTT_CURL
     CURL  *  curl;
 #endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+    void* websocket_ctx;
+#endif
     MQTTCtx* mqttCtx;
 } SocketContext;
 

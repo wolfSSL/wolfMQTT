@@ -155,6 +155,35 @@ if (WOLFMQTT_CURL)
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_CURL")
 endif()
 
+# WebSocket
+option(ENABLE_WEBSOCKET "Enable WebSocket support" OFF)
+if(ENABLE_WEBSOCKET)
+    # Add define
+    add_definitions(-DENABLE_MQTT_WEBSOCKET)
+    
+    # Find libwebsockets
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(LIBWEBSOCKETS libwebsockets>=2.0.0)
+    endif()
+    
+    if(LIBWEBSOCKETS_FOUND)
+        include_directories(${LIBWEBSOCKETS_INCLUDE_DIRS})
+        list(APPEND LIBS ${LIBWEBSOCKETS_LIBRARIES})
+    else()
+        # Try to find libwebsockets without pkg-config
+        find_path(LIBWEBSOCKETS_INCLUDE_DIR libwebsockets.h)
+        find_library(LIBWEBSOCKETS_LIBRARY websockets)
+        
+        if(LIBWEBSOCKETS_INCLUDE_DIR AND LIBWEBSOCKETS_LIBRARY)
+            include_directories(${LIBWEBSOCKETS_INCLUDE_DIR})
+            list(APPEND LIBS ${LIBWEBSOCKETS_LIBRARY})
+        else()
+            message(FATAL_ERROR "libwebsockets not found. Install libwebsockets or disable WebSocket support with -DENABLE_WEBSOCKET=OFF")
+        endif()
+    endif()
+endif()
+
 # Note: not adding stress option to cmake build as of yet. stress is for
 # testing only and requires the scripts/ dir to be useful.
 
@@ -282,3 +311,19 @@ install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/wolfmqtt/
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/wolfmqtt/
         DESTINATION include/wolfmqtt
         FILES_MATCHING PATTERN "*.h")
+
+# Print configuration
+message("-----------------------------------------------")
+message("wolfMQTT Configuration:")
+message("\tBuild Version:       ${VERSION}")
+message("\tDebug Build:         ${DEBUG_WOLFMQTT}")
+message("\tNon-Blocking:        ${ENABLE_NONBLOCK}")
+message("\tMQTT-SN:             ${ENABLE_MQTT_SN}")
+message("\tMQTT v5:             ${ENABLE_MQTT_V5}")
+message("\tTLS:                 ${ENABLE_TLS}")
+message("\tWebSocket:           ${ENABLE_WEBSOCKET}")
+message("\tExamples:            ${ENABLE_EXAMPLES}")
+message("\tFirmware Examples:   ${ENABLE_FIRMWARE_EXAMPLES}")
+message("\tMultithread:         ${ENABLE_MULTITHREAD}")
+message("\tCurl:                ${ENABLE_CURL}")
+message("-----------------------------------------------")
