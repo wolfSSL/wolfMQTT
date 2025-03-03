@@ -50,12 +50,15 @@ typedef struct _LibwebsockContext {
 static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
     void *user, void *in, size_t len)
 {
-    LibwebsockContext *net = (LibwebsockContext*)user;
+    LibwebsockContext *net;
     
-    (void)wsi;
+    (void)user;
     (void)in;
     (void)len;
-    
+
+
+    net = (LibwebsockContext*)lws_context_user(lws_get_context(wsi));
+
     /* Only handle the events we care about */
     if (reason == LWS_CALLBACK_CLIENT_ESTABLISHED) {
         net->status = 1;
@@ -87,18 +90,19 @@ static const struct lws_protocols protocols[] = {
         NULL, /* user */
         0 /* tx_packet_size */
     },
-    { NULL, NULL, 0, 0, 0, NULL, 0 }
+    LWS_PROTOCOL_LIST_TERM
 };
 
-int NetWebsocket_Connect(void *context, const char* host, word16 port,
+int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
     int timeout_ms)
 {
-    SocketContext *sock = (SocketContext*)context;
-    LibwebsockContext *net;
+    SocketContext *sock = (SocketContext*)ctx;
+    LibwebsockContext *net, *user_net;
     struct lws_client_connect_info conn_info;
     struct lws_context_creation_info info;
-    int wait_ms = timeout_ms;
-    
+    int rc;
+
+    (void)timeout_ms;
     if (sock == NULL || host == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -109,23 +113,29 @@ int NetWebsocket_Connect(void *context, const char* host, word16 port,
         return MQTT_CODE_ERROR_MEMORY;
     }
     XMEMSET(net, 0, sizeof(LibwebsockContext));
-    
-    /* Store in socket context */
-    sock->websocket_ctx = net;
-    
-    /* Initialize context */
+
+    /* Initialize info struct */
     XMEMSET(&info, 0, sizeof(info));
     info.port = CONTEXT_PORT_NO_LISTEN;
     info.protocols = protocols;
     info.gid = -1;
     info.uid = -1;
+    info.user = net;
     
     net->context = lws_create_context(&info);
     if (net->context == NULL) {
-        WOLFMQTT_FREE(net);
         sock->websocket_ctx = NULL;
+        WOLFMQTT_FREE(net);
+        net = NULL;
         return MQTT_CODE_ERROR_NETWORK;
     }
+    
+    /* Get the user data from the context */
+    user_net = (LibwebsockContext*)lws_context_user(net->context);
+    (void)user_net;
+
+    /* Store in socket context */
+    sock->websocket_ctx = net;
     
     XMEMSET(&conn_info, 0, sizeof(conn_info));
     conn_info.context = net->context;
@@ -139,15 +149,15 @@ int NetWebsocket_Connect(void *context, const char* host, word16 port,
     net->wsi = lws_client_connect_via_info(&conn_info);
     if (net->wsi == NULL) {
         lws_context_destroy(net->context);
-        WOLFMQTT_FREE(net);
         sock->websocket_ctx = NULL;
+        WOLFMQTT_FREE(net);
+        net = NULL;
         return MQTT_CODE_ERROR_NETWORK;
     }
     
     /* Wait for connection */
-    while (wait_ms > 0 && net->status == 0) {
-        lws_service(net->context, 100);
-        wait_ms -= 100;
+    while (rc >= 0 && net->status == 0) {
+        rc = lws_service(net->context, 0);
     }
     
     return (net->status > 0) ? MQTT_CODE_SUCCESS : MQTT_CODE_ERROR_NETWORK;
