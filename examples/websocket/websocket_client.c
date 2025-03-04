@@ -29,6 +29,7 @@
 #include "examples/mqttexample.h"
 #include "examples/net_libwebsockets.h"
 #include <signal.h>
+#include <time.h>
 
 #ifdef ENABLE_MQTT_WEBSOCKET
 /* Globals */
@@ -36,6 +37,9 @@ static int mStopRead = 0;
 
 /* Define packet size */
 #define MAX_BUFFER_SIZE 1024
+
+/* Define ping timeout in seconds */
+#define PING_TIMEOUT_SEC 30
 
 static void sig_handler(int signo)
 {
@@ -55,6 +59,7 @@ int main(int argc, char *argv[])
     word16 port = 9001;
     const char* client_id = "wolfMQTT_Websocket_Client";
     byte *tx_buf, *rx_buf;
+    time_t ping_time;
     
     /* Parse arguments */
     if (argc > 1) {
@@ -147,8 +152,23 @@ int main(int argc, char *argv[])
     printf("Waiting for messages...\n");
     signal(SIGINT, sig_handler);
     
+    /* Initialize ping timer */
+    ping_time = time(NULL);
+    
     while (!mStopRead) {
-        /* Try receiving */
+        /* Check if it's time to send a ping */
+        time_t current_time = time(NULL);
+        if (current_time - ping_time >= PING_TIMEOUT_SEC) {
+            printf("Sending ping to broker\n");
+            rc = MqttClient_Ping(&client);
+            if (rc != MQTT_CODE_SUCCESS) {
+                printf("MqttClient_Ping failed: %d\n", rc);
+                break;
+            }
+            ping_time = current_time; /* Reset ping timer */
+        }
+        
+        /* Try receiving with a shorter timeout to allow for ping checks */
         rc = MqttClient_WaitMessage(&client, 1000);
         
         if (rc == MQTT_CODE_ERROR_TIMEOUT) {
