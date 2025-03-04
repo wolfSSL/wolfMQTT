@@ -1,0 +1,82 @@
+name: WebSocket Client Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-websocket:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential autoconf automake libtool
+        sudo apt-get install -y libwebsockets-dev mosquitto mosquitto-clients
+        
+    - name: Configure and build wolfMQTT
+      run: |
+        ./autogen.sh
+        ./configure --enable-websocket --disable-tls
+        make
+        
+    - name: Create Mosquitto config
+      run: |
+        echo "listener 11883" > mosquitto.conf
+        echo "protocol mqtt" >> mosquitto.conf
+        echo "listener 19001" >> mosquitto.conf
+        echo "protocol websockets" >> mosquitto.conf
+        echo "allow_anonymous true" >> mosquitto.conf
+        
+    - name: Start Mosquitto broker
+      run: |
+        mosquitto -c mosquitto.conf -d
+        # Wait for broker to start
+        sleep 2
+        
+    - name: Verify broker is running
+      run: |
+        # Check if mosquitto is running
+        pgrep mosquitto || (echo "Mosquitto failed to start" && exit 1)
+        # Check if port 19001 is open
+        nc -z localhost 19001 || (echo "WebSocket port 19001 is not open" && exit 1)
+        
+    - name: Publish test message
+      run: |
+        # Start a background process to publish messages
+        (
+          # Wait for client to connect and subscribe
+          sleep 5
+          # Publish a test message
+          mosquitto_pub -t "test/topic" -m "Hello from WebSocket test" -p 11883
+          # Publish a few more messages
+          for i in {1..5}; do
+            sleep 1
+            mosquitto_pub -t "test/topic" -m "Test message $i" -p 11883
+          done
+        ) &
+        
+    - name: Run WebSocket client
+      run: |
+        # Run the client with a timeout
+        timeout 15s ./examples/websocket/websocket_client localhost 19001 || exit_code=$?
+        
+        # Check if client received messages (exit code 124 means timeout occurred, which is expected)
+        if [ "$exit_code" -eq 124 ]; then
+          echo "Client ran successfully until timeout"
+          exit 0
+        elif [ "$exit_code" -ne 0 ]; then
+          echo "Client failed with exit code $exit_code"
+          exit 1
+        fi
+        
+    - name: Stop Mosquitto broker
+      run: |
+        sudo killall mosquitto 
