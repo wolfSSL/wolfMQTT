@@ -164,7 +164,7 @@ Here are the steps for creating your own implementation.
 ## Examples
 
 ### Client Example
-The example MQTT client is located in `/examples/mqttclient/`. This example exercises many of the exposed API’s and prints any incoming publish messages for subscription topic “wolfMQTT/example/testTopic”. This client contains examples of many MQTTv5 features, including the property callback and server assignment of client ID. The mqqtclient example is a good starting template for your MQTT application.
+The example MQTT client is located in `/examples/mqttclient/`. This example exercises many of the exposed API's and prints any incoming publish messages for subscription topic "wolfMQTT/example/testTopic". This client contains examples of many MQTTv5 features, including the property callback and server assignment of client ID. The mqqtclient example is a good starting template for your MQTT application.
 
 ### Simple Standalone Client Example
 The example MQTT client is located in `/examples/mqttsimple/`. This example demonstrates a standalone client using standard BSD sockets. This requires `HAVE_SOCKET` to be defined, which comes from the ./configure generated `wolfmqtt/config.h` file. All parameters are build-time macros defined at the top of `/examples/mqttsimple/mqttsimple.c`.
@@ -173,7 +173,7 @@ The example MQTT client is located in `/examples/mqttsimple/`. This example demo
 The example MQTT client is located in `/examples/nbclient/`. This example uses non-blocking I/O for message exchange. The wolfMQTT library must be configured with the `--enable-nonblock` option (or built with `WOLFMQTT_NONBLOCK`).
 
 ### Firmware Example
-The MQTT firmware update is located in `/examples/firmware/`. This example has two parts. The first is called “fwpush”, which signs and publishes a firmware image. The second is called “fwclient”, which receives the firmware image and verifies the signature. This example publishes message on the topic “wolfMQTT/example/firmware”. The "fwpush" application is an example of using a publish callback to send the payload data.
+The MQTT firmware update is located in `/examples/firmware/`. This example has two parts. The first is called "fwpush", which signs and publishes a firmware image. The second is called "fwclient", which receives the firmware image and verifies the signature. This example publishes message on the topic "wolfMQTT/example/firmware". The "fwpush" application is an example of using a publish callback to send the payload data.
 
 ### Azure IoT Hub Example
 We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device called `demoDevice`, which you can connect and publish to. The example demonstrates creation of a SasToken, which is used as the password for the MQTT connect packet. It also shows the topic names for publishing events and listening to `devicebound` messages. This example only works with `ENABLE_MQTT_TLS` set and the wolfSSL library present because it requires Base64 Encode/Decode and HMAC-SHA256. Note: The wolfSSL library must be built with `./configure --enable-base64encode` or `#define WOLFSSL_BASE64_ENCODE`. The `wc_GetTime` API was added in 3.9.1 and if not present you'll need to implement your own version of this to get current UTC seconds or update your wolfSSL library.
@@ -377,3 +377,67 @@ Examples of usage:
 Note: When stress is enabled, the Multithread Example becomes localhost only
 and will not connect to remote servers. Additionally the test `scripts/stress.test`
 is added to `make check`, and all other tests are disabled.
+
+## WebSocket Support
+
+wolfMQTT supports MQTT over WebSockets, allowing clients to connect to MQTT brokers through WebSocket endpoints. This is useful for environments where traditional MQTT ports might be blocked or when integrating with web applications.
+
+### Building with WebSocket Support
+
+To build wolfMQTT with WebSocket support:
+
+1. Install the libwebsockets development library:
+   ```
+   # On Debian/Ubuntu
+   sudo apt-get install libwebsockets-dev
+
+   # On macOS with Homebrew
+   brew install libwebsockets
+   ```
+
+2. Configure wolfMQTT with WebSocket support:
+   ```
+   ./configure --enable-websocket
+   ```
+
+3. Build as usual:
+   ```
+   make
+   ```
+
+### WebSocket Example
+
+The WebSocket client example is located in `/examples/websocket/`. This example demonstrates how to connect to an MQTT broker using WebSockets. The example subscribes to the topic "test/topic" and waits for incoming messages.
+
+To run the example:
+```
+./examples/websocket/websocket_client [host] [port]
+```
+
+By default, it connects to `localhost` on port `9001`.
+
+### Broker Configuration
+
+To use the WebSocket example, your MQTT broker must be configured to support WebSockets. For Mosquitto, add the following to your `mosquitto.conf`:
+
+```
+# WebSocket settings
+listener 9001
+protocol websockets
+```
+
+Then restart Mosquitto with this configuration:
+```
+mosquitto -c mosquitto.conf
+```
+
+### Implementation Details
+
+The WebSocket implementation uses libwebsockets as the backend and provides custom network callbacks for the MQTT client:
+
+- `NetWebsocket_Connect`: Establishes a WebSocket connection to the broker
+- `NetWebsocket_Read`: Reads data from the WebSocket connection
+- `NetWebsocket_Write`: Writes data to the WebSocket connection
+- `NetWebsocket_Disconnect`: Closes the WebSocket connection
+
+The example also implements a ping mechanism to keep the WebSocket connection alive, sending a ping to the broker every 30 seconds.

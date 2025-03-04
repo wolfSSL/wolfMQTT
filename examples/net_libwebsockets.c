@@ -97,10 +97,10 @@ int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
     int timeout_ms)
 {
     SocketContext *sock = (SocketContext*)ctx;
-    LibwebsockContext *net, *user_net;
+    LibwebsockContext *net;
     struct lws_client_connect_info conn_info;
     struct lws_context_creation_info info;
-    int rc;
+    int rc = 0;
 
     (void)timeout_ms;
     if (sock == NULL || host == NULL) {
@@ -130,10 +130,6 @@ int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
         return MQTT_CODE_ERROR_NETWORK;
     }
     
-    /* Get the user data from the context */
-    user_net = (LibwebsockContext*)lws_context_user(net->context);
-    (void)user_net;
-
     /* Store in socket context */
     sock->websocket_ctx = net;
     

@@ -41,6 +41,48 @@ static int mStopRead = 0;
 /* Define ping timeout in seconds */
 #define PING_TIMEOUT_SEC 30
 
+/* Message callback */
+static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
+    byte msg_new, byte msg_done)
+{
+    byte buf[PRINT_BUFFER_SIZE+1];
+    word32 len;
+    
+    (void)client;
+
+    if (msg_new) {
+        /* Topic */
+        len = msg->topic_name_len;
+        if (len > PRINT_BUFFER_SIZE) {
+            len = PRINT_BUFFER_SIZE;
+        }
+        XMEMCPY(buf, msg->topic_name, len);
+        buf[len] = '\0'; /* Make sure it's null terminated */
+        
+        /* Print topic */
+        printf("MQTT Message: Topic %s, Qos %d, Len %u",
+            buf, msg->qos, msg->total_len);
+    }
+    
+    /* Print message payload */
+    len = msg->buffer_len;
+    if (len > PRINT_BUFFER_SIZE) {
+        len = PRINT_BUFFER_SIZE;
+    }
+    XMEMCPY(buf, msg->buffer, len);
+    buf[len] = '\0'; /* Make sure it's null terminated */
+    
+    printf("Payload (%d - %d): %s\n",
+        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, buf);
+
+    if (msg_done) {
+        printf("MQTT Message: Done\n");
+    }
+    
+    /* Return negative to terminate publish processing */
+    return MQTT_CODE_SUCCESS;
+}
+
 static void sig_handler(int signo)
 {
     if (signo == SIGINT) {
@@ -98,7 +140,7 @@ int main(int argc, char *argv[])
     }
     
     /* Initialize MqttClient */
-    rc = MqttClient_Init(&client, &mqttNet, NULL, 
+    rc = MqttClient_Init(&client, &mqttNet, mqtt_message_cb, 
         tx_buf, MAX_BUFFER_SIZE, 
         rx_buf, MAX_BUFFER_SIZE, 
         5000);
@@ -150,6 +192,7 @@ int main(int argc, char *argv[])
     
     /* Wait for messages */
     printf("Waiting for messages...\n");
+    printf("Press Ctrl+C to quit\n");
     signal(SIGINT, sig_handler);
     
     /* Initialize ping timer */

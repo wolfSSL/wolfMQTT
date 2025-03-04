@@ -152,8 +152,7 @@ examples_pub_sub_mqtt_sub_DEPENDENCIES = src/libwolfmqtt.la
 examples_pub_sub_mqtt_sub_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 # WebSocket example
-if BUILD_EXAMPLES
-if ENABLE_WEBSOCKET
+if BUILD_WEBSOCKET
 noinst_HEADERS += examples/net_libwebsockets.h
 noinst_PROGRAMS += examples/websocket/websocket_client
 examples_websocket_websocket_client_SOURCES      = examples/websocket/websocket_client.c \
@@ -163,7 +162,6 @@ examples_websocket_websocket_client_SOURCES      = examples/websocket/websocket_
 examples_websocket_websocket_client_LDADD        = src/libwolfmqtt.la
 examples_websocket_websocket_client_DEPENDENCIES = src/libwolfmqtt.la
 examples_websocket_websocket_client_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
-endif
 endif
 endif
 
@@ -187,7 +185,7 @@ dist_example_DATA+= examples/sn-client/sn-multithread.c
 endif
 dist_example_DATA+= examples/pub-sub/mqtt-pub.c
 dist_example_DATA+= examples/pub-sub/mqtt-sub.c
-if ENABLE_WEBSOCKET
+if BUILD_WEBSOCKET
 dist_example_DATA+= examples/websocket/websocket_client.c
 endif
 
@@ -206,7 +204,7 @@ DISTCLEANFILES+=   examples/sn-client/.libs/sn-client \
                    examples/sn-client/.libs/sn-client_qos-1 \
                    examples/sn-client/.libs/sn-multithread
 endif
-if ENABLE_WEBSOCKET
+if BUILD_WEBSOCKET
 DISTCLEANFILES+=   examples/websocket/.libs/websocket_client
 endif
 
