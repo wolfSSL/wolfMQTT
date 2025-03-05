@@ -385,7 +385,13 @@ if test "x$ENABLED_STRESS" != "xno"; then
 fi
 
 # WebSocket
-if test "x$enable_websocket" = "xyes"
+AC_ARG_ENABLE([websocket],
+    [AS_HELP_STRING([--enable-websocket],[Enable WebSocket support (default: disabled)])],
+    [ ENABLED_WEBSOCKET=$enableval ],
+    [ ENABLED_WEBSOCKET=no ]
+    )
+
+if test "x$ENABLED_WEBSOCKET" = "xyes"
 then
     AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_WEBSOCKET"
     ENABLED_WEBSOCKET=yes

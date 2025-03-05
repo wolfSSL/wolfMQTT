@@ -204,7 +204,11 @@ int NetWebsocket_Write(void *context, const byte* buf, int buf_len,
     if (net == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    
+
+    if (net->status <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
     /* Add LWS_PRE bytes for libwebsockets header */
     ws_buf = (unsigned char*)WOLFMQTT_MALLOC(LWS_PRE + buf_len);
     if (ws_buf == NULL) {
@@ -218,7 +222,7 @@ int NetWebsocket_Write(void *context, const byte* buf, int buf_len,
     
     /* Try to write with timeout */
     ret = 0;
-    while (ret <= 0) {
+    while (ret <= 0 && net->status > 0) {
         ret = lws_write(net->wsi, ws_buf + LWS_PRE, buf_len, LWS_WRITE_BINARY);
         
         if (ret <= 0) {
@@ -232,6 +236,12 @@ int NetWebsocket_Write(void *context, const byte* buf, int buf_len,
             /* Service libwebsockets and try again */
             lws_service(net->context, 100);
             
+            /* Check if connection was lost during service */
+            if (net->status <= 0) {
+                ret = MQTT_CODE_ERROR_NETWORK;
+                break;
+            }
+            
             /* Small delay before retrying */
             #ifdef _WIN32
                 Sleep(10);
@@ -242,6 +252,11 @@ int NetWebsocket_Write(void *context, const byte* buf, int buf_len,
     }
     
     WOLFMQTT_FREE(ws_buf);
+    
+    /* If connection was lost, return network error */
+    if (net->status <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
     
     return (ret > 0) ? ret : ret;
 }
@@ -262,12 +277,16 @@ int NetWebsocket_Read(void *context, byte* buf, int buf_len,
     if (net == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    
+
+    if (net->status <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
     /* Record start time for timeout handling */
     start_time = time(NULL);
     
     /* Check if we already have data */
-    if (net->rx_len > 0) {
+    if (net->rx_len > 0 && net->status > 0) {
         ret = (net->rx_len <= (size_t)buf_len) ? (int)net->rx_len : buf_len;
         XMEMCPY(buf, net->rx_buffer, ret);
         
@@ -286,6 +305,11 @@ int NetWebsocket_Read(void *context, byte* buf, int buf_len,
     while (net->rx_len == 0) {
         /* Service libwebsockets to process callbacks */
         lws_service(net->context, 100);
+        
+        /* Check if connection was lost during service */
+        if (net->status <= 0) {
+            return MQTT_CODE_ERROR_NETWORK;
+        }
         
         /* Check if we received data in the callback */
         if (net->rx_len > 0) {
