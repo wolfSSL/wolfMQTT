@@ -382,6 +382,8 @@ is added to `make check`, and all other tests are disabled.
 
 wolfMQTT supports MQTT over WebSockets, allowing clients to connect to MQTT brokers through WebSocket endpoints. This is useful for environments where traditional MQTT ports might be blocked or when integrating with web applications.
 
+Currently secure websocket is not supported, but support is planned for a future release.
+
 ### Building with WebSocket Support
 
 To build wolfMQTT with WebSocket support:
@@ -395,10 +397,17 @@ To build wolfMQTT with WebSocket support:
    brew install libwebsockets
    ```
 
+   You can also build the libwebsockets library from source with support for TLS from wolfSSL:
+   ```
+   cmake .. -DLWS_WITH_WOLFSSL=1 -DLWS_WOLFSSL_INCLUDE_DIRS=/usr/local/include/wolfssl -DLWS_WOLFSSL_LIBRARIES=/usr/local/lib/libwolfssl.so -DLWS_WITH_EXTERNAL_POLL=1 -DCMAKE_BUILD_TYPE=DEBUG ..
+   ```
+   This option requires wolfSSL to be built with `./configure --enable-libwebsockets --enable-alpn` and installed to `/usr/local`.
+
 2. Configure wolfMQTT with WebSocket support:
    ```
-   ./configure --enable-websocket
+   ./configure --enable-websocket --disable-tls
    ```
+   Note: You can also build wolfSSL with `--enable-opensslcoexist` (to support both OpenSSL and wolfSSL in the same build). This will allow you to build wolfMQTT without the `--disable-tls` option.
 
 3. Build as usual:
    ```
