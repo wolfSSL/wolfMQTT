@@ -42,7 +42,7 @@ typedef struct _LibwebsockContext {
     int status;
     void* heap;
     /* Buffer for received data */
-    unsigned char rx_buffer[1024];
+    unsigned char rx_buffer[WOLFMQTT_LWS_RX_BUF_SIZE];
     size_t rx_len;
 } LibwebsockContext;
 
@@ -53,9 +53,6 @@ static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
     LibwebsockContext *net;
     
     (void)user;
-    (void)in;
-    (void)len;
-
 
     net = (LibwebsockContext*)lws_context_user(lws_get_context(wsi));
 
@@ -70,10 +67,41 @@ static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
         net->status = 0;
     }
     else if (reason == LWS_CALLBACK_CLIENT_RECEIVE) {
-        /* Store received data */
-        if (in && len > 0 && len <= sizeof(net->rx_buffer)) {
-            memcpy(net->rx_buffer, in, len);
-            net->rx_len = len;
+        if (in && len > 0) {
+            /* Check if we have enough space in the buffer */
+            if (net->rx_len + len <= sizeof(net->rx_buffer)) {
+                /* Append new data to existing buffer */
+                XMEMCPY(net->rx_buffer + net->rx_len, in, len);
+                net->rx_len += len;
+            } else {
+                /* Buffer overflow - handle error */
+                lwsl_err("WebSocket receive buffer overflow - dropping oldest data\n");
+                
+                /* Simple approach: If new data is larger than buffer, just keep newest data */
+                if (len >= sizeof(net->rx_buffer)) {
+                    /* New data is larger than entire buffer, keep only what fits */
+                    /* Cast to byte pointer to allow pointer arithmetic */
+                    const byte* in_bytes = (const byte*)in;
+                    XMEMCPY(net->rx_buffer, 
+                            &in_bytes[len - sizeof(net->rx_buffer)], 
+                            sizeof(net->rx_buffer));
+                    net->rx_len = sizeof(net->rx_buffer);
+                } else {
+                    /* Keep as much new data as possible */
+                    size_t keep_bytes = sizeof(net->rx_buffer) - len;
+                    
+                    /* Move the portion of old data we want to keep to the beginning */
+                    if (keep_bytes > 0 && net->rx_len > 0) {
+                        XMEMMOVE(net->rx_buffer, 
+                                net->rx_buffer + (net->rx_len - keep_bytes),
+                                keep_bytes);
+                    }
+                    
+                    /* Append all new data */
+                    XMEMCPY(net->rx_buffer + keep_bytes, in, len);
+                    net->rx_len = keep_bytes + len;
+                }
+            }
         }
     }
     
@@ -85,7 +113,7 @@ static const struct lws_protocols protocols[] = {
         "mqtt",
         callback_mqtt,
         sizeof(LibwebsockContext),
-        0,
+        WOLFMQTT_LWS_RX_BUF_SIZE,
         0, /* id */
         NULL, /* user */
         0 /* tx_packet_size */
