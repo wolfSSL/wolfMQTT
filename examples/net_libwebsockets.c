@@ -129,6 +129,7 @@ int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
     struct lws_client_connect_info conn_info;
     struct lws_context_creation_info info;
     int rc = 0;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
 
     (void)timeout_ms;
     if (sock == NULL || host == NULL) {
@@ -150,6 +151,26 @@ int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
     info.uid = -1;
     info.user = net;
     
+    /* Configure TLS if enabled */
+    if (mqttCtx && mqttCtx->use_tls) {
+        info.options |= LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+        
+        /* Set SSL verification options */
+        if (mqttCtx->ca_file) {
+            info.ssl_ca_filepath = mqttCtx->ca_file;
+        }
+        
+        /* Set client certificate if using mutual TLS */
+        if (mqttCtx->mtls_certfile) {
+            info.ssl_cert_filepath = mqttCtx->mtls_certfile;
+        }
+        
+        /* Set client key if using mutual TLS */
+        if (mqttCtx->mtls_keyfile) {
+            info.ssl_private_key_filepath = mqttCtx->mtls_keyfile;
+        }
+    }
+    
     net->context = lws_create_context(&info);
     if (net->context == NULL) {
         sock->websocket_ctx = NULL;
@@ -169,6 +190,11 @@ int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
     conn_info.host = host;
     conn_info.protocol = "mqtt";
     conn_info.pwsi = &net->wsi;
+    
+    /* Set SSL options for the connection if TLS is enabled */
+    if (mqttCtx && mqttCtx->use_tls) {
+        conn_info.ssl_connection = LCCSCF_USE_SSL;
+    }
     
     net->wsi = lws_client_connect_via_info(&conn_info);
     if (net->wsi == NULL) {
@@ -375,4 +401,4 @@ int NetWebsocket_Disconnect(void *context)
     return MQTT_CODE_SUCCESS;
 }
 
-#endif /* ENABLE_MQTT_WEBSOCKET */ 
+#endif /* ENABLE_MQTT_WEBSOCKET */  

@@ -24,7 +24,7 @@ jobs:
     - name: Configure and build wolfMQTT
       run: |
         ./autogen.sh
-        ./configure --enable-websocket --disable-tls
+        ./configure --enable-websocket
         make
         
     - name: Create Mosquitto config
@@ -79,4 +79,4 @@ jobs:
         
     - name: Stop Mosquitto broker
       run: |
-        sudo killall mosquitto 
+        sudo killall mosquitto  

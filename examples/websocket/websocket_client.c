@@ -41,6 +41,13 @@ static int mStopRead = 0;
 /* Define ping timeout in seconds */
 #define PING_TIMEOUT_SEC 30
 
+/* TLS callback */
+static int mqtt_tls_cb(MqttClient* client)
+{
+    (void)client;
+    return 0;
+}
+
 /* Message callback */
 static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
@@ -103,19 +110,26 @@ int main(int argc, char *argv[])
     byte *tx_buf, *rx_buf;
     time_t ping_time;
     
-    /* Parse arguments */
-    if (argc > 1) {
-        host = argv[1];
-    }
-    if (argc > 2) {
-        port = (word16)atoi(argv[2]);
-    }
-    
     /* Initialize MQTTCtx */
     mqtt_init_ctx(&mqttCtx);
+    mqttCtx.app_name = "websocket_client";
     mqttCtx.host = host;
     mqttCtx.port = port;
     mqttCtx.client_id = client_id;
+    
+    /* Parse arguments */
+    rc = mqtt_parse_args(&mqttCtx, argc, argv);
+    if (rc != 0) {
+        return rc;
+    }
+    
+    /* Update host and port if provided as arguments */
+    if (mqttCtx.host) {
+        host = mqttCtx.host;
+    }
+    if (mqttCtx.port) {
+        port = mqttCtx.port;
+    }
     
     /* Initialize Network */
     rc = MqttClientNet_Init(&mqttNet, &mqttCtx);
@@ -150,8 +164,8 @@ int main(int argc, char *argv[])
     }
     
     /* Connect to broker */
-    printf("Connecting to %s:%d\n", host, port);
-    rc = MqttClient_NetConnect(&client, host, port, 5000, 0, NULL);
+    printf("Connecting to %s:%d%s\n", host, port, mqttCtx.use_tls ? " (TLS)" : "");
+    rc = MqttClient_NetConnect(&client, host, port, 5000, mqttCtx.use_tls, mqtt_tls_cb);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_NetConnect failed: %d\n", rc);
         goto exit;
