@@ -389,38 +389,36 @@ Both standard WebSockets and secure WebSockets (WSS) are supported.
 To build wolfMQTT with WebSocket support:
 
 1. Install the libwebsockets development library:
-   ```
-   # On Debian/Ubuntu
-   sudo apt-get install libwebsockets-dev
 
-   # On macOS with Homebrew
-   brew install libwebsockets
-   ```
+```
+# On Debian/Ubuntu
+sudo apt-get install libwebsockets-dev
 
-   You can also build the libwebsockets library from source with support for TLS from wolfSSL:
-   ```
-   cmake .. -DLWS_WITH_WOLFSSL=1 -DLWS_WOLFSSL_INCLUDE_DIRS=/usr/local/include/wolfssl -DLWS_WOLFSSL_LIBRARIES=/usr/local/lib/libwolfssl.so -DLWS_WITH_EXTERNAL_POLL=1 -DCMAKE_BUILD_TYPE=DEBUG ..
-   ```
-   This option requires wolfSSL to be built with `./configure --enable-libwebsockets --enable-alpn` and installed to `/usr/local`.
+# On macOS with Homebrew
+brew install libwebsockets
+```
 
 2. Configure wolfMQTT with WebSocket support:
-   ```
-   ./configure --enable-websocket
-   ```
+
+```
+./configure --enable-websocket
+```
    Note: You can also build wolfSSL with `--enable-opensslcoexist` (to support both OpenSSL and wolfSSL in the same build) if you encounter any conflicts.
 
 3. Build as usual:
-   ```
-   make
-   ```
+
+```
+make
+```
 
 ### WebSocket Example
 
 The WebSocket client example is located in `/examples/websocket/`. This example demonstrates how to connect to an MQTT broker using WebSockets. The example subscribes to the topic "test/topic" and waits for incoming messages.
 
 To run the example:
+
 ```
-./examples/websocket/websocket_client [host] [port]
+./examples/websocket/websocket_client [-h host] [-p port]
 ```
 
 By default, it connects to `localhost` on port `9001`.
@@ -431,25 +429,34 @@ wolfMQTT also supports secure WebSockets (WSS), which use TLS to encrypt the Web
 
 To use secure WebSockets:
 
-1. Make sure you have built wolfMQTT with both WebSocket and TLS support:
-   ```
-   ./configure --enable-websocket --enable-tls
-   ```
+* Make sure you have built wolfMQTT with both WebSocket and TLS support:
 
-2. Run the WebSocket example with TLS enabled:
-   ```
-   ./examples/websocket/websocket_client -t
-   ```
+```
+./configure --enable-websocket --enable-tls
+```
+* Run the WebSocket example with TLS enabled:
 
-3. You can also specify a CA certificate for TLS verification:
-   ```
-   ./examples/websocket/websocket_client -t -A /path/to/ca-cert.pem
-   ```
+```
+./examples/websocket/websocket_client -t -p 8081
+```
+* You can also specify a CA certificate for TLS verification:
 
-4. For mutual TLS authentication, you can specify client certificate and key:
-   ```
-   ./examples/websocket/websocket_client -t -A /path/to/ca-cert.pem --cert /path/to/client-cert.pem --key /path/to/client-key.pem
-   ```
+```
+./examples/websocket/websocket_client -t -A /path/to/ca-cert.pem
+```
+* For mutual TLS authentication, you can specify client certificate and key:
+
+```
+./examples/websocket/websocket_client -t -A /path/to/ca-cert.pem --cert /path/to/client-cert.pem --key /path/to/client-key.pem
+```
+
+* You can also build the libwebsockets library from source with support for TLS from wolfSSL:
+
+```
+cmake .. -DLWS_WITH_WOLFSSL=1 -DLWS_WOLFSSL_INCLUDE_DIRS=/usr/local/include/wolfssl -DLWS_WOLFSSL_LIBRARIES=/usr/local/lib/libwolfssl.so -DLWS_WITH_EXTERNAL_POLL=1 -DCMAKE_BUILD_TYPE=DEBUG ..
+```
+
+   This option requires wolfSSL to be built with `./configure --enable-libwebsockets --enable-alpn` and installed to `/usr/local`.
 
 ### Broker Configuration
 
@@ -461,7 +468,21 @@ listener 9001
 protocol websockets
 ```
 
+For Secure WebSocket Support, add:
+
+```
+# Secure WebSocket
+listener 8081
+protocol websockets
+cafile <path-to>/ca-cert.pem
+# Path to the PEM encoded server certificate.
+certfile <path-to>/server-cert.pem
+# Path to the PEM encoded keyfile.
+keyfile <path-to>/server-key.pem
+```
+
 Then restart Mosquitto with this configuration:
+
 ```
 mosquitto -c mosquitto.conf
 ```

@@ -21,7 +21,7 @@
 
 /* Include the autoconf generated config.h */
 #ifdef HAVE_CONFIG_H
-    #include <config.h>
+#include <config.h>
 #endif
 
 #include "wolfmqtt/mqtt_client.h"
@@ -41,15 +41,13 @@ static int mStopRead = 0;
 /* Define ping timeout in seconds */
 #define PING_TIMEOUT_SEC 30
 
-/* TLS callback is defined in mqttexample.c */
-
 /* Message callback */
 static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
-    byte msg_new, byte msg_done)
+        byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
     word32 len;
-    
+
     (void)client;
 
     if (msg_new) {
@@ -60,12 +58,12 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         }
         XMEMCPY(buf, msg->topic_name, len);
         buf[len] = '\0'; /* Make sure it's null terminated */
-        
+
         /* Print topic */
         printf("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+                buf, msg->qos, msg->total_len);
     }
-    
+
     /* Print message payload */
     len = msg->buffer_len;
     if (len > PRINT_BUFFER_SIZE) {
@@ -73,14 +71,14 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     }
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure it's null terminated */
-    
+
     printf("Payload (%d - %d): %s\n",
-        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, buf);
+            msg->buffer_pos, msg->buffer_pos + msg->buffer_len, buf);
 
     if (msg_done) {
         printf("MQTT Message: Done\n");
     }
-    
+
     /* Return negative to terminate publish processing */
     return MQTT_CODE_SUCCESS;
 }
@@ -104,20 +102,20 @@ int main(int argc, char *argv[])
     const char* client_id = "wolfMQTT_Websocket_Client";
     byte *tx_buf, *rx_buf;
     time_t ping_time;
-    
+
     /* Initialize MQTTCtx */
     mqtt_init_ctx(&mqttCtx);
     mqttCtx.app_name = "websocket_client";
     mqttCtx.host = host;
     mqttCtx.port = port;
     mqttCtx.client_id = client_id;
-    
+
     /* Parse arguments */
     rc = mqtt_parse_args(&mqttCtx, argc, argv);
     if (rc != 0) {
         return rc;
     }
-    
+
     /* Update host and port if provided as arguments */
     if (mqttCtx.host) {
         host = mqttCtx.host;
@@ -125,20 +123,20 @@ int main(int argc, char *argv[])
     if (mqttCtx.port) {
         port = mqttCtx.port;
     }
-    
+
     /* Initialize Network */
     rc = MqttClientNet_Init(&mqttNet, &mqttCtx);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClientNet_Init failed: %d\n", rc);
         return rc;
     }
-    
+
     /* Override with websocket callbacks */
     mqttNet.connect = NetWebsocket_Connect;
     mqttNet.read = NetWebsocket_Read;
     mqttNet.write = NetWebsocket_Write;
     mqttNet.disconnect = NetWebsocket_Disconnect;
-    
+
     /* Setup buffers */
     tx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
     rx_buf = (byte*)WOLFMQTT_MALLOC(MAX_BUFFER_SIZE);
@@ -147,40 +145,44 @@ int main(int argc, char *argv[])
         rc = MQTT_CODE_ERROR_MEMORY;
         goto exit;
     }
-    
+
     /* Initialize MqttClient */
     rc = MqttClient_Init(&client, &mqttNet, mqtt_message_cb, 
-        tx_buf, MAX_BUFFER_SIZE, 
-        rx_buf, MAX_BUFFER_SIZE, 
-        5000);
+            tx_buf, MAX_BUFFER_SIZE,
+            rx_buf, MAX_BUFFER_SIZE,
+            5000);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_Init failed: %d\n", rc);
         goto exit;
     }
-    
+
     /* Connect to broker */
-    printf("Connecting to %s:%d%s\n", host, port, mqttCtx.use_tls ? " (TLS)" : "");
-    rc = MqttClient_NetConnect(&client, host, port, 5000, mqttCtx.use_tls, mqtt_tls_cb);
+    printf("Connecting to %s:%d%s\n", host, port,
+            mqttCtx.use_tls ? " (TLS)" : "");
+    do {
+        rc = MqttClient_NetConnect(&client, host, port, 5000,
+                                   mqttCtx.use_tls, NULL);
+    } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_NetConnect failed: %d\n", rc);
         goto exit;
     }
-    
+
     /* Perform MQTT Connect */
     XMEMSET(&connect, 0, sizeof(connect));
     connect.keep_alive_sec = 60;
     connect.clean_session = 1;
     connect.client_id = client_id;
-    
+
     printf("MQTT Connect: ClientID=%s\n", connect.client_id);
     rc = MqttClient_Connect(&client, &connect);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_Connect failed: %d\n", rc);
         goto exit;
     }
-    
+
     printf("MQTT Connected\n");
-    
+
     /* Subscribe to a topic */
     MqttSubscribe subscribe;
     MqttTopic topics[1];
@@ -190,23 +192,23 @@ int main(int argc, char *argv[])
     subscribe.packet_id = mqtt_get_packetid();
     subscribe.topic_count = 1;
     subscribe.topics = topics;
-    
+
     printf("MQTT Subscribe: %s (QoS %d)\n", 
-        topics[0].topic_filter, topics[0].qos);
+            topics[0].topic_filter, topics[0].qos);
     rc = MqttClient_Subscribe(&client, &subscribe);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_Subscribe failed: %d\n", rc);
         goto exit;
     }
-    
+
     /* Wait for messages */
     printf("Waiting for messages...\n");
     printf("Press Ctrl+C to quit\n");
     signal(SIGINT, sig_handler);
-    
+
     /* Initialize ping timer */
     ping_time = time(NULL);
-    
+
     while (!mStopRead) {
         /* Check if it's time to send a ping */
         time_t current_time = time(NULL);
@@ -219,10 +221,10 @@ int main(int argc, char *argv[])
             }
             ping_time = current_time; /* Reset ping timer */
         }
-        
+
         /* Try receiving with a shorter timeout to allow for ping checks */
         rc = MqttClient_WaitMessage(&client, 1000);
-        
+
         if (rc == MQTT_CODE_ERROR_TIMEOUT) {
             /* Keep waiting */
             continue;
@@ -232,28 +234,28 @@ int main(int argc, char *argv[])
             break;
         }
     }
-    
+
     /* Unsubscribe */
     MqttUnsubscribe unsubscribe;
     XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
     unsubscribe.packet_id = mqtt_get_packetid();
     unsubscribe.topic_count = 1;
     unsubscribe.topics = topics;
-    
+
     rc = MqttClient_Unsubscribe(&client, &unsubscribe);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_Unsubscribe failed: %d\n", rc);
     }
-    
-exit:
+
     /* Disconnect */
     rc = MqttClient_Disconnect(&client);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_Disconnect failed: %d\n", rc);
     }
-    
+
+    exit:
     MqttClient_DeInit(&client);
-    
+
     /* Free resources */
     if (tx_buf) {
         WOLFMQTT_FREE(tx_buf);
@@ -262,7 +264,7 @@ exit:
         WOLFMQTT_FREE(rx_buf);
     }
     MqttClientNet_DeInit(&mqttNet);
-    
+
     return rc;
 } 
 #else
