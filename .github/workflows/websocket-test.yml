@@ -21,6 +21,27 @@ jobs:
         sudo apt-get install -y build-essential autoconf automake libtool
         sudo apt-get install -y libwebsockets-dev mosquitto mosquitto-clients
         
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure with coexist for default libwebsocket
+      working-directory: ./wolfssl
+      run: ./configure --enable-opensslcoexist
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+
+    - uses: actions/checkout@master
+    - name: wolfmqtt autogen
+      run: ./autogen.sh
+
     - name: Configure and build wolfMQTT
       run: |
         ./autogen.sh
@@ -31,13 +52,18 @@ jobs:
       run: |
         echo "listener 11883" > mosquitto.conf
         echo "protocol mqtt" >> mosquitto.conf
-        echo "listener 19001" >> mosquitto.conf
+        echo "listener 18080" >> mosquitto.conf
         echo "protocol websockets" >> mosquitto.conf
+        echo "listener 18081" >> mosquitto.conf
+        echo "protocol websockets" >> mosquitto.conf
+        echo "cafile scripts/broker_test/ca-cert.pem" >> mosquitto.conf
+        echo "certfile scripts/broker_test/server-cert.pem" >> mosquitto.conf
+        echo "keyfile scripts/broker_test/server-key.pem" >> mosquitto.conf
         echo "allow_anonymous true" >> mosquitto.conf
         
     - name: Start Mosquitto broker
       run: |
-        mosquitto -c mosquitto.conf -d
+        mosquitto -c mosquitto.conf -v -d
         # Wait for broker to start
         sleep 2
         
@@ -45,8 +71,8 @@ jobs:
       run: |
         # Check if mosquitto is running
         pgrep mosquitto || (echo "Mosquitto failed to start" && exit 1)
-        # Check if port 19001 is open
-        nc -z localhost 19001 || (echo "WebSocket port 19001 is not open" && exit 1)
+        # Check if port 18080 is open
+        nc -z localhost 18080 || (echo "WebSocket port 18080 is not open" && exit 1)
         
     - name: Publish test message
       run: |
@@ -66,7 +92,21 @@ jobs:
     - name: Run WebSocket client
       run: |
         # Run the client with a timeout
-        timeout 15s ./examples/websocket/websocket_client localhost 19001 || exit_code=$?
+        timeout 15s ./examples/websocket/websocket_client -h localhost -p 18080 || exit_code=$?
+        
+        # Check if client received messages (exit code 124 means timeout occurred, which is expected)
+        if [ "$exit_code" -eq 124 ]; then
+          echo "Client ran successfully until timeout"
+          exit 0
+        elif [ "$exit_code" -ne 0 ]; then
+          echo "Client failed with exit code $exit_code"
+          exit 1
+        fi
+        
+    - name: Run Secure WebSocket client
+      run: |
+        # Run the client with a timeout
+        timeout 15s ./examples/websocket/websocket_client -t -h localhost -p 18081 -A scripts/broker_test/ca-cert.pem || exit_code=$?
         
         # Check if client received messages (exit code 124 means timeout occurred, which is expected)
         if [ "$exit_code" -eq 124 ]; then
