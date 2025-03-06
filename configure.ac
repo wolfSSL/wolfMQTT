@@ -51,6 +51,10 @@ AS_IF([test -n "$CFLAG_VISIBILITY"],
 # silent
 m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])])
 
+#
+m4_pattern_allow([AC_CHECK_LIB])
+m4_pattern_allow([AC_MSG_ERROR])
+
 # Checks for programs.
 AC_PROG_CC
 AM_PROG_CC_C_O
@@ -380,6 +384,30 @@ if test "x$ENABLED_STRESS" != "xno"; then
     AM_CFLAGS="$AM_CFLAGS -DNUM_PUB_PER_TASK=$NUM_PUBS"
 fi
 
+# WebSocket
+AC_ARG_ENABLE([websocket],
+    [AS_HELP_STRING([--enable-websocket],[Enable WebSocket support (default: disabled)])],
+    [ ENABLED_WEBSOCKET=$enableval ],
+    [ ENABLED_WEBSOCKET=no ]
+    )
+
+if test "x$ENABLED_WEBSOCKET" = "xyes"
+then
+    AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_WEBSOCKET"
+    ENABLED_WEBSOCKET=yes
+
+    # Check for libwebsockets
+    PKG_CHECK_MODULES([LIBWEBSOCKETS], [libwebsockets >= 2.0.0],
+        [
+            AM_CFLAGS="$AM_CFLAGS $LIBWEBSOCKETS_CFLAGS"
+            LIBS="$LIBS $LIBWEBSOCKETS_LIBS"
+        ],
+        [
+            AC_CHECK_LIB([websockets], [lws_create_context],
+                [LIBS="$LIBS -lwebsockets"],
+                [AC_MSG_ERROR([libwebsockets not found. Install libwebsockets or use --disable-websocket])])
+        ])
+fi
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
@@ -390,7 +418,7 @@ AM_CONDITIONAL([BUILD_SN], [test "x$ENABLED_SN" = "xyes"])
 AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
 AM_CONDITIONAL([BUILD_NONBLOCK], [test "x$ENABLED_NONBLOCK" = "xyes"])
 AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
-
+AM_CONDITIONAL([BUILD_WEBSOCKET], [test "x$ENABLED_WEBSOCKET" = "xyes"])
 
 
 # HARDEN FLAGS
@@ -517,3 +545,4 @@ echo "   * TLS:                       $ENABLED_TLS"
 echo "   * CURL:                      $ENABLED_CURL"
 echo "   * Multi-thread:              $ENABLED_MULTITHREAD"
 echo "   * Stress:                    $ENABLED_STRESS"
+echo "   * WebSocket:                 $ENABLED_WEBSOCKET"

@@ -243,6 +243,9 @@ enum MqttPacketResponseCodes {
             #define XSNPRINTF        _snprintf
         #endif
     #endif
+    #ifndef XMEMMOVE
+        #define XMEMMOVE(d,s,l)     memmove((d),(s),(l))
+    #endif
 #endif
 
 #ifndef WOLFMQTT_CUSTOM_MALLOC

@@ -45,6 +45,8 @@ EXTRA_DIST+= wolfmqtt.sln
 EXTRA_DIST+= wolfmqtt.vcxproj
 EXTRA_DIST+= wolfmqtt.vcxproj.filters
 EXTRA_DIST+= autogen.sh
+EXTRA_DIST+= LICENSING.txt
+EXTRA_DIST+= wolfmqtt/options.h.in
 
 TEST_EXTENSIONS=.test
 TESTS += $(check_PROGRAMS)
@@ -106,3 +108,15 @@ merge-clean:
 	@find ./ | $(GREP) \.OTHER | xargs rm -f
 	@find ./ | $(GREP) \.BASE | xargs rm -f
 	@find ./ | $(GREP) \~$$ | xargs rm -f
+
+# Make sure these directories exist
+dist-hook:
+	$(MKDIR_P) $(distdir)/examples/mqttsimple
+	$(MKDIR_P) $(distdir)/examples/aws
+	$(MKDIR_P) $(distdir)/examples/azure
+	$(MKDIR_P) $(distdir)/examples/firmware
+	$(MKDIR_P) $(distdir)/examples/wiot
+	$(MKDIR_P) $(distdir)/examples/nbclient
+	$(MKDIR_P) $(distdir)/examples/multithread
+	$(MKDIR_P) $(distdir)/examples/pub-sub
+	$(MKDIR_P) $(distdir)/examples/websocket
