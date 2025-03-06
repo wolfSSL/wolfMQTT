@@ -41,12 +41,7 @@ static int mStopRead = 0;
 /* Define ping timeout in seconds */
 #define PING_TIMEOUT_SEC 30
 
-/* TLS callback */
-int mqtt_tls_cb(MqttClient* client)
-{
-    (void)client;
-    return 0;
-}
+/* TLS callback is defined in mqttexample.c */
 
 /* Message callback */
 static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
