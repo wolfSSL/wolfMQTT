@@ -55,7 +55,8 @@
 
 
 /* Public Functions */
-#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL) && \
+    !defined(ENABLE_MQTT_WEBSOCKET)
 int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     void *ptr)
 {
@@ -100,7 +101,7 @@ int MqttSocket_TlsSocketSend(WOLFSSL* ssl, char *buf, int sz,
     }
     return rc;
 }
-#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL && !ENABLE_MQTT_WEBSOCKET*/
 
 int MqttSocket_Init(MqttClient *client, MqttNet *net)
 {
@@ -113,7 +114,8 @@ int MqttSocket_Init(MqttClient *client, MqttNet *net)
         client->net = net;
         MqttClient_Flags(client, (MQTT_CLIENT_FLAG_IS_CONNECTED |
             MQTT_CLIENT_FLAG_IS_TLS), 0);;
-    #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
+    #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL) && \
+        !defined(ENABLE_MQTT_WEBSOCKET)
         client->tls.ctx = NULL;
         client->tls.ssl = NULL;
         client->tls.timeout_ms_read = client->cmd_timeout_ms;
@@ -133,7 +135,8 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 {
     int rc;
 
-#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL) && \
+    !defined(ENABLE_MQTT_WEBSOCKET)
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms_write = timeout_ms;
         client->tls.sockRcWrite = 0; /* init value */
@@ -164,7 +167,7 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
         }
     }
     else
-#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL && !ENABLE_MQTT_WEBSOCKET*/
     {
         rc = client->net->write(client->net->context, buf, buf_len,
             timeout_ms);
@@ -236,7 +239,8 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 {
     int rc;
 
-#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL) && \
+    !defined(ENABLE_MQTT_WEBSOCKET)
     if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_TLS) {
         client->tls.timeout_ms_read = timeout_ms;
         client->tls.sockRcRead = 0; /* init value */
@@ -270,7 +274,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         }
     }
     else
-#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL && !ENABLE_MQTT_WEBSOCKET */
     {
         rc = client->net->read(client->net->context, buf, buf_len, timeout_ms);
     }
@@ -397,7 +401,8 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
     }
 
-#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
+#if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL) && \
+    !defined(ENABLE_MQTT_WEBSOCKET)
     if (use_tls) {
         if (client->tls.ctx == NULL) {
         #ifdef DEBUG_WOLFSSL
@@ -513,7 +518,7 @@ exit:
 
 #else
     (void)cb;
-#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL*/
+#endif /* ENABLE_MQTT_TLS && !ENABLE_MQTT_CURL && !ENABLE_MQTT_WEBSOCKET */
 
 #ifdef WOLFMQTT_DEBUG_SOCKET
     PRINTF("MqttSocket_Connect: Rc=%d", rc);

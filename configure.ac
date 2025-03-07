@@ -8,6 +8,9 @@ AC_INIT([wolfmqtt],[1.19.2],[https://github.com/wolfssl/wolfMQTT/issues],[wolfmq
 AC_PREREQ([2.63])
 AC_CONFIG_AUX_DIR([build-aux])
 
+# Check for pkg-config
+PKG_PROG_PKG_CONFIG
+
 # The following sets CFLAGS to empty if unset on command line.
 : ${CFLAGS=""}
 
@@ -397,16 +400,9 @@ then
     ENABLED_WEBSOCKET=yes
 
     # Check for libwebsockets
-    PKG_CHECK_MODULES([LIBWEBSOCKETS], [libwebsockets >= 2.0.0],
-        [
-            AM_CFLAGS="$AM_CFLAGS $LIBWEBSOCKETS_CFLAGS"
-            LIBS="$LIBS $LIBWEBSOCKETS_LIBS"
-        ],
-        [
-            AC_CHECK_LIB([websockets], [lws_create_context],
-                [LIBS="$LIBS -lwebsockets"],
-                [AC_MSG_ERROR([libwebsockets not found. Install libwebsockets or use --disable-websocket])])
-        ])
+    AC_CHECK_LIB([websockets], [lws_create_context],
+        [LIBS="$LIBS -lwebsockets"],
+        [AC_MSG_ERROR([libwebsockets not found. Install libwebsockets or use --disable-websocket])])
 fi
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])

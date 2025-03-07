@@ -47,4 +47,4 @@ int NetWebsocket_Disconnect(void *context);
     } /* extern "C" */
 #endif
 
-#endif /* WOLFMQTT_NET_LIBWEBSOCKETS_H */ 
+#endif /* WOLFMQTT_NET_LIBWEBSOCKETS_H */
