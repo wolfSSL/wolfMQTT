@@ -27,7 +27,7 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
-#include "examples/net_libwebsockets.h"
+#include "examples/websocket/net_libwebsockets.h"
 #include <signal.h>
 #include <time.h>
 
@@ -97,31 +97,20 @@ int main(int argc, char *argv[])
     MqttConnect connect;
     MQTTCtx mqttCtx;
     int rc;
-    const char *host = "localhost";
-    word16 port = 9001;
-    const char* client_id = "wolfMQTT_Websocket_Client";
     byte *tx_buf, *rx_buf;
     time_t ping_time;
 
     /* Initialize MQTTCtx */
     mqtt_init_ctx(&mqttCtx);
     mqttCtx.app_name = "websocket_client";
-    mqttCtx.host = host;
-    mqttCtx.port = port;
-    mqttCtx.client_id = client_id;
+    mqttCtx.host = "localhost";
+    mqttCtx.port = 8080; /* use -p 8081 for TLS */
+    mqttCtx.client_id = "wolfMQTT_Websocket_Client";
 
     /* Parse arguments */
     rc = mqtt_parse_args(&mqttCtx, argc, argv);
     if (rc != 0) {
         return rc;
-    }
-
-    /* Update host and port if provided as arguments */
-    if (mqttCtx.host) {
-        host = mqttCtx.host;
-    }
-    if (mqttCtx.port) {
-        port = mqttCtx.port;
     }
 
     /* Initialize Network */
@@ -157,10 +146,10 @@ int main(int argc, char *argv[])
     }
 
     /* Connect to broker */
-    printf("Connecting to %s:%d%s\n", host, port,
+    printf("Connecting to %s:%d%s\n", mqttCtx.host, mqttCtx.port,
             mqttCtx.use_tls ? " (TLS)" : "");
     do {
-        rc = MqttClient_NetConnect(&client, host, port, 5000,
+        rc = MqttClient_NetConnect(&client, mqttCtx.host, mqttCtx.port, 5000,
                                    mqttCtx.use_tls, NULL);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
@@ -172,7 +161,7 @@ int main(int argc, char *argv[])
     XMEMSET(&connect, 0, sizeof(connect));
     connect.keep_alive_sec = 60;
     connect.clean_session = 1;
-    connect.client_id = client_id;
+    connect.client_id = mqttCtx.client_id;
 
     printf("MQTT Connect: ClientID=%s\n", connect.client_id);
     rc = MqttClient_Connect(&client, &connect);

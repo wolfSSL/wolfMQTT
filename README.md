@@ -418,10 +418,10 @@ The WebSocket client example is located in `/examples/websocket/`. This example 
 To run the example:
 
 ```
-./examples/websocket/websocket_client [-h host] [-p port]
+./examples/websocket/websocket_client [-h host] [-p port] [-t]
 ```
 
-By default, it connects to `localhost` on port `9001`.
+By default, it connects to `localhost` on port `8080`.
 
 #### Secure WebSocket Support
 
@@ -442,12 +442,12 @@ To use secure WebSockets:
 * You can also specify a CA certificate for TLS verification:
 
 ```
-./examples/websocket/websocket_client -t -A /path/to/ca-cert.pem
+./examples/websocket/websocket_client -t -p 8081 -A /path/to/ca-cert.pem
 ```
 * For mutual TLS authentication, you can specify client certificate and key:
 
 ```
-./examples/websocket/websocket_client -t -A /path/to/ca-cert.pem --cert /path/to/client-cert.pem --key /path/to/client-key.pem
+./examples/websocket/websocket_client -t -p 8081 -A /path/to/ca-cert.pem --cert /path/to/client-cert.pem --key /path/to/client-key.pem
 ```
 
 * You can also build the libwebsockets library from source with support for TLS from wolfSSL:
@@ -464,7 +464,7 @@ To use the WebSocket example, your MQTT broker must be configured to support Web
 
 ```
 # WebSocket settings
-listener 9001
+listener 8080
 protocol websockets
 ```
 
@@ -486,6 +486,12 @@ Then restart Mosquitto with this configuration:
 ```
 mosquitto -c mosquitto.conf
 ```
+
+There is an example mosquitto configuration file in the websocket folder:
+`<wolfMQTT>$ mosquitto -c examples/websocket/mosq_ws.conf`
+
+You can also build the mosquitto broker to use wolfSSL for the TLS connection:
+https://github.com/wolfSSL/osp/tree/master/mosquitto
 
 ### Implementation Details
 

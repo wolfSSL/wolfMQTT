@@ -27,7 +27,7 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
-#include "examples/net_libwebsockets.h"
+#include "examples/websocket/net_libwebsockets.h"
 
 #ifdef ENABLE_MQTT_WEBSOCKET
 
