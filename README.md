@@ -503,3 +503,21 @@ The WebSocket implementation uses libwebsockets as the backend and provides cust
 - `NetWebsocket_Disconnect`: Closes the WebSocket connection
 
 The example also implements a ping mechanism to keep the WebSocket connection alive, sending a ping to the broker every 30 seconds.
+
+### Testing with public brokers
+You can test the wolfMQTT client against public brokers supporting websockets:
+* Mosquitto unencrypted
+
+    `./examples/websocket/websocket_client -h test.mosquitto.org -p8080`
+ 
+* Mosquitto secure websocket
+
+    `./examples/websocket/websocket_client -h test.mosquitto.org -p8081 -t`
+ 
+* HiveMQ unencrypted
+
+    `./examples/websocket/websocket_client -h broker.hivemq.com -p8000`
+
+* HiveMQ secure websockets
+
+    `./examples/websocket/websocket_client -h broker.hivemq.com -p8884 -t`
