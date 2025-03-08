@@ -13,9 +13,15 @@ The latest experimental development version can be found at the staging site:
 ```bash
 #!/bin/bash
 
-. ~/esp/esp-idf/export.sh
+WRK_IDF_PATH=/mnt/c/SysGCC/esp32/esp-idf/v5.2
 
-# Needed for Staging site:
+echo "Run export.sh from ${WRK_IDF_PATH}"
+
+pushd ${WRK_IDF_PATH}
+. ./export.sh
+popd
+
+# Needed for Staging site ONLY:
 export IDF_COMPONENT_REGISTRY_URL=https://components-staging.espressif.com
 
 idf.py create-project-from-example "gojimmypi/mywolfmqtt^1.0.14-test:AWS_IoT_MQTT"
@@ -52,9 +58,15 @@ set(WOLFSSL_ROOT "~/workspace/wolfssl-other-source")
 ```
 
 
-## Getting Started:
+## Getting Started with ESP Registry Managed Components:
 
-Here's an example using the command-line [idf.py](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/tools/idf-py.html).
+The quickest way to get started is with wolfMQTT Managed Components.
+
+Coming soon. See [Staging Site](https://components-staging.espressif.com/components/gojimmypi/mywolfmqtt).
+
+## Getting Started with ESP-IDF local examples:
+
+Here's an example using the command-line [idf.py](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/tools/idf-py.html):
 
 Edit your `WRK_IDF_PATH`to point to your ESP-IDF install directory.
 
@@ -80,12 +92,10 @@ Press `Ctrl+]` to exit `idf.py monitor`. See [additional monitor keyboard comman
 
 For examples, see:
 
-- [TLS Client](../wolfssl_client/README.md)
-- [TLS Server](../wolfssl_server/README.md)
-- [Benchmark](../wolfssl_benchmark/README.md)
-- [Test](../wolfssl_test/README.md)
+- [wolfSSL template](https://github.com/wolfSSL/wolfssl/tree/master/IDE/Espressif/ESP-IDF/examples/template/README.md)
+- [Benchmark](https://github.com/wolfSSL/wolfssl/tree/master/IDE/Espressif/ESP-IDF/examples/wolfssl_benchmark/README.md)
+- [TLS Client](https://github.com/wolfSSL/wolfssl/tree/master/IDE/Espressif/ESP-IDF/examples/wolfssl_client/README.md)
+- [TLS Server](https://github.com/wolfSSL/wolfssl/tree/master/IDE/Espressif/ESP-IDF/examples/wolfssl_server/README.md)
+- [Test](https://github.com/wolfSSL/wolfssl/tree/master/IDE/Espressif/ESP-IDF/examples/wolfssl_test)
 - [wolfssl-examples](https://github.com/wolfSSL/wolfssl-examples/tree/master/ESP32)
 - [wolfssh-examples](https://github.com/wolfSSL/wolfssh-examples/tree/main/Espressif)
-
-
-
