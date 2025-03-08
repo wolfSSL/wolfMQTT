@@ -1,0 +1,88 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF
+EXTRA_DIST+= IDE\Espressif\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\compileAllExamples.sh
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\README.md
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\README.md
+
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\partitions_singleapp_large.csv
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\sdkconfig.defaults
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\component.mk
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\include
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\install_wolfMQTT.cmd
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\Kconfig
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfmqtt\include\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\component.mk
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\include
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\Kconfig
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\include\config.h
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\components\wolfssl\include\user_settings.h
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\examples
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\include
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\main.c
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\time_helper.c
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\wifi_connect.c
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\examples\aws
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\examples\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\examples\aws\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\include\main.h
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\include\time_helper.h
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\include\time_helper.h.bak
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\main\include\wifi_connect.h
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\VisualGDB
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\AWS_IoT_MQTT\VisualGDB\wolfssl_mqtt_aws_iot_IDF_v5.1_ESP32.vgdbproj
+
+# wolfmqtt_template example
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\main
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\partitions_singleapp_large.csv
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\sdkconfig
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\sdkconfig.defaults
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\component.mk
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\include
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\install_wolfMQTT.cmd
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\Kconfig
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfmqtt\include\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\component.mk
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\include
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\Kconfig
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\README.md
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\include\config.h
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\components\wolfssl\include\user_settings.h
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\main\CMakeLists.txt
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\main\include
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\main\main.c
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\main\include\main.h
+
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\VisualGDB
+EXTRA_DIST+= IDE\Espressif\ESP-IDF\examples\wolfmqtt_template\VisualGDB\wolfmqtt_template_IDF_v5.1_ESP32.vgdbproj
