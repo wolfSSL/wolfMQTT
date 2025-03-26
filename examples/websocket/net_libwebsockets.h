@@ -30,7 +30,7 @@
 #include "examples/mqttnet.h"
 
 #ifdef ENABLE_MQTT_WEBSOCKET
-#define WOLFMQTT_LWS_RX_BUF_SIZE 1024
+#define WOLFMQTT_LWS_RX_BUF_SIZE 4096
 
 /* Function declarations */
 int NetWebsocket_Connect(void *context, const char* host, word16 port, 
