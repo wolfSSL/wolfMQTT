@@ -153,12 +153,12 @@ examples_pub_sub_mqtt_sub_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
 # WebSocket example
 if BUILD_WEBSOCKET
-noinst_HEADERS += examples/net_libwebsockets.h
+noinst_HEADERS += examples/websocket/net_libwebsockets.h
 noinst_PROGRAMS += examples/websocket/websocket_client
 examples_websocket_websocket_client_SOURCES      = examples/websocket/websocket_client.c \
+                                                   examples/websocket/net_libwebsockets.c \
                                                    examples/mqttnet.c \
-                                                   examples/mqttexample.c \
-                                                   examples/net_libwebsockets.c
+                                                   examples/mqttexample.c
 examples_websocket_websocket_client_LDADD        = src/libwolfmqtt.la
 examples_websocket_websocket_client_DEPENDENCIES = src/libwolfmqtt.la
 examples_websocket_websocket_client_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
@@ -187,6 +187,7 @@ dist_example_DATA+= examples/pub-sub/mqtt-pub.c
 dist_example_DATA+= examples/pub-sub/mqtt-sub.c
 if BUILD_WEBSOCKET
 dist_example_DATA+= examples/websocket/websocket_client.c
+dist_example_DATA+= examples/websocket/net_libwebsockets.c
 endif
 
 DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
