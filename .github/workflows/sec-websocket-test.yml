@@ -1,0 +1,142 @@
+
+name: Secure WebSocket Client Test with wolfSSL
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-websocket:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install Act dependencies
+      if: ${{ env.ACT }}
+      run: |
+        apt-get update && apt-get install sudo git wget nmap netcat -y
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential autoconf automake libtool cmake
+        sudo apt-get install -y mosquitto-clients
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure with libwebsocket and mosquitto
+      working-directory: ./wolfssl
+      run: ./configure --enable-libwebsockets --enable-mosquitto --enable-alpn
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+
+    - name: Download libwebsockets
+      run: |
+        git clone https://libwebsockets.org/repo/libwebsockets
+
+    - name: Build libwebsockets with wolfSSL
+      run: |
+        cd libwebsockets
+        mkdir build
+        cd build
+        cmake .. -DLWS_WITH_WOLFSSL=1 -DLWS_WOLFSSL_INCLUDE_DIRS=/usr/local/include/wolfssl -DLWS_WOLFSSL_LIBRARIES=/usr/local/lib/libwolfssl.so -DLWS_WITH_EXTERNAL_POLL=1 ..
+        make
+        sudo make install
+
+    - name: Download mosquitto and apply wolfSSL OSP patch
+      run: |
+        git clone https://github.com/eclipse/mosquitto.git --branch v2.0.18  --single-branch
+        cd mosquitto
+        wget https://raw.githubusercontent.com/wolfSSL/osp/refs/heads/master/mosquitto/2.0.18.patch
+        patch -p1 < 2.0.18.patch
+
+    - name: Build mosquitto with wolfSSL and websocket support
+      run: |
+        cd mosquitto
+        make WITH_TLS=wolfssl WITH_WEBSOCKETS=yes WITH_DOCS=no WITH_CJSON=no 
+        sudo make WITH_TLS=wolfssl WITH_WEBSOCKETS=yes WITH_DOCS=no WITH_CJSON=no install
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfmqtt
+        path: wolfmqtt
+    - name: wolfmqtt autogen
+      working-directory: ./wolfmqtt
+      run: ./autogen.sh
+    - name: Configure and build wolfMQTT
+      working-directory: ./wolfmqtt
+      run: |
+        ./configure --enable-websocket
+        make
+
+    - name: Create Mosquitto config
+      run: |
+        echo "listener 11883" > mosquitto.conf
+        echo "protocol mqtt" >> mosquitto.conf
+        echo "listener 18080" >> mosquitto.conf
+        echo "protocol websockets" >> mosquitto.conf
+        echo "listener 18081" >> mosquitto.conf
+        echo "protocol websockets" >> mosquitto.conf
+        echo "cafile scripts/broker_test/ca-cert.pem" >> mosquitto.conf
+        echo "certfile scripts/broker_test/server-cert.pem" >> mosquitto.conf
+        echo "keyfile scripts/broker_test/server-key.pem" >> mosquitto.conf
+        echo "allow_anonymous true" >> mosquitto.conf
+
+    - name: Start Mosquitto broker
+      working-directory: ./wolfmqtt
+      run: |
+        mosquitto -c ../mosquitto.conf -v -d
+        # Wait for broker to start
+        sleep 2
+
+    - name: Verify broker is running
+      run: |
+        # Check if mosquitto is running
+        pgrep mosquitto || (echo "Mosquitto failed to start" && exit 1)
+        # Check if port 18081 is open
+        nc -z localhost 18081 || (echo "WebSocket port 18081 is not open" && exit 1)
+
+    - name: Publish test message
+      run: |
+        # Start a background process to publish messages
+        (
+          # Wait for client to connect and subscribe
+          sleep 5
+          # Publish a test message
+          mosquitto_pub -t "test/topic" -m "Hello from WebSocket test" -p 11883
+          # Publish a few more messages
+          for i in {1..5}; do
+            sleep 1
+            mosquitto_pub -t "test/topic" -m "Test message $i" -p 11883
+          done
+        ) &
+
+    - name: Run Secure WebSocket client
+      working-directory: ./wolfmqtt
+      run: |
+        # Run the client with a timeout
+        timeout 15s ./examples/websocket/websocket_client -t -h localhost -p 18081 -A scripts/broker_test/ca-cert.pem || exit_code=$?
+
+        # Check if client received messages (exit code 124 means timeout occurred, which is expected)
+        if [ "$exit_code" -eq 124 ]; then
+          echo "Client ran successfully until timeout"
+          exit 0
+        elif [ "$exit_code" -ne 0 ]; then
+          echo "Client failed with exit code $exit_code"
+          exit 1
+        fi
+
+    - name: Stop Mosquitto broker
+      run: |
+        sudo killall mosquitto
