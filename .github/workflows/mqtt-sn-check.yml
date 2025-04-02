@@ -33,6 +33,10 @@ jobs:
       with:
         repository: eclipse/paho.mqtt-sn.embedded-c
         path: gateway
+    - name: Setup cmake version
+      uses: jwlawson/actions-setup-cmake@v2
+      with:
+        cmake-version: '3.25.x'
     - name: Build gateway
       working-directory: ./gateway/MQTTSNGateway
       run: ./build.sh udp -DDEBUG -DDEBUG_NW
