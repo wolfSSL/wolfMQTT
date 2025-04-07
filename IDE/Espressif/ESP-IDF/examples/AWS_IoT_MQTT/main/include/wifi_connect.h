@@ -1,15 +1,15 @@
 /* wifi_connect.h
  *
- * Copyright (C) 2006-2023 wolfSSL Inc.
+ * Copyright (C) 2006-2025 wolfSSL Inc.
  *
- * This file is part of wolfSSL.
+ * This file is part of wolfMQTT.
  *
- * wolfSSL is free software; you can redistribute it and/or modify
+ * wolfMQTT is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
- * wolfSSL is distributed in the hope that it will be useful,
+ * wolfMQTT is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
@@ -18,6 +18,8 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1335, USA
  */
+
+
 #ifndef _WIFI_CONNECT_H_
 #define _WIFI_CONNECT_H_
 
@@ -74,15 +76,21 @@
     ** the config you want - ie #define EXAMPLE_WIFI_SSID "mywifissid"
     */
     #ifdef CONFIG_ESP_WIFI_SSID
+        #undef  EXAMPLE_ESP_WIFI_SSID
         #define EXAMPLE_ESP_WIFI_SSID CONFIG_ESP_WIFI_SSID
     #else
-        #define EXAMPLE_ESP_WIFI_SSID "MYSSID_WIFI_CONNECT"
+        #ifndef     EXAMPLE_ESP_WIFI_SSID
+            #define EXAMPLE_ESP_WIFI_SSID "MYSSID_WIFI_CONNECT"
+        #endif
     #endif
 
     #ifdef CONFIG_ESP_WIFI_PASSWORD
+        #undef  EXAMPLE_ESP_WIFI_PASS
         #define EXAMPLE_ESP_WIFI_PASS CONFIG_ESP_WIFI_PASSWORD
     #else
-        #define EXAMPLE_ESP_WIFI_PASS "MYPASSWORD_WIFI_CONNECT"
+        #ifndef     EXAMPLE_ESP_WIFI_PASS
+            #define EXAMPLE_ESP_WIFI_PASS "MYPASSWORD_WIFI_CONNECT"
+        #endif
     #endif
 #endif
 
