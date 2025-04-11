@@ -64,26 +64,50 @@ function(CHECK_DUPLICATE_LIBRARIES RESULT_VAR KEYWORD)
         "${CMAKE_HOME_DIRECTORY}/components/my${KEYWORD}"
         "${CMAKE_HOME_DIRECTORY}/managed_components/wolfssl__${KEYWORD}"
         "${CMAKE_HOME_DIRECTORY}/managed_components/gojimmypi__my${KEYWORD}"
+        # Add any other known user "my[component] here"
         "${CMAKE_HOME_DIRECTORY}/managed_components/${THIS_USER}__my${KEYWORD}"
         "$ENV{IDF_PATH}/components/${KEYWORD}/"
         "$ENV{IDF_PATH}/components/esp-${KEYWORD}/"
     )
 
     set(EXISTING_COUNT 0)
+    set(MATCHING_DIRS "")  # List to store found directories
+    set(SEEN_DIRS "")  # To store unique normalized existing paths
 
     foreach(DIR ${DIR_LIST})
-        message(STATUS "Checking ${DIR}")
         file(TO_CMAKE_PATH "${DIR}" DIR)  # Normalize paths
-        message(STATUS "Checking ${DIR}")
+        message(STATUS "Checking for ${KEYWORD} in ${DIR}")
+
         if(EXISTS "${DIR}")
-            math(EXPR EXISTING_COUNT "${EXISTING_COUNT} + 1")
+            # Check if DIR already seen
+            list(FIND SEEN_DIRS "${DIR}" IDX)
+
+            if(IDX EQUAL -1)
+                # Not seen before
+                list(APPEND SEEN_DIRS "${DIR}")
+                list(APPEND MATCHING_DIRS "${DIR}")
+                math(EXPR EXISTING_COUNT "${EXISTING_COUNT} + 1")
+                message(STATUS "Found: ${DIR}")
+            else()
+                message(STATUS "Already counted: ${DIR}")
+            endif()
+
+            list(APPEND MATCHING_DIRS "${DIR}")
             message(STATUS "Found: ${DIR}")
-        endif()
-    endforeach()
+        endif() # EXISTS "${DIR}"
+    endforeach() # DIR ${DIR_LIST}
 
     if(EXISTING_COUNT GREATER_EQUAL 2)
         set(${RESULT_VAR} TRUE PARENT_SCOPE)
-        message(STATUS "WARNING: At least two '${KEYWORD}' component directories exist.")
+        message(STATUS  "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        message(STATUS  "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        message(STATUS  "WARNING: Found duplicate '${KEYWORD}' in")
+        foreach(DUP_DIR ${MATCHING_DIRS})
+            message(STATUS "  - ${DUP_DIR}")
+        endforeach()
+        message(STATUS  "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        message(STATUS  "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+        message(WARNING "WARNING: More than 1 '${KEYWORD}' component directories exist.")
 
         # Append the warning flag to CMAKE_C_FLAGS and propagate it to the parent scope
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D${KEYWORD}_MULTI_INSTALL_WARNING")
