@@ -68,6 +68,7 @@ function(CHECK_DUPLICATE_LIBRARIES RESULT_VAR KEYWORD)
         "${CMAKE_CURRENT_LIST_DIR}/components/my${KEYWORD}"
         "${CMAKE_CURRENT_LIST_DIR}/managed_components/wolfssl__${KEYWORD}"
         "${CMAKE_CURRENT_LIST_DIR}/managed_components/gojimmypi__my${KEYWORD}"
+        # Add any other known user "my[component] here"
         "${CMAKE_CURRENT_LIST_DIR}/managed_components/${THIS_USER}__my${KEYWORD}"
         "$ENV{IDF_PATH}/components/${KEYWORD}/"
         "$ENV{IDF_PATH}/components/esp-${KEYWORD}/"
@@ -75,16 +76,30 @@ function(CHECK_DUPLICATE_LIBRARIES RESULT_VAR KEYWORD)
 
     set(EXISTING_COUNT 0)
     set(MATCHING_DIRS "")  # List to store found directories
+    set(SEEN_DIRS "")  # To store unique normalized existing paths
 
     foreach(DIR ${DIR_LIST})
         file(TO_CMAKE_PATH "${DIR}" DIR)  # Normalize paths
         message(STATUS "Checking for ${KEYWORD} in ${DIR}")
+
         if(EXISTS "${DIR}")
-            math(EXPR EXISTING_COUNT "${EXISTING_COUNT} + 1")
+            # Check if DIR already seen
+            list(FIND SEEN_DIRS "${DIR}" IDX)
+
+            if(IDX EQUAL -1)
+                # Not seen before
+                list(APPEND SEEN_DIRS "${DIR}")
+                list(APPEND MATCHING_DIRS "${DIR}")
+                math(EXPR EXISTING_COUNT "${EXISTING_COUNT} + 1")
+                message(STATUS "Found: ${DIR}")
+            else()
+                message(STATUS "Already counted: ${DIR}")
+            endif()
+
             list(APPEND MATCHING_DIRS "${DIR}")
             message(STATUS "Found: ${DIR}")
-        endif()
-    endforeach()
+        endif() # EXISTS "${DIR}"
+    endforeach() # DIR ${DIR_LIST}
 
     if(EXISTING_COUNT GREATER_EQUAL 2)
         set(${RESULT_VAR} TRUE PARENT_SCOPE)
