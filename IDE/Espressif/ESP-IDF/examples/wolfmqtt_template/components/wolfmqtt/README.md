@@ -1,21 +1,20 @@
 # wolfMQTT for Espressif ESP-IDF
 
-[wolfMQTT](https://www.wolfMQTT.com) provides commercial-grade, world-class encryption libraries to secure connections 
-from tiny embedded devices to the largest cloud and super computing platforms. 
+[wolfMQTT](https://www.wolfMQTT.com) provides commercial-grade, world-class encryption libraries to secure connections
+from tiny embedded devices to the largest cloud and super computing platforms.
 
-Makers and students can use these libraries free of charge, as long as they abide by abide by the terms of GPLV2 licensing. 
+Makers and students can use these libraries free of charge, as long as they abide by abide by the terms of GPLV2 licensing.
 
-Commercial customers are invited to contact wolfSSL for licensing options. 
-Visit [wolfSSL.com/Espressif/](https://www.wolfSSL.com/Espressif/) to learn 
+Commercial customers are invited to contact wolfSSL for licensing options.
+Visit [wolfSSL.com/Espressif/](https://www.wolfSSL.com/Espressif/) to learn
 more about Espressif-specific development efforts for wolfSSL, wolfMQTT, wolfSSH, and more.
 
 ## Getting Started
 
 The easiest way to get started is by using the Espressif Managed Component Registry
-at 
+at: [wolfssl/wolfmqtt](https://components.espressif.com/components/wolfssl/wolfmqtt)
 
-The latest experimental development version can be found at the staging site: 
-[gojimmypi/mywolfmqtt](https://components-staging.espressif.com/components/gojimmypi/mywolfmqtt/versions/1.0.14-test?language=en).
+The latest experimental development version can be found at the staging site: [gojimmypi/mywolfmqtt](https://components-staging.espressif.com/components/gojimmypi/mywolfmqtt/versions/1.18.0-preview8a?language=en).
 
 ```
 #!/bin/bash
@@ -25,7 +24,7 @@ The latest experimental development version can be found at the staging site:
 # Needed for Staging site:
 export IDF_COMPONENT_REGISTRY_URL=https://components-staging.espressif.com
 
-idf.py create-project-from-example "gojimmypi/mywolfmqtt^1.0.14-test:AWS_IoT_MQTT"
+idf.py create-project-from-example "gojimmypi/mywolfmqtt^1.18.0-preview8a::AWS_IoT_MQTT"
 
 cd AWS_IoT_MQTT
 
