@@ -1,5 +1,17 @@
 ## Release Notes
 
+### v1.20.0 (05/02/2025)
+Release 1.20.0 has been developed according to wolfSSL's development and QA
+process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* OQS's Mosquitto is out of date. by @anhu in #417
+* Add support for websocket by @embhorn in #418
+* Add support for secure websockets by @embhorn in #419
+* Add secure ws CI test by @embhorn in #421
+* Update examples for latest Managed Components by @gojimmypi in #420
+* Improve cmake duplicate component check by @gojimmypi in #422
+
 ### v1.19.2 (01/31/2025)
 Release 1.19.2 has been developed according to wolfSSL's development and QA
 process (see link below) and successfully passed the quality criteria.

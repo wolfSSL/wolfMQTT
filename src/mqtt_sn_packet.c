@@ -281,7 +281,8 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
 /* Packet Type Encoders/Decoders */
 int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
 {
-    word16 total_len, id_len;
+    word16 total_len;
+    size_t id_len;
     byte flags = 0;
     byte *tx_payload = tx_buf;
 
@@ -295,7 +296,7 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
     total_len = 6; /* Len + Message Type + Flags + ProtocolID + Duration(2) */
 
     /* Client ID size */
-    id_len = (word16)XSTRLEN(mc_connect->client_id);
+    id_len = XSTRLEN(mc_connect->client_id);
     id_len = (id_len <= SN_CLIENTID_MAX_LEN) ? id_len : SN_CLIENTID_MAX_LEN;
 
     total_len += id_len;
