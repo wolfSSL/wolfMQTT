@@ -16,3 +16,5 @@ if BUILD_SN
 nobase_include_HEADERS+= wolfmqtt/mqtt_sn_client.h \
                          wolfmqtt/mqtt_sn_packet.h
 endif
+
+EXTRA_DIST+= wolfmqtt/options.h.in
