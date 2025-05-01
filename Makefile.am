@@ -45,8 +45,6 @@ EXTRA_DIST+= wolfmqtt.sln
 EXTRA_DIST+= wolfmqtt.vcxproj
 EXTRA_DIST+= wolfmqtt.vcxproj.filters
 EXTRA_DIST+= autogen.sh
-EXTRA_DIST+= LICENSING.txt
-EXTRA_DIST+= wolfmqtt/options.h.in
 
 TEST_EXTENSIONS=.test
 TESTS += $(check_PROGRAMS)
