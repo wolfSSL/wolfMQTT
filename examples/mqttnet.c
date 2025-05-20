@@ -379,6 +379,186 @@ static int NetRead(void *context, byte* buf, int buf_len,
 
 
 /* -------------------------------------------------------------------------- */
+/* NETX SOCKET BACKEND EXAMPLE */
+/* -------------------------------------------------------------------------- */
+#elif defined(HAVE_NETX)
+
+static int NetDisconnect(void *context)
+{
+    SocketContext *sock = (SocketContext*)context;
+    if (sock) {
+        nx_tcp_socket_disconnect(&sock->fd, NX_NO_WAIT);
+        nx_tcp_socket_delete(&sock->fd);
+
+        sock->stat = SOCK_BEGIN;
+    }
+    return 0;
+}
+
+static int NetConnect(void *context, const char* host, word16 port,
+    int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    int rc = MQTT_CODE_ERROR_NETWORK;
+    MQTTCtx* mqttCtx = sock->mqttCtx;
+    UINT status;
+    NXD_ADDRESS ipAddress;
+
+    /* Get address information for host and locate IPv4 */
+    switch(sock->stat) {
+        case SOCK_BEGIN:
+        {
+            if (mqttCtx->debug_on) {
+                PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, "
+                        "Use TLS %d", host, port, timeout_ms, mqttCtx->use_tls);
+            }
+    #ifdef HAVE_NETX_DNS
+            /* Convert hostname to IP address using NETX DUO DNS */
+            status = nxd_dns_host_by_name_get(sock->ipPtr, (UCHAR *)host, &ipAddress, timeout_ms);
+            if (status != NX_SUCCESS) {
+                PRINTF("DNS lookup failed: %d", status);
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+    #else
+            PRINTF("DNS lookup not avilable");
+	        return MQTT_CODE_ERROR_NETWORK;
+    #endif
+	        status = nx_tcp_socket_create(sock->ipPtr, &sock->fd,
+                                            "MQTT Socket", NX_IP_NORMAL,
+                                            NX_FRAGMENT_OKAY, NX_IP_TIME_TO_LIVE,
+                                            1024, NX_NULL, NX_NULL);
+            if (status != NX_SUCCESS) {
+                PRINTF("Socket create failed: %d", status);
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+
+            /* Bind the socket to a local port */
+            status = nx_tcp_client_socket_bind(&sock->fd, port, NX_WAIT_FOREVER);
+            if (status != NX_SUCCESS) {
+                PRINTF("Socket bind failed: %d", status);
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+
+            sock->stat = SOCK_CONN;
+        }
+        FALL_THROUGH;
+
+        case SOCK_CONN:
+        {
+            /* Connect to server using NETX DUO */
+            status = nxd_tcp_client_socket_connect(&sock->fd, &ipAddress, port, timeout_ms);
+            if (status != NX_SUCCESS) {
+                if (status == NX_WAIT_ABORTED) {
+                    return MQTT_CODE_CONTINUE;
+                }
+                PRINTF("Socket connect failed: %d", status);
+                NetDisconnect(context);
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+            return MQTT_CODE_SUCCESS;
+        }
+
+        default:
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+            break;
+    } /* switch */
+
+    return rc;
+}
+
+
+static int NetWrite(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    NX_PACKET*      packet;
+    NX_PACKET_POOL* pool;   /* shorthand */
+    UINT            status;
+
+    if (sock == NULL) {
+        PRINTF("NetX Send NULL parameters");
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    pool = sock->fd.nx_tcp_socket_ip_ptr->nx_ip_default_packet_pool;
+    status = nx_packet_allocate(pool, &packet, NX_TCP_PACKET,
+                                timeout_ms);
+    if (status != NX_SUCCESS) {
+        PRINTF("NetX Send packet alloc error");
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    status = nx_packet_data_append(packet, (VOID*)buf, buf_len, pool, timeout_ms);
+    if (status != NX_SUCCESS) {
+        nx_packet_release(packet);
+        PRINTF("NetX Send data append error");
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    status = nx_tcp_socket_send(&sock->fd, packet, timeout_ms);
+    if (status != NX_SUCCESS) {
+        nx_packet_release(packet);
+        PRINTF("NetX Send socket send error");
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    return buf_len;
+}
+
+
+static int NetRead(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    ULONG left;
+    ULONG total;
+    ULONG copied = 0;
+    UINT  status;
+
+    if (sock == NULL) {
+        PRINTF("NetX Recv NULL parameters");
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    if (sock->nxPacket == NULL) {
+        status = nx_tcp_socket_receive(&sock->fd, &sock->nxPacket,
+                                       timeout_ms);
+        if (status != NX_SUCCESS) {
+            PRINTF("NetX Recv receive error");
+            return MQTT_CODE_ERROR_NETWORK;
+        }
+    }
+
+    if (sock->nxPacket) {
+        status = nx_packet_length_get(sock->nxPacket, &total);
+        if (status != NX_SUCCESS) {
+            PRINTF("NetX Recv length get error");
+            return MQTT_CODE_ERROR_NETWORK;
+        }
+
+        left = total - sock->nxOffset;
+            status = nx_packet_data_extract_offset(sock->nxPacket, sock->nxOffset,
+                                               buf, buf_len, &copied);
+        if (status != NX_SUCCESS) {
+            PRINTF("NetX Recv data extract offset error");
+            return MQTT_CODE_ERROR_NETWORK;
+        }
+
+        sock->nxOffset += copied;
+
+        if (copied == left) {
+            PRINTF("NetX Recv Drained packet");
+            nx_packet_release(sock->nxPacket);
+            sock->nxPacket = NULL;
+            sock->nxOffset = 0;
+        }
+    }
+
+    return copied;
+}
+
+
+/* -------------------------------------------------------------------------- */
 /* CURL EASY SOCKET BACKEND EXAMPLE */
 /* -------------------------------------------------------------------------- */
 #elif defined(ENABLE_MQTT_CURL)
@@ -1606,7 +1786,9 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
 #if defined(ENABLE_MQTT_CURL)
         sockCtx->curl = NULL;
 #endif
+#if !defined(HAVE_NETX)
         sockCtx->fd = SOCKET_INVALID;
+#endif
         sockCtx->stat = SOCK_BEGIN;
         sockCtx->mqttCtx = mqttCtx;
 
