@@ -412,28 +412,29 @@ static int NetConnect(void *context, const char* host, word16 port,
                 PRINTF("NetConnect: Host %s, Port %u, Timeout %d ms, "
                         "Use TLS %d", host, port, timeout_ms, mqttCtx->use_tls);
             }
-    #ifdef HAVE_NETX_DNS
+    #ifndef WOLFMQTT_NO_NETX_DNS
             /* Convert hostname to IP address using NETX DUO DNS */
-            status = nxd_dns_host_by_name_get(sock->ipPtr, (UCHAR *)host, &ipAddress, timeout_ms);
+            status = nxd_dns_host_by_name_get(sock->ipPtr, (UCHAR *)host,
+                &ipAddress, timeout_ms);
             if (status != NX_SUCCESS) {
                 PRINTF("DNS lookup failed: %d", status);
                 return MQTT_CODE_ERROR_NETWORK;
             }
     #else
-            PRINTF("DNS lookup not avilable");
-	        return MQTT_CODE_ERROR_NETWORK;
+            PRINTF("DNS lookup not available");
+            return MQTT_CODE_ERROR_NETWORK;
     #endif
-	        status = nx_tcp_socket_create(sock->ipPtr, &sock->fd,
-                                            "MQTT Socket", NX_IP_NORMAL,
-                                            NX_FRAGMENT_OKAY, NX_IP_TIME_TO_LIVE,
-                                            1024, NX_NULL, NX_NULL);
+            status = nx_tcp_socket_create(sock->ipPtr, &sock->fd,
+                                           "MQTT Socket", NX_IP_NORMAL,
+                                           NX_FRAGMENT_OKAY, NX_IP_TIME_TO_LIVE,
+                                           1024, NX_NULL, NX_NULL);
             if (status != NX_SUCCESS) {
                 PRINTF("Socket create failed: %d", status);
                 return MQTT_CODE_ERROR_NETWORK;
             }
 
             /* Bind the socket to a local port */
-            status = nx_tcp_client_socket_bind(&sock->fd, port, NX_WAIT_FOREVER);
+            status = nx_tcp_client_socket_bind(&sock->fd, port, timeout_ms);
             if (status != NX_SUCCESS) {
                 PRINTF("Socket bind failed: %d", status);
                 return MQTT_CODE_ERROR_NETWORK;
@@ -446,11 +447,9 @@ static int NetConnect(void *context, const char* host, word16 port,
         case SOCK_CONN:
         {
             /* Connect to server using NETX DUO */
-            status = nxd_tcp_client_socket_connect(&sock->fd, &ipAddress, port, timeout_ms);
+            status = nxd_tcp_client_socket_connect(&sock->fd, &ipAddress, port,
+                timeout_ms);
             if (status != NX_SUCCESS) {
-                if (status == NX_WAIT_ABORTED) {
-                    return MQTT_CODE_CONTINUE;
-                }
                 PRINTF("Socket connect failed: %d", status);
                 NetDisconnect(context);
                 return MQTT_CODE_ERROR_NETWORK;
@@ -467,8 +466,7 @@ static int NetConnect(void *context, const char* host, word16 port,
 }
 
 
-static int NetWrite(void *context, const byte* buf, int buf_len,
-    int timeout_ms)
+static int NetWrite(void *context, const byte* buf, int buf_len, int timeout_ms)
 {
     SocketContext *sock = (SocketContext*)context;
     NX_PACKET*      packet;
@@ -481,14 +479,14 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 
     pool = sock->fd.nx_tcp_socket_ip_ptr->nx_ip_default_packet_pool;
-    status = nx_packet_allocate(pool, &packet, NX_TCP_PACKET,
-                                timeout_ms);
+    status = nx_packet_allocate(pool, &packet, NX_TCP_PACKET, timeout_ms);
     if (status != NX_SUCCESS) {
         PRINTF("NetX Send packet alloc error");
         return MQTT_CODE_ERROR_NETWORK;
     }
 
-    status = nx_packet_data_append(packet, (VOID*)buf, buf_len, pool, timeout_ms);
+    status = nx_packet_data_append(packet, (VOID*)buf, buf_len, pool,
+        timeout_ms);
     if (status != NX_SUCCESS) {
         nx_packet_release(packet);
         PRINTF("NetX Send data append error");
@@ -506,8 +504,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
 }
 
 
-static int NetRead(void *context, byte* buf, int buf_len,
-    int timeout_ms)
+static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
 {
     SocketContext *sock = (SocketContext*)context;
     ULONG left;
@@ -521,8 +518,7 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
 
     if (sock->nxPacket == NULL) {
-        status = nx_tcp_socket_receive(&sock->fd, &sock->nxPacket,
-                                       timeout_ms);
+        status = nx_tcp_socket_receive(&sock->fd, &sock->nxPacket, timeout_ms);
         if (status != NX_SUCCESS) {
             PRINTF("NetX Recv receive error");
             return MQTT_CODE_ERROR_NETWORK;
@@ -537,8 +533,8 @@ static int NetRead(void *context, byte* buf, int buf_len,
         }
 
         left = total - sock->nxOffset;
-            status = nx_packet_data_extract_offset(sock->nxPacket, sock->nxOffset,
-                                               buf, buf_len, &copied);
+            status = nx_packet_data_extract_offset(sock->nxPacket,
+                sock->nxOffset, buf, buf_len, &copied);
         if (status != NX_SUCCESS) {
             PRINTF("NetX Recv data extract offset error");
             return MQTT_CODE_ERROR_NETWORK;
