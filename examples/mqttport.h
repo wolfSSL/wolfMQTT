@@ -77,6 +77,13 @@ extern "C" {
 #elif defined(WOLFMQTT_USER_IO)
     #include "userio_template.h"
 
+/* NetX */
+#elif defined(HAVE_NETX)
+    #include "nx_api.h"
+
+    #define SOCKET_T        NX_TCP_SOCKET
+    #define SOCK_ADDR_IN    NXD_ADDRESS
+
 /* Windows */
 #elif defined(USE_WINDOWS_API)
     #include <winsock2.h>

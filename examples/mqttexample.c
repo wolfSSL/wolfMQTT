@@ -584,7 +584,7 @@ int mqtt_check_timeout(int rc, word32* start_sec, word32 timeout_sec)
 #endif /* WOLFMQTT_NONBLOCK */
 
 
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(EXTERNAL_MQTT_TLS_CALLBACK)
 
 #ifdef WOLFSSL_ENCRYPTED_KEYS
 int mqtt_password_cb(char* passwd, int sz, int rw, void* userdata)

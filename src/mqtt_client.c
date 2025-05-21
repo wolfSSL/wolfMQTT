@@ -186,6 +186,35 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
         return 0;
     }
 
+#elif defined(THREADX)
+    /* ThreadX semaphore */
+    int wm_SemInit(wm_Sem *s) {
+        if (tx_semaphore_create(s, NULL, 1) != TX_SUCCESS) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
+        return 0;
+    }
+    int wm_SemFree(wm_Sem *s) {
+        if (tx_semaphore_delete(s) != TX_SUCCESS) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
+        return 0;
+    }
+
+    static UINT semstatus;
+    int wm_SemLock(wm_Sem *s) {
+        semstatus = tx_semaphore_get(s, TX_WAIT_FOREVER);
+        if (semstatus != TX_SUCCESS) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
+        return 0;
+    }
+    int wm_SemUnlock(wm_Sem *s) {
+        if (tx_semaphore_put(s) != TX_SUCCESS) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
+        return 0;
+    }
 #endif /* MUTEX */
 #endif /* WOLFMQTT_MULTITHREAD */
 

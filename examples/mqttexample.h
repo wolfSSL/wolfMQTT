@@ -98,6 +98,7 @@
 #endif
 
 /* certs are either static or extern, depending on the specific example */
+#ifndef EXTERNAL_MQTT_TLS_CALLBACK
 #ifdef WOLFMQTT_EXTERN_CERT
     #undef  WOLFMQTT_EXAMPLE_CERT
     #define WOLFMQTT_EXAMPLE_CERT /* init extern from mqttexample.h */
@@ -108,7 +109,7 @@
     #undef  WOLFMQTT_EXAMPLE_CERT
     #define WOLFMQTT_EXAMPLE_CERT static
 #endif
-
+#endif /* !EXTERNAL_MQTT_TLS_CALLBACK */
 /* MQTT Client state */
 typedef enum _MQTTCtxState {
     WMQ_BEGIN = 0,

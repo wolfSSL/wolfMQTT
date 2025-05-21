@@ -56,6 +56,11 @@ typedef struct _SocketContext {
 #ifdef ENABLE_MQTT_WEBSOCKET
     void* websocket_ctx;
 #endif
+#ifdef HAVE_NETX
+    NX_IP     *ipPtr;
+    NX_PACKET *nxPacket;
+    ULONG     nxOffset;
+#endif
     MQTTCtx* mqttCtx;
 } SocketContext;
 
