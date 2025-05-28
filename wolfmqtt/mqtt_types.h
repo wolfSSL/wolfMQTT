@@ -126,6 +126,10 @@
         #include <windows.h>
         typedef HANDLE wm_Sem;
 
+    #elif defined(THREADX)
+        #include <tx_api.h>
+        typedef TX_SEMAPHORE wm_Sem;
+
     #else
         #error "Multithreading requires binary semaphore implementation!"
     #endif
