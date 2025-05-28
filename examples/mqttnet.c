@@ -403,6 +403,7 @@ static int NetConnect(void *context, const char* host, word16 port,
     MQTTCtx* mqttCtx = sock->mqttCtx;
     UINT status;
     NXD_ADDRESS ipAddress;
+    UINT  ticks;
 
     /* Get address information for host and locate IPv4 */
     switch(sock->stat) {
@@ -446,9 +447,12 @@ static int NetConnect(void *context, const char* host, word16 port,
 
         case SOCK_CONN:
         {
+            /* Convert timeout_ms to ticks and round up */
+            ticks = (timeout_ms * TX_TIMER_TICKS_PER_SECOND + 999) / 1000;
+
             /* Connect to server using NETX DUO */
             status = nxd_tcp_client_socket_connect(&sock->fd, &ipAddress, port,
-                timeout_ms);
+                ticks);
             if (status != NX_SUCCESS) {
                 PRINTF("Socket connect failed: %d", status);
                 NetDisconnect(context);
@@ -472,6 +476,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len, int timeout_ms)
     NX_PACKET*      packet;
     NX_PACKET_POOL* pool;   /* shorthand */
     UINT            status;
+    UINT            ticks;
 
     if (sock == NULL) {
         PRINTF("NetX Send NULL parameters");
@@ -493,7 +498,11 @@ static int NetWrite(void *context, const byte* buf, int buf_len, int timeout_ms)
         return MQTT_CODE_ERROR_NETWORK;
     }
 
-    status = nx_tcp_socket_send(&sock->fd, packet, timeout_ms);
+
+    /* Convert timeout_ms to ticks and round up */
+    ticks = (timeout_ms * TX_TIMER_TICKS_PER_SECOND + 999) / 1000;
+
+    status = nx_tcp_socket_send(&sock->fd, packet, ticks);
     if (status != NX_SUCCESS) {
         nx_packet_release(packet);
         PRINTF("NetX Send socket send error");
@@ -511,6 +520,7 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
     ULONG total;
     ULONG copied = 0;
     UINT  status;
+    UINT  ticks;
 
     if (sock == NULL) {
         PRINTF("NetX Recv NULL parameters");
@@ -518,8 +528,14 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
     }
 
     if (sock->nxPacket == NULL) {
-        status = nx_tcp_socket_receive(&sock->fd, &sock->nxPacket, timeout_ms);
+        /* Convert timeout_ms to ticks and round up */
+        ticks = (timeout_ms * TX_TIMER_TICKS_PER_SECOND + 999) / 1000;
+        status = nx_tcp_socket_receive(&sock->fd, &sock->nxPacket, ticks);
         if (status != NX_SUCCESS) {
+            if (status == NX_NO_PACKET) {
+                PRINTF("NetX Recv timeout");
+                return MQTT_CODE_ERROR_TIMEOUT;
+            }
             PRINTF("NetX Recv receive error");
             return MQTT_CODE_ERROR_NETWORK;
         }
