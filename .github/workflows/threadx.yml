@@ -87,6 +87,14 @@ jobs:
     - uses: actions/checkout@v4
       with:
         path: wolfmqtt
+    - name: Change wolfmqtt configure.ac
+      working-directory: ./wolfmqtt
+      run: |
+        # ThreadX requires tx_application_define(void*) as an entry point
+        # this causes the simple conftest.c created by autoconf to fail when
+        # checking for wolfssl. Removing the check for wolfssl here.
+        sed -i '/AC_CHECK_LIB(\[wolfssl\],/d' configure.ac
+
     - name: wolfmqtt autogen
       working-directory: ./wolfmqtt
       run: ./autogen.sh
