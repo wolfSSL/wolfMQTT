@@ -33,6 +33,12 @@
 #include "examples/mqttexample.h"
 #include "examples/mqttport.h"
 
+#if defined(HAVE_NETX) && !defined(WOLFMQTT_NO_NETX_DNS)
+    /* include the NetX DNS addon header */
+    #include "nxd_dns.h"
+#endif
+
+
 /* Local context for Net callbacks */
 typedef enum {
     SOCK_BEGIN = 0,
@@ -57,6 +63,9 @@ typedef struct _SocketContext {
     void* websocket_ctx;
 #endif
 #ifdef HAVE_NETX
+#ifndef WOLFMQTT_NO_NETX_DNS
+    NX_DNS    *dnsPtr;
+#endif
     NX_IP     *ipPtr;
     NX_PACKET *nxPacket;
     ULONG     nxOffset;

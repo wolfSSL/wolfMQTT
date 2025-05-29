@@ -31,7 +31,7 @@
 #include "mqttsimple.h"
 
 /* Requires BSD Style Socket */
-#ifdef HAVE_SOCKET
+#if defined(HAVE_SOCKET) && ! defined(HAVE_NETX)
 #ifndef ENABLE_MQTT_TLS
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -462,7 +462,7 @@ int main(int argc, char** argv)
     int rc = -1;
     (void)argc;
     (void)argv;
-    #ifdef HAVE_SOCKET
+    #if defined(HAVE_SOCKET) && ! defined(HAVE_NETX)
     rc = mqttsimple_test();
     #endif
     return (rc == 0) ? 0 : EXIT_FAILURE;

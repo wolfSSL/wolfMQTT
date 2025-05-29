@@ -414,9 +414,14 @@ static int NetConnect(void *context, const char* host, word16 port,
                         "Use TLS %d", host, port, timeout_ms, mqttCtx->use_tls);
             }
     #ifndef WOLFMQTT_NO_NETX_DNS
+            if (sock->dnsPtr == NULL) {
+                PRINTF("DNS pointer was NULL and needs set, sock->dnsPtr");
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+
             /* Convert hostname to IP address using NETX DUO DNS */
-            status = nxd_dns_host_by_name_get(sock->ipPtr, (UCHAR *)host,
-                &ipAddress, timeout_ms);
+            status = nxd_dns_host_by_name_get(sock->dnsPtr, (UCHAR *)host,
+                &ipAddress, timeout_ms, NX_IP_VERSION_V4);
             if (status != NX_SUCCESS) {
                 PRINTF("DNS lookup failed: %d", status);
                 return MQTT_CODE_ERROR_NETWORK;
@@ -426,7 +431,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             return MQTT_CODE_ERROR_NETWORK;
     #endif
             status = nx_tcp_socket_create(sock->ipPtr, &sock->fd,
-                                           "MQTT Socket", NX_IP_NORMAL,
+                                           (CHAR*)"MQTT Socket", NX_IP_NORMAL,
                                            NX_FRAGMENT_OKAY, NX_IP_TIME_TO_LIVE,
                                            1024, NX_NULL, NX_NULL);
             if (status != NX_SUCCESS) {

@@ -1,0 +1,262 @@
+name: ThreadXBuild Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+    - name: Install dependencies
+      run: |
+        # Don't prompt for anything
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        # Install mosquitto
+        sudo apt-get install -y mosquitto bubblewrap cmake gcc-arm-none-eabi
+
+    - name: Setup mosquitto broker
+      run: |
+        # Disable default broker daemon
+        sudo service mosquitto stop
+        sleep 1
+
+    # This is some debug info useful if something goes wrong
+    - name: Show network status
+      run: |
+        sudo ifconfig
+        sudo route
+        sudo netstat -tulpan
+
+    - name: Cache NetXDuo bundle
+      id: cache-netxduo
+      uses: actions/cache@v3
+      with:
+        path: ./v6.4.3_rel.tar.gz
+        key: netxduo-bundle-v6.4.3_rel
+
+    - name: Download NetXDuo bundle if not cached
+      if: steps.cache-netxduo.outputs.cache-hit != 'true'
+      run: |
+        wget https://github.com/eclipse-threadx/netxduo/archive/refs/tags/v6.4.3_rel.tar.gz
+
+    - name: Extract NetXDuo bundle
+      run: |
+        mkdir -p netxduo_src
+        tar -xzf v6.4.3_rel.tar.gz -C netxduo_src --strip-components=1
+
+    - name: Install NetXDuo Dependencies
+      working-directory: ./netxduo_src
+      run: |
+        ./scripts/install.sh
+
+    - name: Configure NetX with DNS Client Support
+      working-directory: ./netxduo_src
+      run: |
+        cp addons/dns/nxd_dns.h ./common/inc/
+        cp addons/dns/nxd_dns.c ./common/src/
+
+    - name: Build NetXDuo with DNS Support
+      working-directory: ./netxduo_src
+      run: |
+        rm -rf test/cmake/threadx
+        rm -rf test/cmake/filex
+        ./scripts/build_nxd64.sh
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl
+      run: ./configure --enable-enckeys --disable-examples --disable-benchmark --disable-crypttests CPPFLAGS="-DTHREADX -DHAVE_NETX -DWOLFSSL_USER_IO -I${{ github.workspace }}/netxduo_src/common/inc -I${{ github.workspace }}/netxduo_src/ports/linux/gnu/inc -I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/inc" LDFLAGS="-L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/default_build_coverage/netxduo -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx"  LIBS="-lnetxduo -lthreadx"
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: |
+        sed -i 's/ -Werror//' Makefile
+        make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: |
+        sudo make install
+        sudo ldconfig
+
+    - uses: actions/checkout@v4
+      with:
+        path: wolfmqtt
+    - name: Change wolfmqtt configure.ac
+      working-directory: ./wolfmqtt
+      run: |
+        # ThreadX requires tx_application_define(void*) as an entry point
+        # this causes the simple conftest.c created by autoconf to fail when
+        # checking for wolfssl. Removing the check for wolfssl here.
+        sed -i '/AC_CHECK_LIB(\[wolfssl\],/d' configure.ac
+
+    - name: wolfmqtt autogen
+      working-directory: ./wolfmqtt
+      run: ./autogen.sh
+    - name: wolfmqtt configure with Multi-threading
+      working-directory: ./wolfmqtt
+      run: ./configure --enable-tls --enable-mt --disable-examples --disable-stdincap CPPFLAGS="-DTHREADX -DHAVE_NETX -DWOLFSSL_USER_IO -DNO_MAIN_DRIVER -I${{ github.workspace }}/netxduo_src/common/inc -I${{ github.workspace }}/netxduo_src/ports/linux/gnu/inc -I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/inc" LDFLAGS="-L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/default_build_coverage/netxduo -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx" LIBS="-lnetxduo -lthreadx -lwolfssl"
+    - name: wolfmqtt make
+      working-directory: ./wolfmqtt
+      run: |
+        make
+        sudo make install
+
+    - name: Create ThreadX NetX test app source file
+      working-directory: ./wolfmqtt
+      run: |
+        cat > examples/threadx_netx_test.c <<'EOF'
+        /* threadx_netx_test.c
+         * Minimal ThreadX/NetX test app using NetConnect logic from mqttnet.c
+         */
+
+        #include <stdio.h>
+        #include "tx_api.h"
+        #include "nx_api.h"
+        #include "nxd_dns.h"
+        #include "wolfmqtt/mqtt_client.h"
+        #include "examples/mqttnet.h"
+        #include "examples/mqttexample.h"
+
+        #define DEMO_STACK_SIZE         40000
+        #define DEMO_IP_ADDRESS         IP_ADDRESS(192,168,1,100)
+        #define DEMO_NET_MASK           0xFFFFFF00
+        #define DEMO_GATEWAY_ADDRESS    IP_ADDRESS(192,168,1,1)
+        #define DEMO_DNS_SERVER         IP_ADDRESS(8,8,8,8)
+        #define DEMO_HOSTNAME           "test.mosquitto.org"
+        #define DEMO_PORT               1883
+        #define DEMO_TIMEOUT_MS         5000
+
+        /* ThreadX/NetX objects */
+        TX_THREAD       demo_thread;
+        ULONG           demo_thread_stack[DEMO_STACK_SIZE / sizeof(ULONG)];
+        NX_PACKET_POOL  pool_0;
+        NX_IP           ip_0;
+        NX_DNS          dns_0;
+        void *first_unused_memory;
+
+        /* Forward declaration */
+        void demo_thread_entry(ULONG thread_input);
+        void nx_driver_placeholder(NX_IP_DRIVER *driver_req);
+
+        #ifdef __linux__
+        int main(int argc, char** argv)
+        {
+            tx_kernel_enter();
+            return 0;
+        }
+        #endif
+
+        void tx_application_define(void *memory_ptr)
+        {
+            first_unused_memory = memory_ptr;
+
+            /* Create the main demo thread. */
+            tx_thread_create(&demo_thread, "Demo Thread", demo_thread_entry, 0,
+                             demo_thread_stack, DEMO_STACK_SIZE,
+                             1, 1, TX_NO_TIME_SLICE, TX_AUTO_START);
+        }
+
+        void demo_thread_entry(ULONG thread_input)
+        {
+            UINT status;
+            NXD_ADDRESS dns_server;
+            MQTTCtx mqttCtx;
+            MqttNet net;
+            SocketContext *sockCtx;
+            int rc;
+
+            /* Initialize NetX system */
+            nx_system_initialize();
+
+            /* Create a packet pool. */
+            status = nx_packet_pool_create(&pool_0, "NetX Main Packet Pool",
+                                    1536, (UCHAR*)first_unused_memory, 16*1536);
+            if (status != NX_SUCCESS) {
+                printf("Packet pool create failed: %u\n", status);
+                return;
+            }
+
+            /* Create an IP instance. */
+            status = nx_ip_create(&ip_0, "NetX IP Instance",
+                                 DEMO_IP_ADDRESS, DEMO_NET_MASK,
+                                 &pool_0, nx_driver_placeholder,
+                                 (UCHAR*)first_unused_memory + 16*1536, 2048, 1);
+            if (status != NX_SUCCESS) {
+                printf("IP create failed: %u\n", status);
+                return;
+            }
+
+            /* Enable ARP, ICMP, TCP, UDP */
+            nx_arp_enable(&ip_0, (UCHAR*)first_unused_memory + 16*1536 + 2048, 1024);
+            nx_icmp_enable(&ip_0);
+            nx_tcp_enable(&ip_0);
+            nx_udp_enable(&ip_0);
+
+            /* Create DNS instance */
+            status = nx_dns_create(&dns_0, &ip_0, (UCHAR*)"DNS Client");
+            if (status != NX_SUCCESS) {
+                printf("DNS create failed: %u\n", status);
+                return;
+            }
+            dns_server.nxd_ip_version = NX_IP_VERSION_V4;
+            dns_server.nxd_ip_address.v4 = DEMO_DNS_SERVER;
+            nxd_dns_server_add(&dns_0, &dns_server);
+
+            /* Initialize MQTT context and network */
+            mqtt_init_ctx(&mqttCtx);
+            MqttClientNet_Init(&net, &mqttCtx);
+            sockCtx = (SocketContext*)net.context;
+            sockCtx->ipPtr  = &ip_0;
+            sockCtx->dnsPtr = &dns_0;
+
+            /* Use NetConnect to connect to the MQTT broker */
+            rc = net.connect(sockCtx, DEMO_HOSTNAME, DEMO_PORT, DEMO_TIMEOUT_MS);
+            if (rc == 0) {
+                printf("NetConnect succeeded!\n");
+                net.disconnect(sockCtx);
+            } else {
+                printf("NetConnect failed: %d\n", rc);
+            }
+
+            /* Cleanup (not strictly necessary in a demo) */
+            nx_dns_delete(&dns_0);
+            nx_ip_delete(&ip_0);
+            nx_packet_pool_delete(&pool_0);
+            /* Thread exits */
+            tx_thread_terminate(&demo_thread);
+        }
+
+        /* Placeholder driver for demo purposes */
+        void nx_driver_placeholder(NX_IP_DRIVER *driver_req)
+        {
+            NX_PARAMETER_NOT_USED(driver_req);
+        }
+        EOF
+
+    - name: Compile ThreadX NetX test app
+      working-directory: ./wolfmqtt
+      run: |
+        gcc -o threadx_netx_test examples/threadx_netx_test.c examples/mqttnet.c examples/mqttexample.c -I. -I${{ github.workspace }}/netxduo_src/common/inc -I${{ github.workspace }}/netxduo_src/ports/linux/gnu/inc -I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/inc -I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/default_build_coverage/netxduo -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx -lnetxduo -lthreadx -lwolfssl -lwolfmqtt
+
+      # capture logs on failure
+    - name: Show logs on failure
+      if: failure() || cancelled()
+      run: |
+        set +e
+        cat wolfmqtt/test-suite.log
+        cat wolfmqtt/scripts/*.log
+        cat wolfmqtt/config.log
+        ls /usr/local/lib/*
+        file /usr/local/lib/libwolfssl.so
