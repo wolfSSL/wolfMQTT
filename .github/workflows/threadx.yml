@@ -1,0 +1,121 @@
+name: ThreadXBuild Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+
+    steps:
+    - name: Install dependencies
+      run: |
+        # Don't prompt for anything
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        # Install mosquitto
+        sudo apt-get install -y mosquitto bubblewrap cmake gcc-arm-none-eabi
+
+    - name: Setup mosquitto broker
+      run: |
+        # Disable default broker daemon
+        sudo service mosquitto stop
+        sleep 1
+
+    # This is some debug info useful if something goes wrong
+    - name: Show network status
+      run: |
+        sudo ifconfig
+        sudo route
+        sudo netstat -tulpan
+
+    - name: Cache NetXDuo bundle
+      id: cache-netxduo
+      uses: actions/cache@v3
+      with:
+        path: ./v6.4.3_rel.tar.gz
+        key: netxduo-bundle-v6.4.3_rel
+
+    - name: Download NetXDuo bundle if not cached
+      if: steps.cache-netxduo.outputs.cache-hit != 'true'
+      run: |
+        wget https://github.com/eclipse-threadx/netxduo/archive/refs/tags/v6.4.3_rel.tar.gz
+
+    - name: Extract NetXDuo bundle
+      run: |
+        mkdir -p netxduo_src
+        tar -xzf v6.4.3_rel.tar.gz -C netxduo_src --strip-components=1
+
+    - name: Install NetXDuo Dependencies
+      working-directory: ./netxduo_src
+      timeout-minutes: 10
+      run: |
+        ./scripts/install.sh
+
+    - name: Build NetXDuo
+      working-directory: ./netxduo_src
+      run: |
+        rm -rf test/cmake/threadx
+        rm -rf test/cmake/filex
+        ./scripts/build_nxd64.sh
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl
+      run: ./configure --enable-static --disable-shared --enable-enckeys --disable-examples --disable-benchmark --disable-crypttests CPPFLAGS="-I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/inc" LDFLAGS="-L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/default_build_coverage/netxduo -lnetxduo -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx -lthreadx"
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+
+    - uses: actions/checkout@v4
+      with:
+        path: wolfmqtt
+    - name: wolfmqtt autogen
+      working-directory: ./wolfmqtt
+      run: ./autogen.sh
+    - name: wolfmqtt configure with TLS
+      working-directory: ./wolfmqtt
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+      run: ./configure --enable-static --disable-shared --enable-all --enable-tls CPPFLAGS="-I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/inc" LDFLAGS="-L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/default_build_coverage/netxduo -lnetxduo -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx -lthreadx"
+    - name: wolfmqtt make
+      working-directory: ./wolfmqtt
+      run: make
+    - name: wolfmqtt make check
+      timeout-minutes: 3
+      working-directory: ./wolfmqtt
+      run: make check
+
+    - name: wolfmqtt configure with Multi-threading
+      working-directory: ./wolfmqtt
+      env:
+        WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1 
+      run: ./configure --enable-static --disable-shared --enable-all --enable-tls --enable-mt CPPFLAGS="-I${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/inc" LDFLAGS="-L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/default_build_coverage/netxduo -lnetxduo -L${{ github.workspace }}/netxduo_src/test/cmake/netxduo64/build/libs/threadx -lthreadx"
+    - name: wolfmqtt make
+      working-directory: ./wolfmqtt
+      run: make
+    - name: wolfmqtt make check
+      timeout-minutes: 3
+      working-directory: ./wolfmqtt
+      run: make check
+
+      # capture logs on failure
+    - name: Show logs on failure
+      if: failure() || cancelled()
+      run: |
+        cat test-suite.log
+        cat scripts/*.log
