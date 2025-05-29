@@ -81,7 +81,9 @@ jobs:
         make
     - name: wolfssl make install
       working-directory: ./wolfssl
-      run: sudo make install
+      run: |
+        sudo make install
+        sudo ldconfig
 
     - uses: actions/checkout@v4
       with:
