@@ -652,14 +652,14 @@ WOLFMQTT_LOCAL int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf,
     int rx_buf_len, int timeout_ms);
 
 /* Packet Element Encoders/Decoders */
-WOLFMQTT_LOCAL int MqttDecode_Num(byte* buf, word16 *len);
+WOLFMQTT_LOCAL int MqttDecode_Num(byte* buf, word16 *len, word32 buf_len);
 WOLFMQTT_LOCAL int MqttEncode_Num(byte *buf, word16 len);
 
 WOLFMQTT_LOCAL int MqttDecode_Int(byte* buf, word32* len);
 WOLFMQTT_LOCAL int MqttEncode_Int(byte* buf, word32 len);
 
 WOLFMQTT_LOCAL int MqttDecode_String(byte *buf, const char **pstr,
-    word16 *pstr_len);
+    word16 *pstr_len, word32 buf_len);
 WOLFMQTT_LOCAL int MqttEncode_String(byte *buf, const char *str);
 
 WOLFMQTT_LOCAL int MqttEncode_Data(byte *buf, const byte *data,
