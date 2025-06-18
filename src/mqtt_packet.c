@@ -540,7 +540,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_SHORT:
             {
-                tmp = MqttDecode_Num(buf, &cur_prop->data_short, 
+                tmp = MqttDecode_Num(buf, &cur_prop->data_short,
                         (word32)(buf_len - (buf - pbuf)));
                 if (tmp < 0) {
                     rc = tmp;

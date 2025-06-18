@@ -127,18 +127,18 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
             case SN_MSG_TYPE_REGACK:
             case SN_MSG_TYPE_PUBACK:
                 /* octet 4-5 */
-                MqttDecode_Num(rx_buf + 2, p_packet_id, (word32)(rx_buf_len - (rx_buf + 2 - (rx_buf - 1))));
+                MqttDecode_Num(rx_buf + 2, p_packet_id, (word32)(rx_buf_len - 3));
                 break;
             case SN_MSG_TYPE_PUBCOMP:
             case SN_MSG_TYPE_PUBREC:
             case SN_MSG_TYPE_PUBREL:
             case SN_MSG_TYPE_UNSUBACK:
                 /* octet 2-3 */
-                MqttDecode_Num(rx_buf, p_packet_id, (word32)(rx_buf_len - (rx_buf - (rx_buf - 1))));
+                MqttDecode_Num(rx_buf, p_packet_id, (word32)(rx_buf_len - 1));
                 break;
             case SN_MSG_TYPE_SUBACK:
                 /* octet 5-6 */
-                MqttDecode_Num(rx_buf + 3, p_packet_id, (word32)(rx_buf_len - (rx_buf + 3 - (rx_buf - 1))));
+                MqttDecode_Num(rx_buf + 3, p_packet_id, (word32)(rx_buf_len - 4));
                 break;
             case SN_MSG_TYPE_ADVERTISE:
             case SN_MSG_TYPE_SEARCHGW:
