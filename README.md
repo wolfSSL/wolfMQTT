@@ -312,27 +312,62 @@ The SN client was tested using the Eclipse Paho MQTT-SN Gateway (https://github.
 
 ## Post-Quantum MQTT Support
 
-Recently the OpenQuantumSafe project has integrated their fork of OpenSSL with the mosquito MQTT broker. You can now build wolfMQTT with wolfSSL and liboqs and use that to publish to the mosquito MQTT broker. Currently, wolfMQTT supports the `KYBER_LEVEL1` and `P256_KYBER_LEVEL1` groups and FALCON_LEVEL1 for authentication in TLS 1.3. This works on Linux.
+Recently the OpenQuantumSafe project has integrated their fork of OpenSSL with the mosquito MQTT broker. You can now build wolfMQTT with wolfSSL and use that to publish to the mosquito MQTT broker. Currently, wolfMQTT supports the `ML_KEM_768` and `P384_ML_KEM_768` groups and ML-DSA-65 for authentication in TLS 1.3. This works on Linux.
 
 ### Getting Started with Post-Quantum Mosquito MQTT Broker and Subscriber
 
-To get started, you can use the code from the following github pull request:
+To get started, you can use the oqs-demos repo at https://github.com/open-quantum-safe/oqs-demos/ .
 
-https://github.com/open-quantum-safe/oqs-demos/pull/143
+Follow all the instructions in README.md and USAGE.md. This allows you to create a docker image and a docker network. Then you will run a broker, a subscriber and a publisher. At the end the publisher will exit and the broker and subscriber will remain active.
 
-Follow all the instructions in README.md and USAGE.md. This allows you to create a docker image and a docker network. Then you will run a broker, a subscriber and a publisher. At the end the publisher will exit and the broker and subscriber will remain active. You will need to re-activate the publisher docker instance and get the following files onto your local machine:
+NOTE: Do not stop the broker and the subscriber instances.
+
+You will need to get into a docker instance and get the following files onto your local machine:
 
 - /test/cert/CA.crt
 - /test/cert/publisher.crt
 - /test/cert/publisher.key
 
-NOTE: Do not stop the broker and the subscriber instances.
+Once the publisher exits, the following command can be executed:
 
-### Building and Running Post-Quantum wolfMQTT Publisher [DEPRECATED]
+sudo docker run --network mosquitto-test --ip 174.18.0.4 -it --rm --name oqs-mosquitto-publisher -e "BROKER_IP=174.18.0.2" -e "PUB_IP=174.18.0.4" oqs-mosquitto bash
 
-Please see the following issue on Open Quantum Safe's oqs-demo repo:
+This opens a bash shell "inside" the docker container. You'll see the shell script for executing the publisher. This includes commands for generating the keys and certificates. Execute them and then use cat to display them and then copy and paste them into the wolfMQTT root directory.
 
-https://github.com/open-quantum-safe/oqs-demos/issues/346
+### Building and Running Post-Quantum wolfMQTT Publisher
+
+Build and install wolfSSL like this:
+
+```
+./autogen.sh (if obtained from github)
+./configure --enable-dilithium --enable-mlkem
+make all
+make check
+```
+
+No special flags are required for building wolfMQTT. Simply do the following:
+
+```
+./autogen.sh (if obtained from github)
+./configure
+make all
+make check
+```
+
+NOTE: No need to install wolfmqtt.
+
+Since the broker and subscriber are still running, you can use `mqttclient` to publish using post-quantum algorithms in TLS 1.3 by doing the following:
+
+```
+./examples/mqttclient/mqttclient -T -h 174.18.0.2 -p 8883 -t -A CA.crt -K publisher.key -c publisher.crt -m "Hello from post-quantum wolfMQTT" -n test/sensor1 -Q P384_ML_KEM_768
+```
+
+Congratulations! You have just published an MQTT message using TLS 1.3 with ML-KEM-768 hybridized with ECDHE on the P-384 curve and ML-DSA-65 signature scheme. To use only ML-KEM-768, replace `P384_ML_KEM_768` with `ML_KEM_768`. Moreover, you have also shown interoperability with liboqs, liboqs-provider, openssl3 and mosquitto.
+
+Latest version combination tested:
+    - wolfSSL: v5.8.2-stable
+    - wolfMQTT: v1.20.0
+    - oqs-demos: commit 29d4dccbd547a62e8ba77d3fef1af5d6f8625d60
 
 ## Curl Easy Socket Support
 
