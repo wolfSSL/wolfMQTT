@@ -210,6 +210,7 @@ DISTCLEANFILES+=   examples/websocket/.libs/websocket_client
 endif
 
 EXTRA_DIST+=       examples/mqttuart.c \
+                   examples/threadx/threadx_netx.c \
                    examples/publish.dat \
                    examples/mqttclient/mqttclient.vcxproj \
                    examples/nbclient/nbclient.vcxproj \
