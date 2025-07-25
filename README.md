@@ -180,7 +180,8 @@ We setup a wolfMQTT IoT Hub on the Azure server for testing. We added a device c
 **NOTE** The Azure broker only supports MQTT v3.1.1
 
 ### AWS IoT Example
-We setup an AWS IoT endpoint and testing device certificate for testing. The AWS server uses TLS client certificate for authentication. The example is located in `/examples/aws/`. The example subscribes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta` and publishes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update`.
+We setup an AWS IoT endpoint and testing device certificate for testing. The
+ AWS server uses TLS client certificate for authentication. The example is located in `/examples/aws/`. The example subscribes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update/delta` and publishes to `$aws/things/"AWSIOT_DEVICE_ID"/shadow/update`.
 **NOTE** The AWS broker only supports MQTT v3.1.1
 
 ### Watson IoT Example
