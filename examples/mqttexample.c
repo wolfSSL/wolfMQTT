@@ -728,8 +728,8 @@ int mqtt_tls_cb(MqttClient* client)
             int group = 0;
             if (XSTRCMP(mTlsPQAlg, "ML_KEM_768") == 0) {
                 group = WOLFSSL_ML_KEM_768;
-            } else if (XSTRCMP(mTlsPQAlg, "P384_ML_KEM_768") == 0) {
-                group = WOLFSSL_P384_ML_KEM_768;
+            } else if (XSTRCMP(mTlsPQAlg, "SecP384r1MLKEM768") == 0) {
+                group = WOLFSSL_SECP384R1MLKEM768;
             } else {
                 PRINTF("Invalid post-quantum KEM specified");
             }
