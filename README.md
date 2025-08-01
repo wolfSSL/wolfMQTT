@@ -312,7 +312,7 @@ The SN client was tested using the Eclipse Paho MQTT-SN Gateway (https://github.
 
 ## Post-Quantum MQTT Support
 
-Recently the OpenQuantumSafe project has integrated their fork of OpenSSL with the mosquito MQTT broker. You can now build wolfMQTT with wolfSSL and use that to publish to the mosquito MQTT broker. Currently, wolfMQTT supports the `ML_KEM_768` and `P384_ML_KEM_768` groups and ML-DSA-65 for authentication in TLS 1.3. This works on Linux.
+Recently the OpenQuantumSafe project has integrated their fork of OpenSSL with the mosquito MQTT broker. You can now build wolfMQTT with wolfSSL and use that to publish to the mosquito MQTT broker. Currently, wolfMQTT supports the `ML_KEM_768` and `SecP384r1MLKEM768` groups and ML-DSA-65 for authentication in TLS 1.3. This works on Linux.
 
 ### Getting Started with Post-Quantum Mosquito MQTT Broker and Subscriber
 
@@ -359,10 +359,10 @@ NOTE: No need to install wolfmqtt.
 Since the broker and subscriber are still running, you can use `mqttclient` to publish using post-quantum algorithms in TLS 1.3 by doing the following:
 
 ```
-./examples/mqttclient/mqttclient -T -h 174.18.0.2 -p 8883 -t -A CA.crt -K publisher.key -c publisher.crt -m "Hello from post-quantum wolfMQTT" -n test/sensor1 -Q P384_ML_KEM_768
+./examples/mqttclient/mqttclient -T -h 174.18.0.2 -p 8883 -t -A CA.crt -K publisher.key -c publisher.crt -m "Hello from post-quantum wolfMQTT" -n test/sensor1 -Q SecP384r1MLKEM768
 ```
 
-Congratulations! You have just published an MQTT message using TLS 1.3 with ML-KEM-768 hybridized with ECDHE on the P-384 curve and ML-DSA-65 signature scheme. To use only ML-KEM-768, replace `P384_ML_KEM_768` with `ML_KEM_768`. Moreover, you have also shown interoperability with liboqs, liboqs-provider, openssl3 and mosquitto.
+Congratulations! You have just published an MQTT message using TLS 1.3 with ML-KEM-768 hybridized with ECDHE on the P-384 curve and ML-DSA-65 signature scheme. To use only ML-KEM-768, replace `SecP384r1MLKEM768` with `ML_KEM_768`. Moreover, you have also shown interoperability with liboqs, liboqs-provider, openssl3 and mosquitto.
 
 Latest version combination tested:
     - wolfSSL: v5.8.2-stable
