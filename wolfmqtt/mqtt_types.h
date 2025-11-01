@@ -202,6 +202,7 @@ enum MqttPacketResponseCodes {
     MQTT_CODE_ERROR_CURL = -16, /* An error in libcurl that is not clearly
                                  * a network, memory, TLS, or system error. */
 #endif
+    MQTT_CODE_ERROR_PROPERTY_MISMATCH = -17,
 
     MQTT_CODE_CONTINUE = -101,
     MQTT_CODE_STDIN_WAKE = -102,
