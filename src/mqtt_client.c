@@ -2692,7 +2692,7 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 
         auth->stat.write = MQTT_MSG_HEADER;
     }
-    if (auth->stat.write == MQTT_MSG_BEGIN) {
+    if (auth->stat.write == MQTT_MSG_HEADER) {
         int xfer = client->write.len;
 
         /* Send authentication packet */
