@@ -377,13 +377,20 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
 
     /* TODO: Check against max size. Sometimes all properties are not
              expected to be added */
-    /* TODO: Validate property type is allowed for packet type */
 
     /* loop through the list properties */
     while ((cur_prop != NULL) && (rc >= 0))
     {
-        /* TODO: validate packet type */
-        (void)packet;
+        if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+            break;
+        }
+
+        /* Validate property type is allowed for this packet type */
+        if (!(gPropMatrix[cur_prop->type].packet_type_mask & (1 << packet))) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY_MISMATCH);
+            break;
+        }
 
         /* Encode the Identifier */
         tmp = MqttEncode_Vbi(buf, (word32)cur_prop->type);
@@ -505,11 +512,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             break;
         }
 
-        /* Decode the Identifier */
-        if (buf_len < (word32)(buf - pbuf)) {
+        /* Check boundary before VBI decoding */
+        if ((buf - pbuf) > (int)buf_len) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             break;
         }
+        /* Decode the Identifier */
         rc = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
                 (word32)(buf_len - (buf - pbuf)));
         if (rc < 0) {
@@ -520,11 +528,14 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         total += tmp;
         prop_len -= tmp;
 
-        /* TODO: Validate property type is allowed for packet type */
-        (void)packet;
-
         if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+            break;
+        }
+
+        /* Validate property type is allowed for packet type */
+        if (!(gPropMatrix[cur_prop->type].packet_type_mask & (1 << packet))) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY_MISMATCH);
             break;
         }
 
@@ -561,6 +572,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_STRING:
             {
+                if ((buf - pbuf) > (int)buf_len) {
+                    /* Should already be caught earlier, but safe to recheck */
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                    break;
+                }
                 tmp = MqttDecode_String(buf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len,
