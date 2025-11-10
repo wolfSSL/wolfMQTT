@@ -1254,8 +1254,8 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
                 }
                 props_tmp = MqttDecode_Vbi(rx_payload, &props_len,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)));
-                if (tmp < 0)
-                    return tmp;
+                if (props_tmp < 0)
+                    return props_tmp;
 
                 if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                     rx_payload += props_tmp;
@@ -1564,8 +1564,8 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                 }
                 props_tmp = MqttDecode_Vbi(rx_payload, &props_len,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)));
-                if (tmp < 0)
-                    return tmp;
+                if (props_tmp < 0)
+                    return props_tmp;
 
                 if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                     rx_payload += props_tmp;
