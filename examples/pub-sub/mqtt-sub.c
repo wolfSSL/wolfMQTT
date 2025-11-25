@@ -98,6 +98,8 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         PRINTF("%s", buf);
     }
 
+    fflush(stdout);
+
     #ifdef WOLFMQTT_V5
     {
         /* Properties can be checked in the message callback */
