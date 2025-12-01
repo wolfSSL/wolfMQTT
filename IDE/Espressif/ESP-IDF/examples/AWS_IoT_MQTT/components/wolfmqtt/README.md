@@ -3,7 +3,7 @@
 [wolfMQTT](https://www.wolfMQTT.com) provides commercial-grade, world-class encryption libraries to secure connections
 from tiny embedded devices to the largest cloud and super computing platforms.
 
-Makers and students can use these libraries free of charge, as long as they abide by abide by the terms of GPLV2 licensing.
+Makers and students can use these libraries free of charge, as long as they abide by abide by the terms of GPLV3 licensing.
 
 Commercial customers are invited to contact wolfSSL for licensing options.
 Visit [wolfSSL.com/Espressif/](https://www.wolfSSL.com/Espressif/) to learn

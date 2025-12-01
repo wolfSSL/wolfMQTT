@@ -8,7 +8,7 @@ The wolfMQTT Cube Pack can be found [here](https://www.wolfssl.com/files/ide/I-C
     - Run the “STM32CubeMX” tool.
     - Under “Manage software installations” pane on the right, click “INSTALL/REMOVE” button.
     - From Local and choose “I-CUBE-wolfMQTT.pack”.
-    - Accept the GPLv2 license. Contact wolfSSL at sales@wolfssl.com for a commercial license and support/maintenance.
+    - Accept the GPLv3 license. Contact wolfSSL at sales@wolfssl.com for a commercial license and support/maintenance.
 
 3. Create an STM32 project for your board and open the `.ioc` file. Click the `Software Packs` drop down menu and then `Select Components`. Expand the `wolfMQTT` pack and check the Core and Examples components. If you intend to use TLS with you MQTT client, check the TLS component as well. All this will do is enforce the dependency to wolfSSL. To enable TLS support in the wolfMQTT code base, you will have to turn it on in the wolfMQTT settings in the `.ioc` file.
 
