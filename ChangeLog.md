@@ -1,5 +1,23 @@
 ## Release Notes
 
+### v1.21.0 (12/03/2025)
+Release 1.21.0 has been developed according to wolfSSL's development and QA
+process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* Add port for NETX use by @JacobBarthelmeh in #427
+* Fix heap buffer overflow in MqttDecode_Num with bounds checking by @embhorn in #430
+* Restore instructions for testing against OQS mosquitto integration. by @anhu in #432
+* initial threadx test by @JacobBarthelmeh in #429
+* Rename ML-KEM hybrids to match IETF Draft. by @anhu in #435
+* Update expired test certs by @lealem47 in #441
+* Pin to ESP-IDF v5.5, limit workflow push branches, line endings by @gojimmypi in #444
+* Fix: MQTT v5 Property-Packet Protocol Validation and Decode Safety by @kaabia in #440
+* Fix: Correct state transition check in MqttClient_Auth by @kaabia in #439
+* fix: correct variable in MQTT property decode error checks by @kaabia in #445
+* Add fflush to mqtt-sub example by @embhorn in #447
+* Update license to GPLv3 by @embhorn in #448
+
 ### v1.20.0 (05/02/2025)
 Release 1.20.0 has been developed according to wolfSSL's development and QA
 process (see link below) and successfully passed the quality criteria.
