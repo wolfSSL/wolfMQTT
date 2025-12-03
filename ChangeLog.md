@@ -6,7 +6,7 @@ process (see link below) and successfully passed the quality criteria.
 https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
 
 * Add port for NETX use by @JacobBarthelmeh in #427
-* Fix heap buffer overflow in MqttDecode_Num with bounds checking by @devin-ai-integration[bot] in #430
+* Fix heap buffer overflow in MqttDecode_Num with bounds checking by @embhorn in #430
 * Restore instructions for testing against OQS mosquitto integration. by @anhu in #432
 * initial threadx test by @JacobBarthelmeh in #429
 * Rename ML-KEM hybrids to match IETF Draft. by @anhu in #435
