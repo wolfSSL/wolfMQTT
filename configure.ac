@@ -27,7 +27,7 @@ AC_ARG_PROGRAM
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS([src/config.h])
 
-WOLFMQTT_LIBRARY_VERSION=19:0:0
+WOLFMQTT_LIBRARY_VERSION=18:1:0
 #                        | | |
 #                 +------+ | +---+
 #                 |        |     |
