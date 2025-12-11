@@ -51,7 +51,7 @@ jobs:
     - uses: vapier/coverity-scan-action@v1
       with:
         build_language: 'cxx'
-        project: "wolfmqtt"
+        project: "wolfMQTT"
         token: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
         email: ${{ secrets.COVERITY_SCAN_EMAIL }}
         command: "make"
