@@ -15,7 +15,6 @@ jobs:
         ref: master
 
     - name: Configure wolfMQTT with enable-all M-F
-      if: github.event.schedule == '0 0 * * 1-5'
       run: |
         ./autogen.sh
         ./configure --enable-all
