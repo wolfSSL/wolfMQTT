@@ -1,0 +1,39 @@
+name: Coverity Scan master branch
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 1-5'
+
+jobs:
+  coverity:
+    if: github.repository_owner == 'wolfssl'
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: master
+
+    - name: Configure wolfMQTT with enable-all M-F
+      if: github.event.schedule == '0 0 * * 1-5'
+      run: |
+        ./autogen.sh
+        ./configure --enable-all
+
+    - name: Check secrets
+      env:
+        token_var: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
+        email_var: ${{ secrets.COVERITY_SCAN_EMAIL }}
+      run: |
+        token_len=${#token_var}
+        echo "$token_len"
+        email_len=${#email_var}
+        echo "$email_len"
+
+    - uses: vapier/coverity-scan-action@v1
+      with:
+        build_language: 'cxx'
+        project: "wolfmqtt"
+        token: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
+        email: ${{ secrets.COVERITY_SCAN_EMAIL }}
+        command: "make"
