@@ -299,7 +299,7 @@ static void MqttWriteStop(MqttClient* client, MqttMsgStat* stat)
     }
 }
 
-static int MqttReadStart(MqttClient* client, MqttMsgStat* stat)
+WOLFMQTT_LOCAL int MqttReadStart(MqttClient* client, MqttMsgStat* stat)
 {
     int rc = MQTT_CODE_SUCCESS;
 
@@ -356,7 +356,7 @@ static int MqttReadStart(MqttClient* client, MqttMsgStat* stat)
 
     return rc;
 }
-static void MqttReadStop(MqttClient* client, MqttMsgStat* stat)
+WOLFMQTT_LOCAL void MqttReadStop(MqttClient* client, MqttMsgStat* stat)
 {
 #ifdef WOLFMQTT_DEBUG_CLIENT
     if (!stat->isReadActive) {
@@ -1040,7 +1040,7 @@ static inline int MqttIsPubRespPacket(int packet_type)
  * MQTT_CODE_ERROR_NOT_FOUND: Not found
  * Any other response is from the the packet_ret
  */
-static int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
+WOLFMQTT_LOCAL int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
     word16 wait_packet_id)
 {
     int rc;

@@ -585,6 +585,8 @@ WOLFMQTT_API const char* MqttClient_ReturnCodeToString(
 #endif /* WOLFMQTT_NO_ERROR_STRINGS */
 
 /* Internal functions */
+WOLFMQTT_LOCAL int MqttReadStart(MqttClient* client, MqttMsgStat* stat);
+WOLFMQTT_LOCAL void MqttReadStop(MqttClient* client, MqttMsgStat* stat);
 #ifdef WOLFMQTT_MULTITHREAD
 WOLFMQTT_LOCAL int MqttClient_RespList_Find(MqttClient *client,
         MqttPacketType packet_type, word16 packet_id, MqttPendResp **retResp);
@@ -593,6 +595,8 @@ WOLFMQTT_LOCAL void MqttClient_RespList_Remove(MqttClient *client,
 WOLFMQTT_LOCAL int MqttClient_RespList_Add(MqttClient *client,
         MqttPacketType packet_type, word16 packet_id, MqttPendResp *newResp,
         void *packet_obj);
+WOLFMQTT_LOCAL int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
+        word16 wait_packet_id);
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
 
