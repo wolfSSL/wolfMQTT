@@ -28,6 +28,7 @@
 
 #ifdef WOLFMQTT_BROKER
 
+WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);
 
 #endif
 
