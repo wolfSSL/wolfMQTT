@@ -220,6 +220,9 @@ enum MqttPacketResponseCodes {
     #ifndef XSTRCHR
         #define XSTRCHR(s,c)        strchr((s),(c))
     #endif
+    #ifndef XSTRCMP
+        #define XSTRCMP(s1,s2)      strcmp((s1),(s2))
+    #endif
     #ifndef XSTRNCMP
         #define XSTRNCMP(s1,s2,n)   strncmp((s1),(s2),(n))
     #endif

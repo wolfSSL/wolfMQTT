@@ -22,6 +22,8 @@
 #ifndef WOLFMQTT_BROKER_H
 #define WOLFMQTT_BROKER_H
 
+#include "wolfmqtt/mqtt_types.h"
+
 #ifdef __cplusplus
     extern "C" {
 #endif

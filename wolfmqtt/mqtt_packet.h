@@ -730,8 +730,10 @@ WOLFMQTT_API int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len,
     MqttUnsubscribe *unsubscribe);
 WOLFMQTT_API int MqttEncode_UnsubscribeAck(byte *tx_buf, int tx_buf_len,
     MqttUnsubscribeAck *unsubscribe_ack);
+#ifndef WOLFMQTT_V5
 WOLFMQTT_API int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len,
     MqttDisconnect* disc);
+#endif
 #endif
 
 #ifdef __cplusplus

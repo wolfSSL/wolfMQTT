@@ -44,8 +44,6 @@
 
 #ifdef WOLFMQTT_BROKER
 
-int wolfmqtt_broker(int argc, char** argv);
-
 typedef struct BrokerClient {
     int fd;
     byte protocol_level;
@@ -69,11 +67,21 @@ typedef struct BrokerSub {
     struct BrokerSub* next;
 } BrokerSub;
 
-#define BROKER_RX_BUF_SZ 4096
-#define BROKER_TX_BUF_SZ 4096
-#define BROKER_TIMEOUT_MS 1000
-#define BROKER_LISTEN_BACKLOG 8
-#define BROKER_LOG_PKT 1
+#ifndef BROKER_RX_BUF_SZ
+    #define BROKER_RX_BUF_SZ 4096
+#endif
+#ifndef BROKER_TX_BUF_SZ
+    #define BROKER_TX_BUF_SZ 4096
+#endif
+#ifndef BROKER_TIMEOUT_MS
+    #define BROKER_TIMEOUT_MS 1000
+#endif
+#ifndef BROKER_LISTEN_BACKLOG
+    #define BROKER_LISTEN_BACKLOG 128
+#endif
+#ifndef BROKER_LOG_PKT
+    #define BROKER_LOG_PKT 1
+#endif
 
 static int BrokerSocket_SetNonBlocking(int fd)
 {
@@ -442,7 +450,10 @@ static int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
     return MqttPacket_Write(&bc->client, bc->tx_buf, pos);
 }
 
-static int BrokerHandle_Connect(BrokerClient* bc, int rx_len)
+/* Returns: > 0 success, 0 auth rejected (CONNACK sent with refused),
+ *          < 0 error */
+static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
+    const char* auth_user, const char* auth_pass)
 {
     int rc;
     MqttConnect mc;
@@ -461,6 +472,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len)
         return rc;
     }
 
+    /* Store client ID */
     if (bc->client_id) {
         WOLFMQTT_FREE(bc->client_id);
         bc->client_id = NULL;
@@ -479,16 +491,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len)
     bc->protocol_level = mc.protocol_level;
     bc->keep_alive_sec = mc.keep_alive_sec;
     bc->last_rx = time(NULL);
-    PRINTF("broker: CONNECT proto=%u clean=%d will=%d",
-        mc.protocol_level, mc.clean_session, mc.enable_lwt);
+    PRINTF("broker: CONNECT proto=%u clean=%d will=%d client_id=%s",
+        mc.protocol_level, mc.clean_session, mc.enable_lwt,
+        bc->client_id ? bc->client_id : "(null)");
 
-    ack.flags = 0;
-    ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
-#ifdef WOLFMQTT_V5
-    ack.protocol_level = mc.protocol_level;
-    ack.props = NULL;
-#endif
-
+    /* Store credentials */
     if (bc->username) {
         WOLFMQTT_FREE(bc->username);
         bc->username = NULL;
@@ -519,13 +526,36 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len)
             }
         }
     }
+
+    /* Check auth before sending CONNACK */
+    ack.flags = 0;
+    ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
 #ifdef WOLFMQTT_V5
     ack.protocol_level = mc.protocol_level;
     ack.props = NULL;
 #endif
+
+    if (auth_user || auth_pass) {
+        int auth_ok = 1;
+        if (auth_user && (!bc->username ||
+            XSTRCMP(auth_user, bc->username) != 0)) {
+            auth_ok = 0;
+        }
+        if (auth_pass && (!bc->password ||
+            XSTRCMP(auth_pass, bc->password) != 0)) {
+            auth_ok = 0;
+        }
+        if (!auth_ok) {
+            PRINTF("broker: auth failed fd=%d user=%s", bc->fd,
+                bc->username ? bc->username : "(null)");
+            ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+        }
+    }
+
     rc = MqttEncode_ConnectAck(bc->tx_buf, bc->tx_buf_len, &ack);
     if (rc > 0) {
-        PRINTF("broker: CONNACK send fd=%d", bc->fd);
+        PRINTF("broker: CONNACK send fd=%d code=%d", bc->fd,
+            ack.return_code);
         rc = MqttPacket_Write(&bc->client, bc->tx_buf, rc);
     }
 
@@ -537,10 +567,16 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len)
         (void)MqttProps_Free(lwt.props);
     }
 #endif
+
+    /* Return 0 if auth rejected so caller can disconnect */
+    if (ack.return_code != MQTT_CONNECT_ACK_CODE_ACCEPTED) {
+        return 0;
+    }
     return rc;
 }
 
-static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len)
+static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
+    BrokerSub** sub_list)
 {
     int rc;
     int i;
@@ -565,7 +601,14 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len)
         return rc;
     }
 
+    /* Register subscriptions and build return codes */
     for (i = 0; i < sub.topic_count && i < MAX_MQTT_TOPICS; i++) {
+        const char* f = sub.topics[i].topic_filter;
+        word16 flen = 0;
+        if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
+                &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+            (void)BrokerSubs_Add(sub_list, bc, f, flen);
+        }
         return_codes[i] = MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS0;
     }
 
@@ -581,9 +624,11 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len)
     return rc;
 }
 
-static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len)
+static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
+    BrokerSub** sub_list)
 {
     int rc;
+    int i;
     MqttUnsubscribe unsub;
     MqttUnsubscribeAck ack;
 
@@ -603,6 +648,16 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len)
         PRINTF("broker: UNSUBSCRIBE decode failed rc=%d", rc);
         WOLFMQTT_FREE(unsub.topics);
         return rc;
+    }
+
+    /* Remove subscriptions */
+    for (i = 0; i < unsub.topic_count && i < MAX_MQTT_TOPICS; i++) {
+        const char* f = unsub.topics[i].topic_filter;
+        word16 flen = 0;
+        if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
+                &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+            BrokerSubs_Remove(sub_list, bc, f, flen);
+        }
     }
 
     XMEMSET(&ack, 0, sizeof(ack));
@@ -879,6 +934,7 @@ int wolfmqtt_broker(int argc, char** argv)
                     PRINTF("broker: read failed fd=%d rc=%d", bc->fd, rc);
                     BrokerSubs_RemoveClient(&subs, bc);
                     BrokerClient_Remove(&clients, bc);
+                    bc = NULL;
                 }
                 else if (rc > 0) {
                     byte type = MQTT_PACKET_TYPE_GET(bc->rx_buf[0]);
@@ -889,41 +945,17 @@ int wolfmqtt_broker(int argc, char** argv)
 #endif
                     switch (type) {
                         case MQTT_PACKET_TYPE_CONNECT:
-                            (void)BrokerHandle_Connect(bc, rc);
-                            if (auth_user || auth_pass) {
-                                int ok = 1;
-                                if (auth_user && (!bc->username ||
-                                    XSTRCMP(auth_user, bc->username) != 0)) {
-                                    ok = 0;
-                                }
-                                if (auth_pass && (!bc->password ||
-                                    XSTRCMP(auth_pass, bc->password) != 0)) {
-                                    ok = 0;
-                                }
-                                if (!ok) {
-                                    MqttConnectAck nack;
-                                    XMEMSET(&nack, 0, sizeof(nack));
-                                    nack.flags = 0;
-                                    nack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-#ifdef WOLFMQTT_V5
-                                    nack.protocol_level = bc->protocol_level;
-                                    nack.props = NULL;
-#endif
-                                    {
-                                        int nrc = MqttEncode_ConnectAck(
-                                                bc->tx_buf, bc->tx_buf_len,
-                                                &nack);
-                                        if (nrc > 0) {
-                                            (void)MqttPacket_Write(&bc->client,
-                                                bc->tx_buf, nrc);
-                                        }
-                                    }
-                                    PRINTF("broker: auth failed fd=%d", bc->fd);
-                                    BrokerSubs_RemoveClient(&subs, bc);
-                                    BrokerClient_Remove(&clients, bc);
-                                }
+                        {
+                            int c_rc = BrokerHandle_Connect(bc, rc,
+                                    auth_user, auth_pass);
+                            if (c_rc == 0) {
+                                /* Auth rejected, disconnect */
+                                BrokerSubs_RemoveClient(&subs, bc);
+                                BrokerClient_Remove(&clients, bc);
+                                bc = NULL;
                             }
                             break;
+                        }
                         case MQTT_PACKET_TYPE_PUBLISH:
                             (void)BrokerHandle_Publish(bc, rc, subs);
                             break;
@@ -931,95 +963,18 @@ int wolfmqtt_broker(int argc, char** argv)
                             (void)BrokerHandle_PublishRel(bc, rc);
                             break;
                         case MQTT_PACKET_TYPE_SUBSCRIBE:
-                        {
-                            int s_rc = BrokerHandle_Subscribe(bc, rc);
-                            if (s_rc >= 0) {
-                                int idx;
-                                MqttSubscribe sub;
-                                XMEMSET(&sub, 0, sizeof(sub));
-#ifdef WOLFMQTT_V5
-                                sub.protocol_level = bc->protocol_level;
-#endif
-                                sub.topics = (MqttTopic*)WOLFMQTT_MALLOC(
-                                        sizeof(MqttTopic) * MAX_MQTT_TOPICS);
-                                if (sub.topics) {
-                                    XMEMSET(sub.topics, 0,
-                                            sizeof(MqttTopic) * MAX_MQTT_TOPICS);
-                                    if (MqttDecode_Subscribe(bc->rx_buf, rc,
-                                            &sub) >= 0) {
-                                        for (idx = 0; idx < sub.topic_count;
-                                             idx++) {
-                                            const char* f = sub.topics[idx].topic_filter;
-                                            word16 flen = 0;
-                                            if (f &&
-                                                MqttDecode_Num((byte*)f -
-                                                    MQTT_DATA_LEN_SIZE,
-                                                    &flen,
-                                                    MQTT_DATA_LEN_SIZE) ==
-                                                    MQTT_DATA_LEN_SIZE) {
-                                                (void)BrokerSubs_Add(&subs, bc,
-                                                    f, flen);
-                                            }
-                                        }
-                                    }
-#ifdef WOLFMQTT_V5
-                                    if (sub.props) {
-                                        (void)MqttProps_Free(sub.props);
-                                    }
-#endif
-                                    WOLFMQTT_FREE(sub.topics);
-                                }
-                            }
+                            (void)BrokerHandle_Subscribe(bc, rc, &subs);
                             break;
-                        }
                         case MQTT_PACKET_TYPE_UNSUBSCRIBE:
-                        {
-                            int u_rc = BrokerHandle_Unsubscribe(bc, rc);
-                            if (u_rc >= 0) {
-                                int idx;
-                                MqttUnsubscribe unsub;
-                                XMEMSET(&unsub, 0, sizeof(unsub));
-#ifdef WOLFMQTT_V5
-                                unsub.protocol_level = bc->protocol_level;
-#endif
-                                unsub.topics = (MqttTopic*)WOLFMQTT_MALLOC(
-                                        sizeof(MqttTopic) * MAX_MQTT_TOPICS);
-                                if (unsub.topics) {
-                                    XMEMSET(unsub.topics, 0,
-                                            sizeof(MqttTopic) * MAX_MQTT_TOPICS);
-                                    if (MqttDecode_Unsubscribe(bc->rx_buf, rc,
-                                            &unsub) >= 0) {
-                                        for (idx = 0; idx < unsub.topic_count;
-                                             idx++) {
-                                            const char* f = unsub.topics[idx].topic_filter;
-                                            word16 flen = 0;
-                                            if (f &&
-                                                MqttDecode_Num((byte*)f -
-                                                    MQTT_DATA_LEN_SIZE,
-                                                    &flen,
-                                                    MQTT_DATA_LEN_SIZE) ==
-                                                    MQTT_DATA_LEN_SIZE) {
-                                                BrokerSubs_Remove(&subs, bc,
-                                                    f, flen);
-                                            }
-                                        }
-                                    }
-#ifdef WOLFMQTT_V5
-                                    if (unsub.props) {
-                                        (void)MqttProps_Free(unsub.props);
-                                    }
-#endif
-                                    WOLFMQTT_FREE(unsub.topics);
-                                }
-                            }
+                            (void)BrokerHandle_Unsubscribe(bc, rc, &subs);
                             break;
-                        }
                         case MQTT_PACKET_TYPE_PING_REQ:
                             (void)BrokerSend_PingResp(bc);
                             break;
                         case MQTT_PACKET_TYPE_DISCONNECT:
                             BrokerSubs_RemoveClient(&subs, bc);
                             BrokerClient_Remove(&clients, bc);
+                            bc = NULL;
                             break;
                         default:
                             break;
