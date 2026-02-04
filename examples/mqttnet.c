@@ -990,44 +990,48 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     PRINTF("sock->curl = %p, sockfd = %d", (void *)sock->curl, sockfd);
 #endif
 
-#ifdef WOLFMQTT_MULTITHREAD
-    {
-        int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
-        if (rc != 0) {
-            return rc;
+    /* Loop until all data is sent or error */
+    do {
+    #ifdef WOLFMQTT_MULTITHREAD
+        {
+            int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
+            if (rc != 0) {
+                return rc;
+            }
         }
-    }
-#endif
+    #endif
 
-    res = curl_easy_send(sock->curl, &buf[sock->bytes],
-                         buf_len - sock->bytes, &sent);
+        res = curl_easy_send(sock->curl, &buf[sock->bytes],
+                             buf_len - sock->bytes, &sent);
 
-#ifdef WOLFMQTT_MULTITHREAD
-    wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
-#endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+    #endif
 
-    if (res == CURLE_OK) {
-        sock->bytes += (int)sent;
-        if (sock->bytes < buf_len) {
-            /* Partial write, return continue to retry */
-            return MQTT_CODE_CONTINUE;
+        if (res == CURLE_OK) {
+            sock->bytes += (int)sent;
+            if (sock->bytes == buf_len) {
+                /* Complete, reset for next operation */
+                sent = sock->bytes;
+                sock->bytes = 0;
+                return (int)sent;
+            }
+            /* Partial write, continue loop */
         }
-        /* Complete, reset for next operation */
-        sent = sock->bytes;
-        sock->bytes = 0;
-        return (int)sent;
-    }
-
-    if (res == CURLE_AGAIN) {
-        wait_rc = mqttcurl_wait(sockfd, 0, timeout_ms,
-                                sock->mqttCtx->test_mode);
-        return wait_rc;
-    }
-
-    PRINTF("error: curl_easy_send(%d) returned: %d, %s", buf_len, res,
-           curl_easy_strerror(res));
-    sock->bytes = 0;
-    return MQTT_CODE_ERROR_CURL;
+        else if (res == CURLE_AGAIN) {
+            wait_rc = mqttcurl_wait(sockfd, 0, timeout_ms,
+                                    sock->mqttCtx->test_mode);
+            if (wait_rc != MQTT_CODE_CONTINUE) {
+                return wait_rc;
+            }
+        }
+        else {
+            PRINTF("error: curl_easy_send(%d) returned: %d, %s", buf_len, res,
+                   curl_easy_strerror(res));
+            sock->bytes = 0;
+            return MQTT_CODE_ERROR_CURL;
+        }
+    } while (1);
 }
 
 static int NetRead(void *context, byte* buf, int buf_len,
@@ -1069,50 +1073,54 @@ static int NetRead(void *context, byte* buf, int buf_len,
     PRINTF("sock->curl = %p, sockfd = %d", (void *)sock->curl, sockfd);
 #endif
 
-#ifdef WOLFMQTT_MULTITHREAD
-    {
-        int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
-        if (rc != 0) {
-            return rc;
+    /* Loop until all data is received or error */
+    do {
+    #ifdef WOLFMQTT_MULTITHREAD
+        {
+            int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
+            if (rc != 0) {
+                return rc;
+            }
         }
-    }
-#endif
+    #endif
 
-    res = curl_easy_recv(sock->curl, &buf[sock->bytes],
-                         buf_len - sock->bytes, &recvd);
+        res = curl_easy_recv(sock->curl, &buf[sock->bytes],
+                             buf_len - sock->bytes, &recvd);
 
-#ifdef WOLFMQTT_MULTITHREAD
-    wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
-#endif
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+    #endif
 
-    if (res == CURLE_OK) {
-        if (recvd == 0) {
-            /* Connection closed */
-            PRINTF("error: connection closed by peer");
+        if (res == CURLE_OK) {
+            if (recvd == 0) {
+                /* Connection closed */
+                PRINTF("error: connection closed by peer");
+                sock->bytes = 0;
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+            sock->bytes += (int)recvd;
+            if (sock->bytes == buf_len) {
+                /* Complete, reset for next operation */
+                recvd = sock->bytes;
+                sock->bytes = 0;
+                return (int)recvd;
+            }
+            /* Partial read, continue loop */
+        }
+        else if (res == CURLE_AGAIN) {
+            wait_rc = mqttcurl_wait(sockfd, 1, timeout_ms,
+                                    sock->mqttCtx->test_mode);
+            if (wait_rc != MQTT_CODE_CONTINUE) {
+                return wait_rc;
+            }
+        }
+        else {
+            PRINTF("error: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
+                   curl_easy_strerror(res));
             sock->bytes = 0;
-            return MQTT_CODE_ERROR_NETWORK;
+            return MQTT_CODE_ERROR_CURL;
         }
-        sock->bytes += (int)recvd;
-        if (sock->bytes < buf_len) {
-            /* Partial read, return continue to retry */
-            return MQTT_CODE_CONTINUE;
-        }
-        /* Complete, reset for next operation */
-        recvd = sock->bytes;
-        sock->bytes = 0;
-        return (int)recvd;
-    }
-
-    if (res == CURLE_AGAIN) {
-        wait_rc = mqttcurl_wait(sockfd, 1, timeout_ms,
-                                sock->mqttCtx->test_mode);
-        return wait_rc;
-    }
-
-    PRINTF("error: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
-           curl_easy_strerror(res));
-    sock->bytes = 0;
-    return MQTT_CODE_ERROR_CURL;
+    } while (1);
 }
 
 static int NetDisconnect(void *context)
