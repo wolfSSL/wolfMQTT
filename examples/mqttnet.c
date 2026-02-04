@@ -737,22 +737,16 @@ mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
 
     if (timeout_ms != 0) {
         res = curl_easy_setopt(sock->curl, CURLOPT_CONNECTTIMEOUT_MS,
-                               timeout_ms);
+                               (long)timeout_ms);
 
         if (res != CURLE_OK) {
             PRINTF("error: curl_easy_setopt(CONNECTTIMEOUT_MS, %d) "
                    "returned %d", timeout_ms, res);
             return MQTT_CODE_ERROR_CURL;
         }
-
-        res = curl_easy_setopt(sock->curl, CURLOPT_TIMEOUT_MS,
-                               timeout_ms);
-
-        if (res != CURLE_OK) {
-            PRINTF("error: curl_easy_setopt(TIMEOUT_MS, %d) "
-                   "returned %d", timeout_ms, res);
-            return MQTT_CODE_ERROR_CURL;
-        }
+        /* Note: CURLOPT_TIMEOUT_MS is not used here because it sets a total
+         * transfer timeout, which is not applicable with CURLOPT_CONNECT_ONLY
+         * mode where we use curl_easy_send/recv manually after connect. */
     }
 
     res = curl_easy_setopt(sock->curl, CURLOPT_URL, host);
@@ -763,7 +757,7 @@ mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
         return MQTT_CODE_ERROR_CURL;
     }
 
-    res = curl_easy_setopt(sock->curl, CURLOPT_PORT, port);
+    res = curl_easy_setopt(sock->curl, CURLOPT_PORT, (long)port);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_setopt(PORT, %d) returned: %d",
@@ -845,7 +839,7 @@ mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
         */
 
         /* Set peer and host verification. */
-        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYPEER, 1);
+        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYPEER, 1L);
 
         if (res != CURLE_OK) {
             PRINTF("error: curl_easy_setopt(SSL_VERIFYPEER) returned: %d",
@@ -856,10 +850,10 @@ mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
         /* Only do server host verification when not running against
          * localhost broker. */
         if (XSTRCMP(host, "localhost") == 0) {
-            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 0);
+            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 0L);
         }
         else {
-            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2);
+            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2L);
         }
 
         if (res != CURLE_OK) {
@@ -898,7 +892,7 @@ mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
     }
     #endif
 
-    res = curl_easy_setopt(sock->curl, CURLOPT_CONNECT_ONLY, 1);
+    res = curl_easy_setopt(sock->curl, CURLOPT_CONNECT_ONLY, 1L);
 
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_setopt(CONNECT_ONLY, 1) returned: %d",
@@ -952,6 +946,7 @@ static int NetConnect(void *context, const char* host, word16 port,
         return rc;
     }
 
+    sock->bytes = 0;
     sock->stat = SOCK_CONN;
     return MQTT_CODE_SUCCESS;
 }
@@ -995,59 +990,44 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     PRINTF("sock->curl = %p, sockfd = %d", (void *)sock->curl, sockfd);
 #endif
 
-    /* A very simple retry with timeout example. This assumes the entire
-     * payload will be transferred in a single shot without buffering.
-     * todo: add buffering? */
-    for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
-    #ifdef WOLFMQTT_MULTITHREAD
+#ifdef WOLFMQTT_MULTITHREAD
+    {
         int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
         if (rc != 0) {
             return rc;
         }
-    #endif
+    }
+#endif
 
-        res = curl_easy_send(sock->curl, buf, buf_len, &sent);
+    res = curl_easy_send(sock->curl, &buf[sock->bytes],
+                         buf_len - sock->bytes, &sent);
 
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
-    #endif
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+#endif
 
-        if (res == CURLE_OK) {
-            #if defined(WOLFMQTT_DEBUG_SOCKET)
-            PRINTF("info: curl_easy_send(%d) returned: %d, %s", buf_len, res,
-                   curl_easy_strerror(res));
-            #endif
-            break;
+    if (res == CURLE_OK) {
+        sock->bytes += (int)sent;
+        if (sock->bytes < buf_len) {
+            /* Partial write, return continue to retry */
+            return MQTT_CODE_CONTINUE;
         }
-
-        if (res == CURLE_AGAIN) {
-            #if defined(WOLFMQTT_DEBUG_SOCKET)
-            PRINTF("info: curl_easy_send(%d) returned: %d, %s", buf_len, res,
-                   curl_easy_strerror(res));
-            #endif
-
-            wait_rc = mqttcurl_wait(sockfd, 0, timeout_ms,
-                                    sock->mqttCtx->test_mode);
-
-            if (wait_rc == MQTT_CODE_CONTINUE) {
-                continue;
-            }
-            else {
-                return wait_rc;
-            }
-        }
-
-        PRINTF("error: curl_easy_send(%d) returned: %d, %s", buf_len, res,
-               curl_easy_strerror(res));
-        return MQTT_CODE_ERROR_CURL;
+        /* Complete, reset for next operation */
+        sent = sock->bytes;
+        sock->bytes = 0;
+        return (int)sent;
     }
 
-    if ((int) sent != buf_len) {
-        PRINTF("error: sent %d bytes, expected %d", (int)sent, buf_len);
-        return MQTT_CODE_ERROR_CURL;
+    if (res == CURLE_AGAIN) {
+        wait_rc = mqttcurl_wait(sockfd, 0, timeout_ms,
+                                sock->mqttCtx->test_mode);
+        return wait_rc;
     }
 
-    return buf_len;
+    PRINTF("error: curl_easy_send(%d) returned: %d, %s", buf_len, res,
+           curl_easy_strerror(res));
+    sock->bytes = 0;
+    return MQTT_CODE_ERROR_CURL;
 }
 
 static int NetRead(void *context, byte* buf, int buf_len,
@@ -1089,59 +1069,50 @@ static int NetRead(void *context, byte* buf, int buf_len,
     PRINTF("sock->curl = %p, sockfd = %d", (void *)sock->curl, sockfd);
 #endif
 
-    /* A very simple retry with timeout example. This assumes the entire
-     * payload will be transferred in a single shot without buffering.
-     * todo: add buffering? */
-    for (size_t i = 0; i < MQTT_CURL_NUM_RETRY; ++i) {
-    #ifdef WOLFMQTT_MULTITHREAD
+#ifdef WOLFMQTT_MULTITHREAD
+    {
         int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
         if (rc != 0) {
             return rc;
         }
-    #endif
+    }
+#endif
 
-        res = curl_easy_recv(sock->curl, buf, buf_len, &recvd);
+    res = curl_easy_recv(sock->curl, &buf[sock->bytes],
+                         buf_len - sock->bytes, &recvd);
 
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
-    #endif
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+#endif
 
-        if (res == CURLE_OK) {
-            #if defined(WOLFMQTT_DEBUG_SOCKET)
-            PRINTF("info: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
-                   curl_easy_strerror(res));
-            #endif
-            break;
+    if (res == CURLE_OK) {
+        if (recvd == 0) {
+            /* Connection closed */
+            PRINTF("error: connection closed by peer");
+            sock->bytes = 0;
+            return MQTT_CODE_ERROR_NETWORK;
         }
-
-        if (res == CURLE_AGAIN) {
-            #if defined(WOLFMQTT_DEBUG_SOCKET)
-            PRINTF("info: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
-                   curl_easy_strerror(res));
-            #endif
-
-            wait_rc = mqttcurl_wait(sockfd, 1, timeout_ms,
-                                    sock->mqttCtx->test_mode);
-
-            if (wait_rc == MQTT_CODE_CONTINUE) {
-                continue;
-            }
-            else {
-                return wait_rc;
-            }
+        sock->bytes += (int)recvd;
+        if (sock->bytes < buf_len) {
+            /* Partial read, return continue to retry */
+            return MQTT_CODE_CONTINUE;
         }
-
-        PRINTF("error: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
-               curl_easy_strerror(res));
-        return MQTT_CODE_ERROR_CURL;
+        /* Complete, reset for next operation */
+        recvd = sock->bytes;
+        sock->bytes = 0;
+        return (int)recvd;
     }
 
-    if ((int) recvd != buf_len) {
-        PRINTF("error: recvd %d bytes, expected %d", (int)recvd, buf_len);
-        return MQTT_CODE_ERROR_CURL;
+    if (res == CURLE_AGAIN) {
+        wait_rc = mqttcurl_wait(sockfd, 1, timeout_ms,
+                                sock->mqttCtx->test_mode);
+        return wait_rc;
     }
 
-    return buf_len;
+    PRINTF("error: curl_easy_recv(%d) returned: %d, %s", buf_len, res,
+           curl_easy_strerror(res));
+    sock->bytes = 0;
+    return MQTT_CODE_ERROR_CURL;
 }
 
 static int NetDisconnect(void *context)
@@ -1159,6 +1130,7 @@ static int NetDisconnect(void *context)
         curl_easy_cleanup(sock->curl);
         sock->curl = NULL;
     }
+    sock->bytes = 0;
 
     return 0;
 }
