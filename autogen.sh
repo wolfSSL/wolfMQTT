@@ -5,14 +5,6 @@
 
 set -e
 
-# Git hooks should come before autoreconf.
-if test -d .git; then
-  if ! test -d .git/hooks; then
-    mkdir .git/hooks
-  fi
-  ln -s -f ../../pre-commit.sh .git/hooks/pre-commit
-fi
-
 # if get an error about libtool not setup
 # " error: Libtool library used but 'LIBTOOL' is undefined
 #     The usual way to define 'LIBTOOL' is to add 'LT_INIT' "
