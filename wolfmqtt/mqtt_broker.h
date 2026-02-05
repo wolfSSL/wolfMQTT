@@ -87,6 +87,15 @@
 #ifndef BROKER_MAX_FILTER_LEN
     #define BROKER_MAX_FILTER_LEN    128
 #endif
+#ifndef BROKER_MAX_RETAINED
+    #define BROKER_MAX_RETAINED      16
+#endif
+#ifndef BROKER_MAX_TOPIC_LEN
+    #define BROKER_MAX_TOPIC_LEN     128
+#endif
+#ifndef BROKER_MAX_PAYLOAD_LEN
+    #define BROKER_MAX_PAYLOAD_LEN   4096
+#endif
 
 /* -------------------------------------------------------------------------- */
 /* Forward declarations                                                        */
@@ -126,6 +135,8 @@ typedef struct BrokerClient {
     char    password[BROKER_MAX_PASSWORD_LEN];
     byte    tx_buf[BROKER_TX_BUF_SZ];
     byte    rx_buf[BROKER_RX_BUF_SZ];
+    char    will_topic[BROKER_MAX_TOPIC_LEN];
+    byte    will_payload[BROKER_MAX_PAYLOAD_LEN];
 #else
     char*   client_id;
     char*   username;
@@ -134,12 +145,19 @@ typedef struct BrokerClient {
     byte*   rx_buf;
     int     tx_buf_len;
     int     rx_buf_len;
+    char*   will_topic;
+    byte*   will_payload;
     struct BrokerClient* next;
 #endif
     BROKER_SOCKET_T sock;
     byte    protocol_level;
     word16  keep_alive_sec;
     WOLFMQTT_BROKER_TIME_T last_rx;
+    byte    clean_session;
+    byte    has_will;
+    word16  will_payload_len;
+    MqttQoS will_qos;
+    byte    will_retain;
     MqttNet net;
     MqttClient client;
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
@@ -157,7 +175,24 @@ typedef struct BrokerSub {
     struct BrokerSub* next;
 #endif
     struct BrokerClient* client;
+    MqttQoS qos;
 } BrokerSub;
+
+/* -------------------------------------------------------------------------- */
+/* Retained message store                                                      */
+/* -------------------------------------------------------------------------- */
+typedef struct BrokerRetainedMsg {
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    in_use;
+    char    topic[BROKER_MAX_TOPIC_LEN];
+    byte    payload[BROKER_MAX_PAYLOAD_LEN];
+#else
+    char*   topic;
+    byte*   payload;
+    struct BrokerRetainedMsg* next;
+#endif
+    word16  payload_len;
+} BrokerRetainedMsg;
 
 /* -------------------------------------------------------------------------- */
 /* Broker context                                                              */
@@ -169,12 +204,15 @@ typedef struct MqttBroker {
     const char* auth_user;
     const char* auth_pass;
     MqttBrokerNet net;
+    word16  next_packet_id;
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerClient clients[BROKER_MAX_CLIENTS];
     BrokerSub    subs[BROKER_MAX_SUBS];
+    BrokerRetainedMsg retained[BROKER_MAX_RETAINED];
 #else
     BrokerClient* clients;
     BrokerSub*    subs;
+    BrokerRetainedMsg* retained;
 #endif
 } MqttBroker;
 
