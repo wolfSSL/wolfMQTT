@@ -143,9 +143,8 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
 
         rc = wolfSSL_write(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
-        #if defined(WOLFMQTT_DEBUG_SOCKET) || defined(WOLFSSL_ASYNC_CRYPT)
             int error = wolfSSL_get_error(client->tls.ssl, 0);
-        #endif
+            client->tls.lastError = error;
         #ifdef WOLFMQTT_DEBUG_SOCKET
             if (error != WOLFSSL_ERROR_WANT_WRITE
             #ifdef WOLFSSL_ASYNC_CRYPT
@@ -248,6 +247,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
         if (rc < 0) {
             int error = wolfSSL_get_error(client->tls.ssl, 0);
+            client->tls.lastError = error;
         #ifdef WOLFMQTT_DEBUG_SOCKET
             if (error != WOLFSSL_ERROR_WANT_READ
             #ifdef WOLFSSL_ASYNC_CRYPT
@@ -404,6 +404,9 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL) && \
     !defined(ENABLE_MQTT_WEBSOCKET)
     if (use_tls) {
+        /* Clear any previous TLS error */
+        client->tls.lastError = 0;
+
         if (client->tls.ctx == NULL) {
         #ifdef DEBUG_WOLFSSL
             wolfSSL_Debugging_ON();
@@ -502,6 +505,8 @@ exit:
             ) {
                 return MQTT_CODE_CONTINUE;
             }
+            /* Preserve the error to be used later, e.g. in net callback */
+            client->tls.lastError = errnum;
         #ifdef WOLFMQTT_DEBUG_SOCKET
             errstr = wolfSSL_ERR_reason_error_string(errnum);
         #endif

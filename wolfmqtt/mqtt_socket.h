@@ -73,6 +73,7 @@ typedef struct _MqttTls {
     int                 sockRcWrite;
     int                 timeout_ms_read;
     int                 timeout_ms_write;
+    int                 lastError;
 } MqttTls;
 #endif
 
