@@ -199,6 +199,16 @@ The multi-threading feature can also be used with the non-blocking socket (--ena
 
 If you are having issues with thread synchronization on Linux consider using not the conditional signal (`WOLFMQTT_NO_COND_SIGNAL`).
 
+### Sparkplug Example
+This example demonstrates the [Sparkplug B](https://sparkplug.eclipse.org/) industrial IoT protocol specification. Sparkplug defines a standard MQTT topic namespace and payload format for SCADA and industrial automation systems. The example creates two MQTT clients that communicate using Sparkplug:
+
+* **Edge Node**: Publishes birth certificates (NBIRTH), device data (DDATA), and responds to commands (DCMD)
+* **Host Application**: Subscribes to Sparkplug topics, receives telemetry data, and sends device commands
+
+The example simulates sensor metrics (temperature, humidity, LED state) and demonstrates command/control where the Host toggles the Edge Node's LED. For full two-client communication, build with `--enable-mt`. The example is located in `/examples/sparkplug/`.
+
+More details in [examples/sparkplug/README.md](examples/sparkplug/README.md)
+
 ### Atomic publish and subscribe examples
 In the `examples/pub-sub` folder, there are two simple client examples:
 * mqtt-pub - publishes to a topic
