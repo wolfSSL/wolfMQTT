@@ -1999,6 +1999,18 @@ int MqttBroker_Step(MqttBroker* broker)
             if (rc > 0) {
                 activity = 1;
             }
+            /* BrokerClient_Process may remove another client (e.g. client ID
+             * takeover), which could free the node that next points to.
+             * Validate next is still in the linked list before dereferencing */
+            if (next != NULL) {
+                BrokerClient* v = broker->clients;
+                while (v != NULL && v != next) {
+                    v = v->next;
+                }
+                if (v == NULL) {
+                    break; /* next was freed; remaining clients handled next step */
+                }
+            }
             bc = next;
         }
     }

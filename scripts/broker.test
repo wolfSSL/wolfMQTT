@@ -1,0 +1,285 @@
+#!/bin/bash
+
+# wolfMQTT Broker test
+# Tests the wolfMQTT broker with pub/sub, retained messages, LWT, QoS 1,
+# client ID takeover, and multi-client pairs.
+
+name="MQTT Broker"
+broker_bin="src/mqtt_broker"
+pub_bin="examples/pub-sub/mqtt-pub"
+sub_bin="examples/pub-sub/mqtt-sub"
+no_pid=-1
+broker_pid=$no_pid
+
+do_cleanup() {
+    if [ $broker_pid != $no_pid ]; then
+        kill -9 $broker_pid 2>/dev/null
+        echo "Killed broker PID $broker_pid"
+        broker_pid=$no_pid
+    fi
+    # Kill any lingering test processes
+    for pid in "${TEST_PIDS[@]:-}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    wait 2>/dev/null || true
+    if [ -n "${TMP_DIR:-}" ] && [ -d "${TMP_DIR}" ]; then
+        if [ "${KEEP_LOGS:-0}" = "1" ]; then
+            echo "Logs preserved in ${TMP_DIR}"
+        else
+            rm -rf "${TMP_DIR}"
+        fi
+    fi
+    if [ $1 -ne 0 ]; then
+        exit 1
+    fi
+}
+
+# Check for broker binary
+[ ! -x ./$broker_bin ] && echo -e "\n\n$broker_bin doesn't exist" && exit 1
+
+# Check for pub/sub binaries (needed for multi-client test)
+has_pubsub=no
+if [ -x ./$pub_bin ] && [ -x ./$sub_bin ]; then
+    has_pubsub=yes
+fi
+
+# Generate a random port
+generate_port() {
+    if [[ "$OSTYPE" == "linux"* ]]; then
+        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
+    else
+        port=11883
+    fi
+    echo "Using port $port"
+}
+
+check_broker() {
+    timeout 10 sh -c 'until nc -v -z $0 $1; do sleep 1; done' localhost $port
+}
+
+generate_port
+
+TEST_PIDS=()
+TMP_DIR="$(mktemp -d)"
+FAIL=0
+
+echo "=== wolfMQTT Broker Test Suite ==="
+
+# Start broker
+./$broker_bin -p $port &
+broker_pid=$!
+echo "Broker PID is $broker_pid"
+check_broker
+
+# --- Test 1: Basic pub/sub with mosquitto_pub/mosquitto_sub ---
+echo ""
+echo "--- Test 1: Basic pub/sub ---"
+if command -v mosquitto_sub >/dev/null 2>&1 && command -v mosquitto_pub >/dev/null 2>&1; then
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/hello" -C 1 -W 5 >"${TMP_DIR}/t1_sub.log" 2>&1 &
+    T1_PID=$!
+    sleep 1
+    mosquitto_pub -h 127.0.0.1 -p $port -t "test/hello" -m "world"
+    wait $T1_PID 2>/dev/null
+    if grep -q "world" "${TMP_DIR}/t1_sub.log" 2>/dev/null; then
+        echo "PASS: Basic pub/sub"
+    else
+        echo "FAIL: Basic pub/sub"
+        FAIL=1
+    fi
+else
+    echo "SKIP: mosquitto_pub/mosquitto_sub not found"
+fi
+
+# --- Test 2: Retained messages ---
+echo ""
+echo "--- Test 2: Retained messages ---"
+if command -v mosquitto_sub >/dev/null 2>&1 && command -v mosquitto_pub >/dev/null 2>&1; then
+    mosquitto_pub -h 127.0.0.1 -p $port -t "test/retained" -m "stored_msg" -r
+    sleep 1
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/retained" -C 1 -W 5 >"${TMP_DIR}/t2_sub.log" 2>&1
+    if grep -q "stored_msg" "${TMP_DIR}/t2_sub.log" 2>/dev/null; then
+        echo "PASS: Retained message delivered on subscribe"
+    else
+        echo "FAIL: Retained message not delivered"
+        FAIL=1
+    fi
+else
+    echo "SKIP: mosquitto_pub/mosquitto_sub not found"
+fi
+
+# --- Test 3: QoS 1 forwarding ---
+echo ""
+echo "--- Test 3: QoS 1 forwarding ---"
+if command -v mosquitto_sub >/dev/null 2>&1 && command -v mosquitto_pub >/dev/null 2>&1; then
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/qos1" -q 1 -C 1 -W 5 >"${TMP_DIR}/t3_sub.log" 2>&1 &
+    T3_PID=$!
+    sleep 1
+    mosquitto_pub -h 127.0.0.1 -p $port -t "test/qos1" -m "qos1_msg" -q 1
+    wait $T3_PID 2>/dev/null
+    if grep -q "qos1_msg" "${TMP_DIR}/t3_sub.log" 2>/dev/null; then
+        echo "PASS: QoS 1 forwarding"
+    else
+        echo "FAIL: QoS 1 forwarding"
+        FAIL=1
+    fi
+else
+    echo "SKIP: mosquitto_pub/mosquitto_sub not found"
+fi
+
+# --- Test 4: Last Will and Testament ---
+echo ""
+echo "--- Test 4: Last Will and Testament ---"
+if command -v mosquitto_sub >/dev/null 2>&1; then
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/will" -C 1 -W 10 >"${TMP_DIR}/t4_sub.log" 2>&1 &
+    T4_SUB_PID=$!
+    sleep 1
+    # Connect a client with a will, then kill it abruptly
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/nothing" \
+        --will-topic "test/will" --will-payload "client_died" -W 3 >"${TMP_DIR}/t4_will.log" 2>&1 &
+    T4_WILL_PID=$!
+    sleep 1
+    kill -9 $T4_WILL_PID 2>/dev/null
+    wait $T4_WILL_PID 2>/dev/null || true
+    wait $T4_SUB_PID 2>/dev/null || true
+    if grep -q "client_died" "${TMP_DIR}/t4_sub.log" 2>/dev/null; then
+        echo "PASS: LWT delivered on abnormal disconnect"
+    else
+        echo "FAIL: LWT not delivered"
+        FAIL=1
+    fi
+else
+    echo "SKIP: mosquitto_sub not found"
+fi
+
+# --- Test 5: Client ID takeover ---
+echo ""
+echo "--- Test 5: Client ID takeover ---"
+if command -v mosquitto_sub >/dev/null 2>&1 && command -v mosquitto_pub >/dev/null 2>&1; then
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/takeover" -i "takeoverClient" -W 5 >"${TMP_DIR}/t5_old.log" 2>&1 &
+    T5_OLD_PID=$!
+    sleep 1
+    # Connect second client with same ID - should disconnect old
+    mosquitto_sub -h 127.0.0.1 -p $port -t "test/takeover" -i "takeoverClient" -C 1 -W 5 >"${TMP_DIR}/t5_new.log" 2>&1 &
+    T5_NEW_PID=$!
+    sleep 1
+    # Old client should have been disconnected
+    wait $T5_OLD_PID 2>/dev/null
+    T5_OLD_EXIT=$?
+    # Send message to new client
+    mosquitto_pub -h 127.0.0.1 -p $port -t "test/takeover" -m "after_takeover"
+    wait $T5_NEW_PID 2>/dev/null || true
+    if [ $T5_OLD_EXIT -ne 0 ]; then
+        echo "PASS: Client ID takeover (old client disconnected)"
+    else
+        echo "FAIL: Old client was not disconnected"
+        FAIL=1
+    fi
+else
+    echo "SKIP: mosquitto_pub/mosquitto_sub not found"
+fi
+
+# --- Test 6: Multi-client paired pub/sub ---
+echo ""
+echo "--- Test 6: Multi-client paired pub/sub ---"
+if [ "$has_pubsub" = "yes" ]; then
+    NUM_PAIRS=2
+    NUM_CLIENTS=$((NUM_PAIRS * 2))
+    SUB_LOGS=()
+
+    start_sub() {
+        local client_id="$1"
+        local topic="$2"
+        local log="$3"
+        stdbuf -oL ./${sub_bin} -T -h localhost -p ${port} -i "${client_id}" \
+            -n "${topic}" -q 0 >"${log}" 2>&1 &
+        TEST_PIDS+=("$!")
+        SUB_LOGS+=("${log}")
+    }
+
+    run_pub() {
+        local client_id="$1"
+        local topic="$2"
+        local msg="$3"
+        ./${pub_bin} -T -h localhost -p ${port} -i "${client_id}" -n "${topic}" \
+            -m "${msg}" -q 0 >/dev/null 2>&1
+    }
+
+    # Start subscribers
+    for p in $(seq 0 $((NUM_PAIRS - 1))); do
+        start_sub "sub_${p}_a" "pair/${p}/a" "${TMP_DIR}/sub_${p}_a.log"
+        start_sub "sub_${p}_b" "pair/${p}/b" "${TMP_DIR}/sub_${p}_b.log"
+    done
+
+    # Wait for subscribers to be ready
+    echo "Waiting for ${NUM_CLIENTS} subscribers to connect..."
+    ELAPSED=0
+    while [ $ELAPSED -lt 15 ]; do
+        READY=0
+        for log in "${SUB_LOGS[@]}"; do
+            if grep -q "MQTT Waiting for message" "${log}" 2>/dev/null; then
+                READY=$((READY + 1))
+            fi
+        done
+        if [ $READY -eq ${#SUB_LOGS[@]} ]; then
+            echo "All subscribers ready after ${ELAPSED}s"
+            break
+        fi
+        sleep 1
+        ELAPSED=$((ELAPSED + 1))
+    done
+
+    # Publish messages
+    for p in $(seq 0 $((NUM_PAIRS - 1))); do
+        run_pub "pub_${p}_a" "pair/${p}/b" "hello_from_${p}_a"
+        run_pub "pub_${p}_b" "pair/${p}/a" "hello_from_${p}_b"
+    done
+
+    # Wait for delivery
+    sleep 3
+
+    # Check results
+    T6_PASS=0
+    T6_FAIL=0
+    for p in $(seq 0 $((NUM_PAIRS - 1))); do
+        if grep -q "hello_from_${p}_b" "${TMP_DIR}/sub_${p}_a.log" 2>/dev/null; then
+            T6_PASS=$((T6_PASS + 1))
+        else
+            T6_FAIL=$((T6_FAIL + 1))
+        fi
+        if grep -q "hello_from_${p}_a" "${TMP_DIR}/sub_${p}_b.log" 2>/dev/null; then
+            T6_PASS=$((T6_PASS + 1))
+        else
+            T6_FAIL=$((T6_FAIL + 1))
+        fi
+    done
+
+    # Clean up subscriber processes
+    for pid in "${TEST_PIDS[@]:-}"; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    TEST_PIDS=()
+
+    if [ $T6_FAIL -eq 0 ]; then
+        echo "PASS: Multi-client pub/sub (${T6_PASS}/${NUM_CLIENTS} messages delivered)"
+    else
+        echo "FAIL: Multi-client pub/sub (${T6_FAIL} messages missing)"
+        FAIL=1
+    fi
+else
+    echo "SKIP: mqtt-pub/mqtt-sub not built"
+fi
+
+# --- Summary ---
+echo ""
+if [ $FAIL -ne 0 ]; then
+    KEEP_LOGS=1
+    echo "$name Tests FAILED"
+    do_cleanup "-1"
+fi
+
+do_cleanup "0"
+echo "$name Tests Passed"
+exit 0
