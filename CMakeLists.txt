@@ -184,6 +184,14 @@ if(ENABLE_WEBSOCKET)
     endif()
 endif()
 
+# Broker
+add_option(WOLFMQTT_BROKER
+           "Enable lightweight broker support"
+           "no" "yes;no")
+if (WOLFMQTT_BROKER)
+    list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER")
+endif()
+
 # Note: not adding stress option to cmake build as of yet. stress is for
 # testing only and requires the scripts/ dir to be useful.
 
@@ -286,6 +294,14 @@ if (WOLFMQTT_EXAMPLES)
     add_mqtt_example(mqtt-sub pub-sub/mqtt-sub.c)
 endif()
 
+if (WOLFMQTT_BROKER)
+    add_executable(mqtt_broker src/mqtt_broker.c)
+    target_link_libraries(mqtt_broker wolfmqtt)
+    target_include_directories(mqtt_broker PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
+endif()
+
 ####################################################
 # Installation
 ####################################################
@@ -326,4 +342,5 @@ message("\tExamples:            ${ENABLE_EXAMPLES}")
 message("\tFirmware Examples:   ${ENABLE_FIRMWARE_EXAMPLES}")
 message("\tMultithread:         ${ENABLE_MULTITHREAD}")
 message("\tCurl:                ${ENABLE_CURL}")
+message("\tBroker:              ${WOLFMQTT_BROKER}")
 message("-----------------------------------------------")
