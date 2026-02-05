@@ -272,7 +272,17 @@ static int BrokerTls_Init(MqttBroker* broker)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+    /* Select TLS method based on version preference */
+    if (broker->tls_version == 12) {
+        ctx = wolfSSL_CTX_new(wolfTLSv1_2_server_method());
+    }
+    else if (broker->tls_version == 13) {
+        ctx = wolfSSL_CTX_new(wolfTLSv1_3_server_method());
+    }
+    else {
+        /* Default: auto-negotiate (supports TLS 1.2 and 1.3) */
+        ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+    }
     if (ctx == NULL) {
         PRINTF("broker: wolfSSL_CTX_new failed");
         wolfSSL_Cleanup();
@@ -404,7 +414,10 @@ static void BrokerClient_Free(BrokerClient* bc)
     (void)BrokerNetDisconnect(bc);
 #ifdef ENABLE_MQTT_TLS
     if (bc->client.tls.ssl) {
-        wolfSSL_shutdown(bc->client.tls.ssl);
+        /* Only send close_notify if handshake completed successfully */
+        if (bc->tls_handshake_done) {
+            wolfSSL_shutdown(bc->client.tls.ssl);
+        }
         wolfSSL_free(bc->client.tls.ssl);
         bc->client.tls.ssl = NULL;
     }
@@ -1568,17 +1581,19 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 
     if (broker->auth_user || broker->auth_pass) {
         int auth_ok = 1;
-        if (broker->auth_user && (bc->username[0] == '\0' ||
+        if (broker->auth_user && (bc->username == NULL ||
+            bc->username[0] == '\0' ||
             XSTRCMP(broker->auth_user, bc->username) != 0)) {
             auth_ok = 0;
         }
-        if (broker->auth_pass && (bc->password[0] == '\0' ||
+        if (broker->auth_pass && (bc->password == NULL ||
+            bc->password[0] == '\0' ||
             XSTRCMP(broker->auth_pass, bc->password) != 0)) {
             auth_ok = 0;
         }
         if (!auth_ok) {
             PRINTF("broker: auth failed sock=%d user=%s", (int)bc->sock,
-                bc->username[0] ? bc->username : "(null)");
+                (bc->username && bc->username[0]) ? bc->username : "(null)");
             ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
         }
     }
@@ -2267,11 +2282,12 @@ static void BrokerUsage(const char* prog)
 {
     PRINTF("usage: %s [-p port] [-u user] [-P pass]"
 #ifdef ENABLE_MQTT_TLS
-           " [-t] [-c cert] [-K key] [-A ca]"
+           " [-t] [-V ver] [-c cert] [-K key] [-A ca]"
 #endif
            , prog);
 #ifdef ENABLE_MQTT_TLS
     PRINTF("  -t          Enable TLS");
+    PRINTF("  -V <ver>    TLS version: 12=TLS 1.2, 13=TLS 1.3 (default: auto)");
     PRINTF("  -c <file>   Server certificate file (PEM)");
     PRINTF("  -K <file>   Server private key file (PEM)");
     PRINTF("  -A <file>   CA certificate for mutual TLS (PEM)");
@@ -2323,6 +2339,9 @@ int wolfmqtt_broker(int argc, char** argv)
             if (broker.port == MQTT_DEFAULT_PORT) {
                 broker.port = MQTT_SECURE_PORT;
             }
+        }
+        else if (XSTRCMP(argv[i], "-V") == 0 && i + 1 < argc) {
+            broker.tls_version = (byte)XATOI(argv[++i]);
         }
         else if (XSTRCMP(argv[i], "-c") == 0 && i + 1 < argc) {
             broker.tls_cert = argv[++i];

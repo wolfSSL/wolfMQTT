@@ -453,7 +453,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
 
     /* Publish Topic */
     XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
-    mqttCtx->publish.retain = 0;
+    mqttCtx->publish.retain = mqttCtx->retain;
     mqttCtx->publish.qos = mqttCtx->qos;
     mqttCtx->publish.duplicate = 0;
     mqttCtx->publish.topic_name = mqttCtx->topic_name;
@@ -567,7 +567,7 @@ int mqttclient_test(MQTTCtx *mqttCtx)
                 /* Publish Topic */
                 mqttCtx->stat = WMQ_PUB;
                 XMEMSET(&mqttCtx->publish, 0, sizeof(MqttPublish));
-                mqttCtx->publish.retain = 0;
+                mqttCtx->publish.retain = mqttCtx->retain;
                 mqttCtx->publish.qos = mqttCtx->qos;
                 mqttCtx->publish.duplicate = 0;
                 mqttCtx->publish.topic_name = mqttCtx->topic_name;

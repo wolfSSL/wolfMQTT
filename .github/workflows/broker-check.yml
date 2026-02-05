@@ -18,8 +18,16 @@ jobs:
         include:
           - name: "Broker default (dynamic alloc)"
             cflags: ""
+            wolfmqtt_opts: "--enable-broker"
           - name: "Broker static memory"
             cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker"
+          - name: "Broker with TLS"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-tls"
+          - name: "Broker with TLS (static memory)"
+            cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker --enable-tls"
 
     steps:
     - name: Install dependencies
@@ -50,7 +58,7 @@ jobs:
       run: ./autogen.sh
 
     - name: "wolfmqtt configure (${{ matrix.name }})"
-      run: ./configure --enable-broker CFLAGS="${{ matrix.cflags }}"
+      run: ./configure ${{ matrix.wolfmqtt_opts }} CFLAGS="${{ matrix.cflags }}"
     - name: wolfmqtt make
       run: make
 
