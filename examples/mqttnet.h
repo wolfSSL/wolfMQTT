@@ -58,6 +58,7 @@ typedef struct _SocketContext {
 #endif
 #ifdef ENABLE_MQTT_CURL
     CURL  *  curl;
+    int      bytes; /* track partial read/write */
 #endif
 #ifdef ENABLE_MQTT_WEBSOCKET
     void* websocket_ctx;
