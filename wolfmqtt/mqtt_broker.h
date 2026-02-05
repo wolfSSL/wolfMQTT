@@ -161,6 +161,9 @@ typedef struct BrokerClient {
     MqttNet net;
     MqttClient client;
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
+#ifdef ENABLE_MQTT_TLS
+    byte    tls_handshake_done;
+#endif
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
@@ -205,6 +208,13 @@ typedef struct MqttBroker {
     const char* auth_pass;
     MqttBrokerNet net;
     word16  next_packet_id;
+#ifdef ENABLE_MQTT_TLS
+    WOLFSSL_CTX* tls_ctx;
+    const char*  tls_cert;     /* Server certificate file path */
+    const char*  tls_key;      /* Server private key file path */
+    const char*  tls_ca;       /* CA cert for mutual auth (optional) */
+    byte         use_tls;
+#endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerClient clients[BROKER_MAX_CLIENTS];
     BrokerSub    subs[BROKER_MAX_SUBS];

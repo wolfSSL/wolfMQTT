@@ -46,6 +46,9 @@
     #include <sys/socket.h>
     #include <time.h>
     #include <unistd.h>
+#ifdef ENABLE_MQTT_TLS
+    #include <wolfssl/ssl.h>
+#endif
 #endif /* !WOLFMQTT_BROKER_CUSTOM_NET */
 
 /* -------------------------------------------------------------------------- */
@@ -257,6 +260,89 @@ int MqttBrokerNet_Init(MqttBrokerNet* net)
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef ENABLE_MQTT_TLS
+static int BrokerTls_Init(MqttBroker* broker)
+{
+    WOLFSSL_CTX* ctx;
+    int rc;
+
+    rc = wolfSSL_Init();
+    if (rc != WOLFSSL_SUCCESS) {
+        PRINTF("broker: wolfSSL_Init failed %d", rc);
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+    if (ctx == NULL) {
+        PRINTF("broker: wolfSSL_CTX_new failed");
+        wolfSSL_Cleanup();
+        return MQTT_CODE_ERROR_MEMORY;
+    }
+
+    /* Load server certificate */
+    if (broker->tls_cert == NULL) {
+        PRINTF("broker: TLS cert not set (-c)");
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    rc = wolfSSL_CTX_use_certificate_file(ctx, broker->tls_cert,
+        WOLFSSL_FILETYPE_PEM);
+    if (rc != WOLFSSL_SUCCESS) {
+        PRINTF("broker: load cert failed %d (%s)", rc, broker->tls_cert);
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Load server private key */
+    if (broker->tls_key == NULL) {
+        PRINTF("broker: TLS key not set (-K)");
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    rc = wolfSSL_CTX_use_PrivateKey_file(ctx, broker->tls_key,
+        WOLFSSL_FILETYPE_PEM);
+    if (rc != WOLFSSL_SUCCESS) {
+        PRINTF("broker: load key failed %d (%s)", rc, broker->tls_key);
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Set wolfSSL IO callbacks (reuse existing WOLFMQTT_API functions) */
+    wolfSSL_CTX_SetIORecv(ctx, MqttSocket_TlsSocketReceive);
+    wolfSSL_CTX_SetIOSend(ctx, MqttSocket_TlsSocketSend);
+
+    /* Mutual TLS: load CA and require client certificate */
+    if (broker->tls_ca != NULL) {
+        rc = wolfSSL_CTX_load_verify_locations(ctx, broker->tls_ca, NULL);
+        if (rc != WOLFSSL_SUCCESS) {
+            PRINTF("broker: load CA failed %d (%s)", rc, broker->tls_ca);
+            wolfSSL_CTX_free(ctx);
+            wolfSSL_Cleanup();
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
+        wolfSSL_CTX_set_verify(ctx,
+            WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+        PRINTF("broker: mutual TLS enabled (CA=%s)", broker->tls_ca);
+    }
+
+    broker->tls_ctx = ctx;
+    return MQTT_CODE_SUCCESS;
+}
+
+static void BrokerTls_Free(MqttBroker* broker)
+{
+    if (broker->tls_ctx != NULL) {
+        wolfSSL_CTX_free(broker->tls_ctx);
+        broker->tls_ctx = NULL;
+    }
+    wolfSSL_Cleanup();
+}
+#endif /* ENABLE_MQTT_TLS */
+
 #endif /* !WOLFMQTT_BROKER_CUSTOM_NET */
 
 /* -------------------------------------------------------------------------- */
@@ -316,6 +402,13 @@ static void BrokerClient_Free(BrokerClient* bc)
         return;
     }
     (void)BrokerNetDisconnect(bc);
+#ifdef ENABLE_MQTT_TLS
+    if (bc->client.tls.ssl) {
+        wolfSSL_shutdown(bc->client.tls.ssl);
+        wolfSSL_free(bc->client.tls.ssl);
+        bc->client.tls.ssl = NULL;
+    }
+#endif
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
     XMEMSET(bc, 0, sizeof(*bc));
@@ -408,6 +501,27 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
         PRINTF("broker: client init failed rc=%d", rc);
         BrokerClient_Free(bc);
         return NULL;
+    }
+
+#ifdef ENABLE_MQTT_TLS
+    if (broker->use_tls && broker->tls_ctx) {
+        bc->client.tls.ssl = wolfSSL_new(broker->tls_ctx);
+        if (bc->client.tls.ssl == NULL) {
+            PRINTF("broker: wolfSSL_new failed sock=%d", (int)sock);
+            BrokerClient_Free(bc);
+            return NULL;
+        }
+        wolfSSL_SetIOReadCtx(bc->client.tls.ssl, &bc->client);
+        wolfSSL_SetIOWriteCtx(bc->client.tls.ssl, &bc->client);
+        MqttClient_Flags(&bc->client, 0, MQTT_CLIENT_FLAG_IS_TLS);
+        bc->tls_handshake_done = 0;
+    }
+    else
+#endif
+    {
+#ifdef ENABLE_MQTT_TLS
+        bc->tls_handshake_done = 1;
+#endif
     }
 
 #ifndef WOLFMQTT_STATIC_MEMORY
@@ -1854,6 +1968,34 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     int rc;
     int activity = 0;
 
+#ifdef ENABLE_MQTT_TLS
+    /* Complete TLS handshake before processing MQTT packets */
+    if (!bc->tls_handshake_done) {
+        int ret;
+        bc->client.tls.timeout_ms_read = BROKER_TIMEOUT_MS;
+        bc->client.tls.timeout_ms_write = BROKER_TIMEOUT_MS;
+        ret = wolfSSL_accept(bc->client.tls.ssl);
+        if (ret == WOLFSSL_SUCCESS) {
+            bc->tls_handshake_done = 1;
+            PRINTF("broker: TLS handshake done sock=%d %s",
+                (int)bc->sock, wolfSSL_get_version(bc->client.tls.ssl));
+            return 1; /* activity */
+        }
+        else {
+            int err = wolfSSL_get_error(bc->client.tls.ssl, ret);
+            if (err == WOLFSSL_ERROR_WANT_READ ||
+                err == WOLFSSL_ERROR_WANT_WRITE) {
+                return 0; /* handshake in progress */
+            }
+            PRINTF("broker: TLS handshake failed sock=%d err=%d",
+                (int)bc->sock, err);
+            BrokerSubs_RemoveClient(broker, bc);
+            BrokerClient_Remove(broker, bc);
+            return 0;
+        }
+    }
+#endif
+
     /* Try non-blocking read (timeout=0) */
 #ifdef WOLFMQTT_STATIC_MEMORY
     rc = MqttPacket_Read(&bc->client, bc->rx_buf, BROKER_RX_BUF_SZ, 0);
@@ -2035,7 +2177,20 @@ int MqttBroker_Run(MqttBroker* broker)
         return rc;
     }
 
-    PRINTF("broker: listening on port %d (no TLS)", broker->port);
+#if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+    if (broker->use_tls) {
+        rc = BrokerTls_Init(broker);
+        if (rc != MQTT_CODE_SUCCESS) {
+            PRINTF("broker: TLS init failed rc=%d", rc);
+            return rc;
+        }
+        PRINTF("broker: listening on port %d (TLS)", broker->port);
+    }
+    else
+#endif
+    {
+        PRINTF("broker: listening on port %d (no TLS)", broker->port);
+    }
     if (broker->auth_user || broker->auth_pass) {
         PRINTF("broker: auth enabled user=%s",
             broker->auth_user ? broker->auth_user : "(null)");
@@ -2092,6 +2247,10 @@ int MqttBroker_Free(MqttBroker* broker)
     /* Clean up retained messages */
     BrokerRetained_FreeAll(broker);
 
+#if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+    BrokerTls_Free(broker);
+#endif
+
     /* Close listen socket */
     if (broker->listen_sock != BROKER_SOCKET_INVALID) {
         broker->net.close(broker->net.ctx, broker->listen_sock);
@@ -2106,7 +2265,17 @@ int MqttBroker_Free(MqttBroker* broker)
 /* -------------------------------------------------------------------------- */
 static void BrokerUsage(const char* prog)
 {
-    PRINTF("usage: %s [-p port] [-u user] [-P pass]", prog);
+    PRINTF("usage: %s [-p port] [-u user] [-P pass]"
+#ifdef ENABLE_MQTT_TLS
+           " [-t] [-c cert] [-K key] [-A ca]"
+#endif
+           , prog);
+#ifdef ENABLE_MQTT_TLS
+    PRINTF("  -t          Enable TLS");
+    PRINTF("  -c <file>   Server certificate file (PEM)");
+    PRINTF("  -K <file>   Server private key file (PEM)");
+    PRINTF("  -A <file>   CA certificate for mutual TLS (PEM)");
+#endif
 }
 
 int wolfmqtt_broker(int argc, char** argv)
@@ -2148,6 +2317,23 @@ int wolfmqtt_broker(int argc, char** argv)
         else if (XSTRCMP(argv[i], "-P") == 0 && i + 1 < argc) {
             broker.auth_pass = argv[++i];
         }
+#ifdef ENABLE_MQTT_TLS
+        else if (XSTRCMP(argv[i], "-t") == 0) {
+            broker.use_tls = 1;
+            if (broker.port == MQTT_DEFAULT_PORT) {
+                broker.port = MQTT_SECURE_PORT;
+            }
+        }
+        else if (XSTRCMP(argv[i], "-c") == 0 && i + 1 < argc) {
+            broker.tls_cert = argv[++i];
+        }
+        else if (XSTRCMP(argv[i], "-K") == 0 && i + 1 < argc) {
+            broker.tls_key = argv[++i];
+        }
+        else if (XSTRCMP(argv[i], "-A") == 0 && i + 1 < argc) {
+            broker.tls_ca = argv[++i];
+        }
+#endif
         else if (XSTRCMP(argv[i], "-h") == 0) {
             BrokerUsage(argv[0]);
             return 0;
