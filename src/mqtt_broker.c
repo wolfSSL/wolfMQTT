@@ -82,6 +82,23 @@
     #define BROKER_LOG_PKT 1
 #endif
 
+/* Constant-time string comparison to prevent timing attacks on auth.
+ * Compares all bytes regardless of where differences occur.
+ * Returns 0 if equal, non-zero if different. */
+static int BrokerStrCompare(const char* a, const char* b)
+{
+    int result = 0;
+    int len_a = (int)XSTRLEN(a);
+    int len_b = (int)XSTRLEN(b);
+    int len = (len_a < len_b) ? len_a : len_b;
+    int i;
+    for (i = 0; i < len; i++) {
+        result |= (a[i] ^ b[i]);
+    }
+    result |= (len_a ^ len_b);
+    return result;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Default POSIX network backend                                               */
 /* -------------------------------------------------------------------------- */
@@ -1199,9 +1216,6 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
                 out_pub.topic_name = bc->will_topic;
                 eff_qos = (bc->will_qos < sub->qos) ?
                     bc->will_qos : sub->qos;
-                if (eff_qos > MQTT_QOS_1) {
-                    eff_qos = MQTT_QOS_1;
-                }
                 out_pub.qos = eff_qos;
                 out_pub.retain = 0;
                 out_pub.duplicate = 0;
@@ -1238,9 +1252,6 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
                 out_pub.topic_name = bc->will_topic;
                 eff_qos = (bc->will_qos < sub->qos) ?
                     bc->will_qos : sub->qos;
-                if (eff_qos > MQTT_QOS_1) {
-                    eff_qos = MQTT_QOS_1;
-                }
                 out_pub.qos = eff_qos;
                 out_pub.retain = 0;
                 out_pub.duplicate = 0;
@@ -1367,6 +1378,37 @@ static int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
     return MqttPacket_Write(&bc->client, bc->tx_buf, pos);
 }
 
+#ifdef WOLFMQTT_V5
+static int BrokerSend_Disconnect(BrokerClient* bc, byte reason_code)
+{
+    int rc;
+    MqttDisconnect disc;
+
+    if (bc == NULL ||
+        bc->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        return 0;
+    }
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    disc.protocol_level = bc->protocol_level;
+    disc.reason_code = reason_code;
+
+    rc = MqttEncode_Disconnect(bc->tx_buf,
+    #ifdef WOLFMQTT_STATIC_MEMORY
+        BROKER_TX_BUF_SZ,
+    #else
+        bc->tx_buf_len,
+    #endif
+        &disc);
+    if (rc > 0) {
+        PRINTF("broker: DISCONNECT send sock=%d reason=0x%02x",
+            (int)bc->sock, reason_code);
+        rc = MqttPacket_Write(&bc->client, bc->tx_buf, rc);
+    }
+    return rc;
+}
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* Packet handlers                                                             */
 /* -------------------------------------------------------------------------- */
@@ -1446,6 +1488,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 BrokerClient_PublishWill(broker, old);
             }
             else {
+                BrokerSend_Disconnect(old,
+                    MQTT_REASON_SESSION_TAKEN_OVER);
                 BrokerClient_ClearWill(old);
             }
 #else
@@ -1583,18 +1627,27 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         int auth_ok = 1;
         if (broker->auth_user && (bc->username == NULL ||
             bc->username[0] == '\0' ||
-            XSTRCMP(broker->auth_user, bc->username) != 0)) {
+            BrokerStrCompare(broker->auth_user, bc->username) != 0)) {
             auth_ok = 0;
         }
         if (broker->auth_pass && (bc->password == NULL ||
             bc->password[0] == '\0' ||
-            XSTRCMP(broker->auth_pass, bc->password) != 0)) {
+            BrokerStrCompare(broker->auth_pass, bc->password) != 0)) {
             auth_ok = 0;
         }
         if (!auth_ok) {
             PRINTF("broker: auth failed sock=%d user=%s", (int)bc->sock,
                 (bc->username && bc->username[0]) ? bc->username : "(null)");
-            ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+            }
+            else
+        #endif
+            {
+                ack.return_code =
+                    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+            }
         }
     }
 
@@ -1661,9 +1714,9 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
         MqttQoS topic_qos = sub.topics[i].qos;
         MqttQoS granted_qos;
 
-        /* Cap at QoS 1 for this broker */
-        if (topic_qos > MQTT_QOS_1) {
-            topic_qos = MQTT_QOS_1;
+        /* Cap at QoS 2 */
+        if (topic_qos > MQTT_QOS_2) {
+            topic_qos = MQTT_QOS_2;
         }
         granted_qos = topic_qos;
 
@@ -1741,7 +1794,13 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_V5
     ack.protocol_level = bc->protocol_level;
     ack.props = NULL;
-    ack.reason_codes = NULL;
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        byte reason = MQTT_REASON_SUCCESS;
+        ack.reason_codes = &reason;
+    }
+    else {
+        ack.reason_codes = NULL;
+    }
 #endif
     rc = MqttEncode_UnsubscribeAck(bc->tx_buf,
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -1826,11 +1885,8 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 MqttPublish out_pub;
                 XMEMSET(&out_pub, 0, sizeof(out_pub));
                 out_pub.topic_name = topic;
-                /* Effective QoS = min(publish_qos, sub_qos), capped at 1 */
+                /* Effective QoS = min(publish_qos, sub_qos) */
                 eff_qos = (pub.qos < sub->qos) ? pub.qos : sub->qos;
-                if (eff_qos > MQTT_QOS_1) {
-                    eff_qos = MQTT_QOS_1;
-                }
                 out_pub.qos = eff_qos;
                 if (eff_qos >= MQTT_QOS_1) {
                     out_pub.packet_id = BrokerNextPacketId(broker);
@@ -1865,9 +1921,6 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     XMEMSET(&out_pub, 0, sizeof(out_pub));
                     out_pub.topic_name = topic;
                     eff_qos = (pub.qos < sub->qos) ? pub.qos : sub->qos;
-                    if (eff_qos > MQTT_QOS_1) {
-                        eff_qos = MQTT_QOS_1;
-                    }
                     out_pub.qos = eff_qos;
                     if (eff_qos >= MQTT_QOS_1) {
                         out_pub.packet_id = BrokerNextPacketId(broker);
@@ -1975,6 +2028,49 @@ static int BrokerHandle_PublishRel(BrokerClient* bc, int rx_len)
     return rc;
 }
 
+/* Handle PUBREC from subscriber: broker sent QoS 2 PUBLISH, subscriber
+ * responds with PUBREC, broker sends PUBREL */
+static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
+{
+    int rc;
+    MqttPublishResp resp;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+#ifdef WOLFMQTT_V5
+    resp.protocol_level = bc->protocol_level;
+#endif
+    PRINTF("broker: PUBLISH_REC recv sock=%d len=%d", (int)bc->sock, rx_len);
+    rc = MqttDecode_PublishResp(bc->rx_buf, rx_len,
+            MQTT_PACKET_TYPE_PUBLISH_REC, &resp);
+    if (rc < 0) {
+        PRINTF("broker: PUBLISH_REC decode failed rc=%d", rc);
+        return rc;
+    }
+
+#ifdef WOLFMQTT_V5
+    resp.reason_code = MQTT_REASON_SUCCESS;
+    resp.props = NULL;
+#endif
+    rc = MqttEncode_PublishResp(bc->tx_buf,
+#ifdef WOLFMQTT_STATIC_MEMORY
+            BROKER_TX_BUF_SZ,
+#else
+            bc->tx_buf_len,
+#endif
+            MQTT_PACKET_TYPE_PUBLISH_REL, &resp);
+    if (rc > 0) {
+        PRINTF("broker: PUBREL send sock=%d packet_id=%u",
+            (int)bc->sock, resp.packet_id);
+        rc = MqttPacket_Write(&bc->client, bc->tx_buf, rc);
+    }
+#ifdef WOLFMQTT_V5
+    if (resp.props) {
+        (void)MqttProps_Free(resp.props);
+    }
+#endif
+    return rc;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Per-client processing (called from Step)                                    */
 /* -------------------------------------------------------------------------- */
@@ -1994,6 +2090,20 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             bc->tls_handshake_done = 1;
             PRINTF("broker: TLS handshake done sock=%d %s",
                 (int)bc->sock, wolfSSL_get_version(bc->client.tls.ssl));
+            /* Log client certificate subject if mutual TLS */
+            if (broker->tls_ca != NULL) {
+                WOLFSSL_X509* peer = wolfSSL_get_peer_certificate(
+                    bc->client.tls.ssl);
+                if (peer != NULL) {
+                    char subject[256];
+                    wolfSSL_X509_NAME_oneline(
+                        wolfSSL_X509_get_subject_name(peer), subject,
+                        (int)sizeof(subject));
+                    PRINTF("broker: TLS client cert sock=%d subject=%s",
+                        (int)bc->sock, subject);
+                    wolfSSL_X509_free(peer);
+                }
+            }
             return 1; /* activity */
         }
         else {
@@ -2053,8 +2163,22 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             case MQTT_PACKET_TYPE_PUBLISH:
                 (void)BrokerHandle_Publish(bc, rc, broker);
                 break;
+            case MQTT_PACKET_TYPE_PUBLISH_ACK:
+                /* QoS 1 ack from subscriber - delivery complete */
+                break;
+            case MQTT_PACKET_TYPE_PUBLISH_REC:
+                /* QoS 2 step 2: subscriber sends PUBREC, broker
+                 * responds with PUBREL */
+                (void)BrokerHandle_PublishRec(bc, rc);
+                break;
             case MQTT_PACKET_TYPE_PUBLISH_REL:
+                /* QoS 2 step 3: publisher sends PUBREL, broker
+                 * responds with PUBCOMP */
                 (void)BrokerHandle_PublishRel(bc, rc);
+                break;
+            case MQTT_PACKET_TYPE_PUBLISH_COMP:
+                /* QoS 2 step 4: subscriber sends PUBCOMP - delivery
+                 * complete */
                 break;
             case MQTT_PACKET_TYPE_SUBSCRIBE:
                 (void)BrokerHandle_Subscribe(bc, rc, broker);
@@ -2075,12 +2199,15 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
         }
     }
 
-    /* Check keepalive timeout */
+    /* Check keepalive timeout (MQTT spec 3.1.2.10: 1.5x keep alive) */
     if (bc->keep_alive_sec > 0) {
         WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
         if ((now - bc->last_rx) >
-            (WOLFMQTT_BROKER_TIME_T)(bc->keep_alive_sec * 2)) {
+            (WOLFMQTT_BROKER_TIME_T)(bc->keep_alive_sec * 3 / 2)) {
             PRINTF("broker: keepalive timeout sock=%d", (int)bc->sock);
+        #ifdef WOLFMQTT_V5
+            BrokerSend_Disconnect(bc, MQTT_REASON_KEEP_ALIVE_TIMEOUT);
+        #endif
             BrokerClient_PublishWill(broker, bc); /* abnormal disconnect */
             BrokerSubs_RemoveClient(broker, bc);
             BrokerClient_Remove(broker, bc);

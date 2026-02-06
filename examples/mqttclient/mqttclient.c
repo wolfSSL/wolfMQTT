@@ -625,6 +625,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
     mqttCtx->return_code = rc;
 
 disconn:
+    /* Preserve error code through disconnect */
+    if (rc != MQTT_CODE_SUCCESS) {
+        mqttCtx->return_code = rc;
+    }
+
     /* Disconnect */
     XMEMSET(&mqttCtx->disconnect, 0, sizeof(mqttCtx->disconnect));
 #ifdef WOLFMQTT_V5
@@ -668,7 +673,7 @@ exit:
 
     MqttClient_DeInit(&mqttCtx->client);
 
-    return rc;
+    return mqttCtx->return_code;
 }
 
 
