@@ -58,8 +58,9 @@ extern "C" {
 #include <stdint.h>
 #include <stdlib.h>  /* for rand() */
 
-/* Define word64 if not already defined (wolfMQTT only defines byte/word16/word32) */
-#ifndef word64
+/* word64 is defined by wolfSSL's wolfcrypt/types.h. Define it here only
+ * when not building with wolfSSL. */
+#ifndef WOLF_CRYPT_TYPES_H
     typedef uint64_t word64;
 #endif
 
