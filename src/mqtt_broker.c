@@ -2397,7 +2397,10 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             bc->tls_handshake_done = 1;
             PRINTF("broker: TLS handshake done sock=%d %s",
                 (int)bc->sock, wolfSSL_get_version(bc->client.tls.ssl));
-            /* Log client certificate CN if mutual TLS */
+            /* Log client certificate CN if mutual TLS.
+             * Requires wolfSSL built with KEEP_PEER_CERT or similar. */
+        #if defined(KEEP_PEER_CERT) || defined(OPENSSL_EXTRA) || \
+            defined(OPENSSL_EXTRA_X509_SMALL) || defined(SESSION_CERTS)
             if (broker->tls_ca != NULL) {
                 WOLFSSL_X509* peer = wolfSSL_get_peer_certificate(
                     bc->client.tls.ssl);
@@ -2408,6 +2411,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     wolfSSL_X509_free(peer);
                 }
             }
+        #endif
             return 1; /* activity */
         }
         else {
