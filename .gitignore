@@ -25,6 +25,7 @@ lt*.m4
 *.cache
 config.*
 configure
+configure~
 libtool
 libtool.m4
 *.log
@@ -123,3 +124,4 @@ examples/websocket/websocket_client
 # Never exclude Espressif config.h files
 !/IDE/Espressif/**/config.h
 
+src/mqtt_broker

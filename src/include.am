@@ -19,3 +19,13 @@ src_libwolfmqtt_la_LDFLAGS      = ${AM_LDFLAGS} -no-undefined -version-info ${WO
 src_libwolfmqtt_la_DEPENDENCIES =
 
 EXTRA_DIST +=
+
+if BUILD_BROKER
+bin_PROGRAMS += src/mqtt_broker
+src_mqtt_broker_SOURCES      = src/mqtt_broker.c
+src_mqtt_broker_CFLAGS       = $(AM_CFLAGS)
+src_mqtt_broker_CPPFLAGS     = $(AM_CPPFLAGS)
+src_mqtt_broker_LDFLAGS      = -Lsrc
+src_mqtt_broker_LDADD        = src/libwolfmqtt.la $(LTLIBEVENT) $(LIB_STATIC_ADD)
+src_mqtt_broker_DEPENDENCIES = src/libwolfmqtt.la
+endif

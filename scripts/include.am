@@ -23,3 +23,7 @@ else
 dist_noinst_SCRIPTS += scripts/stress.test
 endif # BUILD_STRESS
 endif # BUILD_EXAMPLES
+
+if BUILD_BROKER
+dist_noinst_SCRIPTS += scripts/broker.test
+endif # BUILD_BROKER
