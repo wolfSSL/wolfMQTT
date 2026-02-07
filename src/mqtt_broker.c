@@ -890,7 +890,7 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
 /* Retained message management                                                 */
 /* -------------------------------------------------------------------------- */
 static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
-    const byte* payload, word16 payload_len)
+    const byte* payload, word16 payload_len, word32 expiry_sec)
 {
     BrokerRetainedMsg* msg = NULL;
 
@@ -987,8 +987,11 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     }
 #endif
 
-    PRINTF("broker: retained store topic=%s len=%u", topic,
-        (unsigned)payload_len);
+    msg->store_time = WOLFMQTT_BROKER_GET_TIME_S();
+    msg->expiry_sec = expiry_sec;
+
+    PRINTF("broker: retained store topic=%s len=%u expiry=%u", topic,
+        (unsigned)payload_len, (unsigned)expiry_sec);
     return MQTT_CODE_SUCCESS;
 }
 
@@ -1076,6 +1079,7 @@ static void BrokerClient_ClearWill(BrokerClient* bc)
     bc->has_will = 0;
     bc->will_qos = MQTT_QOS_0;
     bc->will_retain = 0;
+    bc->will_delay_sec = 0;
     bc->will_payload_len = 0;
 #ifdef WOLFMQTT_STATIC_MEMORY
     bc->will_topic[0] = '\0';
@@ -1091,8 +1095,229 @@ static void BrokerClient_ClearWill(BrokerClient* bc)
 #endif
 }
 
-/* Forward declaration needed for BrokerClient_PublishWill */
+/* -------------------------------------------------------------------------- */
+/* Pending will management (v5 Will Delay Interval)                            */
+/* -------------------------------------------------------------------------- */
+
+/* Add a pending will to be published after delay expires */
+static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
+{
+    BrokerPendingWill* pw = NULL;
+    WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
+
+#ifdef WOLFMQTT_STATIC_MEMORY
+    {
+        int i;
+        for (i = 0; i < BROKER_MAX_PENDING_WILLS; i++) {
+            if (!broker->pending_wills[i].in_use) {
+                pw = &broker->pending_wills[i];
+                break;
+            }
+        }
+        if (pw == NULL) {
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMSET(pw, 0, sizeof(*pw));
+        pw->in_use = 1;
+        XSTRNCPY(pw->client_id, bc->client_id, BROKER_MAX_CLIENT_ID_LEN - 1);
+        XSTRNCPY(pw->topic, bc->will_topic, BROKER_MAX_TOPIC_LEN - 1);
+        if (bc->will_payload_len > 0) {
+            word16 len = bc->will_payload_len;
+            if (len > BROKER_MAX_PAYLOAD_LEN) {
+                len = BROKER_MAX_PAYLOAD_LEN;
+            }
+            XMEMCPY(pw->payload, bc->will_payload, len);
+            pw->payload_len = len;
+        }
+    }
+#else
+    pw = (BrokerPendingWill*)WOLFMQTT_MALLOC(sizeof(BrokerPendingWill));
+    if (pw == NULL) {
+        return MQTT_CODE_ERROR_MEMORY;
+    }
+    XMEMSET(pw, 0, sizeof(*pw));
+    {
+        int id_len = (int)XSTRLEN(bc->client_id);
+        pw->client_id = (char*)WOLFMQTT_MALLOC((size_t)id_len + 1);
+        if (pw->client_id == NULL) {
+            WOLFMQTT_FREE(pw);
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMCPY(pw->client_id, bc->client_id, (size_t)id_len + 1);
+    }
+    {
+        int t_len = (int)XSTRLEN(bc->will_topic);
+        pw->topic = (char*)WOLFMQTT_MALLOC((size_t)t_len + 1);
+        if (pw->topic == NULL) {
+            WOLFMQTT_FREE(pw->client_id);
+            WOLFMQTT_FREE(pw);
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMCPY(pw->topic, bc->will_topic, (size_t)t_len + 1);
+    }
+    if (bc->will_payload_len > 0) {
+        pw->payload = (byte*)WOLFMQTT_MALLOC(bc->will_payload_len);
+        if (pw->payload == NULL) {
+            WOLFMQTT_FREE(pw->topic);
+            WOLFMQTT_FREE(pw->client_id);
+            WOLFMQTT_FREE(pw);
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        XMEMCPY(pw->payload, bc->will_payload, bc->will_payload_len);
+        pw->payload_len = bc->will_payload_len;
+    }
+    pw->next = broker->pending_wills;
+    broker->pending_wills = pw;
+#endif
+    pw->qos = bc->will_qos;
+    pw->retain = bc->will_retain;
+    pw->publish_time = now + (WOLFMQTT_BROKER_TIME_T)bc->will_delay_sec;
+
+    PRINTF("broker: will deferred sock=%d client_id=%s delay=%u",
+        (int)bc->sock, bc->client_id, (unsigned)bc->will_delay_sec);
+    return MQTT_CODE_SUCCESS;
+}
+
+/* Cancel a pending will for the given client_id (client reconnected) */
+static void BrokerPendingWill_Cancel(MqttBroker* broker,
+    const char* client_id)
+{
+    if (broker == NULL || client_id == NULL) {
+        return;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    {
+        int i;
+        for (i = 0; i < BROKER_MAX_PENDING_WILLS; i++) {
+            if (broker->pending_wills[i].in_use &&
+                XSTRCMP(broker->pending_wills[i].client_id, client_id) == 0) {
+                PRINTF("broker: will cancelled client_id=%s", client_id);
+                XMEMSET(&broker->pending_wills[i], 0,
+                    sizeof(BrokerPendingWill));
+                return;
+            }
+        }
+    }
+#else
+    {
+        BrokerPendingWill* pw = broker->pending_wills;
+        BrokerPendingWill* prev = NULL;
+        while (pw) {
+            BrokerPendingWill* next = pw->next;
+            if (pw->client_id != NULL &&
+                XSTRCMP(pw->client_id, client_id) == 0) {
+                PRINTF("broker: will cancelled client_id=%s", client_id);
+                if (prev) {
+                    prev->next = next;
+                }
+                else {
+                    broker->pending_wills = next;
+                }
+                WOLFMQTT_FREE(pw->client_id);
+                if (pw->topic) WOLFMQTT_FREE(pw->topic);
+                if (pw->payload) WOLFMQTT_FREE(pw->payload);
+                WOLFMQTT_FREE(pw);
+                return;
+            }
+            prev = pw;
+            pw = next;
+        }
+    }
+#endif
+}
+
+static void BrokerPendingWill_FreeAll(MqttBroker* broker)
+{
+    if (broker == NULL) {
+        return;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    XMEMSET(broker->pending_wills, 0, sizeof(broker->pending_wills));
+#else
+    {
+        BrokerPendingWill* pw = broker->pending_wills;
+        while (pw) {
+            BrokerPendingWill* next = pw->next;
+            if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
+            if (pw->topic) WOLFMQTT_FREE(pw->topic);
+            if (pw->payload) WOLFMQTT_FREE(pw->payload);
+            WOLFMQTT_FREE(pw);
+            pw = next;
+        }
+        broker->pending_wills = NULL;
+    }
+#endif
+}
+
+/* Forward declarations */
 static int BrokerTopicMatch(const char* filter, const char* topic);
+static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
+    const char* topic, const byte* payload, word16 payload_len,
+    MqttQoS qos, byte retain);
+
+/* Process pending wills - publish any that have expired their delay */
+static int BrokerPendingWill_Process(MqttBroker* broker)
+{
+    int activity = 0;
+    WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
+
+    if (broker == NULL) {
+        return 0;
+    }
+
+#ifdef WOLFMQTT_STATIC_MEMORY
+    {
+        int i;
+        for (i = 0; i < BROKER_MAX_PENDING_WILLS; i++) {
+            BrokerPendingWill* pw = &broker->pending_wills[i];
+            if (!pw->in_use) {
+                continue;
+            }
+            if (now >= pw->publish_time) {
+                PRINTF("broker: LWT deferred publish client_id=%s topic=%s "
+                    "len=%u", pw->client_id, pw->topic,
+                    (unsigned)pw->payload_len);
+                BrokerClient_PublishWillImmediate(broker, pw->topic,
+                    pw->payload, pw->payload_len, pw->qos, pw->retain);
+                XMEMSET(pw, 0, sizeof(BrokerPendingWill));
+                activity = 1;
+            }
+        }
+    }
+#else
+    {
+        BrokerPendingWill* pw = broker->pending_wills;
+        BrokerPendingWill* prev = NULL;
+        while (pw) {
+            BrokerPendingWill* next = pw->next;
+            if (now >= pw->publish_time) {
+                PRINTF("broker: LWT deferred publish client_id=%s topic=%s "
+                    "len=%u", pw->client_id, pw->topic,
+                    (unsigned)pw->payload_len);
+                BrokerClient_PublishWillImmediate(broker, pw->topic,
+                    pw->payload, pw->payload_len, pw->qos, pw->retain);
+                if (prev) {
+                    prev->next = next;
+                }
+                else {
+                    broker->pending_wills = next;
+                }
+                if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
+                if (pw->topic) WOLFMQTT_FREE(pw->topic);
+                if (pw->payload) WOLFMQTT_FREE(pw->payload);
+                WOLFMQTT_FREE(pw);
+                activity = 1;
+            }
+            else {
+                prev = pw;
+            }
+            pw = next;
+        }
+    }
+#endif
+
+    return activity;
+}
 
 static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     BrokerClient* bc, const char* filter, MqttQoS sub_qos)
@@ -1100,6 +1325,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     if (broker == NULL || bc == NULL || filter == NULL) {
         return;
     }
+    WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
     (void)sub_qos; /* retained always delivered at QoS 0 in this broker */
 
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -1108,6 +1334,13 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         for (i = 0; i < BROKER_MAX_RETAINED; i++) {
             BrokerRetainedMsg* rm = &broker->retained[i];
             if (!rm->in_use || rm->topic[0] == '\0') {
+                continue;
+            }
+            /* Skip expired messages */
+            if (rm->expiry_sec > 0 &&
+                (now - rm->store_time) >= rm->expiry_sec) {
+                PRINTF("broker: retained expired topic=%s", rm->topic);
+                XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
                 continue;
             }
             if (BrokerTopicMatch(filter, rm->topic)) {
@@ -1137,7 +1370,25 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
 #else
     {
         BrokerRetainedMsg* rm = broker->retained;
+        BrokerRetainedMsg* rm_prev = NULL;
         while (rm) {
+            BrokerRetainedMsg* rm_next = rm->next;
+            /* Skip and remove expired messages */
+            if (rm->expiry_sec > 0 &&
+                (now - rm->store_time) >= rm->expiry_sec) {
+                PRINTF("broker: retained expired topic=%s", rm->topic);
+                if (rm_prev) {
+                    rm_prev->next = rm_next;
+                }
+                else {
+                    broker->retained = rm_next;
+                }
+                if (rm->topic) WOLFMQTT_FREE(rm->topic);
+                if (rm->payload) WOLFMQTT_FREE(rm->payload);
+                WOLFMQTT_FREE(rm);
+                rm = rm_next;
+                continue;
+            }
             if (rm->topic != NULL && BrokerTopicMatch(filter, rm->topic)) {
                 MqttPublish out_pub;
                 int enc_rc;
@@ -1160,7 +1411,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
                 }
             }
-            rm = rm->next;
+            rm_prev = rm;
+            rm = rm_next;
         }
     }
 #endif
@@ -1182,17 +1434,41 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
     }
 #endif
 
+    /* v5 Will Delay Interval: defer publication */
+    if (bc->will_delay_sec > 0) {
+        if (BrokerPendingWill_Add(broker, bc) == MQTT_CODE_SUCCESS) {
+            BrokerClient_ClearWill(bc);
+            return; /* will deferred, not published now */
+        }
+        /* If add failed (out of slots), publish immediately as fallback */
+    }
+
     PRINTF("broker: LWT publish sock=%d topic=%s len=%u",
         (int)bc->sock, bc->will_topic, (unsigned)bc->will_payload_len);
 
+    BrokerClient_PublishWillImmediate(broker, bc->will_topic,
+        bc->will_payload, bc->will_payload_len, bc->will_qos,
+        bc->will_retain);
+    BrokerClient_ClearWill(bc);
+}
+
+/* Publish a will message immediately (shared by direct and deferred paths) */
+static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
+    const char* topic, const byte* payload, word16 payload_len,
+    MqttQoS qos, byte retain)
+{
+    if (broker == NULL || topic == NULL) {
+        return;
+    }
+
     /* Handle retain flag on will message */
-    if (bc->will_retain) {
-        if (bc->will_payload_len == 0) {
-            BrokerRetained_Delete(broker, bc->will_topic);
+    if (retain) {
+        if (payload_len == 0) {
+            BrokerRetained_Delete(broker, topic);
         }
         else {
-            (void)BrokerRetained_Store(broker, bc->will_topic,
-                bc->will_payload, bc->will_payload_len);
+            (void)BrokerRetained_Store(broker, topic, payload,
+                payload_len, 0);
         }
     }
 
@@ -1207,21 +1483,18 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
                 sub->filter[0] == '\0') {
                 continue;
             }
-            if (sub->client != bc &&
-                BrokerTopicMatch(sub->filter, bc->will_topic)) {
+            if (BrokerTopicMatch(sub->filter, topic)) {
                 MqttPublish out_pub;
                 MqttQoS eff_qos;
                 int enc_rc;
                 XMEMSET(&out_pub, 0, sizeof(out_pub));
-                out_pub.topic_name = bc->will_topic;
-                eff_qos = (bc->will_qos < sub->qos) ?
-                    bc->will_qos : sub->qos;
+                out_pub.topic_name = (char*)topic;
+                eff_qos = (qos < sub->qos) ? qos : sub->qos;
                 out_pub.qos = eff_qos;
                 out_pub.retain = 0;
                 out_pub.duplicate = 0;
-                out_pub.buffer = (bc->will_payload_len > 0) ?
-                    bc->will_payload : NULL;
-                out_pub.total_len = bc->will_payload_len;
+                out_pub.buffer = (payload_len > 0) ? (byte*)payload : NULL;
+                out_pub.total_len = payload_len;
                 if (eff_qos >= MQTT_QOS_1) {
                     out_pub.packet_id = BrokerNextPacketId(broker);
                 }
@@ -1241,23 +1514,21 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
     {
         BrokerSub* sub = broker->subs;
         while (sub) {
-            if (sub->client != NULL && sub->client != bc &&
+            if (sub->client != NULL &&
                 sub->client->protocol_level != 0 &&
                 sub->filter != NULL &&
-                BrokerTopicMatch(sub->filter, bc->will_topic)) {
+                BrokerTopicMatch(sub->filter, topic)) {
                 MqttPublish out_pub;
                 MqttQoS eff_qos;
                 int enc_rc;
                 XMEMSET(&out_pub, 0, sizeof(out_pub));
-                out_pub.topic_name = bc->will_topic;
-                eff_qos = (bc->will_qos < sub->qos) ?
-                    bc->will_qos : sub->qos;
+                out_pub.topic_name = (char*)topic;
+                eff_qos = (qos < sub->qos) ? qos : sub->qos;
                 out_pub.qos = eff_qos;
                 out_pub.retain = 0;
                 out_pub.duplicate = 0;
-                out_pub.buffer = (bc->will_payload_len > 0) ?
-                    bc->will_payload : NULL;
-                out_pub.total_len = bc->will_payload_len;
+                out_pub.buffer = (payload_len > 0) ? (byte*)payload : NULL;
+                out_pub.total_len = payload_len;
                 if (eff_qos >= MQTT_QOS_1) {
                     out_pub.packet_id = BrokerNextPacketId(broker);
                 }
@@ -1275,8 +1546,6 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
         }
     }
 #endif
-
-    BrokerClient_ClearWill(bc);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1379,6 +1648,19 @@ static int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
 }
 
 #ifdef WOLFMQTT_V5
+/* Find a property by type in a property list */
+static MqttProp* BrokerProps_Find(MqttProp* head, MqttPropertyType type)
+{
+    MqttProp* prop = head;
+    while (prop != NULL) {
+        if (prop->type == type) {
+            return prop;
+        }
+        prop = prop->next;
+    }
+    return NULL;
+}
+
 static int BrokerSend_Disconnect(BrokerClient* bc, byte reason_code)
 {
     int rc;
@@ -1477,8 +1759,12 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     /* Client ID uniqueness and clean session handling */
     bc->clean_session = mc.clean_session;
     if (bc->client_id[0] != '\0') {
-        BrokerClient* old = BrokerClient_FindByClientId(broker,
-            bc->client_id, bc);
+        BrokerClient* old;
+
+        /* Cancel any pending will for this client_id (reconnect) */
+        BrokerPendingWill_Cancel(broker, bc->client_id);
+
+        old = BrokerClient_FindByClientId(broker, bc->client_id, bc);
         if (old != NULL) {
             PRINTF("broker: duplicate client_id=%s, disconnecting "
                 "old sock=%d", bc->client_id, (int)old->sock);
@@ -1549,11 +1835,22 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         }
         bc->will_qos = mc.lwt_msg->qos;
         bc->will_retain = mc.lwt_msg->retain;
+        bc->will_delay_sec = 0;
+#ifdef WOLFMQTT_V5
+        if (mc.lwt_msg->props != NULL) {
+            MqttProp* prop = BrokerProps_Find(mc.lwt_msg->props,
+                MQTT_PROP_WILL_DELAY_INTERVAL);
+            if (prop != NULL) {
+                bc->will_delay_sec = prop->data_int;
+            }
+        }
+#endif
         bc->has_will = 1;
         PRINTF("broker: LWT stored sock=%d topic=%s qos=%d retain=%d "
-            "len=%u", (int)bc->sock, bc->will_topic,
+            "len=%u delay=%u", (int)bc->sock, bc->will_topic,
             bc->will_qos, bc->will_retain,
-            (unsigned)bc->will_payload_len);
+            (unsigned)bc->will_payload_len,
+            (unsigned)bc->will_delay_sec);
     }
 
     /* Store credentials */
@@ -1864,8 +2161,18 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             BrokerRetained_Delete(broker, topic);
         }
         else if (payload != NULL) {
+            word32 expiry = 0;
+#ifdef WOLFMQTT_V5
+            if (pub.props != NULL) {
+                MqttProp* prop = BrokerProps_Find(pub.props,
+                    MQTT_PROP_MSG_EXPIRY_INTERVAL);
+                if (prop != NULL) {
+                    expiry = prop->data_int;
+                }
+            }
+#endif
             (void)BrokerRetained_Store(broker, topic, payload,
-                (word16)pub.total_len);
+                (word16)pub.total_len, expiry);
         }
     }
 
@@ -2090,27 +2397,17 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             bc->tls_handshake_done = 1;
             PRINTF("broker: TLS handshake done sock=%d %s",
                 (int)bc->sock, wolfSSL_get_version(bc->client.tls.ssl));
-            /* Log client certificate subject if mutual TLS (requires wolfSSL OPENSSL_EXTRA) */
-#if defined(OPENSSL_EXTRA)
+            /* Log client certificate CN if mutual TLS */
             if (broker->tls_ca != NULL) {
                 WOLFSSL_X509* peer = wolfSSL_get_peer_certificate(
                     bc->client.tls.ssl);
                 if (peer != NULL) {
-                    char subject[256];
-                    wolfSSL_X509_NAME_oneline(
-                        wolfSSL_X509_get_subject_name(peer), subject,
-                        (int)sizeof(subject));
-                    PRINTF("broker: TLS client cert sock=%d subject=%s",
-                        (int)bc->sock, subject);
+                    char* cn = wolfSSL_X509_get_subjectCN(peer);
+                    PRINTF("broker: TLS client cert sock=%d CN=%s",
+                        (int)bc->sock, cn ? cn : "(unknown)");
                     wolfSSL_X509_free(peer);
                 }
             }
-#else
-            if (broker->tls_ca != NULL) {
-                PRINTF("broker: TLS client cert sock=%d (mutual TLS)",
-                    (int)bc->sock);
-            }
-#endif
             return 1; /* activity */
         }
         else {
@@ -2307,6 +2604,11 @@ int MqttBroker_Step(MqttBroker* broker)
     }
 #endif
 
+    /* 3. Process pending wills (v5 Will Delay Interval) */
+    if (BrokerPendingWill_Process(broker) > 0) {
+        activity = 1;
+    }
+
     return activity ? MQTT_CODE_SUCCESS : MQTT_CODE_CONTINUE;
 }
 
@@ -2393,7 +2695,8 @@ int MqttBroker_Free(MqttBroker* broker)
     }
 #endif
 
-    /* Clean up retained messages */
+    /* Clean up pending wills and retained messages */
+    BrokerPendingWill_FreeAll(broker);
     BrokerRetained_FreeAll(broker);
 
 #if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)

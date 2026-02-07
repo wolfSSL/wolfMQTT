@@ -96,6 +96,9 @@
 #ifndef BROKER_MAX_PAYLOAD_LEN
     #define BROKER_MAX_PAYLOAD_LEN   4096
 #endif
+#ifndef BROKER_MAX_PENDING_WILLS
+    #define BROKER_MAX_PENDING_WILLS 4
+#endif
 
 /* -------------------------------------------------------------------------- */
 /* Forward declarations                                                        */
@@ -158,6 +161,7 @@ typedef struct BrokerClient {
     word16  will_payload_len;
     MqttQoS will_qos;
     byte    will_retain;
+    word32  will_delay_sec;     /* v5 Will Delay Interval (seconds) */
     MqttNet net;
     MqttClient client;
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
@@ -195,7 +199,30 @@ typedef struct BrokerRetainedMsg {
     struct BrokerRetainedMsg* next;
 #endif
     word16  payload_len;
+    WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
+    word32  expiry_sec;                 /* v5 message expiry (0=none) */
 } BrokerRetainedMsg;
+
+/* -------------------------------------------------------------------------- */
+/* Pending will messages (v5 Will Delay Interval)                              */
+/* -------------------------------------------------------------------------- */
+typedef struct BrokerPendingWill {
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    in_use;
+    char    client_id[BROKER_MAX_CLIENT_ID_LEN];
+    char    topic[BROKER_MAX_TOPIC_LEN];
+    byte    payload[BROKER_MAX_PAYLOAD_LEN];
+#else
+    char*   client_id;
+    char*   topic;
+    byte*   payload;
+    struct BrokerPendingWill* next;
+#endif
+    word16  payload_len;
+    MqttQoS qos;
+    byte    retain;
+    WOLFMQTT_BROKER_TIME_T publish_time; /* absolute time to publish */
+} BrokerPendingWill;
 
 /* -------------------------------------------------------------------------- */
 /* Broker context                                                              */
@@ -220,10 +247,12 @@ typedef struct MqttBroker {
     BrokerClient clients[BROKER_MAX_CLIENTS];
     BrokerSub    subs[BROKER_MAX_SUBS];
     BrokerRetainedMsg retained[BROKER_MAX_RETAINED];
+    BrokerPendingWill pending_wills[BROKER_MAX_PENDING_WILLS];
 #else
     BrokerClient* clients;
     BrokerSub*    subs;
     BrokerRetainedMsg* retained;
+    BrokerPendingWill* pending_wills;
 #endif
 } MqttBroker;
 

@@ -139,7 +139,8 @@ echo ""
 echo "--- Test 5: Last Will and Testament ---"
 # LWT topic is hardcoded as "wolfMQTT/example/lwttopic", payload is the client ID
 # Use mqtt-sub as the LWT watcher
-timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
+# Note: v5 clients set Will Delay Interval=5s, so watcher must stay alive long enough
+timeout 20 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
     >"${TMP_DIR}/t4_sub.log" 2>&1 &
 T4_SUB_PID=$!
 TEST_PIDS+=($T4_SUB_PID)
@@ -153,7 +154,7 @@ TEST_PIDS+=($T4_CLIENT_PID)
 sleep 2
 kill -9 $T4_CLIENT_PID 2>/dev/null
 wait $T4_CLIENT_PID 2>/dev/null || true
-sleep 2
+sleep 8
 kill $T4_SUB_PID 2>/dev/null
 wait $T4_SUB_PID 2>/dev/null || true
 TEST_PIDS=()
@@ -168,7 +169,8 @@ fi
 echo ""
 echo "--- Test 6: Keep-alive enforcement ---"
 # Subscriber watches the LWT topic
-timeout 15 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
+# Note: v5 clients set Will Delay Interval=5s on top of keepalive timeout
+timeout 25 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
     >"${TMP_DIR}/t5_sub.log" 2>&1 &
 T5_SUB_PID=$!
 TEST_PIDS+=($T5_SUB_PID)
@@ -181,8 +183,9 @@ TEST_PIDS+=($T5_CLIENT_PID)
 sleep 2
 # Freeze the client so it stops sending PINGREQs
 kill -STOP $T5_CLIENT_PID 2>/dev/null
-# Wait for broker to detect keepalive timeout (1.5x keep_alive = 3s + margin)
-sleep 5
+# Wait for broker to detect keepalive timeout (1.5x * 2s = 3s)
+# plus v5 will delay interval (5s) + margin
+sleep 10
 kill -9 $T5_CLIENT_PID 2>/dev/null
 wait $T5_CLIENT_PID 2>/dev/null || true
 kill $T5_SUB_PID 2>/dev/null
