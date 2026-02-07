@@ -190,6 +190,34 @@ add_option(WOLFMQTT_BROKER
            "no" "yes;no")
 if (WOLFMQTT_BROKER)
     list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER")
+
+    add_option(WOLFMQTT_BROKER_RETAINED
+               "Enable broker retained message support"
+               "yes" "yes;no")
+    if (NOT WOLFMQTT_BROKER_RETAINED)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER_NO_RETAINED")
+    endif()
+
+    add_option(WOLFMQTT_BROKER_WILL
+               "Enable broker Last Will and Testament support"
+               "yes" "yes;no")
+    if (NOT WOLFMQTT_BROKER_WILL)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER_NO_WILL")
+    endif()
+
+    add_option(WOLFMQTT_BROKER_WILDCARDS
+               "Enable broker wildcard topic matching"
+               "yes" "yes;no")
+    if (NOT WOLFMQTT_BROKER_WILDCARDS)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER_NO_WILDCARDS")
+    endif()
+
+    add_option(WOLFMQTT_BROKER_AUTH
+               "Enable broker username/password authentication"
+               "yes" "yes;no")
+    if (NOT WOLFMQTT_BROKER_AUTH)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER_NO_AUTH")
+    endif()
 endif()
 
 # Note: not adding stress option to cmake build as of yet. stress is for

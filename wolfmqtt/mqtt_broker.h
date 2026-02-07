@@ -70,10 +70,10 @@
 
 /* Static allocation limits */
 #ifndef BROKER_MAX_CLIENTS
-    #define BROKER_MAX_CLIENTS       16
+    #define BROKER_MAX_CLIENTS       8
 #endif
 #ifndef BROKER_MAX_SUBS
-    #define BROKER_MAX_SUBS          64
+    #define BROKER_MAX_SUBS          32
 #endif
 #ifndef BROKER_MAX_CLIENT_ID_LEN
     #define BROKER_MAX_CLIENT_ID_LEN 64
@@ -96,8 +96,27 @@
 #ifndef BROKER_MAX_PAYLOAD_LEN
     #define BROKER_MAX_PAYLOAD_LEN   4096
 #endif
+#ifndef BROKER_MAX_WILL_PAYLOAD_LEN
+    #define BROKER_MAX_WILL_PAYLOAD_LEN 256
+#endif
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
+#endif
+
+/* -------------------------------------------------------------------------- */
+/* Feature toggles (opt-out: define WOLFMQTT_BROKER_NO_xxx to disable)        */
+/* -------------------------------------------------------------------------- */
+#ifndef WOLFMQTT_BROKER_NO_RETAINED
+    #define WOLFMQTT_BROKER_RETAINED
+#endif
+#ifndef WOLFMQTT_BROKER_NO_WILL
+    #define WOLFMQTT_BROKER_WILL
+#endif
+#ifndef WOLFMQTT_BROKER_NO_WILDCARDS
+    #define WOLFMQTT_BROKER_WILDCARDS
+#endif
+#ifndef WOLFMQTT_BROKER_NO_AUTH
+    #define WOLFMQTT_BROKER_AUTH
 #endif
 
 /* -------------------------------------------------------------------------- */
@@ -134,22 +153,30 @@ typedef struct BrokerClient {
 #ifdef WOLFMQTT_STATIC_MEMORY
     byte    in_use;
     char    client_id[BROKER_MAX_CLIENT_ID_LEN];
+#ifdef WOLFMQTT_BROKER_AUTH
     char    username[BROKER_MAX_USERNAME_LEN];
     char    password[BROKER_MAX_PASSWORD_LEN];
+#endif
     byte    tx_buf[BROKER_TX_BUF_SZ];
     byte    rx_buf[BROKER_RX_BUF_SZ];
+#ifdef WOLFMQTT_BROKER_WILL
     char    will_topic[BROKER_MAX_TOPIC_LEN];
-    byte    will_payload[BROKER_MAX_PAYLOAD_LEN];
+    byte    will_payload[BROKER_MAX_WILL_PAYLOAD_LEN];
+#endif
 #else
     char*   client_id;
+#ifdef WOLFMQTT_BROKER_AUTH
     char*   username;
     char*   password;
+#endif
     byte*   tx_buf;
     byte*   rx_buf;
     int     tx_buf_len;
     int     rx_buf_len;
+#ifdef WOLFMQTT_BROKER_WILL
     char*   will_topic;
     byte*   will_payload;
+#endif
     struct BrokerClient* next;
 #endif
     BROKER_SOCKET_T sock;
@@ -157,11 +184,13 @@ typedef struct BrokerClient {
     word16  keep_alive_sec;
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
+#ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;
     MqttQoS will_qos;
     byte    will_retain;
     word32  will_delay_sec;     /* v5 Will Delay Interval (seconds) */
+#endif
     MqttNet net;
     MqttClient client;
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
@@ -188,6 +217,7 @@ typedef struct BrokerSub {
 /* -------------------------------------------------------------------------- */
 /* Retained message store                                                      */
 /* -------------------------------------------------------------------------- */
+#ifdef WOLFMQTT_BROKER_RETAINED
 typedef struct BrokerRetainedMsg {
 #ifdef WOLFMQTT_STATIC_MEMORY
     byte    in_use;
@@ -202,16 +232,18 @@ typedef struct BrokerRetainedMsg {
     WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
 } BrokerRetainedMsg;
+#endif /* WOLFMQTT_BROKER_RETAINED */
 
 /* -------------------------------------------------------------------------- */
 /* Pending will messages (v5 Will Delay Interval)                              */
 /* -------------------------------------------------------------------------- */
+#ifdef WOLFMQTT_BROKER_WILL
 typedef struct BrokerPendingWill {
 #ifdef WOLFMQTT_STATIC_MEMORY
     byte    in_use;
     char    client_id[BROKER_MAX_CLIENT_ID_LEN];
     char    topic[BROKER_MAX_TOPIC_LEN];
-    byte    payload[BROKER_MAX_PAYLOAD_LEN];
+    byte    payload[BROKER_MAX_WILL_PAYLOAD_LEN];
 #else
     char*   client_id;
     char*   topic;
@@ -223,6 +255,7 @@ typedef struct BrokerPendingWill {
     byte    retain;
     WOLFMQTT_BROKER_TIME_T publish_time; /* absolute time to publish */
 } BrokerPendingWill;
+#endif /* WOLFMQTT_BROKER_WILL */
 
 /* -------------------------------------------------------------------------- */
 /* Broker context                                                              */
@@ -231,8 +264,10 @@ typedef struct MqttBroker {
     BROKER_SOCKET_T listen_sock;
     word16  port;
     int     running;
+#ifdef WOLFMQTT_BROKER_AUTH
     const char* auth_user;
     const char* auth_pass;
+#endif
     MqttBrokerNet net;
     word16  next_packet_id;
 #ifdef ENABLE_MQTT_TLS
@@ -246,13 +281,21 @@ typedef struct MqttBroker {
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerClient clients[BROKER_MAX_CLIENTS];
     BrokerSub    subs[BROKER_MAX_SUBS];
+#ifdef WOLFMQTT_BROKER_RETAINED
     BrokerRetainedMsg retained[BROKER_MAX_RETAINED];
+#endif
+#ifdef WOLFMQTT_BROKER_WILL
     BrokerPendingWill pending_wills[BROKER_MAX_PENDING_WILLS];
+#endif
 #else
     BrokerClient* clients;
     BrokerSub*    subs;
+#ifdef WOLFMQTT_BROKER_RETAINED
     BrokerRetainedMsg* retained;
+#endif
+#ifdef WOLFMQTT_BROKER_WILL
     BrokerPendingWill* pending_wills;
+#endif
 #endif
 } MqttBroker;
 

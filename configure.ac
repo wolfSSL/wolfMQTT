@@ -417,6 +417,47 @@ then
 AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER"
 fi
 
+# Broker feature toggles (only relevant when --enable-broker)
+AC_ARG_ENABLE([broker-retained],
+[AS_HELP_STRING([--disable-broker-retained],[Disable broker retained message support])],
+[ ENABLED_BROKER_RETAINED=$enableval ],
+[ ENABLED_BROKER_RETAINED=yes ]
+)
+if test "x$ENABLED_BROKER_RETAINED" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_RETAINED"
+fi
+
+AC_ARG_ENABLE([broker-will],
+[AS_HELP_STRING([--disable-broker-will],[Disable broker Last Will and Testament support])],
+[ ENABLED_BROKER_WILL=$enableval ],
+[ ENABLED_BROKER_WILL=yes ]
+)
+if test "x$ENABLED_BROKER_WILL" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_WILL"
+fi
+
+AC_ARG_ENABLE([broker-wildcards],
+[AS_HELP_STRING([--disable-broker-wildcards],[Disable broker wildcard subscription support])],
+[ ENABLED_BROKER_WILDCARDS=$enableval ],
+[ ENABLED_BROKER_WILDCARDS=yes ]
+)
+if test "x$ENABLED_BROKER_WILDCARDS" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_WILDCARDS"
+fi
+
+AC_ARG_ENABLE([broker-auth],
+[AS_HELP_STRING([--disable-broker-auth],[Disable broker username/password authentication])],
+[ ENABLED_BROKER_AUTH=$enableval ],
+[ ENABLED_BROKER_AUTH=yes ]
+)
+if test "x$ENABLED_BROKER_AUTH" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_AUTH"
+fi
+
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])

@@ -72,6 +72,17 @@ FAIL=0
 
 echo "=== wolfMQTT Broker Test Suite ==="
 
+# Feature detection via broker help output
+broker_features=$(./$broker_bin -h 2>&1 | grep "Features:")
+has_auth=no
+has_retained=no
+has_will=no
+has_wildcards=no
+echo "$broker_features" | grep -q "auth" && has_auth=yes
+echo "$broker_features" | grep -q "retained" && has_retained=yes
+echo "$broker_features" | grep -q " will" && has_will=yes
+echo "$broker_features" | grep -q "wildcards" && has_wildcards=yes
+
 # Start plain broker for tests 1-6
 start_broker
 
@@ -114,6 +125,9 @@ fi
 # --- Test 4: Retained message ---
 echo ""
 echo "--- Test 4: Retained message ---"
+if [ "$has_retained" = "no" ]; then
+    echo "SKIP: Retained message (not built with retained support)"
+else
 # Publish a retained message (-T disables stdin capture for background use)
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/retain" -m "retained_msg" -r \
     >"${TMP_DIR}/t4_pub.log" 2>&1
@@ -133,10 +147,14 @@ else
     echo "FAIL: Retained message"
     FAIL=1
 fi
+fi # has_retained
 
 # --- Test 5: Last Will and Testament ---
 echo ""
 echo "--- Test 5: Last Will and Testament ---"
+if [ "$has_will" = "no" ]; then
+    echo "SKIP: LWT (not built with will support)"
+else
 # LWT topic is hardcoded as "wolfMQTT/example/lwttopic", payload is the client ID
 # Use mqtt-sub as the LWT watcher
 # Note: v5 clients set Will Delay Interval=5s, so watcher must stay alive long enough
@@ -164,10 +182,14 @@ else
     echo "FAIL: LWT not delivered"
     FAIL=1
 fi
+fi # has_will
 
 # --- Test 6: Keep-alive timeout enforcement ---
 echo ""
 echo "--- Test 6: Keep-alive enforcement ---"
+if [ "$has_will" = "no" ]; then
+    echo "SKIP: Keep-alive enforcement (not built with will support)"
+else
 # Subscriber watches the LWT topic
 # Note: v5 clients set Will Delay Interval=5s on top of keepalive timeout
 timeout 25 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
@@ -197,10 +219,14 @@ else
     echo "FAIL: Keep-alive enforcement"
     FAIL=1
 fi
+fi # has_will
 
 # --- Test 7: Username/password auth ---
 echo ""
 echo "--- Test 7: Username/password auth ---"
+if [ "$has_auth" = "no" ]; then
+    echo "SKIP: Auth (not built with auth support)"
+else
 start_broker -u testuser -P testpass
 
 # Without credentials - should be rejected (non-zero exit code)
@@ -219,12 +245,11 @@ else
     echo "FAIL: Auth test (noauth_rc=$T6_NOAUTH_RC, auth_rc=$T6_AUTH_RC)"
     FAIL=1
 fi
+fi # has_auth
 
 # --- TLS Tests ---
 has_tls=no
-if ./$broker_bin -h 2>&1 | grep -q "\-t"; then
-    has_tls=yes
-fi
+echo "$broker_features" | grep -q "tls" && has_tls=yes
 
 if [ "$has_tls" = "yes" ]; then
     # --- Test 8: TLS pub/sub ---
@@ -341,6 +366,9 @@ fi
 # --- Test 13: Wildcard subscription ---
 echo ""
 echo "--- Test 13: Wildcard subscription ---"
+if [ "$has_wildcards" = "no" ]; then
+    echo "SKIP: Wildcard subscription (not built with wildcard support)"
+else
 # Test both + and # wildcards (use different client IDs)
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/wild/+" -i "sub_plus" \
     >"${TMP_DIR}/t13_plus.log" 2>&1 &
@@ -372,6 +400,7 @@ else
     echo "FAIL: Wildcard (plus=$T13_PLUS_OK, hash=$T13_HASH_OK)"
     FAIL=1
 fi
+fi # has_wildcards
 
 # --- Test 14: Client ID takeover ---
 echo ""
@@ -410,7 +439,7 @@ echo "--- Test 15: Max client connections ---"
 # Connect multiple clients simultaneously to verify broker handles them
 T15_PIDS=()
 T15_OK=yes
-for idx in $(seq 1 8); do
+for idx in $(seq 1 6); do
     timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/maxcli/$idx" \
         -i "max_client_$idx" >"${TMP_DIR}/t15_$idx.log" 2>&1 &
     T15_PIDS+=($!)
@@ -428,7 +457,7 @@ for pid in "${T15_PIDS[@]}"; do
 done
 TEST_PIDS=()
 if [ $T15_VERIFY_RC -eq 0 ]; then
-    echo "PASS: Max client connections (8 concurrent + pub/sub)"
+    echo "PASS: Max client connections (6 concurrent + pub/sub)"
 else
     echo "FAIL: Max client connections (verify_rc=$T15_VERIFY_RC)"
     FAIL=1
@@ -437,6 +466,9 @@ fi
 # --- Test 16: Graceful shutdown (SIGTERM) ---
 echo ""
 echo "--- Test 16: Graceful shutdown ---"
+if [ "$has_will" = "no" ]; then
+    echo "SKIP: Graceful shutdown (not built with will support)"
+else
 # Verify broker exits cleanly on SIGTERM
 start_broker
 # Connect a client with LWT
@@ -469,6 +501,7 @@ if grep -q "shutdown_client" "${TMP_DIR}/t16_watcher.log" 2>/dev/null; then
 else
     echo "PASS: Graceful shutdown (no LWT on SIGTERM)"
 fi
+fi # has_will
 
 # --- Summary ---
 echo ""
