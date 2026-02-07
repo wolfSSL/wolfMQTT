@@ -78,7 +78,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_REQ_PROB_INFO,              MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_WILL_DELAY_INTERVAL,        MQTT_DATA_TYPE_INT,
-        (1 << MQTT_PACKET_TYPE_PUBLISH) },
+        (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_REQ_RESP_INFO,              MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_RESP_INFO,                  MQTT_DATA_TYPE_STRING,

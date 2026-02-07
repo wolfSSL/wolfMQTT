@@ -2090,7 +2090,8 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             bc->tls_handshake_done = 1;
             PRINTF("broker: TLS handshake done sock=%d %s",
                 (int)bc->sock, wolfSSL_get_version(bc->client.tls.ssl));
-            /* Log client certificate subject if mutual TLS */
+            /* Log client certificate subject if mutual TLS (requires wolfSSL OPENSSL_EXTRA) */
+#if defined(OPENSSL_EXTRA)
             if (broker->tls_ca != NULL) {
                 WOLFSSL_X509* peer = wolfSSL_get_peer_certificate(
                     bc->client.tls.ssl);
@@ -2104,6 +2105,12 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     wolfSSL_X509_free(peer);
                 }
             }
+#else
+            if (broker->tls_ca != NULL) {
+                PRINTF("broker: TLS client cert sock=%d (mutual TLS)",
+                    (int)bc->sock);
+            }
+#endif
             return 1; /* activity */
         }
         else {
@@ -2421,6 +2428,19 @@ static void BrokerUsage(const char* prog)
 #endif
 }
 
+static MqttBroker* g_broker = NULL;
+
+#if !defined(WOLFMQTT_BROKER_CUSTOM_NET) && !defined(NO_MAIN_DRIVER)
+#include <signal.h>
+static void broker_signal_handler(int signo)
+{
+    if (g_broker != NULL) {
+        PRINTF("broker: received signal %d, shutting down", signo);
+        MqttBroker_Stop(g_broker);
+    }
+}
+#endif
+
 int wolfmqtt_broker(int argc, char** argv)
 {
     int rc;
@@ -2490,7 +2510,18 @@ int wolfmqtt_broker(int argc, char** argv)
         }
     }
 
+#if !defined(WOLFMQTT_BROKER_CUSTOM_NET) && !defined(NO_MAIN_DRIVER)
+    g_broker = &broker;
+    signal(SIGINT, broker_signal_handler);
+    signal(SIGTERM, broker_signal_handler);
+#endif
+
     rc = MqttBroker_Run(&broker);
+
+#if !defined(WOLFMQTT_BROKER_CUSTOM_NET) && !defined(NO_MAIN_DRIVER)
+    g_broker = NULL;
+#endif
+
     MqttBroker_Free(&broker);
     return rc;
 }
