@@ -1977,19 +1977,29 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_BROKER_AUTH
     if (broker->auth_user || broker->auth_pass) {
         int auth_ok = 1;
-        if (broker->auth_user && (bc->username == NULL ||
+        if (broker->auth_user && (
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            bc->username == NULL ||
+        #endif
             bc->username[0] == '\0' ||
             BrokerStrCompare(broker->auth_user, bc->username) != 0)) {
             auth_ok = 0;
         }
-        if (broker->auth_pass && (bc->password == NULL ||
+        if (broker->auth_pass && (
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            bc->password == NULL ||
+        #endif
             bc->password[0] == '\0' ||
             BrokerStrCompare(broker->auth_pass, bc->password) != 0)) {
             auth_ok = 0;
         }
         if (!auth_ok) {
             WBLOG_ERR(broker, "broker: auth failed sock=%d user=%s", (int)bc->sock,
+            #ifdef WOLFMQTT_STATIC_MEMORY
+                bc->username[0] ? bc->username : "(null)");
+            #else
                 (bc->username && bc->username[0]) ? bc->username : "(null)");
+            #endif
         #ifdef WOLFMQTT_V5
             if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
                 ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
@@ -2475,6 +2485,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     bc->client.tls.ssl);
                 if (peer != NULL) {
                     char* cn = wolfSSL_X509_get_subjectCN(peer);
+                    (void)cn; /* may be unused if logging disabled */
                     WBLOG_INFO(broker, "broker: TLS client cert sock=%d CN=%s",
                         (int)bc->sock, cn ? cn : "(unknown)");
                     wolfSSL_X509_free(peer);
