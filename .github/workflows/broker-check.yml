@@ -1,0 +1,83 @@
+name: Broker Build Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Broker default (dynamic alloc)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker"
+          - name: "Broker static memory"
+            cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker"
+          - name: "Broker with TLS"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-tls"
+          - name: "Broker with TLS (static memory)"
+            cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker --enable-tls"
+          - name: "Broker no logging"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --disable-broker-log"
+          - name: "Broker minimal (no log, no retained, no will, no wildcards, no auth)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --disable-broker-log --disable-broker-retained --disable-broker-will --disable-broker-wildcards --disable-broker-auth"
+
+    steps:
+    - name: Install dependencies
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        sudo apt-get update
+        sudo apt-get install -y mosquitto-clients
+
+    - uses: actions/checkout@master
+      with:
+        repository: wolfssl/wolfssl
+        path: wolfssl
+    - name: wolfssl autogen
+      working-directory: ./wolfssl
+      run: ./autogen.sh
+    - name: wolfssl configure
+      working-directory: ./wolfssl
+      run: ./configure --enable-enckeys
+    - name: wolfssl make
+      working-directory: ./wolfssl
+      run: make
+    - name: wolfssl make install
+      working-directory: ./wolfssl
+      run: sudo make install
+
+    - uses: actions/checkout@master
+    - name: wolfmqtt autogen
+      run: ./autogen.sh
+
+    - name: "wolfmqtt configure (${{ matrix.name }})"
+      run: ./configure ${{ matrix.wolfmqtt_opts }} CFLAGS="${{ matrix.cflags }}"
+    - name: wolfmqtt make
+      run: make
+
+    - name: "Run broker tests (${{ matrix.name }})"
+      run: ./scripts/broker.test
+
+    - name: Show logs on failure
+      if: failure() || cancelled()
+      run: |
+        ls -la /tmp/tmp.* 2>/dev/null || true
+        for d in /tmp/tmp.*; do
+          if [ -d "$d" ]; then
+            echo "=== Logs in $d ==="
+            cat "$d"/*.log 2>/dev/null || true
+          fi
+        done

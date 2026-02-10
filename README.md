@@ -185,7 +185,7 @@ We setup an AWS IoT endpoint and testing device certificate for testing. The AWS
 
 ### Watson IoT Example
 This example enables the wolfMQTT client to connect to the IBM Watson Internet of Things (WIOT) Platform. The WIOT Platform has a limited test broker called "Quickstart" that allows non-secure connections to exercise the component. The example is located in `/examples/wiot/`. Works with MQTT v5 support enabled.
-**NOTE** The WIOT Platform will be disabled DEC2023. The demo may still be useful for users of IBM Watson IOT. 
+**NOTE** The WIOT Platform will be disabled DEC2023. The demo may still be useful for users of IBM Watson IOT.
 
 ### MQTT-SN Example
 The Sensor Network client implements the MQTT-SN protocol for low-bandwidth networks. There are several differences from MQTT, including the ability to use a two byte Topic ID instead the full topic during subscribe and publish. The SN client requires an MQTT-SN gateway. The gateway acts as an intermediary between the SN clients and the broker. This client was tested with the Eclipse Paho MQTT-SN Gateway, which connects by default to the public Eclipse broker, much like our wolfMQTT Client example. The address of the gateway must be configured as the host. The example is located in `/examples/sn-client/`.
@@ -262,7 +262,7 @@ The initially supported version with full specification support for all features
 
 ### MQTT v5.0 Specification Support
 
-The wolfMQTT client supports connecting to v5 enabled brokers when configured with the `--enable-v5` option. 
+The wolfMQTT client supports connecting to v5 enabled brokers when configured with the `--enable-v5` option.
 The following v5.0 specification features are supported by the wolfMQTT client:
 * AUTH packet
 * User properties
@@ -413,6 +413,78 @@ Note: When stress is enabled, the Multithread Example becomes localhost only
 and will not connect to remote servers. Additionally the test `scripts/stress.test`
 is added to `make check`, and all other tests are disabled.
 
+## Broker
+
+wolfMQTT includes a lightweight MQTT broker implementation suitable for embedded and resource-constrained environments. It supports both MQTT v3.1.1 and v5.0 clients, with optional TLS via wolfSSL.
+
+### Features
+
+* QoS 0, QoS 1, and QoS 2 publish/subscribe (full QoS 2 flow with PUBREC/PUBREL/PUBCOMP)
+* Retained messages
+* Last Will and Testament (LWT) with v5 Will Delay Interval
+* Wildcard subscriptions (`+` and `#`)
+* Username/password authentication
+* TLS support (requires wolfSSL with `--enable-tls`)
+* Clean session handling with subscription persistence
+* Keep-alive monitoring with automatic client disconnect
+* Unique client ID enforcement (existing session takeover)
+* Static memory mode (`WOLFMQTT_STATIC_MEMORY`) for zero-malloc operation
+
+### Building
+
+With autotools:
+
+```
+./configure --enable-broker
+make
+```
+
+With CMake:
+
+```
+cmake .. -DWOLFMQTT_BROKER=yes
+cmake --build .
+```
+
+### Running
+
+```
+./src/mqtt_broker -p 1883
+```
+
+For TLS:
+
+```
+./src/mqtt_broker -p 8883 -t -A ca-cert.pem -K server-key.pem -c server-cert.pem
+```
+
+Run `./src/mqtt_broker -h` to see all available options.
+
+### Feature Build Options
+
+All broker features are enabled by default. Individual features can be disabled at build time to reduce code and memory footprint on constrained platforms.
+
+| Feature | Autotools | CMake | Define |
+|---|---|---|---|
+| Retained messages | `--disable-broker-retained` | `-DWOLFMQTT_BROKER_RETAINED=no` | `WOLFMQTT_BROKER_NO_RETAINED` |
+| Last Will and Testament | `--disable-broker-will` | `-DWOLFMQTT_BROKER_WILL=no` | `WOLFMQTT_BROKER_NO_WILL` |
+| Wildcard subscriptions | `--disable-broker-wildcards` | `-DWOLFMQTT_BROKER_WILDCARDS=no` | `WOLFMQTT_BROKER_NO_WILDCARDS` |
+| Authentication | `--disable-broker-auth` | `-DWOLFMQTT_BROKER_AUTH=no` | `WOLFMQTT_BROKER_NO_AUTH` |
+
+### Static Memory Mode
+
+When built with `WOLFMQTT_STATIC_MEMORY`, the broker uses fixed-size arrays instead of dynamic allocation. Buffer sizes and limits can be tuned via compile-time macros:
+
+| Macro | Default | Description |
+|---|---|---|
+| `BROKER_MAX_CLIENTS` | 8 | Maximum concurrent client connections |
+| `BROKER_MAX_SUBS` | 32 | Maximum total subscriptions |
+| `BROKER_MAX_RETAINED` | 16 | Maximum retained messages |
+| `BROKER_RX_BUF_SZ` | 4096 | Per-client receive buffer size |
+| `BROKER_TX_BUF_SZ` | 4096 | Per-client transmit buffer size |
+| `BROKER_MAX_PAYLOAD_LEN` | 4096 | Maximum retained message payload |
+| `BROKER_MAX_WILL_PAYLOAD_LEN` | 256 | Maximum LWT payload size |
+
 ## WebSocket Support
 
 wolfMQTT supports MQTT over WebSockets, allowing clients to connect to MQTT brokers through WebSocket endpoints. This is useful for environments where traditional MQTT ports might be blocked or when integrating with web applications.
@@ -544,11 +616,11 @@ You can test the wolfMQTT client against public brokers supporting websockets:
 * Mosquitto unencrypted
 
     `./examples/websocket/websocket_client -h test.mosquitto.org -p8080`
- 
+
 * Mosquitto secure websocket
 
     `./examples/websocket/websocket_client -h test.mosquitto.org -p8081 -t`
- 
+
 * HiveMQ unencrypted
 
     `./examples/websocket/websocket_client -h broker.hivemq.com -p8000`
