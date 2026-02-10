@@ -304,7 +304,7 @@ then
         [ ENABLED_PROPCB=$enableval ],
         [ ENABLED_PROPCB=yes ]
         )
-    
+
     if test "x$ENABLED_PROPCB" = "xyes"
     then
         AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_PROPERTY_CB"
@@ -405,6 +405,70 @@ then
         [AC_MSG_ERROR([libwebsockets not found. Install libwebsockets or use --disable-websocket])])
 fi
 
+# Broker
+AC_ARG_ENABLE([broker],
+[AS_HELP_STRING([--enable-broker],[Enable lightweight broker support (default: disabled)])],
+[ ENABLED_BROKER=$enableval ],
+[ ENABLED_BROKER=no ]
+)
+
+if test "x$ENABLED_BROKER" = "xyes"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER"
+fi
+
+# Broker feature toggles (only relevant when --enable-broker)
+AC_ARG_ENABLE([broker-retained],
+[AS_HELP_STRING([--disable-broker-retained],[Disable broker retained message support])],
+[ ENABLED_BROKER_RETAINED=$enableval ],
+[ ENABLED_BROKER_RETAINED=yes ]
+)
+if test "x$ENABLED_BROKER_RETAINED" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_RETAINED"
+fi
+
+AC_ARG_ENABLE([broker-will],
+[AS_HELP_STRING([--disable-broker-will],[Disable broker Last Will and Testament support])],
+[ ENABLED_BROKER_WILL=$enableval ],
+[ ENABLED_BROKER_WILL=yes ]
+)
+if test "x$ENABLED_BROKER_WILL" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_WILL"
+fi
+
+AC_ARG_ENABLE([broker-wildcards],
+[AS_HELP_STRING([--disable-broker-wildcards],[Disable broker wildcard subscription support])],
+[ ENABLED_BROKER_WILDCARDS=$enableval ],
+[ ENABLED_BROKER_WILDCARDS=yes ]
+)
+if test "x$ENABLED_BROKER_WILDCARDS" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_WILDCARDS"
+fi
+
+AC_ARG_ENABLE([broker-auth],
+[AS_HELP_STRING([--disable-broker-auth],[Disable broker username/password authentication])],
+[ ENABLED_BROKER_AUTH=$enableval ],
+[ ENABLED_BROKER_AUTH=yes ]
+)
+if test "x$ENABLED_BROKER_AUTH" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_AUTH"
+fi
+
+AC_ARG_ENABLE([broker-log],
+[AS_HELP_STRING([--disable-broker-log],[Disable broker logging])],
+[ ENABLED_BROKER_LOG=$enableval ],
+[ ENABLED_BROKER_LOG=yes ]
+)
+if test "x$ENABLED_BROKER_LOG" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_LOG"
+fi
+
+
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
 AM_CONDITIONAL([BUILD_STRESS], [test "x$ENABLED_STRESS" != "xno"])
@@ -415,6 +479,8 @@ AM_CONDITIONAL([BUILD_MQTT5], [test "x$ENABLED_MQTTV50" = "xyes"])
 AM_CONDITIONAL([BUILD_NONBLOCK], [test "x$ENABLED_NONBLOCK" = "xyes"])
 AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
 AM_CONDITIONAL([BUILD_WEBSOCKET], [test "x$ENABLED_WEBSOCKET" = "xyes"])
+AM_CONDITIONAL([BUILD_BROKER], [test "x$ENABLED_BROKER" = "xyes"])
+
 
 
 # HARDEN FLAGS
@@ -542,3 +608,4 @@ echo "   * CURL:                      $ENABLED_CURL"
 echo "   * Multi-thread:              $ENABLED_MULTITHREAD"
 echo "   * Stress:                    $ENABLED_STRESS"
 echo "   * WebSocket:                 $ENABLED_WEBSOCKET"
+echo "   * Broker:                    $ENABLED_BROKER"
