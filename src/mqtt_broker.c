@@ -36,9 +36,11 @@
 #ifdef WOLFMQTT_BROKER
 
 /* -------------------------------------------------------------------------- */
-/* Platform includes - only for default POSIX backend                          */
+/* Platform includes                                                           */
 /* -------------------------------------------------------------------------- */
-#ifndef WOLFMQTT_BROKER_CUSTOM_NET
+#if defined(WOLFMQTT_WOLFIP)
+    #include "wolfip.h"
+#elif !defined(WOLFMQTT_BROKER_CUSTOM_NET)
     #include <errno.h>
     #include <arpa/inet.h>
     #include <fcntl.h>
@@ -47,21 +49,28 @@
     #include <sys/socket.h>
     #include <time.h>
     #include <unistd.h>
-#endif /* !WOLFMQTT_BROKER_CUSTOM_NET */
+#endif
 
 /* -------------------------------------------------------------------------- */
 /* Default time abstraction                                                    */
 /* -------------------------------------------------------------------------- */
 #ifndef WOLFMQTT_BROKER_GET_TIME_S
-    #define WOLFMQTT_BROKER_GET_TIME_S() \
-        ((WOLFMQTT_BROKER_TIME_T)time(NULL))
+    #if defined(WOLFMQTT_WOLFIP)
+        /* wolfIP: override WOLFMQTT_BROKER_GET_TIME_S in user_settings.h */
+        #define WOLFMQTT_BROKER_GET_TIME_S() ((WOLFMQTT_BROKER_TIME_T)0)
+    #else
+        #define WOLFMQTT_BROKER_GET_TIME_S() \
+            ((WOLFMQTT_BROKER_TIME_T)time(NULL))
+    #endif
 #endif
 
 /* -------------------------------------------------------------------------- */
 /* Default sleep abstraction                                                   */
 /* -------------------------------------------------------------------------- */
 #ifndef BROKER_SLEEP_MS
-    #ifdef USE_WINDOWS_API
+    #if defined(WOLFMQTT_WOLFIP)
+        #define BROKER_SLEEP_MS(ms) /* no-op: Step() returns to caller */
+    #elif defined(USE_WINDOWS_API)
         #define BROKER_SLEEP_MS(ms) Sleep(ms)
     #else
         #define BROKER_SLEEP_MS(ms) usleep((unsigned)(ms) * 1000)
@@ -171,9 +180,152 @@ static void BrokerStore_String(char** dst_ptr,
 #endif
 
 /* -------------------------------------------------------------------------- */
+/* wolfIP network backend                                                      */
+/* -------------------------------------------------------------------------- */
+#if defined(WOLFMQTT_WOLFIP)
+
+/* Context passed through MqttBrokerNet.ctx */
+#ifndef WOLFMQTT_WOLFIP_CTX_DEFINED
+#define WOLFMQTT_WOLFIP_CTX_DEFINED
+typedef struct BrokerWolfIP_Ctx {
+    struct wolfIP *stack;
+} BrokerWolfIP_Ctx;
+#endif
+
+static BrokerWolfIP_Ctx broker_wolfip_ctx;
+
+static int BrokerWolfIP_Listen(void* ctx, BROKER_SOCKET_T* sock,
+    word16 port, int backlog)
+{
+    BrokerWolfIP_Ctx* wctx = (BrokerWolfIP_Ctx*)ctx;
+    struct wolfIP_sockaddr_in addr;
+    BROKER_SOCKET_T fd;
+
+    if (wctx == NULL || wctx->stack == NULL || sock == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    fd = wolfIP_sock_socket(wctx->stack, AF_INET, IPSTACK_SOCK_STREAM, 0);
+    if (fd < 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    XMEMSET(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = ee16(port);
+    addr.sin_addr.s_addr = 0; /* INADDR_ANY */
+
+    if (wolfIP_sock_bind(wctx->stack, fd,
+            (struct wolfIP_sockaddr*)&addr, sizeof(addr)) < 0) {
+        wolfIP_sock_close(wctx->stack, fd);
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    if (wolfIP_sock_listen(wctx->stack, fd, backlog) < 0) {
+        wolfIP_sock_close(wctx->stack, fd);
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    *sock = fd;
+    return MQTT_CODE_SUCCESS;
+}
+
+static int BrokerWolfIP_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
+    BROKER_SOCKET_T* client_sock)
+{
+    BrokerWolfIP_Ctx* wctx = (BrokerWolfIP_Ctx*)ctx;
+    BROKER_SOCKET_T fd;
+
+    if (wctx == NULL || wctx->stack == NULL || client_sock == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    fd = wolfIP_sock_accept(wctx->stack, listen_sock, NULL, NULL);
+    if (fd < 0) {
+        /* EAGAIN / no pending connection */
+        return MQTT_CODE_CONTINUE;
+    }
+
+    *client_sock = fd;
+    return MQTT_CODE_SUCCESS;
+}
+
+static int BrokerWolfIP_Read(void* ctx, BROKER_SOCKET_T sock,
+    byte* buf, int buf_len, int timeout_ms)
+{
+    BrokerWolfIP_Ctx* wctx = (BrokerWolfIP_Ctx*)ctx;
+    int rc;
+    (void)timeout_ms;
+
+    if (wctx == NULL || wctx->stack == NULL || buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    rc = wolfIP_sock_recv(wctx->stack, sock, buf, (size_t)buf_len, 0);
+    if (rc < 0) {
+        /* EAGAIN / would block */
+        return MQTT_CODE_CONTINUE;
+    }
+    if (rc == 0) {
+        return MQTT_CODE_ERROR_NETWORK; /* Connection closed */
+    }
+    return rc;
+}
+
+static int BrokerWolfIP_Write(void* ctx, BROKER_SOCKET_T sock,
+    const byte* buf, int buf_len, int timeout_ms)
+{
+    BrokerWolfIP_Ctx* wctx = (BrokerWolfIP_Ctx*)ctx;
+    int rc;
+    (void)timeout_ms;
+
+    if (wctx == NULL || wctx->stack == NULL || buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    rc = wolfIP_sock_send(wctx->stack, sock, buf, (size_t)buf_len, 0);
+    if (rc < 0) {
+        /* EAGAIN / would block */
+        return MQTT_CODE_CONTINUE;
+    }
+    if (rc == 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    return rc;
+}
+
+static int BrokerWolfIP_Close(void* ctx, BROKER_SOCKET_T sock)
+{
+    BrokerWolfIP_Ctx* wctx = (BrokerWolfIP_Ctx*)ctx;
+
+    if (wctx != NULL && wctx->stack != NULL &&
+        sock != BROKER_SOCKET_INVALID) {
+        wolfIP_sock_close(wctx->stack, sock);
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+int MqttBrokerNet_wolfIP_Init(MqttBrokerNet* net, void* wolfIP_stack)
+{
+    if (net == NULL || wolfIP_stack == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    XMEMSET(net, 0, sizeof(*net));
+    XMEMSET(&broker_wolfip_ctx, 0, sizeof(broker_wolfip_ctx));
+    broker_wolfip_ctx.stack = (struct wolfIP*)wolfIP_stack;
+
+    net->listen = BrokerWolfIP_Listen;
+    net->accept = BrokerWolfIP_Accept;
+    net->read   = BrokerWolfIP_Read;
+    net->write  = BrokerWolfIP_Write;
+    net->close  = BrokerWolfIP_Close;
+    net->ctx    = &broker_wolfip_ctx;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Default POSIX network backend                                               */
 /* -------------------------------------------------------------------------- */
-#ifndef WOLFMQTT_BROKER_CUSTOM_NET
+#elif !defined(WOLFMQTT_BROKER_CUSTOM_NET)
 
 static int BrokerPosix_SetNonBlocking(BROKER_SOCKET_T fd)
 {
@@ -456,7 +608,7 @@ static void BrokerTls_Free(MqttBroker* broker)
 }
 #endif /* ENABLE_MQTT_TLS */
 
-#endif /* !WOLFMQTT_BROKER_CUSTOM_NET */
+#endif /* WOLFMQTT_WOLFIP / !WOLFMQTT_BROKER_CUSTOM_NET */
 
 /* -------------------------------------------------------------------------- */
 /* WebSocket server support (libwebsockets)                                    */
@@ -3233,7 +3385,7 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     broker->log_level = BROKER_LOG_LEVEL_DEFAULT;
     broker->next_packet_id = 1;
 
-#ifndef WOLFMQTT_BROKER_CUSTOM_NET
+#if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
     /* For the default POSIX backend, the net callbacks expect ctx to be a
      * MqttBroker* for logging via WBLOG_*. If no context was provided,
      * default to using this broker instance to avoid NULL-dereference. */
@@ -3381,7 +3533,7 @@ int MqttBroker_Step(MqttBroker* broker)
     return activity ? MQTT_CODE_SUCCESS : MQTT_CODE_CONTINUE;
 }
 
-int MqttBroker_Run(MqttBroker* broker)
+int MqttBroker_Start(MqttBroker* broker)
 {
     int rc;
 
@@ -3475,6 +3627,18 @@ int MqttBroker_Run(MqttBroker* broker)
 #endif
 
     broker->running = 1;
+    return MQTT_CODE_SUCCESS;
+}
+
+int MqttBroker_Run(MqttBroker* broker)
+{
+    int rc;
+
+    rc = MqttBroker_Start(broker);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+
     while (broker->running) {
         rc = MqttBroker_Step(broker);
         if (rc == MQTT_CODE_CONTINUE) {
@@ -3526,8 +3690,17 @@ int MqttBroker_Free(MqttBroker* broker)
     BrokerPendingWill_FreeAll(broker);
     BrokerRetained_FreeAll(broker);
 
-#if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
-    BrokerTls_Free(broker);
+#ifdef ENABLE_MQTT_TLS
+    if (broker->tls_ctx != NULL) {
+    #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+        BrokerTls_Free(broker);
+    #else
+        /* Application-provided TLS context: free ctx but skip
+         * wolfSSL_Cleanup() since wolfSSL may be shared */
+        wolfSSL_CTX_free(broker->tls_ctx);
+        broker->tls_ctx = NULL;
+    #endif
+    }
 #endif
 
     /* Close listen sockets */
@@ -3605,7 +3778,8 @@ static void BrokerUsage(const char* prog)
 
 static MqttBroker* g_broker = NULL;
 
-#if !defined(WOLFMQTT_BROKER_CUSTOM_NET) && !defined(NO_MAIN_DRIVER)
+#if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET) && \
+    !defined(NO_MAIN_DRIVER)
 #include <signal.h>
 static void broker_signal_handler(int signo)
 {
@@ -3628,7 +3802,11 @@ int wolfmqtt_broker(int argc, char** argv)
     setvbuf(stdout, NULL, _IONBF, 0);
 #endif
 
-#ifndef WOLFMQTT_BROKER_CUSTOM_NET
+#if defined(WOLFMQTT_WOLFIP)
+    XMEMSET(&net, 0, sizeof(net));
+    PRINTF("broker: use MqttBrokerNet_wolfIP_Init() for wolfIP");
+    return MQTT_CODE_ERROR_BAD_ARG;
+#elif !defined(WOLFMQTT_BROKER_CUSTOM_NET)
     rc = MqttBrokerNet_Init(&net);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
@@ -3696,7 +3874,8 @@ int wolfmqtt_broker(int argc, char** argv)
         }
     }
 
-#if !defined(WOLFMQTT_BROKER_CUSTOM_NET) && !defined(NO_MAIN_DRIVER)
+#if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET) && \
+    !defined(NO_MAIN_DRIVER)
     g_broker = &broker;
     signal(SIGINT, broker_signal_handler);
     signal(SIGTERM, broker_signal_handler);
@@ -3704,7 +3883,8 @@ int wolfmqtt_broker(int argc, char** argv)
 
     rc = MqttBroker_Run(&broker);
 
-#if !defined(WOLFMQTT_BROKER_CUSTOM_NET) && !defined(NO_MAIN_DRIVER)
+#if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET) && \
+    !defined(NO_MAIN_DRIVER)
     g_broker = NULL;
 #endif
 

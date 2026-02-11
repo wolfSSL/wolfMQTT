@@ -376,9 +376,20 @@ WOLFMQTT_API int MqttBroker_Stop(MqttBroker* broker);
 /* Clean up broker resources */
 WOLFMQTT_API int MqttBroker_Free(MqttBroker* broker);
 
+/* Start the broker (listen + TLS init). Call once before MqttBroker_Step().
+ * For embedded systems that use a cooperative main loop with Step(). */
+WOLFMQTT_API int MqttBroker_Start(MqttBroker* broker);
+
+/* wolfIP backend initializer.
+ * wolfIP_stack is a (struct wolfIP*) pointer to the wolfIP stack instance. */
+#ifdef WOLFMQTT_WOLFIP
+WOLFMQTT_API int MqttBrokerNet_wolfIP_Init(MqttBrokerNet* net,
+    void* wolfIP_stack);
+#endif
+
 /* Default POSIX backend initializer.
  * Only available when WOLFMQTT_BROKER_CUSTOM_NET is NOT defined. */
-#ifndef WOLFMQTT_BROKER_CUSTOM_NET
+#if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
 WOLFMQTT_API int MqttBrokerNet_Init(MqttBrokerNet* net);
 #endif
 
