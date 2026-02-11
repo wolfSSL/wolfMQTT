@@ -255,6 +255,11 @@ int MqttEncode_Vbi(byte *buf, word32 x)
     int rc = 0;
     byte encodedByte;
 
+    /* [MQTT-2.2.3]: Max value is 268,435,455 (0x0FFFFFFF) */
+    if (x > MQTT_PACKET_MAX_REMAIN_LEN) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     do {
         encodedByte = (x & ~MQTT_PACKET_LEN_ENCODE_MASK) & 0xFF;
         x >>= 7;
@@ -709,6 +714,12 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
 
     /* Validate required arguments */
     if (tx_buf == NULL || mc_connect == NULL || mc_connect->client_id == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
+    /* [MQTT-3.1.2-22]: If the User Name Flag is set to 0, the Password Flag
+     * MUST be set to 0 */
+    if (mc_connect->password != NULL && mc_connect->username == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
