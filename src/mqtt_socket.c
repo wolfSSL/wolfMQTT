@@ -437,7 +437,13 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             }
     #ifdef WOLFSSL_DTLS
             else {
-                client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_2_client_method());
+            #ifdef WOLFSSL_DTLS13
+                client->tls.ctx = wolfSSL_CTX_new(
+                    wolfDTLSv1_3_client_method());
+            #else
+                client->tls.ctx = wolfSSL_CTX_new(
+                    wolfDTLSv1_2_client_method());
+            #endif
             }
     #endif
             if (client->tls.ctx == NULL) {

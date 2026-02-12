@@ -330,6 +330,106 @@ static int BrokerPosix_Close(void* ctx, BROKER_SOCKET_T sock)
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef ENABLE_MQTT_DTLS
+static int BrokerPosix_ListenUDP(void* ctx, BROKER_SOCKET_T* sock,
+    word16 port, int backlog)
+{
+    struct sockaddr_in addr;
+    int opt = 1;
+    BROKER_SOCKET_T fd;
+    (void)backlog;
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        WBLOG_ERR((MqttBroker*)ctx, "broker: UDP socket failed (%d)", errno);
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#ifdef SO_REUSEPORT
+    (void)setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
+#endif
+
+    if (BrokerPosix_SetNonBlocking(fd) != MQTT_CODE_SUCCESS) {
+        WBLOG_ERR((MqttBroker*)ctx, "broker: UDP set nonblocking failed (%d)",
+            errno);
+        close(fd);
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+
+    XMEMSET(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(port);
+
+    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        WBLOG_ERR((MqttBroker*)ctx, "broker: UDP bind failed (%d)", errno);
+        close(fd);
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    /* No listen() for UDP */
+
+    *sock = fd;
+    return MQTT_CODE_SUCCESS;
+}
+
+static int BrokerPosix_AcceptUDP(void* ctx, BROKER_SOCKET_T listen_sock,
+    BROKER_SOCKET_T* client_sock)
+{
+    MqttBroker* broker = (MqttBroker*)ctx;
+    struct sockaddr_in peer_addr;
+    socklen_t addr_len = sizeof(peer_addr);
+    char buf[1];
+    int rc;
+
+    /* Peek to see if data is available and get peer address */
+    rc = (int)recvfrom(listen_sock, buf, sizeof(buf),
+        MSG_PEEK | MSG_DONTWAIT,
+        (struct sockaddr*)&peer_addr, &addr_len);
+    if (rc <= 0) {
+        return MQTT_CODE_CONTINUE; /* No data / no new peer */
+    }
+
+    /* Check if we already have a client for this peer */
+    {
+        int found = 0;
+    #ifdef WOLFMQTT_STATIC_MEMORY
+        int i;
+        for (i = 0; i < BROKER_MAX_CLIENTS; i++) {
+            BrokerClient* bc = &broker->clients[i];
+            if (bc->in_use && bc->peer_addr_len == (int)addr_len &&
+                XMEMCMP(bc->peer_addr, &peer_addr, addr_len) == 0) {
+                found = 1;
+                break;
+            }
+        }
+    #else
+        BrokerClient* bc = broker->clients;
+        while (bc != NULL) {
+            if (bc->peer_addr_len == (int)addr_len &&
+                XMEMCMP(bc->peer_addr, &peer_addr, addr_len) == 0) {
+                found = 1;
+                break;
+            }
+            bc = bc->next;
+        }
+    #endif
+        if (found) {
+            return MQTT_CODE_CONTINUE; /* Existing client has data */
+        }
+    }
+
+    /* New peer: save address for BrokerClient_Add to copy */
+    XMEMCPY(broker->pending_peer_addr, &peer_addr, addr_len);
+    broker->pending_peer_addr_len = (int)addr_len;
+
+    /* All DTLS clients share the listen socket. Per-client demuxing is
+     * handled by peek-based read callbacks (BrokerNetReadDTLS). */
+    *client_sock = listen_sock;
+    return MQTT_CODE_SUCCESS;
+}
+#endif /* ENABLE_MQTT_DTLS */
+
 int MqttBrokerNet_Init(MqttBrokerNet* net)
 {
     if (net == NULL) {
@@ -357,16 +457,38 @@ static int BrokerTls_Init(MqttBroker* broker)
         rc = MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* Select TLS method based on version preference */
+    /* Select TLS/DTLS method based on version preference */
     if (rc == WOLFSSL_SUCCESS) {
-        if (broker->tls_version == 12) {
-            ctx = wolfSSL_CTX_new(wolfTLSv1_2_server_method());
+    #ifdef ENABLE_MQTT_DTLS
+        if (broker->use_dtls) {
+            if (broker->tls_version == 12) {
+                ctx = wolfSSL_CTX_new(wolfDTLSv1_2_server_method());
+            }
+        #ifdef WOLFSSL_DTLS13
+            else if (broker->tls_version == 13) {
+                ctx = wolfSSL_CTX_new(wolfDTLSv1_3_server_method());
+            }
+            else {
+                ctx = wolfSSL_CTX_new(wolfDTLSv1_3_server_method());
+            }
+        #else
+            else {
+                ctx = wolfSSL_CTX_new(wolfDTLSv1_2_server_method());
+            }
+        #endif
         }
-        else if (broker->tls_version == 13) {
-            ctx = wolfSSL_CTX_new(wolfTLSv1_3_server_method());
-        }
-        else {
-            ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+        else
+    #endif /* ENABLE_MQTT_DTLS */
+        {
+            if (broker->tls_version == 12) {
+                ctx = wolfSSL_CTX_new(wolfTLSv1_2_server_method());
+            }
+            else if (broker->tls_version == 13) {
+                ctx = wolfSSL_CTX_new(wolfTLSv1_3_server_method());
+            }
+            else {
+                ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+            }
         }
         if (ctx == NULL) {
             WBLOG_ERR(broker, "broker: wolfSSL_CTX_new failed");
@@ -501,6 +623,101 @@ static int BrokerNetDisconnect(void* context)
 }
 
 /* -------------------------------------------------------------------------- */
+/* DTLS per-client IO callbacks (shared UDP socket with peek-based demux)      */
+/* -------------------------------------------------------------------------- */
+#if defined(ENABLE_MQTT_DTLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+static int BrokerNetReadDTLS(void* context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    BrokerClient* bc = (BrokerClient*)context;
+    struct sockaddr_in peer_addr;
+    socklen_t addr_len = sizeof(peer_addr);
+    fd_set rfds;
+    struct timeval tv;
+    int rc;
+
+    if (bc == NULL || bc->broker == NULL || buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Wait for data on the shared listen socket */
+    FD_ZERO(&rfds);
+    FD_SET(bc->sock, &rfds);
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    rc = select(bc->sock + 1, &rfds, NULL, NULL, &tv);
+    if (rc == 0) {
+        return MQTT_CODE_ERROR_TIMEOUT;
+    }
+    if (rc < 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+
+    /* Peek to check source address before consuming */
+    addr_len = sizeof(peer_addr);
+    rc = (int)recvfrom(bc->sock, buf, (size_t)buf_len,
+        MSG_PEEK | MSG_DONTWAIT,
+        (struct sockaddr*)&peer_addr, &addr_len);
+    if (rc <= 0) {
+        return MQTT_CODE_CONTINUE;
+    }
+
+    /* Verify the datagram is from this client's peer */
+    if ((int)addr_len != bc->peer_addr_len ||
+        XMEMCMP(&peer_addr, bc->peer_addr, addr_len) != 0) {
+        /* Not for this client - leave it on the socket */
+        return MQTT_CODE_ERROR_TIMEOUT;
+    }
+
+    /* Source matches: consume the datagram */
+    addr_len = sizeof(peer_addr);
+    rc = (int)recvfrom(bc->sock, buf, (size_t)buf_len, 0,
+        (struct sockaddr*)&peer_addr, &addr_len);
+    if (rc <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    return rc;
+}
+
+static int BrokerNetWriteDTLS(void* context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    BrokerClient* bc = (BrokerClient*)context;
+    int rc;
+    (void)timeout_ms;
+
+    if (bc == NULL || bc->broker == NULL || buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    rc = (int)sendto(bc->sock, buf, (size_t)buf_len, 0,
+        (struct sockaddr*)bc->peer_addr, bc->peer_addr_len);
+    if (rc <= 0) {
+        if (rc < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            return MQTT_CODE_CONTINUE;
+        }
+        WBLOG_ERR(bc->broker, "broker: DTLS sendto error sock=%d errno=%d",
+            (int)bc->sock, errno);
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    return rc;
+}
+
+static int BrokerNetDisconnectDTLS(void* context)
+{
+    BrokerClient* bc = (BrokerClient*)context;
+    if (bc != NULL && bc->broker != NULL &&
+        bc->sock != BROKER_SOCKET_INVALID) {
+        WBLOG_INFO(bc->broker, "broker: DTLS disconnect sock=%d",
+            (int)bc->sock);
+        /* Don't close the shared listen socket */
+        bc->sock = BROKER_SOCKET_INVALID;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+#endif /* ENABLE_MQTT_DTLS && !WOLFMQTT_BROKER_CUSTOM_NET */
+
+/* -------------------------------------------------------------------------- */
 /* Client management                                                           */
 /* -------------------------------------------------------------------------- */
 static void BrokerClient_Free(BrokerClient* bc)
@@ -508,10 +725,9 @@ static void BrokerClient_Free(BrokerClient* bc)
     if (bc == NULL) {
         return;
     }
-    (void)BrokerNetDisconnect(bc);
 #ifdef ENABLE_MQTT_TLS
     if (bc->client.tls.ssl) {
-        /* Only send close_notify if handshake completed successfully */
+        /* Send close_notify before disconnect so the socket is still valid */
         if (bc->tls_handshake_done) {
             wolfSSL_shutdown(bc->client.tls.ssl);
         }
@@ -519,6 +735,13 @@ static void BrokerClient_Free(BrokerClient* bc)
         bc->client.tls.ssl = NULL;
     }
 #endif
+    /* Use the per-client disconnect (DTLS override skips socket close) */
+    if (bc->net.disconnect) {
+        (void)bc->net.disconnect(bc->net.context);
+    }
+    else {
+        (void)BrokerNetDisconnect(bc);
+    }
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
     XMEMSET(bc, 0, sizeof(*bc));
@@ -626,6 +849,26 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
                 wolfSSL_SetIOReadCtx(bc->client.tls.ssl, &bc->client);
                 wolfSSL_SetIOWriteCtx(bc->client.tls.ssl, &bc->client);
                 MqttClient_Flags(&bc->client, 0, MQTT_CLIENT_FLAG_IS_TLS);
+            #ifdef ENABLE_MQTT_DTLS
+                if (broker->use_dtls) {
+                    MqttClient_Flags(&bc->client, 0,
+                        MQTT_CLIENT_FLAG_IS_DTLS);
+                    /* Copy peer address from pending accept */
+                    XMEMCPY(bc->peer_addr, broker->pending_peer_addr,
+                        broker->pending_peer_addr_len);
+                    bc->peer_addr_len = broker->pending_peer_addr_len;
+                    /* Tell wolfSSL which peer this object serves */
+                    wolfSSL_dtls_set_peer(bc->client.tls.ssl,
+                        bc->peer_addr, bc->peer_addr_len);
+                #ifndef WOLFMQTT_BROKER_CUSTOM_NET
+                    /* Use DTLS-specific IO (peek-based demux on
+                     * shared UDP socket) */
+                    bc->net.read = BrokerNetReadDTLS;
+                    bc->net.write = BrokerNetWriteDTLS;
+                    bc->net.disconnect = BrokerNetDisconnectDTLS;
+                #endif
+                }
+            #endif
                 bc->tls_handshake_done = 0;
             }
         }
@@ -2709,6 +2952,16 @@ int MqttBroker_Run(MqttBroker* broker)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+    /* Swap to UDP network callbacks for DTLS mode */
+#ifdef ENABLE_MQTT_DTLS
+    if (broker->use_dtls) {
+    #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+        broker->net.listen = BrokerPosix_ListenUDP;
+        broker->net.accept = BrokerPosix_AcceptUDP;
+    #endif
+    }
+#endif
+
     /* Start listening */
     rc = broker->net.listen(broker->net.ctx, &broker->listen_sock,
         broker->port, BROKER_LISTEN_BACKLOG);
@@ -2724,12 +2977,23 @@ int MqttBroker_Run(MqttBroker* broker)
             WBLOG_ERR(broker, "broker: TLS init failed rc=%d", rc);
             return rc;
         }
-        WBLOG_INFO(broker, "broker: listening on port %d (TLS)", broker->port);
+    #ifdef ENABLE_MQTT_DTLS
+        if (broker->use_dtls) {
+            WBLOG_INFO(broker, "broker: listening on port %d (DTLS)",
+                broker->port);
+        }
+        else
+    #endif
+        {
+            WBLOG_INFO(broker, "broker: listening on port %d (TLS)",
+                broker->port);
+        }
     }
     else
 #endif
     {
-        WBLOG_INFO(broker, "broker: listening on port %d (no TLS)", broker->port);
+        WBLOG_INFO(broker, "broker: listening on port %d (no TLS)",
+            broker->port);
     }
 #ifdef WOLFMQTT_BROKER_AUTH
     if (broker->auth_user || broker->auth_pass) {
@@ -2815,6 +3079,9 @@ static void BrokerUsage(const char* prog)
 #ifdef ENABLE_MQTT_TLS
            " [-t] [-V ver] [-c cert] [-K key] [-A ca]"
 #endif
+#ifdef ENABLE_MQTT_DTLS
+           " [-D]"
+#endif
            , prog);
     PRINTF("  -v <level>  Log level: 1=error, 2=info (default), 3=debug");
 #ifdef ENABLE_MQTT_TLS
@@ -2823,6 +3090,9 @@ static void BrokerUsage(const char* prog)
     PRINTF("  -c <file>   Server certificate file (PEM)");
     PRINTF("  -K <file>   Server private key file (PEM)");
     PRINTF("  -A <file>   CA certificate for mutual TLS (PEM)");
+#endif
+#ifdef ENABLE_MQTT_DTLS
+    PRINTF("  -D          Enable DTLS (UDP) instead of TLS (TCP)");
 #endif
     PRINTF("Features:"
 #ifdef WOLFMQTT_BROKER_RETAINED
@@ -2839,6 +3109,9 @@ static void BrokerUsage(const char* prog)
 #endif
 #ifdef ENABLE_MQTT_TLS
            " tls"
+#endif
+#ifdef ENABLE_MQTT_DTLS
+           " dtls"
 #endif
            );
 }
@@ -2918,6 +3191,15 @@ int wolfmqtt_broker(int argc, char** argv)
         }
         else if (XSTRCMP(argv[i], "-A") == 0 && i + 1 < argc) {
             broker.tls_ca = argv[++i];
+        }
+#endif
+#ifdef ENABLE_MQTT_DTLS
+        else if (XSTRCMP(argv[i], "-D") == 0) {
+            broker.use_dtls = 1;
+            broker.use_tls = 1; /* DTLS implies TLS */
+            if (broker.port == MQTT_DEFAULT_PORT) {
+                broker.port = MQTT_SECURE_PORT;
+            }
         }
 #endif
         else if (XSTRCMP(argv[i], "-h") == 0) {

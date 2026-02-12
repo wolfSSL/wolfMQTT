@@ -170,6 +170,9 @@ typedef struct _MQTTCtx {
     byte *tx_buf, *rx_buf;
     int return_code;
     int use_tls;
+#ifdef ENABLE_MQTT_DTLS
+    int use_dtls;
+#endif
     int retain;
     int enable_lwt;
 #ifdef WOLFMQTT_V5

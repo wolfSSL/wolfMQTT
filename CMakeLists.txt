@@ -91,6 +91,18 @@ if (WOLFMQTT_TLS)
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 endif()
 
+add_option("WOLFMQTT_DTLS"
+           "Enable DTLS support (requires wolfSSL DTLS)"
+           "no" "yes;no")
+if (WOLFMQTT_DTLS)
+    if (NOT WOLFMQTT_TLS)
+        message(WARNING "DTLS requires TLS support -- disabling DTLS")
+        set(WOLFMQTT_DTLS "no" CACHE STRING "" FORCE)
+    else()
+        list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_DTLS")
+    endif()
+endif()
+
 add_option("WOLFMQTT_SN"
            "Enable MQTT-SN support"
            "no" "yes;no")

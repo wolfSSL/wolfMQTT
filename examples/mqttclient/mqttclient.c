@@ -268,6 +268,12 @@ int mqttclient_test(MQTTCtx *mqttCtx)
        MqttSocket_Connect for use by mqtt_tls_verify_cb */
     mqttCtx->client.ctx = mqttCtx;
 
+#ifdef ENABLE_MQTT_DTLS
+    if (mqttCtx->use_dtls) {
+        MqttClient_Flags(&mqttCtx->client, 0, MQTT_CLIENT_FLAG_IS_DTLS);
+    }
+#endif
+
 #ifdef WOLFMQTT_DISCONNECT_CB
     /* setup disconnect callback */
     rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,

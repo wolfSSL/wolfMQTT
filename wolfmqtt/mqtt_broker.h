@@ -72,6 +72,11 @@
 #ifndef BROKER_TX_BUF_SZ
     #define BROKER_TX_BUF_SZ       4096
 #endif
+#ifdef ENABLE_MQTT_DTLS
+#ifndef BROKER_PEER_ADDR_SZ
+    #define BROKER_PEER_ADDR_SZ    16  /* sizeof(struct sockaddr_in) IPv4 */
+#endif
+#endif
 #ifndef BROKER_TIMEOUT_MS
     #define BROKER_TIMEOUT_MS      1000
 #endif
@@ -208,6 +213,10 @@ typedef struct BrokerClient {
 #ifdef ENABLE_MQTT_TLS
     byte    tls_handshake_done;
 #endif
+#ifdef ENABLE_MQTT_DTLS
+    byte    peer_addr[BROKER_PEER_ADDR_SZ];
+    int     peer_addr_len;
+#endif
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
@@ -289,6 +298,11 @@ typedef struct MqttBroker {
     const char*  tls_ca;       /* CA cert for mutual auth (optional) */
     byte         use_tls;
     byte         tls_version;  /* 0=auto (v23), 12=TLS 1.2, 13=TLS 1.3 */
+#ifdef ENABLE_MQTT_DTLS
+    byte         use_dtls;     /* Use DTLS (UDP) instead of TLS (TCP) */
+    byte         pending_peer_addr[BROKER_PEER_ADDR_SZ];
+    int          pending_peer_addr_len;
+#endif
 #endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerClient clients[BROKER_MAX_CLIENTS];

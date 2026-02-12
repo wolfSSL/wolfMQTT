@@ -1217,11 +1217,19 @@ static int NetConnect(void *context, const char* host, word16 port,
 {
     SocketContext *sock = (SocketContext*)context;
     int type = SOCK_STREAM;
+    int proto = IPPROTO_TCP;
     int rc = -1;
     SOERROR_T so_error = 0;
     struct addrinfo *result = NULL;
     struct addrinfo hints;
     MQTTCtx* mqttCtx = sock->mqttCtx;
+
+#ifdef ENABLE_MQTT_DTLS
+    if (mqttCtx->use_dtls) {
+        type = SOCK_DGRAM;
+        proto = IPPROTO_UDP;
+    }
+#endif
 
     /* Get address information for host and locate IPv4 */
     switch(sock->stat) {
@@ -1234,8 +1242,8 @@ static int NetConnect(void *context, const char* host, word16 port,
 
             XMEMSET(&hints, 0, sizeof(hints));
             hints.ai_family = AF_INET;
-            hints.ai_socktype = SOCK_STREAM;
-            hints.ai_protocol = IPPROTO_TCP;
+            hints.ai_socktype = type;
+            hints.ai_protocol = proto;
 
             XMEMSET(&sock->addr, 0, sizeof(sock->addr));
             sock->addr.sin_family = AF_INET;

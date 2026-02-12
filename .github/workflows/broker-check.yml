@@ -19,21 +19,35 @@ jobs:
           - name: "Broker default (dynamic alloc)"
             cflags: ""
             wolfmqtt_opts: "--enable-broker"
+            wolfssl_opts: "--enable-enckeys"
           - name: "Broker static memory"
             cflags: "-DWOLFMQTT_STATIC_MEMORY"
             wolfmqtt_opts: "--enable-broker"
+            wolfssl_opts: "--enable-enckeys"
           - name: "Broker with TLS"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --enable-tls"
+            wolfssl_opts: "--enable-enckeys"
           - name: "Broker with TLS (static memory)"
             cflags: "-DWOLFMQTT_STATIC_MEMORY"
             wolfmqtt_opts: "--enable-broker --enable-tls"
+            wolfssl_opts: "--enable-enckeys"
+          - name: "Broker with DTLS"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-tls --enable-dtls"
+            wolfssl_opts: "--enable-enckeys --enable-dtls --enable-dtls13"
+          - name: "Broker with DTLS (static memory)"
+            cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker --enable-tls --enable-dtls"
+            wolfssl_opts: "--enable-enckeys --enable-dtls --enable-dtls13"
           - name: "Broker no logging"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --disable-broker-log"
+            wolfssl_opts: "--enable-enckeys"
           - name: "Broker minimal (no log, no retained, no will, no wildcards, no auth)"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --disable-broker-log --disable-broker-retained --disable-broker-will --disable-broker-wildcards --disable-broker-auth"
+            wolfssl_opts: "--enable-enckeys"
 
     steps:
     - name: Install dependencies
@@ -51,7 +65,7 @@ jobs:
       run: ./autogen.sh
     - name: wolfssl configure
       working-directory: ./wolfssl
-      run: ./configure --enable-enckeys
+      run: ./configure ${{ matrix.wolfssl_opts }}
     - name: wolfssl make
       working-directory: ./wolfssl
       run: make
