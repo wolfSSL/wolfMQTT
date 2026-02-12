@@ -554,7 +554,7 @@ static void BrokerClient_Free(BrokerClient* bc)
 }
 
 static BrokerClient* BrokerClient_Add(MqttBroker* broker,
-    BROKER_SOCKET_T sock)
+    BROKER_SOCKET_T sock, int is_tls)
 {
     BrokerClient* bc = NULL;
     int rc = MQTT_CODE_SUCCESS;
@@ -616,7 +616,7 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
 
 #ifdef ENABLE_MQTT_TLS
     if (rc == MQTT_CODE_SUCCESS) {
-        if (broker->use_tls && broker->tls_ctx) {
+        if (is_tls && broker->tls_ctx) {
             bc->client.tls.ssl = wolfSSL_new(broker->tls_ctx);
             if (bc->client.tls.ssl == NULL) {
                 WBLOG_ERR(broker, "broker: wolfSSL_new failed sock=%d", (int)sock);
@@ -629,10 +629,17 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
                 bc->tls_handshake_done = 0;
             }
         }
+        else if (is_tls) {
+            WBLOG_ERR(broker, "broker: TLS ctx not set, rejecting sock=%d",
+                (int)sock);
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
         else {
             bc->tls_handshake_done = 1;
         }
     }
+#else
+    (void)is_tls;
 #endif
 
     if (rc == MQTT_CODE_SUCCESS) {
@@ -2612,6 +2619,10 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     XMEMCPY(&broker->net, net, sizeof(MqttBrokerNet));
     broker->listen_sock = BROKER_SOCKET_INVALID;
     broker->port = MQTT_DEFAULT_PORT;
+#ifdef ENABLE_MQTT_TLS
+    broker->listen_sock_tls = BROKER_SOCKET_INVALID;
+    broker->port_tls = MQTT_SECURE_PORT;
+#endif
     broker->running = 0;
     broker->log_level = BROKER_LOG_LEVEL_DEFAULT;
     broker->next_packet_id = 1;
@@ -2631,7 +2642,6 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
 int MqttBroker_Step(MqttBroker* broker)
 {
     int activity = 0;
-    BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
     int rc;
 
     if (broker == NULL) {
@@ -2641,16 +2651,43 @@ int MqttBroker_Step(MqttBroker* broker)
         return MQTT_CODE_SUCCESS;
     }
 
-    /* 1. Try to accept a new connection (non-blocking) */
-    rc = broker->net.accept(broker->net.ctx, broker->listen_sock, &new_sock);
-    if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
-        WBLOG_INFO(broker, "broker: accept sock=%d", (int)new_sock);
-        if (BrokerClient_Add(broker, new_sock) == NULL) {
-            WBLOG_ERR(broker, "broker: accept sock=%d rejected (alloc)", (int)new_sock);
-            broker->net.close(broker->net.ctx, new_sock);
+    /* 1. Try to accept new connections (non-blocking) */
+
+    /* Plain (non-TLS) listener */
+    if (broker->listen_sock != BROKER_SOCKET_INVALID) {
+        BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
+        rc = broker->net.accept(broker->net.ctx, broker->listen_sock,
+            &new_sock);
+        if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
+            WBLOG_INFO(broker, "broker: accept sock=%d (plain)",
+                (int)new_sock);
+            if (BrokerClient_Add(broker, new_sock, 0) == NULL) {
+                WBLOG_ERR(broker,
+                    "broker: accept sock=%d rejected (alloc)", (int)new_sock);
+                broker->net.close(broker->net.ctx, new_sock);
+            }
+            activity = 1;
         }
-        activity = 1;
     }
+
+#ifdef ENABLE_MQTT_TLS
+    /* TLS listener */
+    if (broker->listen_sock_tls != BROKER_SOCKET_INVALID) {
+        BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
+        rc = broker->net.accept(broker->net.ctx, broker->listen_sock_tls,
+            &new_sock);
+        if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
+            WBLOG_INFO(broker, "broker: accept sock=%d (TLS)",
+                (int)new_sock);
+            if (BrokerClient_Add(broker, new_sock, 1) == NULL) {
+                WBLOG_ERR(broker,
+                    "broker: accept sock=%d rejected (alloc)", (int)new_sock);
+                broker->net.close(broker->net.ctx, new_sock);
+            }
+            activity = 1;
+        }
+    }
+#endif
 
     /* 2. Process each client */
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -2709,34 +2746,80 @@ int MqttBroker_Run(MqttBroker* broker)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* Start listening */
+#ifdef ENABLE_MQTT_TLS
+    /* Initialize TLS context if TLS is enabled */
+    if (broker->use_tls) {
+    #if !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+        rc = BrokerTls_Init(broker);
+        if (rc != MQTT_CODE_SUCCESS) {
+            WBLOG_ERR(broker, "broker: TLS init failed rc=%d", rc);
+            return rc;
+        }
+    #else
+        if (broker->tls_ctx == NULL) {
+            WBLOG_ERR(broker, "broker: TLS ctx must be set before start");
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
+    #endif
+    }
+
+    /* Start plain (non-TLS) listener */
+  #ifndef WOLFMQTT_BROKER_NO_INSECURE
+    if (!broker->use_tls || broker->port != broker->port_tls) {
+        rc = broker->net.listen(broker->net.ctx, &broker->listen_sock,
+            broker->port, BROKER_LISTEN_BACKLOG);
+        if (rc != MQTT_CODE_SUCCESS) {
+            WBLOG_ERR(broker, "broker: listen (plain) failed rc=%d", rc);
+            return rc;
+        }
+        WBLOG_INFO(broker, "broker: listening on port %d (plain)",
+            broker->port);
+    }
+    else if (broker->use_tls && broker->port == broker->port_tls) {
+        WBLOG_INFO(broker,
+            "broker: plain port == TLS port (%d), TLS-only mode",
+            broker->port_tls);
+    }
+  #endif /* !WOLFMQTT_BROKER_NO_INSECURE */
+
+    /* Start TLS listener */
+    if (broker->use_tls) {
+        rc = broker->net.listen(broker->net.ctx, &broker->listen_sock_tls,
+            broker->port_tls, BROKER_LISTEN_BACKLOG);
+        if (rc != MQTT_CODE_SUCCESS) {
+            WBLOG_ERR(broker, "broker: listen (TLS) failed rc=%d", rc);
+            return rc;
+        }
+        WBLOG_INFO(broker, "broker: listening on port %d (TLS)",
+            broker->port_tls);
+    }
+#else
+    /* No TLS support compiled in: plain listener only */
     rc = broker->net.listen(broker->net.ctx, &broker->listen_sock,
         broker->port, BROKER_LISTEN_BACKLOG);
     if (rc != MQTT_CODE_SUCCESS) {
         WBLOG_ERR(broker, "broker: listen failed rc=%d", rc);
         return rc;
     }
-
-#if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
-    if (broker->use_tls) {
-        rc = BrokerTls_Init(broker);
-        if (rc != MQTT_CODE_SUCCESS) {
-            WBLOG_ERR(broker, "broker: TLS init failed rc=%d", rc);
-            return rc;
-        }
-        WBLOG_INFO(broker, "broker: listening on port %d (TLS)", broker->port);
-    }
-    else
+    WBLOG_INFO(broker, "broker: listening on port %d (no TLS)", broker->port);
 #endif
-    {
-        WBLOG_INFO(broker, "broker: listening on port %d (no TLS)", broker->port);
-    }
+
 #ifdef WOLFMQTT_BROKER_AUTH
     if (broker->auth_user || broker->auth_pass) {
         WBLOG_INFO(broker, "broker: auth enabled user=%s",
             broker->auth_user ? broker->auth_user : "(null)");
     }
 #endif
+
+    /* Ensure at least one listener is active */
+    if (broker->listen_sock == BROKER_SOCKET_INVALID
+#ifdef ENABLE_MQTT_TLS
+        && broker->listen_sock_tls == BROKER_SOCKET_INVALID
+#endif
+    ) {
+        WBLOG_ERR(broker, "broker: no listeners configured");
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
 
     broker->running = 1;
     while (broker->running) {
@@ -2794,11 +2877,17 @@ int MqttBroker_Free(MqttBroker* broker)
     BrokerTls_Free(broker);
 #endif
 
-    /* Close listen socket */
+    /* Close listen sockets */
     if (broker->listen_sock != BROKER_SOCKET_INVALID) {
         broker->net.close(broker->net.ctx, broker->listen_sock);
         broker->listen_sock = BROKER_SOCKET_INVALID;
     }
+#ifdef ENABLE_MQTT_TLS
+    if (broker->listen_sock_tls != BROKER_SOCKET_INVALID) {
+        broker->net.close(broker->net.ctx, broker->listen_sock_tls);
+        broker->listen_sock_tls = BROKER_SOCKET_INVALID;
+    }
+#endif
 
     return MQTT_CODE_SUCCESS;
 }
@@ -2813,12 +2902,14 @@ static void BrokerUsage(const char* prog)
            " [-u user] [-P pass]"
 #endif
 #ifdef ENABLE_MQTT_TLS
-           " [-t] [-V ver] [-c cert] [-K key] [-A ca]"
+           " [-t] [-s port] [-V ver] [-c cert] [-K key] [-A ca]"
 #endif
            , prog);
+    PRINTF("  -p <port>   Plain port (default: %d)", MQTT_DEFAULT_PORT);
     PRINTF("  -v <level>  Log level: 1=error, 2=info (default), 3=debug");
 #ifdef ENABLE_MQTT_TLS
-    PRINTF("  -t          Enable TLS");
+    PRINTF("  -t          Enable TLS (listens on both plain and TLS ports)");
+    PRINTF("  -s <port>   TLS port (default: %d)", MQTT_SECURE_PORT);
     PRINTF("  -V <ver>    TLS version: 12=TLS 1.2, 13=TLS 1.3 (default: auto)");
     PRINTF("  -c <file>   Server certificate file (PEM)");
     PRINTF("  -K <file>   Server private key file (PEM)");
@@ -2836,6 +2927,9 @@ static void BrokerUsage(const char* prog)
 #endif
 #ifdef WOLFMQTT_BROKER_AUTH
            " auth"
+#endif
+#ifdef WOLFMQTT_BROKER_INSECURE
+           " insecure"
 #endif
 #ifdef ENABLE_MQTT_TLS
            " tls"
@@ -2903,9 +2997,9 @@ int wolfmqtt_broker(int argc, char** argv)
 #ifdef ENABLE_MQTT_TLS
         else if (XSTRCMP(argv[i], "-t") == 0) {
             broker.use_tls = 1;
-            if (broker.port == MQTT_DEFAULT_PORT) {
-                broker.port = MQTT_SECURE_PORT;
-            }
+        }
+        else if (XSTRCMP(argv[i], "-s") == 0 && i + 1 < argc) {
+            broker.port_tls = (word16)XATOI(argv[++i]);
         }
         else if (XSTRCMP(argv[i], "-V") == 0 && i + 1 < argc) {
             broker.tls_version = (byte)XATOI(argv[++i]);
