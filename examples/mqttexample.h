@@ -200,6 +200,9 @@ typedef struct _MQTTCtx {
     unsigned int useNonBlockMode:1; /* set to use non-blocking mode.
         network callbacks can return MQTT_CODE_CONTINUE to indicate "would block" */
 #endif
+#ifdef WOLFMQTT_WOLFIP
+    struct wolfIP *stack; /* wolfIP TCP/IP stack instance */
+#endif
 } MQTTCtx;
 
 

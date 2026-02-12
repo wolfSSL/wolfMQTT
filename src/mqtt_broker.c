@@ -179,6 +179,124 @@ static void BrokerStore_String(char** dst_ptr,
         BrokerStore_String(&(dst), src, len)
 #endif
 
+#ifdef ENABLE_MQTT_TLS
+static int BrokerTls_Init(MqttBroker* broker)
+{
+    WOLFSSL_CTX* ctx = NULL;
+    int rc;
+
+    rc = wolfSSL_Init();
+    if (rc != WOLFSSL_SUCCESS) {
+        WBLOG_ERR(broker, "broker: wolfSSL_Init failed %d", rc);
+        rc = MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* Select TLS method based on version preference */
+    if (rc == WOLFSSL_SUCCESS) {
+        if (broker->tls_version == 12) {
+            ctx = wolfSSL_CTX_new(wolfTLSv1_2_server_method());
+        }
+        else if (broker->tls_version == 13) {
+            ctx = wolfSSL_CTX_new(wolfTLSv1_3_server_method());
+        }
+        else {
+            ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+        }
+        if (ctx == NULL) {
+            WBLOG_ERR(broker, "broker: wolfSSL_CTX_new failed");
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
+    }
+
+    /* Load server certificate */
+    if (rc == WOLFSSL_SUCCESS) {
+        if (broker->tls_cert == NULL) {
+            WBLOG_ERR(broker, "broker: TLS cert not set (-c)");
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
+    }
+    if (rc == WOLFSSL_SUCCESS) {
+#ifndef NO_FILESYSTEM
+        rc = wolfSSL_CTX_use_certificate_file(ctx, broker->tls_cert,
+            WOLFSSL_FILETYPE_PEM);
+        if (rc != WOLFSSL_SUCCESS) {
+            WBLOG_ERR(broker, "broker: load cert failed %d (%s)", rc, broker->tls_cert);
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
+#else
+        /* File operations not available in NO_FILESYSTEM builds */
+        rc = MQTT_CODE_ERROR_BAD_ARG;
+#endif
+    }
+
+    /* Load server private key */
+    if (rc == WOLFSSL_SUCCESS) {
+        if (broker->tls_key == NULL) {
+            WBLOG_ERR(broker, "broker: TLS key not set (-K)");
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
+    }
+    if (rc == WOLFSSL_SUCCESS) {
+#ifndef NO_FILESYSTEM
+        rc = wolfSSL_CTX_use_PrivateKey_file(ctx, broker->tls_key,
+            WOLFSSL_FILETYPE_PEM);
+        if (rc != WOLFSSL_SUCCESS) {
+            WBLOG_ERR(broker, "broker: load key failed %d (%s)", rc, broker->tls_key);
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
+#else
+        rc = MQTT_CODE_ERROR_BAD_ARG;
+#endif
+    }
+
+    /* Set wolfSSL IO callbacks */
+    if (rc == WOLFSSL_SUCCESS) {
+        wolfSSL_CTX_SetIORecv(ctx, MqttSocket_TlsSocketReceive);
+        wolfSSL_CTX_SetIOSend(ctx, MqttSocket_TlsSocketSend);
+    }
+
+    /* Mutual TLS: load CA and require client certificate */
+    if (rc == WOLFSSL_SUCCESS && broker->tls_ca != NULL) {
+#ifndef NO_FILESYSTEM
+        rc = wolfSSL_CTX_load_verify_locations(ctx, broker->tls_ca, NULL);
+#else
+        rc = MQTT_CODE_ERROR_BAD_ARG;
+#endif
+        if (rc != WOLFSSL_SUCCESS) {
+            WBLOG_ERR(broker, "broker: load CA failed %d (%s)", rc, broker->tls_ca);
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
+        else {
+            wolfSSL_CTX_set_verify(ctx,
+                WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT,
+                NULL);
+            WBLOG_INFO(broker, "broker: mutual TLS enabled (CA=%s)", broker->tls_ca);
+        }
+    }
+
+    if (rc == WOLFSSL_SUCCESS) {
+        broker->tls_ctx = ctx;
+        rc = MQTT_CODE_SUCCESS;
+    }
+    else {
+        if (ctx != NULL) {
+            wolfSSL_CTX_free(ctx);
+        }
+        wolfSSL_Cleanup();
+    }
+    return rc;
+}
+
+static void BrokerTls_Free(MqttBroker* broker)
+{
+    if (broker->tls_ctx != NULL) {
+        wolfSSL_CTX_free(broker->tls_ctx);
+        broker->tls_ctx = NULL;
+    }
+    wolfSSL_Cleanup();
+}
+#endif /* ENABLE_MQTT_TLS */
+
 /* -------------------------------------------------------------------------- */
 /* wolfIP network backend                                                      */
 /* -------------------------------------------------------------------------- */
@@ -503,110 +621,7 @@ int MqttBrokerNet_Init(MqttBrokerNet* net)
     return MQTT_CODE_SUCCESS;
 }
 
-#ifdef ENABLE_MQTT_TLS
-static int BrokerTls_Init(MqttBroker* broker)
-{
-    WOLFSSL_CTX* ctx = NULL;
-    int rc;
 
-    rc = wolfSSL_Init();
-    if (rc != WOLFSSL_SUCCESS) {
-        WBLOG_ERR(broker, "broker: wolfSSL_Init failed %d", rc);
-        rc = MQTT_CODE_ERROR_BAD_ARG;
-    }
-
-    /* Select TLS method based on version preference */
-    if (rc == WOLFSSL_SUCCESS) {
-        if (broker->tls_version == 12) {
-            ctx = wolfSSL_CTX_new(wolfTLSv1_2_server_method());
-        }
-        else if (broker->tls_version == 13) {
-            ctx = wolfSSL_CTX_new(wolfTLSv1_3_server_method());
-        }
-        else {
-            ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
-        }
-        if (ctx == NULL) {
-            WBLOG_ERR(broker, "broker: wolfSSL_CTX_new failed");
-            rc = MQTT_CODE_ERROR_MEMORY;
-        }
-    }
-
-    /* Load server certificate */
-    if (rc == WOLFSSL_SUCCESS) {
-        if (broker->tls_cert == NULL) {
-            WBLOG_ERR(broker, "broker: TLS cert not set (-c)");
-            rc = MQTT_CODE_ERROR_BAD_ARG;
-        }
-    }
-    if (rc == WOLFSSL_SUCCESS) {
-        rc = wolfSSL_CTX_use_certificate_file(ctx, broker->tls_cert,
-            WOLFSSL_FILETYPE_PEM);
-        if (rc != WOLFSSL_SUCCESS) {
-            WBLOG_ERR(broker, "broker: load cert failed %d (%s)", rc, broker->tls_cert);
-            rc = MQTT_CODE_ERROR_BAD_ARG;
-        }
-    }
-
-    /* Load server private key */
-    if (rc == WOLFSSL_SUCCESS) {
-        if (broker->tls_key == NULL) {
-            WBLOG_ERR(broker, "broker: TLS key not set (-K)");
-            rc = MQTT_CODE_ERROR_BAD_ARG;
-        }
-    }
-    if (rc == WOLFSSL_SUCCESS) {
-        rc = wolfSSL_CTX_use_PrivateKey_file(ctx, broker->tls_key,
-            WOLFSSL_FILETYPE_PEM);
-        if (rc != WOLFSSL_SUCCESS) {
-            WBLOG_ERR(broker, "broker: load key failed %d (%s)", rc, broker->tls_key);
-            rc = MQTT_CODE_ERROR_BAD_ARG;
-        }
-    }
-
-    /* Set wolfSSL IO callbacks */
-    if (rc == WOLFSSL_SUCCESS) {
-        wolfSSL_CTX_SetIORecv(ctx, MqttSocket_TlsSocketReceive);
-        wolfSSL_CTX_SetIOSend(ctx, MqttSocket_TlsSocketSend);
-    }
-
-    /* Mutual TLS: load CA and require client certificate */
-    if (rc == WOLFSSL_SUCCESS && broker->tls_ca != NULL) {
-        rc = wolfSSL_CTX_load_verify_locations(ctx, broker->tls_ca, NULL);
-        if (rc != WOLFSSL_SUCCESS) {
-            WBLOG_ERR(broker, "broker: load CA failed %d (%s)", rc, broker->tls_ca);
-            rc = MQTT_CODE_ERROR_BAD_ARG;
-        }
-        else {
-            wolfSSL_CTX_set_verify(ctx,
-                WOLFSSL_VERIFY_PEER | WOLFSSL_VERIFY_FAIL_IF_NO_PEER_CERT,
-                NULL);
-            WBLOG_INFO(broker, "broker: mutual TLS enabled (CA=%s)", broker->tls_ca);
-        }
-    }
-
-    if (rc == WOLFSSL_SUCCESS) {
-        broker->tls_ctx = ctx;
-        rc = MQTT_CODE_SUCCESS;
-    }
-    else {
-        if (ctx != NULL) {
-            wolfSSL_CTX_free(ctx);
-        }
-        wolfSSL_Cleanup();
-    }
-    return rc;
-}
-
-static void BrokerTls_Free(MqttBroker* broker)
-{
-    if (broker->tls_ctx != NULL) {
-        wolfSSL_CTX_free(broker->tls_ctx);
-        broker->tls_ctx = NULL;
-    }
-    wolfSSL_Cleanup();
-}
-#endif /* ENABLE_MQTT_TLS */
 
 #endif /* WOLFMQTT_WOLFIP / !WOLFMQTT_BROKER_CUSTOM_NET */
 
@@ -3727,6 +3742,7 @@ int MqttBroker_Free(MqttBroker* broker)
 /* -------------------------------------------------------------------------- */
 static void BrokerUsage(const char* prog)
 {
+    (void)prog; /* Suppress unused parameter warning */
     PRINTF("usage: %s [-p port] [-v level]"
 #ifdef WOLFMQTT_BROKER_AUTH
            " [-u user] [-P pass]"

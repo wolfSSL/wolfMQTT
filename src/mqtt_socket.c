@@ -26,12 +26,18 @@
 
 #ifdef WOLFMQTT_NONBLOCK
     /* need EWOULDBLOCK and EAGAIN */
-    #if defined(MICROCHIP_MPLAB_HARMONY) && \
+    #if defined(WOLFMQTT_WOLFIP)
+        #include "wolfip.h"
+        #define EWOULDBLOCK WOLFIP_EAGAIN
+        #define EAGAIN WOLFIP_EAGAIN
+    #elif defined(MICROCHIP_MPLAB_HARMONY) && \
         ((__XC32_VERSION < 4000) || (__XC32_VERSION == 243739000))
         /* xc32 versions >= v4.0 no longer have sys/errno.h */
         #include <sys/errno.h>
+        #include <errno.h>
+    #else
+        #include <errno.h>
     #endif
-    #include <errno.h>
 #endif
 
 #ifdef ENABLE_MQTT_CURL

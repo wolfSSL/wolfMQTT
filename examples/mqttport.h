@@ -73,6 +73,15 @@ extern "C" {
     #include "lwip/sockets.h"
     #include "lwip/netdb.h"
 
+/* wolfIP TCP/IP stack */
+#elif defined(WOLFMQTT_WOLFIP)
+    #include "wolfip.h"
+
+    #define SOCKET_T        int
+    #define SOCKET_INVALID  (-1)
+    #define SOCK_ADDR_IN    struct wolfIP_sockaddr_in
+    #define NO_FILESYSTEM
+
 /* User defined IO */
 #elif defined(WOLFMQTT_USER_IO)
     #include "userio_template.h"

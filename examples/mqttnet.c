@@ -1158,6 +1158,124 @@ static int NetDisconnect(void *context)
 }
 
 /* -------------------------------------------------------------------------- */
+/* WOLFIP TCP/IP STACK NETWORK CALLBACK EXAMPLE */
+/* -------------------------------------------------------------------------- */
+#elif defined(WOLFMQTT_WOLFIP)
+
+static int NetDisconnect(void *context)
+{
+    SocketContext *sock = (SocketContext*)context;
+    if (sock) {
+        if (sock->fd != SOCKET_INVALID) {
+            wolfIP_sock_close(sock->stack, sock->fd);
+            sock->fd = SOCKET_INVALID;
+        }
+        sock->stat = SOCK_BEGIN;
+    }
+    return 0;
+}
+
+static int NetConnect(void *context, const char* host, word16 port,
+    int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    struct wolfIP_sockaddr_in addr;
+    int rc;
+
+    (void)timeout_ms;
+
+    if (context == NULL || host == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    switch (sock->stat) {
+        case SOCK_BEGIN:
+        {
+            /* Create TCP socket */
+            sock->fd = wolfIP_sock_socket(sock->stack, AF_INET,
+                IPSTACK_SOCK_STREAM, 0);
+            if (sock->fd < 0) {
+                return MQTT_CODE_ERROR_NETWORK;
+            }
+
+            sock->stat = SOCK_CONN;
+        }
+        FALL_THROUGH;
+
+        case SOCK_CONN:
+        {
+            /* Set up address and initiate connect */
+            XMEMSET(&addr, 0, sizeof(addr));
+            addr.sin_family = AF_INET;
+            addr.sin_port = ee16(port);
+            addr.sin_addr.s_addr = atoip4(host);
+
+            rc = wolfIP_sock_connect(sock->stack, sock->fd,
+                (struct wolfIP_sockaddr *)&addr, sizeof(addr));
+            if (rc == 0) {
+                return MQTT_CODE_SUCCESS;
+            }
+            if (rc == -WOLFIP_EAGAIN || rc == -11) {
+                return MQTT_CODE_CONTINUE;
+            }
+
+            /* Connection failed */
+            NetDisconnect(context);
+            return MQTT_CODE_ERROR_NETWORK;
+        }
+
+        default:
+            break;
+    }
+
+    return MQTT_CODE_ERROR_NETWORK;
+}
+
+static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    int rc;
+
+    (void)timeout_ms;
+
+    if (context == NULL || buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    rc = wolfIP_sock_recv(sock->stack, sock->fd, buf, buf_len, 0);
+    if (rc == -WOLFIP_EAGAIN || rc == -1) {
+        return MQTT_CODE_CONTINUE;
+    }
+    if (rc <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    return rc;
+}
+
+static int NetWrite(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    SocketContext *sock = (SocketContext*)context;
+    int rc;
+
+    (void)timeout_ms;
+
+    if (context == NULL || buf == NULL || buf_len <= 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    rc = wolfIP_sock_send(sock->stack, sock->fd, buf, buf_len, 0);
+    if (rc == -WOLFIP_EAGAIN || rc == -1) {
+        return MQTT_CODE_CONTINUE;
+    }
+    if (rc <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    return rc;
+}
+
+
+/* -------------------------------------------------------------------------- */
 /* GENERIC BSD SOCKET TCP NETWORK CALLBACK EXAMPLE */
 /* -------------------------------------------------------------------------- */
 #else
@@ -1807,6 +1925,11 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
 #endif
         sockCtx->stat = SOCK_BEGIN;
         sockCtx->mqttCtx = mqttCtx;
+    #ifdef WOLFMQTT_WOLFIP
+        if (mqttCtx != NULL) {
+            sockCtx->stack = mqttCtx->stack;
+        }
+    #endif
 
     #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
         /* setup the pipe for waking select() */
