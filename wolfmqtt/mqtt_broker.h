@@ -164,6 +164,23 @@ typedef struct MqttBrokerNet {
 } MqttBrokerNet;
 
 /* -------------------------------------------------------------------------- */
+/* WebSocket per-client context                                                */
+/* -------------------------------------------------------------------------- */
+#ifdef ENABLE_MQTT_WEBSOCKET
+#ifndef BROKER_WS_RX_BUF_SZ
+    #define BROKER_WS_RX_BUF_SZ  BROKER_RX_BUF_SZ
+#endif
+typedef struct BrokerWsCtx {
+    void  *wsi;                 /* struct lws* (opaque to avoid lws header) */
+    byte   rx_buffer[BROKER_WS_RX_BUF_SZ];
+    size_t rx_len;
+    byte  *tx_pending;          /* allocated with LWS_PRE prefix room */
+    size_t tx_len;
+    int    status;              /* 1=established, 0=closed, -1=error */
+} BrokerWsCtx;
+#endif /* ENABLE_MQTT_WEBSOCKET */
+
+/* -------------------------------------------------------------------------- */
 /* Broker client tracking                                                      */
 /* -------------------------------------------------------------------------- */
 typedef struct BrokerClient {
@@ -213,6 +230,9 @@ typedef struct BrokerClient {
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
 #ifdef ENABLE_MQTT_TLS
     byte    tls_handshake_done;
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+    void   *ws_ctx;             /* BrokerWsCtx* (NULL for TCP clients) */
 #endif
 } BrokerClient;
 
@@ -318,6 +338,14 @@ typedef struct MqttBroker {
 #ifdef WOLFMQTT_BROKER_WILL
     BrokerPendingWill* pending_wills;
 #endif
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+    void   *ws_ctx;             /* struct lws_context* (opaque) */
+    word16  ws_port;
+    byte    use_websocket;
+    const char *ws_tls_cert;
+    const char *ws_tls_key;
+    const char *ws_tls_ca;
 #endif
 } MqttBroker;
 

@@ -149,8 +149,9 @@ int main(int argc, char *argv[])
     printf("Connecting to %s:%d%s\n", mqttCtx.host, mqttCtx.port,
             mqttCtx.use_tls ? " (TLS)" : "");
     do {
+        /* Do not use socket TLS setup as this gets handled in the LWS driver */
         rc = MqttClient_NetConnect(&client, mqttCtx.host, mqttCtx.port, 5000,
-                                   mqttCtx.use_tls, NULL);
+                                   0, NULL);
     } while (rc == MQTT_CODE_CONTINUE);
     if (rc != MQTT_CODE_SUCCESS) {
         printf("MqttClient_NetConnect failed: %d\n", rc);
