@@ -237,6 +237,9 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
         PRINTF("-p <num>    Port to connect on, default: %d",
              MQTT_DEFAULT_PORT);
 #endif
+#ifdef ENABLE_MQTT_DTLS
+    PRINTF("-D          Enable DTLS (UDP)");
+#endif
     PRINTF("-q <num>    Qos Level 0-2, default: %d",
             mqttCtx->qos);
     PRINTF("-s          Disable clean session connect flag");
@@ -312,9 +315,14 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
     #else
         #define MQTT_V5_ARGS ""
     #endif
+    #ifdef ENABLE_MQTT_DTLS
+        #define MQTT_DTLS_ARGS "D"
+    #else
+        #define MQTT_DTLS_ARGS ""
+    #endif
 
     while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rtd" \
-            MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
+            MQTT_TLS_ARGS MQTT_V5_ARGS MQTT_DTLS_ARGS)) != -1) {
         switch ((char)rc) {
         case '?' :
             mqtt_show_usage(mqttCtx);
@@ -393,6 +401,13 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         case 'd':
             mqttCtx->debug_on = 1;
             break;
+
+    #ifdef ENABLE_MQTT_DTLS
+        case 'D':
+            mqttCtx->use_tls = 1;
+            mqttCtx->use_dtls = 1;
+            break;
+    #endif
 
     #ifdef ENABLE_MQTT_TLS
         case 'A':
@@ -640,6 +655,16 @@ int mqtt_tls_cb(MqttClient* client)
     /* Use highest available and allow downgrade. If wolfSSL is built with
      * old TLS support, it is possible for a server to force a downgrade to
      * an insecure version. */
+#ifdef ENABLE_MQTT_DTLS
+    if (MqttClient_Flags(client, 0, 0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+    #ifdef WOLFSSL_DTLS13
+        client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_3_client_method());
+    #else
+        client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_2_client_method());
+    #endif
+    }
+    else
+#endif
     client->tls.ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
     if (client->tls.ctx) {
         wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
@@ -766,7 +791,11 @@ int mqtt_dtls_cb(MqttClient* client) {
     int rc = WOLFSSL_FAILURE;
     SocketContext * sock = (SocketContext *)client->net->context;
 
+#ifdef WOLFSSL_DTLS13
+    client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_3_client_method());
+#else
     client->tls.ctx = wolfSSL_CTX_new(wolfDTLSv1_2_client_method());
+#endif
     if (client->tls.ctx) {
         wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
                 mqtt_tls_verify_cb);

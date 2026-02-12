@@ -320,6 +320,55 @@ else
     echo "SKIP: TLS tests (broker not built with TLS support)"
 fi
 
+# --- DTLS Tests ---
+has_dtls=no
+echo "$broker_features" | grep -q "dtls" && has_dtls=yes
+
+if [ "$has_dtls" = "yes" ]; then
+    # --- Test 17: DTLS pub/sub ---
+    echo ""
+    echo "--- Test 17: DTLS pub/sub ---"
+    # DTLS uses UDP; nc -z only checks TCP, so use sleep for startup
+    if [ $broker_pid != $no_pid ]; then
+        kill $broker_pid 2>/dev/null
+        wait $broker_pid 2>/dev/null || true
+        broker_pid=$no_pid
+    fi
+    generate_port
+    ./$broker_bin -D \
+        -c scripts/broker_test/server-cert.pem \
+        -K scripts/broker_test/server-key.pem \
+        -p $port &
+    broker_pid=$!
+    sleep 2
+
+    ./$client_bin -T -h 127.0.0.1 -p $port -n "test/dtls" -D \
+        -A scripts/broker_test/ca-cert.pem -C 5000 \
+        >"${TMP_DIR}/t17.log" 2>&1
+    if [ $? -eq 0 ]; then
+        echo "PASS: DTLS pub/sub"
+    else
+        echo "FAIL: DTLS pub/sub"
+        FAIL=1
+    fi
+
+    # --- Test 18: DTLS QoS 2 ---
+    echo ""
+    echo "--- Test 18: DTLS QoS 2 ---"
+    ./$client_bin -T -h 127.0.0.1 -p $port -n "test/dtls_qos2" -q 2 -D \
+        -A scripts/broker_test/ca-cert.pem -C 5000 \
+        >"${TMP_DIR}/t18.log" 2>&1
+    if [ $? -eq 0 ]; then
+        echo "PASS: DTLS QoS 2"
+    else
+        echo "FAIL: DTLS QoS 2"
+        FAIL=1
+    fi
+else
+    echo ""
+    echo "SKIP: DTLS tests (broker not built with DTLS support)"
+fi
+
 # --- Test 11: Multi-client QoS 2 (separate pub/sub) ---
 echo ""
 echo "--- Test 11: Multi-client QoS 2 ---"

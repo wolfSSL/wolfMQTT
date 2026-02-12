@@ -158,7 +158,6 @@ then
     test "$enable_v5" = "" && enable_v5=yes
     test "$enable_discb" = "" && enable_discb=yes
     test "$enable_mt" = "" && enable_mt=yes
-    test "$enable_" = "" && enable_=yes
 fi
 
 # TLS Support with wolfSSL
@@ -174,6 +173,24 @@ then
 
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required and wasn't found on the system. It can be obtained from https://www.wolfssl.com/download.html/.])])
 
+fi
+
+# DTLS Support (requires wolfSSL with DTLS)
+AC_ARG_ENABLE([dtls],
+    [AS_HELP_STRING([--enable-dtls],[Enable DTLS support (requires wolfSSL DTLS) (default: disabled)])],
+    [ ENABLED_DTLS=$enableval ],
+    [ ENABLED_DTLS=no ]
+    )
+
+if test "x$ENABLED_DTLS" = "xyes"
+then
+    if test "x$ENABLED_TLS" != "xyes"
+    then
+        AC_MSG_WARN([DTLS requires TLS support -- disabling DTLS])
+        ENABLED_DTLS=no
+    else
+        AM_CFLAGS="$AM_CFLAGS -DENABLE_MQTT_DTLS"
+    fi
 fi
 
 
@@ -480,6 +497,7 @@ AM_CONDITIONAL([BUILD_NONBLOCK], [test "x$ENABLED_NONBLOCK" = "xyes"])
 AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
 AM_CONDITIONAL([BUILD_WEBSOCKET], [test "x$ENABLED_WEBSOCKET" = "xyes"])
 AM_CONDITIONAL([BUILD_BROKER], [test "x$ENABLED_BROKER" = "xyes"])
+AM_CONDITIONAL([BUILD_DTLS], [test "x$ENABLED_DTLS" = "xyes"])
 
 
 
