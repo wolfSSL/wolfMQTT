@@ -346,44 +346,6 @@ int MqttBrokerNet_Init(MqttBrokerNet* net)
 }
 
 #ifdef ENABLE_MQTT_TLS
-/* When ENABLE_MQTT_WEBSOCKET is also defined, mqtt_socket.c excludes the
- * MqttSocket_TlsSocket{Receive,Send} functions (they're meant for client-side
- * only).  The broker TLS backend needs equivalent wolfSSL IO callbacks, so
- * define them locally. */
-#ifdef ENABLE_MQTT_WEBSOCKET
-static int BrokerTls_IORecv(WOLFSSL* ssl, char *buf, int sz, void *ptr)
-{
-    int rc;
-    MqttClient *client = (MqttClient*)ptr;
-    (void)ssl;
-    rc = client->net->read(client->net->context, (byte*)buf, sz,
-        client->tls.timeout_ms_read);
-    client->tls.sockRcRead = rc;
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_CONTINUE) {
-        return WOLFSSL_CBIO_ERR_WANT_READ;
-    }
-    else if (rc < 0) {
-        return WOLFSSL_CBIO_ERR_GENERAL;
-    }
-    return rc;
-}
-static int BrokerTls_IOSend(WOLFSSL* ssl, char *buf, int sz, void *ptr)
-{
-    int rc;
-    MqttClient *client = (MqttClient*)ptr;
-    (void)ssl;
-    rc = client->net->write(client->net->context, (byte*)buf, sz,
-        client->tls.timeout_ms_write);
-    client->tls.sockRcWrite = rc;
-    if (rc == 0 || rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_CONTINUE) {
-        return WOLFSSL_CBIO_ERR_WANT_WRITE;
-    }
-    else if (rc < 0) {
-        return WOLFSSL_CBIO_ERR_GENERAL;
-    }
-    return rc;
-}
-#endif /* ENABLE_MQTT_WEBSOCKET */
 static int BrokerTls_Init(MqttBroker* broker)
 {
     WOLFSSL_CTX* ctx = NULL;
@@ -446,13 +408,8 @@ static int BrokerTls_Init(MqttBroker* broker)
 
     /* Set wolfSSL IO callbacks */
     if (rc == WOLFSSL_SUCCESS) {
-#ifdef ENABLE_MQTT_WEBSOCKET
-        wolfSSL_CTX_SetIORecv(ctx, BrokerTls_IORecv);
-        wolfSSL_CTX_SetIOSend(ctx, BrokerTls_IOSend);
-#else
         wolfSSL_CTX_SetIORecv(ctx, MqttSocket_TlsSocketReceive);
         wolfSSL_CTX_SetIOSend(ctx, MqttSocket_TlsSocketSend);
-#endif
     }
 
     /* Mutual TLS: load CA and require client certificate */
