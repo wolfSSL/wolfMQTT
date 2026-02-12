@@ -31,6 +31,13 @@
 
 #ifdef ENABLE_MQTT_WEBSOCKET
 
+/* When wolfSSL is present (ENABLE_MQTT_TLS), tell libwebsockets to use the
+ * wolfSSL header path instead of system OpenSSL to avoid type conflicts. */
+#ifdef ENABLE_MQTT_TLS
+    #ifndef USE_WOLFSSL
+        #define USE_WOLFSSL
+    #endif
+#endif
 #include <libwebsockets.h>
 
 /* Network context for libwebsockets */

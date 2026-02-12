@@ -28,4 +28,7 @@ src_mqtt_broker_CPPFLAGS     = $(AM_CPPFLAGS)
 src_mqtt_broker_LDFLAGS      = -Lsrc
 src_mqtt_broker_LDADD        = src/libwolfmqtt.la $(LTLIBEVENT) $(LIB_STATIC_ADD)
 src_mqtt_broker_DEPENDENCIES = src/libwolfmqtt.la
+if BUILD_WEBSOCKET
+src_mqtt_broker_LDADD += -lwebsockets
+endif
 endif
