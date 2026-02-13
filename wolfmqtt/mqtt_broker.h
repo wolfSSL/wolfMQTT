@@ -129,6 +129,12 @@
 #ifndef WOLFMQTT_BROKER_NO_AUTH
     #define WOLFMQTT_BROKER_AUTH
 #endif
+#ifndef WOLFMQTT_BROKER_NO_INSECURE
+    #define WOLFMQTT_BROKER_INSECURE
+#endif
+#if defined(WOLFMQTT_BROKER_NO_INSECURE) && !defined(ENABLE_MQTT_TLS)
+    #error "WOLFMQTT_BROKER_NO_INSECURE requires ENABLE_MQTT_TLS"
+#endif
 
 /* -------------------------------------------------------------------------- */
 /* Forward declarations                                                        */
@@ -283,6 +289,8 @@ typedef struct MqttBroker {
     MqttBrokerNet net;
     word16  next_packet_id;
 #ifdef ENABLE_MQTT_TLS
+    BROKER_SOCKET_T listen_sock_tls; /* TLS listener socket */
+    word16       port_tls;           /* TLS port (default 8883) */
     WOLFSSL_CTX* tls_ctx;
     const char*  tls_cert;     /* Server certificate file path */
     const char*  tls_key;      /* Server private key file path */

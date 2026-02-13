@@ -225,6 +225,13 @@ if (WOLFMQTT_BROKER)
     if (NOT WOLFMQTT_BROKER_LOG)
         list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER_NO_LOG")
     endif()
+
+    add_option(WOLFMQTT_BROKER_INSECURE
+               "Enable broker plain-text (non-TLS) listener"
+               "yes" "yes;no")
+    if (NOT WOLFMQTT_BROKER_INSECURE)
+        list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_BROKER_NO_INSECURE")
+    endif()
 endif()
 
 # Note: not adding stress option to cmake build as of yet. stress is for

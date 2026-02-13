@@ -54,6 +54,8 @@ check_broker() {
 }
 
 # Start broker helper: kills existing broker, generates port, starts new one
+# When -t is among the args, also sets the TLS port (-s) to $port so that
+# single-port TLS tests can connect on $port regardless of dual-port support.
 start_broker() {
     if [ $broker_pid != $no_pid ]; then
         kill $broker_pid 2>/dev/null
@@ -61,9 +63,36 @@ start_broker() {
         broker_pid=$no_pid
     fi
     generate_port
-    ./$broker_bin "$@" -p $port &
+    local tls_args=""
+    for arg in "$@"; do
+        if [ "$arg" = "-t" ]; then
+            tls_args="-s $port"
+            break
+        fi
+    done
+    ./$broker_bin "$@" -p $port $tls_args &
     broker_pid=$!
     check_broker
+    sleep 1
+}
+
+# Start broker with dual ports (plain + TLS).
+# Sets $port (plain) and $port_tls (TLS).
+start_broker_dual() {
+    if [ $broker_pid != $no_pid ]; then
+        kill $broker_pid 2>/dev/null
+        wait $broker_pid 2>/dev/null || true
+        broker_pid=$no_pid
+    fi
+    generate_port
+    local plain_port=$port
+    generate_port
+    port_tls=$port
+    port=$plain_port
+    ./$broker_bin "$@" -p $port -s $port_tls &
+    broker_pid=$!
+    check_broker $port
+    check_broker $port_tls
     sleep 1
 }
 
@@ -79,10 +108,22 @@ has_auth=no
 has_retained=no
 has_will=no
 has_wildcards=no
+has_insecure=no
+has_tls=no
 echo "$broker_features" | grep -q "auth" && has_auth=yes
 echo "$broker_features" | grep -q "retained" && has_retained=yes
 echo "$broker_features" | grep -q " will" && has_will=yes
 echo "$broker_features" | grep -q "wildcards" && has_wildcards=yes
+echo "$broker_features" | grep -q "insecure" && has_insecure=yes
+echo "$broker_features" | grep -q "tls" && has_tls=yes
+
+# Determine if plain (non-TLS) tests can run
+skip_plain=no
+if [ "$has_insecure" = "no" ] && [ "$has_tls" = "yes" ]; then
+    skip_plain=yes
+fi
+
+if [ "$skip_plain" = "no" ]; then
 
 # Start plain broker for tests 1-6
 start_broker
@@ -222,10 +263,14 @@ else
 fi
 fi # has_will
 
+fi # skip_plain (tests 1-6)
+
 # --- Test 7: Username/password auth ---
 echo ""
 echo "--- Test 7: Username/password auth ---"
-if [ "$has_auth" = "no" ]; then
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Auth (plain listener disabled, TLS-only mode)"
+elif [ "$has_auth" = "no" ]; then
     echo "SKIP: Auth (not built with auth support)"
 else
 start_broker -u testuser -P testpass
@@ -249,9 +294,6 @@ fi
 fi # has_auth
 
 # --- TLS Tests ---
-has_tls=no
-echo "$broker_features" | grep -q "tls" && has_tls=yes
-
 if [ "$has_tls" = "yes" ]; then
     # --- Test 8: TLS pub/sub ---
     echo ""
@@ -315,10 +357,91 @@ if [ "$has_tls" = "yes" ]; then
     else
         echo "SKIP: ECC client certs not found"
     fi
+    # --- Test 10a: Dual-port plain-to-TLS ---
+    echo ""
+    echo "--- Test 10a: Dual-port plain-to-TLS ---"
+    if [ "$has_insecure" = "no" ]; then
+        echo "SKIP: Dual-port (built with --disable-broker-insecure)"
+    else
+    start_broker_dual -t \
+        -c scripts/broker_test/server-cert.pem \
+        -K scripts/broker_test/server-key.pem
+
+    # TLS subscriber on secure port
+    timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port_tls -n "test/dualport" -t \
+        -A scripts/broker_test/ca-cert.pem -i "tls_sub" \
+        >"${TMP_DIR}/t10a_sub.log" 2>&1 &
+    T10A_SUB_PID=$!
+    TEST_PIDS+=($T10A_SUB_PID)
+    sleep 1
+    # Plain publisher on non-TLS port
+    ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/dualport" -m "plain_to_tls" \
+        >"${TMP_DIR}/t10a_pub.log" 2>&1
+    sleep 2
+    kill $T10A_SUB_PID 2>/dev/null
+    wait $T10A_SUB_PID 2>/dev/null || true
+    TEST_PIDS=()
+    if grep -q "plain_to_tls" "${TMP_DIR}/t10a_sub.log" 2>/dev/null; then
+        echo "PASS: Dual-port plain-to-TLS"
+    else
+        echo "FAIL: Dual-port plain-to-TLS"
+        FAIL=1
+    fi
+
+    # --- Test 10b: Dual-port TLS-to-plain ---
+    echo ""
+    echo "--- Test 10b: Dual-port TLS-to-plain ---"
+    # Plain subscriber on non-TLS port
+    timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/dualport2" \
+        -i "plain_sub" \
+        >"${TMP_DIR}/t10b_sub.log" 2>&1 &
+    T10B_SUB_PID=$!
+    TEST_PIDS+=($T10B_SUB_PID)
+    sleep 3
+    # TLS publisher on secure port (extra sleep above ensures the plain
+    # subscriber has time to CONNECT + SUBSCRIBE before the TLS publisher
+    # sends its PUBLISH)
+    ./$pub_bin -T -h 127.0.0.1 -p $port_tls -n "test/dualport2" \
+        -m "tls_to_plain" -t -A scripts/broker_test/ca-cert.pem \
+        >"${TMP_DIR}/t10b_pub.log" 2>&1
+    sleep 2
+    kill $T10B_SUB_PID 2>/dev/null
+    wait $T10B_SUB_PID 2>/dev/null || true
+    TEST_PIDS=()
+    if grep -q "tls_to_plain" "${TMP_DIR}/t10b_sub.log" 2>/dev/null; then
+        echo "PASS: Dual-port TLS-to-plain"
+    else
+        echo "FAIL: Dual-port TLS-to-plain"
+        FAIL=1
+    fi
+
+    # --- Test 10c: Dual-port both listeners active ---
+    echo ""
+    echo "--- Test 10c: Dual-port both listeners active ---"
+    # Verify both plain and TLS clients can pub/sub independently
+    ./$client_bin -T -h 127.0.0.1 -p $port -n "test/dual_plain" -C 5000 \
+        >"${TMP_DIR}/t10c_plain.log" 2>&1
+    T10C_PLAIN_RC=$?
+    ./$client_bin -T -h 127.0.0.1 -p $port_tls -n "test/dual_tls" -t \
+        -A scripts/broker_test/ca-cert.pem -C 5000 \
+        >"${TMP_DIR}/t10c_tls.log" 2>&1
+    T10C_TLS_RC=$?
+    if [ $T10C_PLAIN_RC -eq 0 ] && [ $T10C_TLS_RC -eq 0 ]; then
+        echo "PASS: Dual-port both listeners active"
+    else
+        echo "FAIL: Dual-port both listeners (plain_rc=$T10C_PLAIN_RC, tls_rc=$T10C_TLS_RC)"
+        FAIL=1
+    fi
+    fi # has_insecure
 else
     echo ""
     echo "SKIP: TLS tests (broker not built with TLS support)"
 fi
+
+if [ "$skip_plain" = "yes" ]; then
+    echo ""
+    echo "SKIP: Tests 11-16 (plain listener disabled, TLS-only mode)"
+else
 
 # --- Test 11: Multi-client QoS 2 (separate pub/sub) ---
 echo ""
@@ -530,6 +653,8 @@ else
     echo "PASS: Graceful shutdown (no LWT on SIGTERM)"
 fi
 fi # has_will
+
+fi # skip_plain (tests 11-16)
 
 # --- Summary ---
 echo ""

@@ -468,6 +468,16 @@ then
 AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_LOG"
 fi
 
+AC_ARG_ENABLE([broker-insecure],
+[AS_HELP_STRING([--disable-broker-insecure],[Disable broker plain-text (non-TLS) listener])],
+[ ENABLED_BROKER_INSECURE=$enableval ],
+[ ENABLED_BROKER_INSECURE=yes ]
+)
+if test "x$ENABLED_BROKER_INSECURE" = "xno"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_INSECURE"
+fi
+
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])
