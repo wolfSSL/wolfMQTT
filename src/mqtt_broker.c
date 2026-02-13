@@ -259,6 +259,9 @@ static int BrokerPosix_Read(void* ctx, BROKER_SOCKET_T sock,
     if (buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+    if (sock < 0 || sock >= FD_SETSIZE) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
 
     FD_ZERO(&rfds);
     FD_SET(sock, &rfds);
@@ -294,6 +297,9 @@ static int BrokerPosix_Write(void* ctx, BROKER_SOCKET_T sock,
 
     if (buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    if (sock < 0 || sock >= FD_SETSIZE) {
+        return MQTT_CODE_ERROR_NETWORK;
     }
 
     FD_ZERO(&wfds);
@@ -508,10 +514,10 @@ static void BrokerClient_Free(BrokerClient* bc)
     if (bc == NULL) {
         return;
     }
-    (void)BrokerNetDisconnect(bc);
 #ifdef ENABLE_MQTT_TLS
     if (bc->client.tls.ssl) {
-        /* Only send close_notify if handshake completed successfully */
+        /* Send close_notify before closing the socket, because
+         * wolfSSL_shutdown uses I/O callbacks that need a valid fd */
         if (bc->tls_handshake_done) {
             wolfSSL_shutdown(bc->client.tls.ssl);
         }
@@ -519,6 +525,7 @@ static void BrokerClient_Free(BrokerClient* bc)
         bc->client.tls.ssl = NULL;
     }
 #endif
+    (void)BrokerNetDisconnect(bc);
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
     XMEMSET(bc, 0, sizeof(*bc));
