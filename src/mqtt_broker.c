@@ -457,14 +457,6 @@ static void BrokerTls_Free(MqttBroker* broker)
 /* -------------------------------------------------------------------------- */
 #ifdef ENABLE_MQTT_WEBSOCKET
 
-/* When wolfSSL is present (ENABLE_MQTT_TLS), tell libwebsockets to use the
- * wolfSSL header path (<wolfssl/openssl/ssl.h>) instead of the system OpenSSL
- * headers, which would conflict with wolfSSL's OPENSSL_EXTRA compat layer. */
-#ifdef ENABLE_MQTT_TLS
-    #ifndef USE_WOLFSSL
-        #define USE_WOLFSSL
-    #endif
-#endif
 #include <libwebsockets.h>
 
 /* Forward declaration for the no-op connect callback (defined after WS section) */
