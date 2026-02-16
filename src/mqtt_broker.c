@@ -259,6 +259,9 @@ static int BrokerPosix_Read(void* ctx, BROKER_SOCKET_T sock,
     if (buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+    if (sock < 0 || sock >= FD_SETSIZE) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
 
     FD_ZERO(&rfds);
     FD_SET(sock, &rfds);
@@ -294,6 +297,9 @@ static int BrokerPosix_Write(void* ctx, BROKER_SOCKET_T sock,
 
     if (buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    if (sock < 0 || sock >= FD_SETSIZE) {
+        return MQTT_CODE_ERROR_NETWORK;
     }
 
     FD_ZERO(&wfds);
@@ -508,10 +514,10 @@ static void BrokerClient_Free(BrokerClient* bc)
     if (bc == NULL) {
         return;
     }
-    (void)BrokerNetDisconnect(bc);
 #ifdef ENABLE_MQTT_TLS
     if (bc->client.tls.ssl) {
-        /* Only send close_notify if handshake completed successfully */
+        /* Send close_notify before closing the socket, because
+         * wolfSSL_shutdown uses I/O callbacks that need a valid fd */
         if (bc->tls_handshake_done) {
             wolfSSL_shutdown(bc->client.tls.ssl);
         }
@@ -519,6 +525,7 @@ static void BrokerClient_Free(BrokerClient* bc)
         bc->client.tls.ssl = NULL;
     }
 #endif
+    (void)BrokerNetDisconnect(bc);
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
     XMEMSET(bc, 0, sizeof(*bc));
@@ -688,6 +695,36 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
 /* -------------------------------------------------------------------------- */
 /* Subscription management                                                     */
 /* -------------------------------------------------------------------------- */
+
+/* Orphan subscriptions for session persistence (clean_session=0).
+ * Sets client pointer to NULL but keeps the subscription for reconnect. */
+static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
+{
+    int count = 0;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    int i;
+    for (i = 0; i < BROKER_MAX_SUBS; i++) {
+        if (broker->subs[i].in_use && broker->subs[i].client == bc) {
+            broker->subs[i].client = NULL;
+            count++;
+        }
+    }
+#else
+    BrokerSub* cur = broker->subs;
+    while (cur) {
+        if (cur->client == bc) {
+            cur->client = NULL;
+            count++;
+        }
+        cur = cur->next;
+    }
+#endif
+    if (count > 0) {
+        WBLOG_INFO(broker, "broker: orphaned %d subs for client_id=%s (session persist)",
+            count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+    }
+}
+
 static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -712,6 +749,9 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
             }
             if (cur->filter) {
                 WOLFMQTT_FREE(cur->filter);
+            }
+            if (cur->client_id) {
+                WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
         }
@@ -809,6 +849,25 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     if (rc == MQTT_CODE_SUCCESS) {
         sub->client = bc;
         sub->qos = qos;
+        /* Store client_id for session persistence */
+#ifdef WOLFMQTT_STATIC_MEMORY
+        if (BROKER_STR_VALID(bc->client_id)) {
+            int id_len = (int)XSTRLEN(bc->client_id);
+            if (id_len >= BROKER_MAX_CLIENT_ID_LEN) {
+                id_len = BROKER_MAX_CLIENT_ID_LEN - 1;
+            }
+            XMEMCPY(sub->client_id, bc->client_id, (size_t)id_len);
+            sub->client_id[id_len] = '\0';
+        }
+#else
+        if (BROKER_STR_VALID(bc->client_id)) {
+            int id_len = (int)XSTRLEN(bc->client_id);
+            sub->client_id = (char*)WOLFMQTT_MALLOC((size_t)id_len + 1);
+            if (sub->client_id != NULL) {
+                XMEMCPY(sub->client_id, bc->client_id, (size_t)id_len + 1);
+            }
+        }
+#endif
         WBLOG_INFO(broker, "broker: sub add sock=%d filter=%s qos=%d",
             (int)bc->sock, sub->filter, qos);
     }
@@ -923,9 +982,17 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
         int i;
         for (i = 0; i < BROKER_MAX_SUBS; i++) {
             BrokerSub* s = &broker->subs[i];
-            if (s->in_use && s->client != NULL &&
+            if (!s->in_use) continue;
+            /* Check active client subs */
+            if (s->client != NULL &&
                 s->client->client_id[0] != '\0' &&
                 XSTRCMP(s->client->client_id, client_id) == 0) {
+                XMEMSET(s, 0, sizeof(BrokerSub));
+            }
+            /* Check orphaned subs (stored client_id) */
+            else if (s->client == NULL &&
+                BROKER_STR_VALID(s->client_id) &&
+                XSTRCMP(s->client_id, client_id) == 0) {
                 XMEMSET(s, 0, sizeof(BrokerSub));
             }
         }
@@ -936,8 +1003,19 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
         BrokerSub* prev = NULL;
         while (cur) {
             BrokerSub* next = cur->next;
+            int remove = 0;
+            /* Check active client subs */
             if (cur->client != NULL && cur->client->client_id != NULL &&
                 XSTRCMP(cur->client->client_id, client_id) == 0) {
+                remove = 1;
+            }
+            /* Check orphaned subs (stored client_id) */
+            else if (cur->client == NULL &&
+                BROKER_STR_VALID(cur->client_id) &&
+                XSTRCMP(cur->client_id, client_id) == 0) {
+                remove = 1;
+            }
+            if (remove) {
                 if (prev) {
                     prev->next = next;
                 }
@@ -946,6 +1024,9 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
                 }
                 if (cur->filter) {
                     WOLFMQTT_FREE(cur->filter);
+                }
+                if (cur->client_id) {
+                    WOLFMQTT_FREE(cur->client_id);
                 }
                 WOLFMQTT_FREE(cur);
             }
@@ -961,6 +1042,7 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
 static void BrokerSubs_ReassociateClient(MqttBroker* broker,
     const char* client_id, BrokerClient* new_bc)
 {
+    int count = 0;
     if (broker == NULL || client_id == NULL || client_id[0] == '\0' ||
         new_bc == NULL) {
         return;
@@ -971,9 +1053,17 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
         for (i = 0; i < BROKER_MAX_SUBS; i++) {
             BrokerSub* s = &broker->subs[i];
             if (!s->in_use) continue;
-            if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
+            /* Check orphaned subs (client=NULL, client_id stored in sub) */
+            if (s->client == NULL && BROKER_STR_VALID(s->client_id) &&
+                XSTRCMP(s->client_id, client_id) == 0) {
+                s->client = new_bc;
+                count++;
+            }
+            /* Check subs with active client (takeover scenario) */
+            else if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
                 XSTRCMP(s->client->client_id, client_id) == 0) {
                 s->client = new_bc;
+                count++;
             }
         }
     }
@@ -981,14 +1071,26 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
     {
         BrokerSub* s = broker->subs;
         while (s) {
-            if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
+            /* Check orphaned subs (client=NULL, client_id stored in sub) */
+            if (s->client == NULL && BROKER_STR_VALID(s->client_id) &&
+                XSTRCMP(s->client_id, client_id) == 0) {
+                s->client = new_bc;
+                count++;
+            }
+            /* Check subs with active client (takeover scenario) */
+            else if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
                 XSTRCMP(s->client->client_id, client_id) == 0) {
                 s->client = new_bc;
+                count++;
             }
             s = s->next;
         }
     }
 #endif
+    if (count > 0) {
+        WBLOG_INFO(broker, "broker: reassociated %d subs for client_id=%s",
+            count, client_id);
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1898,6 +2000,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             BrokerSubs_RemoveClient(broker, old);
             BrokerClient_Remove(broker, old);
         }
+        else if (!mc.clean_session) {
+            /* No existing client, but check for orphaned subs from
+             * a previous session (clean_session=0 reconnect) */
+            BrokerSubs_ReassociateClient(broker, bc->client_id, bc);
+        }
         if (mc.clean_session) {
             /* Remove any remaining subs for this client_id */
             BrokerSubs_RemoveByClientId(broker, bc->client_id);
@@ -2526,7 +2633,13 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     else if (rc < 0) {
         WBLOG_ERR(broker, "broker: read failed sock=%d rc=%d", (int)bc->sock, rc);
         BrokerClient_PublishWill(broker, bc); /* abnormal disconnect */
-        BrokerSubs_RemoveClient(broker, bc);
+        /* Session persistence: keep subs if clean_session=0 */
+        if (bc->clean_session) {
+            BrokerSubs_RemoveClient(broker, bc);
+        }
+        else {
+            BrokerSubs_OrphanClient(broker, bc);
+        }
         BrokerClient_Remove(broker, bc);
         return 0;
     }
@@ -2580,7 +2693,13 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 break;
             case MQTT_PACKET_TYPE_DISCONNECT:
                 BrokerClient_ClearWill(bc); /* normal disconnect */
-                BrokerSubs_RemoveClient(broker, bc);
+                /* Session persistence: keep subs if clean_session=0 */
+                if (bc->clean_session) {
+                    BrokerSubs_RemoveClient(broker, bc);
+                }
+                else {
+                    BrokerSubs_OrphanClient(broker, bc);
+                }
                 BrokerClient_Remove(broker, bc);
                 return 0;
             default:
@@ -2598,7 +2717,13 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             BrokerSend_Disconnect(bc, MQTT_REASON_KEEP_ALIVE_TIMEOUT);
         #endif
             BrokerClient_PublishWill(broker, bc); /* abnormal disconnect */
-            BrokerSubs_RemoveClient(broker, bc);
+            /* Session persistence: keep subs if clean_session=0 */
+            if (bc->clean_session) {
+                BrokerSubs_RemoveClient(broker, bc);
+            }
+            else {
+                BrokerSubs_OrphanClient(broker, bc);
+            }
             BrokerClient_Remove(broker, bc);
             return 0;
         }

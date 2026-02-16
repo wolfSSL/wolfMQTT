@@ -415,46 +415,53 @@ int sub_client(MQTTCtx *mqttCtx)
     mqttCtx->topics[i].topic_filter = mqttCtx->topic_name;
     mqttCtx->topics[i].qos = mqttCtx->qos;
 
+    if (!mqttCtx->skip_subscribe) {
 #ifdef WOLFMQTT_V5
-    if (mqttCtx->subId_not_avail != 1) {
-        /* Subscription Identifier */
-        MqttProp* prop;
-        prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
-        prop->type = MQTT_PROP_SUBSCRIPTION_ID;
-        prop->data_int = DEFAULT_SUB_ID;
-    }
+        if (mqttCtx->subId_not_avail != 1) {
+            /* Subscription Identifier */
+            MqttProp* prop;
+            prop = MqttClient_PropsAdd(&mqttCtx->subscribe.props);
+            prop->type = MQTT_PROP_SUBSCRIPTION_ID;
+            prop->data_int = DEFAULT_SUB_ID;
+        }
 #endif
 
-    /* Subscribe Topic */
-    mqttCtx->subscribe.packet_id = mqtt_get_packetid();
-    mqttCtx->subscribe.topic_count =
-            sizeof(mqttCtx->topics) / sizeof(MqttTopic);
-    mqttCtx->subscribe.topics = mqttCtx->topics;
+        /* Subscribe Topic */
+        mqttCtx->subscribe.packet_id = mqtt_get_packetid();
+        mqttCtx->subscribe.topic_count =
+                sizeof(mqttCtx->topics) / sizeof(MqttTopic);
+        mqttCtx->subscribe.topics = mqttCtx->topics;
 
-    rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
+        rc = MqttClient_Subscribe(&mqttCtx->client, &mqttCtx->subscribe);
 
 #ifdef WOLFMQTT_V5
-    if (mqttCtx->subscribe.props != NULL) {
-        /* Release the allocated properties */
-        MqttClient_PropsFree(mqttCtx->subscribe.props);
-    }
+        if (mqttCtx->subscribe.props != NULL) {
+            /* Release the allocated properties */
+            MqttClient_PropsFree(mqttCtx->subscribe.props);
+        }
 #endif
 
-    if (mqttCtx->debug_on) {
-        PRINTF("MQTT Subscribe: %s (%d)",
-            MqttClient_ReturnCodeToString(rc), rc);
-    }
-    if (rc != MQTT_CODE_SUCCESS) {
-        goto disconn;
-    }
+        if (mqttCtx->debug_on) {
+            PRINTF("MQTT Subscribe: %s (%d)",
+                MqttClient_ReturnCodeToString(rc), rc);
+        }
+        if (rc != MQTT_CODE_SUCCESS) {
+            goto disconn;
+        }
 
-    if (mqttCtx->debug_on) {
-        /* show subscribe results */
-        for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
-            MqttTopic *topic = &mqttCtx->subscribe.topics[i];
-            PRINTF("  Topic %s, Qos %u, Return Code %u",
-                topic->topic_filter,
-                topic->qos, topic->return_code);
+        if (mqttCtx->debug_on) {
+            /* show subscribe results */
+            for (i = 0; i < mqttCtx->subscribe.topic_count; i++) {
+                MqttTopic *topic = &mqttCtx->subscribe.topics[i];
+                PRINTF("  Topic %s, Qos %u, Return Code %u",
+                    topic->topic_filter,
+                    topic->qos, topic->return_code);
+            }
+        }
+    }
+    else {
+        if (mqttCtx->debug_on) {
+            PRINTF("MQTT Subscribe: Skipped (-x flag)");
         }
     }
     /* Read Loop */

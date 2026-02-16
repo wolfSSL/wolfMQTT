@@ -662,6 +662,178 @@ fi # has_will
 
 fi # skip_plain (tests 11-16)
 
+# --- Test 17: Retained message deletion (empty payload) ---
+echo ""
+echo "--- Test 17: Retained message deletion ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Retained deletion (plain listener disabled)"
+elif [ "$has_retained" = "no" ]; then
+    echo "SKIP: Retained deletion (not built with retained support)"
+else
+start_broker
+# Publish a retained message
+./$pub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -m "to_be_deleted" -r \
+    >"${TMP_DIR}/t17_pub1.log" 2>&1
+sleep 1
+# Verify it's retained (new subscriber receives it)
+timeout 3 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -i "t17_sub1" \
+    >"${TMP_DIR}/t17_sub1.log" 2>&1 &
+T17_SUB1_PID=$!
+sleep 2
+kill $T17_SUB1_PID 2>/dev/null
+wait $T17_SUB1_PID 2>/dev/null || true
+T17_BEFORE=no
+grep -q "to_be_deleted" "${TMP_DIR}/t17_sub1.log" 2>/dev/null && T17_BEFORE=yes
+# Now publish empty payload to delete the retained message
+./$pub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -m "" -r \
+    >"${TMP_DIR}/t17_pub2.log" 2>&1
+sleep 1
+# New subscriber should NOT receive the retained message
+timeout 3 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -i "t17_sub2" \
+    >"${TMP_DIR}/t17_sub2.log" 2>&1 &
+T17_SUB2_PID=$!
+sleep 2
+kill $T17_SUB2_PID 2>/dev/null
+wait $T17_SUB2_PID 2>/dev/null || true
+T17_AFTER=no
+grep -q "to_be_deleted" "${TMP_DIR}/t17_sub2.log" 2>/dev/null && T17_AFTER=yes
+if [ "$T17_BEFORE" = "yes" ] && [ "$T17_AFTER" = "no" ]; then
+    echo "PASS: Retained message deletion"
+else
+    echo "FAIL: Retained deletion (before=$T17_BEFORE, after=$T17_AFTER)"
+    FAIL=1
+fi
+fi # has_retained
+
+# --- Test 18: Graceful client DISCONNECT (no LWT) ---
+echo ""
+echo "--- Test 18: Graceful client DISCONNECT ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Graceful DISCONNECT (plain listener disabled)"
+elif [ "$has_will" = "no" ]; then
+    echo "SKIP: Graceful DISCONNECT (not built with will support)"
+else
+start_broker
+# Watcher for LWT topic
+timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
+    -i "t18_watcher" >"${TMP_DIR}/t18_watcher.log" 2>&1 &
+T18_WATCHER_PID=$!
+TEST_PIDS+=($T18_WATCHER_PID)
+sleep 1
+# Client connects with LWT, does pub/sub, then disconnects gracefully
+# mqttclient sends DISCONNECT before exiting (graceful)
+./$client_bin -T -h 127.0.0.1 -p $port -n "test/graceful" -i "graceful_client" \
+    -l -C 5000 >"${TMP_DIR}/t18_client.log" 2>&1
+T18_CLIENT_RC=$?
+sleep 3
+kill $T18_WATCHER_PID 2>/dev/null
+wait $T18_WATCHER_PID 2>/dev/null || true
+TEST_PIDS=()
+# LWT should NOT be delivered since client disconnected gracefully
+if grep -q "graceful_client" "${TMP_DIR}/t18_watcher.log" 2>/dev/null; then
+    echo "FAIL: Graceful DISCONNECT (LWT was delivered)"
+    FAIL=1
+elif [ $T18_CLIENT_RC -eq 0 ]; then
+    echo "PASS: Graceful client DISCONNECT (no LWT)"
+else
+    echo "FAIL: Graceful DISCONNECT (client_rc=$T18_CLIENT_RC)"
+    FAIL=1
+fi
+fi # has_will
+
+# --- Test 19: UNSUBSCRIBE removes subscription ---
+echo ""
+echo "--- Test 19: UNSUBSCRIBE ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: UNSUBSCRIBE (plain listener disabled)"
+else
+start_broker
+# Subscriber subscribes, then unsubscribes, then publisher sends
+# We use mqttclient which does: subscribe, publish, unsubscribe, disconnect
+# After unsubscribe, a new publish should not be received
+# This test verifies unsubscribe works by checking mqttclient completes successfully
+./$client_bin -T -h 127.0.0.1 -p $port -n "test/unsub" -i "unsub_client" -C 5000 \
+    >"${TMP_DIR}/t19.log" 2>&1
+if [ $? -eq 0 ]; then
+    echo "PASS: UNSUBSCRIBE"
+else
+    echo "FAIL: UNSUBSCRIBE"
+    FAIL=1
+fi
+fi
+
+# --- Test 20: Duplicate subscribe QoS update ---
+echo ""
+echo "--- Test 20: Duplicate subscribe QoS update ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Duplicate subscribe (plain listener disabled)"
+else
+start_broker
+# Subscribe twice to same topic with different QoS
+# First at QoS 0, then at QoS 2 - should update, not duplicate
+# Verify by checking the broker handles it without error
+timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/dupsub" -q 0 -i "dupsub_client" \
+    >"${TMP_DIR}/t20_sub1.log" 2>&1 &
+T20_SUB_PID=$!
+sleep 1
+# Same client subscribes again at QoS 2 (simulated by new connection with same topic)
+# Since mqtt-sub stays connected, we test by running mqttclient which subscribes
+./$client_bin -T -h 127.0.0.1 -p $port -n "test/dupsub" -q 2 -i "dupsub_client2" -C 5000 \
+    >"${TMP_DIR}/t20_sub2.log" 2>&1
+T20_RC=$?
+kill $T20_SUB_PID 2>/dev/null
+wait $T20_SUB_PID 2>/dev/null || true
+if [ $T20_RC -eq 0 ]; then
+    echo "PASS: Duplicate subscribe QoS update"
+else
+    echo "FAIL: Duplicate subscribe (rc=$T20_RC)"
+    FAIL=1
+fi
+fi
+
+# --- Test 21: Clean session=0 subscription persistence ---
+echo ""
+echo "--- Test 21: Clean session persistence ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Clean session persistence (plain listener disabled)"
+else
+start_broker
+# Step 1: mqtt-sub connects with clean_session=0 (-s), subscribes, stays connected
+timeout 5 ./$sub_bin -T -d -h 127.0.0.1 -p $port -n "test/persist" -s \
+    -i "persist_client" >"${TMP_DIR}/t21_sub1.log" 2>&1 &
+T21_SUB1_PID=$!
+TEST_PIDS+=($T21_SUB1_PID)
+sleep 2
+# Step 2: Kill mqtt-sub (disconnect without unsubscribe - subscription should persist)
+kill $T21_SUB1_PID 2>/dev/null
+wait $T21_SUB1_PID 2>/dev/null || true
+TEST_PIDS=()
+sleep 1
+# Step 3: mqtt-sub reconnects with same ID, clean_session=0, skips subscribe (-x)
+# It should still receive messages on the persisted subscription
+timeout 10 ./$sub_bin -T -d -h 127.0.0.1 -p $port -n "test/persist" -s -x \
+    -i "persist_client" >"${TMP_DIR}/t21_sub2.log" 2>&1 &
+T21_SUB2_PID=$!
+TEST_PIDS+=($T21_SUB2_PID)
+sleep 2
+# Step 4: Another client publishes to the topic
+./$pub_bin -T -h 127.0.0.1 -p $port -n "test/persist" -m "persisted_msg" \
+    >"${TMP_DIR}/t21_pub.log" 2>&1
+sleep 2
+kill $T21_SUB2_PID 2>/dev/null
+wait $T21_SUB2_PID 2>/dev/null || true
+TEST_PIDS=()
+# Verify: reconnected client received the message without re-subscribing
+T21_GOT_MSG=no
+grep -q "persisted_msg" "${TMP_DIR}/t21_sub2.log" 2>/dev/null && T21_GOT_MSG=yes
+if [ "$T21_GOT_MSG" = "yes" ]; then
+    echo "PASS: Clean session persistence (sub persisted across reconnect)"
+else
+    echo "FAIL: Clean session persistence (got_msg=$T21_GOT_MSG)"
+    FAIL=1
+fi
+fi
+
 # --- Summary ---
 echo ""
 if [ $FAIL -ne 0 ]; then

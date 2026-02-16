@@ -223,11 +223,13 @@ typedef struct BrokerSub {
 #ifdef WOLFMQTT_STATIC_MEMORY
     byte    in_use;
     char    filter[BROKER_MAX_FILTER_LEN];
+    char    client_id[BROKER_MAX_CLIENT_ID_LEN]; /* For session persistence */
 #else
     char*   filter;
+    char*   client_id; /* For session persistence */
     struct BrokerSub* next;
 #endif
-    struct BrokerClient* client;
+    struct BrokerClient* client; /* NULL if client disconnected (session persisted) */
     MqttQoS qos;
 } BrokerSub;
 

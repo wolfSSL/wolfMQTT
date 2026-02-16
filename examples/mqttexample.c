@@ -260,6 +260,7 @@ void mqtt_show_usage(MQTTCtx* mqttCtx)
             DEFAULT_MAX_PKT_SZ);
 #endif
     PRINTF("-T          Test mode");
+    PRINTF("-x          Skip subscribe (for testing session persistence)");
     PRINTF("-f <file>   Use file contents for publish");
     if (!mqttCtx->debug_on) {
         PRINTF("-d          Enable example debug messages");
@@ -313,7 +314,7 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
         #define MQTT_V5_ARGS ""
     #endif
 
-    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rtd" \
+    while ((rc = mygetopt(argc, argv, "?h:p:q:sk:i:lu:w:m:n:C:Tf:rtdx" \
             MQTT_TLS_ARGS MQTT_V5_ARGS)) != -1) {
         switch ((char)rc) {
         case '?' :
@@ -392,6 +393,10 @@ int mqtt_parse_args(MQTTCtx* mqttCtx, int argc, char** argv)
 
         case 'd':
             mqttCtx->debug_on = 1;
+            break;
+
+        case 'x':
+            mqttCtx->skip_subscribe = 1;
             break;
 
     #ifdef ENABLE_MQTT_TLS
