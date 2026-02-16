@@ -201,6 +201,9 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
         buf_len - client->write.pos, timeout_ms);
     if (rc >= 0) {
+        if (rc > buf_len - client->write.pos) {
+            rc = buf_len - client->write.pos;
+        }
         client->write.pos += rc;
         client->write.total += rc;
         if (client->write.pos < buf_len) {
@@ -217,6 +220,9 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
             buf_len - client->write.pos, timeout_ms);
         if (rc <= 0) {
             break;
+        }
+        if (rc > buf_len - client->write.pos) {
+            rc = buf_len - client->write.pos;
         }
         client->write.pos += rc;
         client->write.total += rc;
@@ -307,6 +313,9 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
         buf_len - client->read.pos, timeout_ms);
     if (rc >= 0) {
+        if (rc > buf_len - client->read.pos) {
+            rc = buf_len - client->read.pos;
+        }
         client->read.pos += rc;
         client->read.total += rc;
         if (client->read.pos < buf_len) {
@@ -323,6 +332,9 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
             buf_len - client->read.pos, timeout_ms);
         if (rc <= 0) {
             break;
+        }
+        if (rc > buf_len - client->read.pos) {
+            rc = buf_len - client->read.pos;
         }
         client->read.pos += rc;
         client->read.total += rc;
