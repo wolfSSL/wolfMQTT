@@ -464,6 +464,18 @@ int sub_client(MQTTCtx *mqttCtx)
             PRINTF("MQTT Subscribe: Skipped (-x flag)");
         }
     }
+
+    /* Touch ready file to signal test script that we're subscribed */
+    if (mqttCtx->ready_file != NULL) {
+        XFILE f = XFOPEN(mqttCtx->ready_file, "w");
+        if (f != NULL) {
+            XFCLOSE(f);
+            if (mqttCtx->debug_on) {
+                PRINTF("Ready file touched: %s", mqttCtx->ready_file);
+            }
+        }
+    }
+
     /* Read Loop */
     if (mqttCtx->debug_on) {
         PRINTF("MQTT Waiting for message...");

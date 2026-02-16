@@ -50,7 +50,20 @@ generate_port() {
 
 check_broker() {
     local check_port=${1:-$port}
-    timeout 10 sh -c 'until nc -z $0 $1 2>/dev/null; do sleep 1; done' localhost $check_port
+    timeout 5 sh -c 'until nc -z $0 $1 2>/dev/null; do sleep 0.1; done' localhost $check_port
+}
+
+# Wait for a file to appear (used for subscriber ready synchronization)
+# Usage: wait_for_file <file> [timeout_sec]
+wait_for_file() {
+    local file="$1"
+    local timeout_sec="${2:-5}"
+    local waited=0
+    while [ ! -f "$file" ] && [ $waited -lt $timeout_sec ]; do
+        sleep 0.1
+        waited=$(echo "$waited + 0.1" | bc)
+    done
+    [ -f "$file" ]
 }
 
 # Start broker helper: kills existing broker, generates port, starts new one
@@ -79,7 +92,6 @@ start_broker() {
     ./$broker_bin "$@" -p $port $tls_args &
     broker_pid=$!
     check_broker
-    sleep 1
 }
 
 # Start broker with dual ports (plain + TLS).
@@ -99,7 +111,6 @@ start_broker_dual() {
     broker_pid=$!
     check_broker $port
     check_broker $port_tls
-    sleep 1
 }
 
 TEST_PIDS=()
@@ -179,13 +190,14 @@ else
 # Publish a retained message (-T disables stdin capture for background use)
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/retain" -m "retained_msg" -r \
     >"${TMP_DIR}/t4_pub.log" 2>&1
-sleep 1
 # New subscriber should receive the retained message
+rm -f "${TMP_DIR}/t4_sub.ready"
 timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/retain" \
-    >"${TMP_DIR}/t4_sub.log" 2>&1 &
+    -R "${TMP_DIR}/t4_sub.ready" >"${TMP_DIR}/t4_sub.log" 2>&1 &
 T4_PID=$!
 TEST_PIDS+=($T4_PID)
-sleep 2
+wait_for_file "${TMP_DIR}/t4_sub.ready" 5
+sleep 0.2  # brief wait for retained message delivery
 kill $T4_PID 2>/dev/null
 wait $T4_PID 2>/dev/null || true
 TEST_PIDS=()
@@ -206,25 +218,26 @@ else
 # LWT topic is hardcoded as "wolfMQTT/example/lwttopic", payload is the client ID
 # Use mqtt-sub as the LWT watcher
 # Note: v5 clients set Will Delay Interval=5s, so watcher must stay alive long enough
+rm -f "${TMP_DIR}/t5_watcher.ready" "${TMP_DIR}/t5_client.ready"
 timeout 20 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
-    >"${TMP_DIR}/t4_sub.log" 2>&1 &
-T4_SUB_PID=$!
-TEST_PIDS+=($T4_SUB_PID)
-sleep 1
+    -R "${TMP_DIR}/t5_watcher.ready" >"${TMP_DIR}/t5_watcher.log" 2>&1 &
+T5_WATCHER_PID=$!
+TEST_PIDS+=($T5_WATCHER_PID)
+wait_for_file "${TMP_DIR}/t5_watcher.ready" 5
 # Use mqtt-sub with LWT enabled as the client to be killed
 # mqtt-sub stays connected waiting for messages (unlike mqttclient which auto-exits)
 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/lwt_trigger" -i "lwt_client" -l \
-    >"${TMP_DIR}/t4_client.log" 2>&1 &
-T4_CLIENT_PID=$!
-TEST_PIDS+=($T4_CLIENT_PID)
-sleep 2
-kill -9 $T4_CLIENT_PID 2>/dev/null
-wait $T4_CLIENT_PID 2>/dev/null || true
-sleep 8
-kill $T4_SUB_PID 2>/dev/null
-wait $T4_SUB_PID 2>/dev/null || true
+    -R "${TMP_DIR}/t5_client.ready" >"${TMP_DIR}/t5_client.log" 2>&1 &
+T5_CLIENT_PID=$!
+TEST_PIDS+=($T5_CLIENT_PID)
+wait_for_file "${TMP_DIR}/t5_client.ready" 5
+kill -9 $T5_CLIENT_PID 2>/dev/null
+wait $T5_CLIENT_PID 2>/dev/null || true
+sleep 8  # v5 Will Delay Interval is 5s
+kill $T5_WATCHER_PID 2>/dev/null
+wait $T5_WATCHER_PID 2>/dev/null || true
 TEST_PIDS=()
-if grep -q "lwt_client" "${TMP_DIR}/t4_sub.log" 2>/dev/null; then
+if grep -q "lwt_client" "${TMP_DIR}/t5_watcher.log" 2>/dev/null; then
     echo "PASS: LWT delivered on abnormal disconnect"
 else
     echo "FAIL: LWT not delivered"
@@ -240,28 +253,29 @@ if [ "$has_will" = "no" ]; then
 else
 # Subscriber watches the LWT topic
 # Note: v5 clients set Will Delay Interval=5s on top of keepalive timeout
+rm -f "${TMP_DIR}/t6_watcher.ready" "${TMP_DIR}/t6_client.ready"
 timeout 25 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
-    >"${TMP_DIR}/t5_sub.log" 2>&1 &
-T5_SUB_PID=$!
-TEST_PIDS+=($T5_SUB_PID)
-sleep 1
+    -R "${TMP_DIR}/t6_watcher.ready" >"${TMP_DIR}/t6_sub.log" 2>&1 &
+T6_WATCHER_PID=$!
+TEST_PIDS+=($T6_WATCHER_PID)
+wait_for_file "${TMP_DIR}/t6_watcher.ready" 5
 # Client connects with short keepalive (2s) and LWT enabled, then gets frozen
 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/ka_trigger" -i "ka_client" -l -k 2 \
-    >"${TMP_DIR}/t5_client.log" 2>&1 &
-T5_CLIENT_PID=$!
-TEST_PIDS+=($T5_CLIENT_PID)
-sleep 2
+    -R "${TMP_DIR}/t6_client.ready" >"${TMP_DIR}/t6_client.log" 2>&1 &
+T6_CLIENT_PID=$!
+TEST_PIDS+=($T6_CLIENT_PID)
+wait_for_file "${TMP_DIR}/t6_client.ready" 5
 # Freeze the client so it stops sending PINGREQs
-kill -STOP $T5_CLIENT_PID 2>/dev/null
+kill -STOP $T6_CLIENT_PID 2>/dev/null
 # Wait for broker to detect keepalive timeout (1.5x * 2s = 3s)
 # plus v5 will delay interval (5s) + margin
 sleep 10
-kill -9 $T5_CLIENT_PID 2>/dev/null
-wait $T5_CLIENT_PID 2>/dev/null || true
-kill $T5_SUB_PID 2>/dev/null
-wait $T5_SUB_PID 2>/dev/null || true
+kill -9 $T6_CLIENT_PID 2>/dev/null
+wait $T6_CLIENT_PID 2>/dev/null || true
+kill $T6_WATCHER_PID 2>/dev/null
+wait $T6_WATCHER_PID 2>/dev/null || true
 TEST_PIDS=()
-if grep -q "ka_client" "${TMP_DIR}/t5_sub.log" 2>/dev/null; then
+if grep -q "ka_client" "${TMP_DIR}/t6_sub.log" 2>/dev/null; then
     echo "PASS: Keep-alive enforcement (LWT delivered on timeout)"
 else
     echo "FAIL: Keep-alive enforcement"
@@ -374,16 +388,17 @@ if [ "$has_tls" = "yes" ]; then
         -K scripts/broker_test/server-key.pem
 
     # TLS subscriber on secure port
+    rm -f "${TMP_DIR}/t10a_sub.ready"
     timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port_tls -n "test/dualport" -t \
         -A scripts/broker_test/ca-cert.pem -i "tls_sub" \
-        >"${TMP_DIR}/t10a_sub.log" 2>&1 &
+        -R "${TMP_DIR}/t10a_sub.ready" >"${TMP_DIR}/t10a_sub.log" 2>&1 &
     T10A_SUB_PID=$!
     TEST_PIDS+=($T10A_SUB_PID)
-    sleep 1
+    wait_for_file "${TMP_DIR}/t10a_sub.ready" 5
     # Plain publisher on non-TLS port
     ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/dualport" -m "plain_to_tls" \
         >"${TMP_DIR}/t10a_pub.log" 2>&1
-    sleep 2
+    sleep 0.2
     kill $T10A_SUB_PID 2>/dev/null
     wait $T10A_SUB_PID 2>/dev/null || true
     TEST_PIDS=()
@@ -398,19 +413,18 @@ if [ "$has_tls" = "yes" ]; then
     echo ""
     echo "--- Test 10b: Dual-port TLS-to-plain ---"
     # Plain subscriber on non-TLS port
+    rm -f "${TMP_DIR}/t10b_sub.ready"
     timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/dualport2" \
-        -i "plain_sub" \
+        -i "plain_sub" -R "${TMP_DIR}/t10b_sub.ready" \
         >"${TMP_DIR}/t10b_sub.log" 2>&1 &
     T10B_SUB_PID=$!
     TEST_PIDS+=($T10B_SUB_PID)
-    sleep 3
-    # TLS publisher on secure port (extra sleep above ensures the plain
-    # subscriber has time to CONNECT + SUBSCRIBE before the TLS publisher
-    # sends its PUBLISH)
+    wait_for_file "${TMP_DIR}/t10b_sub.ready" 5
+    # TLS publisher on secure port
     ./$pub_bin -T -h 127.0.0.1 -p $port_tls -n "test/dualport2" \
         -m "tls_to_plain" -t -A scripts/broker_test/ca-cert.pem \
         >"${TMP_DIR}/t10b_pub.log" 2>&1
-    sleep 2
+    sleep 0.2
     kill $T10B_SUB_PID 2>/dev/null
     wait $T10B_SUB_PID 2>/dev/null || true
     TEST_PIDS=()
@@ -454,15 +468,16 @@ echo ""
 echo "--- Test 11: Multi-client QoS 2 ---"
 start_broker
 # Subscriber connects with QoS 2
+rm -f "${TMP_DIR}/t11_sub.ready"
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/mc_qos2" -q 2 \
-    >"${TMP_DIR}/t11_sub.log" 2>&1 &
+    -R "${TMP_DIR}/t11_sub.ready" >"${TMP_DIR}/t11_sub.log" 2>&1 &
 T11_SUB_PID=$!
 TEST_PIDS+=($T11_SUB_PID)
-sleep 1
+wait_for_file "${TMP_DIR}/t11_sub.ready" 5
 # Publisher sends at QoS 2
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/mc_qos2" -q 2 -m "qos2_multi" \
     >"${TMP_DIR}/t11_pub.log" 2>&1
-sleep 2
+sleep 0.2
 kill $T11_SUB_PID 2>/dev/null
 wait $T11_SUB_PID 2>/dev/null || true
 TEST_PIDS=()
@@ -494,14 +509,15 @@ if [ "$has_v5" = "yes" ]; then
 
     # 12c: v5 pub/sub with separate clients (property forwarding)
     start_broker
+    rm -f "${TMP_DIR}/t12_sub.ready"
     timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/v5fwd" \
-        >"${TMP_DIR}/t12_sub.log" 2>&1 &
+        -R "${TMP_DIR}/t12_sub.ready" >"${TMP_DIR}/t12_sub.log" 2>&1 &
     T12_SUB_PID=$!
     TEST_PIDS+=($T12_SUB_PID)
-    sleep 1
+    wait_for_file "${TMP_DIR}/t12_sub.ready" 5
     ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/v5fwd" -m "v5_forwarded" \
         >"${TMP_DIR}/t12_pub.log" 2>&1
-    sleep 2
+    sleep 0.2
     kill $T12_SUB_PID 2>/dev/null
     wait $T12_SUB_PID 2>/dev/null || true
     TEST_PIDS=()
@@ -526,18 +542,20 @@ if [ "$has_wildcards" = "no" ]; then
 else
 start_broker
 # Test both + and # wildcards (use different client IDs)
+rm -f "${TMP_DIR}/t13_plus.ready" "${TMP_DIR}/t13_hash.ready"
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/wild/+" -i "sub_plus" \
-    >"${TMP_DIR}/t13_plus.log" 2>&1 &
+    -R "${TMP_DIR}/t13_plus.ready" >"${TMP_DIR}/t13_plus.log" 2>&1 &
 T13_PLUS_PID=$!
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/#" -i "sub_hash" \
-    >"${TMP_DIR}/t13_hash.log" 2>&1 &
+    -R "${TMP_DIR}/t13_hash.ready" >"${TMP_DIR}/t13_hash.log" 2>&1 &
 T13_HASH_PID=$!
 TEST_PIDS+=($T13_PLUS_PID $T13_HASH_PID)
-sleep 1
+wait_for_file "${TMP_DIR}/t13_plus.ready" 5
+wait_for_file "${TMP_DIR}/t13_hash.ready" 5
 # Publish to a topic that matches both wildcards
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/wild/card" -m "wildcard_msg" \
     >"${TMP_DIR}/t13_pub.log" 2>&1
-sleep 2
+sleep 0.2
 kill $T13_PLUS_PID $T13_HASH_PID 2>/dev/null
 wait $T13_PLUS_PID 2>/dev/null || true
 wait $T13_HASH_PID 2>/dev/null || true
@@ -563,21 +581,21 @@ echo ""
 echo "--- Test 14: Client ID takeover ---"
 start_broker
 # First client connects with LWT
+rm -f "${TMP_DIR}/t14_watcher.ready" "${TMP_DIR}/t14_old.ready"
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
-    >"${TMP_DIR}/t14_watcher.log" 2>&1 &
+    -R "${TMP_DIR}/t14_watcher.ready" >"${TMP_DIR}/t14_watcher.log" 2>&1 &
 T14_WATCHER_PID=$!
 TEST_PIDS+=($T14_WATCHER_PID)
-sleep 1
+wait_for_file "${TMP_DIR}/t14_watcher.ready" 5
 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/takeover" -i "dup_client" -l \
-    >"${TMP_DIR}/t14_old.log" 2>&1 &
+    -R "${TMP_DIR}/t14_old.ready" >"${TMP_DIR}/t14_old.log" 2>&1 &
 T14_OLD_PID=$!
 TEST_PIDS+=($T14_OLD_PID)
-sleep 2
+wait_for_file "${TMP_DIR}/t14_old.ready" 5
 # Second client connects with same ID - should take over
 ./$client_bin -T -h 127.0.0.1 -p $port -n "test/takeover" -i "dup_client" -C 5000 \
     >"${TMP_DIR}/t14_new.log" 2>&1
 T14_NEW_RC=$?
-sleep 1
 kill $T14_OLD_PID 2>/dev/null
 wait $T14_OLD_PID 2>/dev/null || true
 kill $T14_WATCHER_PID 2>/dev/null
@@ -597,12 +615,17 @@ echo "--- Test 15: Max client connections ---"
 T15_PIDS=()
 T15_OK=yes
 for idx in $(seq 1 6); do
+    rm -f "${TMP_DIR}/t15_$idx.ready"
     timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/maxcli/$idx" \
-        -i "max_client_$idx" >"${TMP_DIR}/t15_$idx.log" 2>&1 &
+        -i "max_client_$idx" -R "${TMP_DIR}/t15_$idx.ready" \
+        >"${TMP_DIR}/t15_$idx.log" 2>&1 &
     T15_PIDS+=($!)
 done
 TEST_PIDS=("${T15_PIDS[@]}")
-sleep 2
+# Wait for all subscribers to be ready
+for idx in $(seq 1 6); do
+    wait_for_file "${TMP_DIR}/t15_$idx.ready" 5
+done
 # Publish to one topic to verify broker is still responsive
 ./$client_bin -T -h 127.0.0.1 -p $port -n "test/maxcli/verify" -C 5000 \
     >"${TMP_DIR}/t15_verify.log" 2>&1
@@ -629,22 +652,24 @@ else
 # Verify broker exits cleanly on SIGTERM
 start_broker
 # Connect a client with LWT
+rm -f "${TMP_DIR}/t16_watcher.ready" "${TMP_DIR}/t16_client.ready"
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
-    -i "shutdown_watcher" >"${TMP_DIR}/t16_watcher.log" 2>&1 &
+    -i "shutdown_watcher" -R "${TMP_DIR}/t16_watcher.ready" \
+    >"${TMP_DIR}/t16_watcher.log" 2>&1 &
 T16_WATCHER_PID=$!
 TEST_PIDS+=($T16_WATCHER_PID)
-sleep 1
+wait_for_file "${TMP_DIR}/t16_watcher.ready" 5
 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/shutdown" -i "shutdown_client" -l \
-    >"${TMP_DIR}/t16_client.log" 2>&1 &
+    -R "${TMP_DIR}/t16_client.ready" >"${TMP_DIR}/t16_client.log" 2>&1 &
 T16_CLIENT_PID=$!
 TEST_PIDS+=($T16_CLIENT_PID)
-sleep 1
+wait_for_file "${TMP_DIR}/t16_client.ready" 5
 # Send SIGTERM to broker - should shut down gracefully (no LWT)
 kill $broker_pid 2>/dev/null
 wait $broker_pid 2>/dev/null || true
 T16_BROKER_RC=$?
 broker_pid=$no_pid
-sleep 2
+sleep 0.5
 kill $T16_CLIENT_PID 2>/dev/null
 wait $T16_CLIENT_PID 2>/dev/null || true
 kill $T16_WATCHER_PID 2>/dev/null
@@ -674,12 +699,13 @@ start_broker
 # Publish a retained message
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -m "to_be_deleted" -r \
     >"${TMP_DIR}/t17_pub1.log" 2>&1
-sleep 1
 # Verify it's retained (new subscriber receives it)
+rm -f "${TMP_DIR}/t17_sub1.ready"
 timeout 3 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -i "t17_sub1" \
-    >"${TMP_DIR}/t17_sub1.log" 2>&1 &
+    -R "${TMP_DIR}/t17_sub1.ready" >"${TMP_DIR}/t17_sub1.log" 2>&1 &
 T17_SUB1_PID=$!
-sleep 2
+wait_for_file "${TMP_DIR}/t17_sub1.ready" 3
+sleep 0.2  # brief wait for retained message delivery
 kill $T17_SUB1_PID 2>/dev/null
 wait $T17_SUB1_PID 2>/dev/null || true
 T17_BEFORE=no
@@ -687,12 +713,13 @@ grep -q "to_be_deleted" "${TMP_DIR}/t17_sub1.log" 2>/dev/null && T17_BEFORE=yes
 # Now publish empty payload to delete the retained message
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -m "" -r \
     >"${TMP_DIR}/t17_pub2.log" 2>&1
-sleep 1
 # New subscriber should NOT receive the retained message
+rm -f "${TMP_DIR}/t17_sub2.ready"
 timeout 3 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/retain_del" -i "t17_sub2" \
-    >"${TMP_DIR}/t17_sub2.log" 2>&1 &
+    -R "${TMP_DIR}/t17_sub2.ready" >"${TMP_DIR}/t17_sub2.log" 2>&1 &
 T17_SUB2_PID=$!
-sleep 2
+wait_for_file "${TMP_DIR}/t17_sub2.ready" 3
+sleep 0.2
 kill $T17_SUB2_PID 2>/dev/null
 wait $T17_SUB2_PID 2>/dev/null || true
 T17_AFTER=no
@@ -715,17 +742,19 @@ elif [ "$has_will" = "no" ]; then
 else
 start_broker
 # Watcher for LWT topic
+rm -f "${TMP_DIR}/t18_watcher.ready"
 timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port -n "wolfMQTT/example/lwttopic" \
-    -i "t18_watcher" >"${TMP_DIR}/t18_watcher.log" 2>&1 &
+    -i "t18_watcher" -R "${TMP_DIR}/t18_watcher.ready" \
+    >"${TMP_DIR}/t18_watcher.log" 2>&1 &
 T18_WATCHER_PID=$!
 TEST_PIDS+=($T18_WATCHER_PID)
-sleep 1
+wait_for_file "${TMP_DIR}/t18_watcher.ready" 5
 # Client connects with LWT, does pub/sub, then disconnects gracefully
 # mqttclient sends DISCONNECT before exiting (graceful)
 ./$client_bin -T -h 127.0.0.1 -p $port -n "test/graceful" -i "graceful_client" \
     -l -C 5000 >"${TMP_DIR}/t18_client.log" 2>&1
 T18_CLIENT_RC=$?
-sleep 3
+sleep 0.2
 kill $T18_WATCHER_PID 2>/dev/null
 wait $T18_WATCHER_PID 2>/dev/null || true
 TEST_PIDS=()
@@ -772,10 +801,11 @@ start_broker
 # Subscribe twice to same topic with different QoS
 # First at QoS 0, then at QoS 2 - should update, not duplicate
 # Verify by checking the broker handles it without error
+rm -f "${TMP_DIR}/t20_sub1.ready"
 timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/dupsub" -q 0 -i "dupsub_client" \
-    >"${TMP_DIR}/t20_sub1.log" 2>&1 &
+    -R "${TMP_DIR}/t20_sub1.ready" >"${TMP_DIR}/t20_sub1.log" 2>&1 &
 T20_SUB_PID=$!
-sleep 1
+wait_for_file "${TMP_DIR}/t20_sub1.ready" 5
 # Same client subscribes again at QoS 2 (simulated by new connection with same topic)
 # Since mqtt-sub stays connected, we test by running mqttclient which subscribes
 ./$client_bin -T -h 127.0.0.1 -p $port -n "test/dupsub" -q 2 -i "dupsub_client2" -C 5000 \
@@ -799,27 +829,29 @@ if [ "$skip_plain" = "yes" ]; then
 else
 start_broker
 # Step 1: mqtt-sub connects with clean_session=0 (-s), subscribes, stays connected
+rm -f "${TMP_DIR}/t21_sub1.ready" "${TMP_DIR}/t21_sub2.ready"
 timeout 5 ./$sub_bin -T -d -h 127.0.0.1 -p $port -n "test/persist" -s \
-    -i "persist_client" >"${TMP_DIR}/t21_sub1.log" 2>&1 &
+    -i "persist_client" -R "${TMP_DIR}/t21_sub1.ready" \
+    >"${TMP_DIR}/t21_sub1.log" 2>&1 &
 T21_SUB1_PID=$!
 TEST_PIDS+=($T21_SUB1_PID)
-sleep 2
+wait_for_file "${TMP_DIR}/t21_sub1.ready" 5
 # Step 2: Kill mqtt-sub (disconnect without unsubscribe - subscription should persist)
 kill $T21_SUB1_PID 2>/dev/null
 wait $T21_SUB1_PID 2>/dev/null || true
 TEST_PIDS=()
-sleep 1
 # Step 3: mqtt-sub reconnects with same ID, clean_session=0, skips subscribe (-x)
 # It should still receive messages on the persisted subscription
 timeout 10 ./$sub_bin -T -d -h 127.0.0.1 -p $port -n "test/persist" -s -x \
-    -i "persist_client" >"${TMP_DIR}/t21_sub2.log" 2>&1 &
+    -i "persist_client" -R "${TMP_DIR}/t21_sub2.ready" \
+    >"${TMP_DIR}/t21_sub2.log" 2>&1 &
 T21_SUB2_PID=$!
 TEST_PIDS+=($T21_SUB2_PID)
-sleep 2
+wait_for_file "${TMP_DIR}/t21_sub2.ready" 5
 # Step 4: Another client publishes to the topic
 ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/persist" -m "persisted_msg" \
     >"${TMP_DIR}/t21_pub.log" 2>&1
-sleep 2
+sleep 0.2
 kill $T21_SUB2_PID 2>/dev/null
 wait $T21_SUB2_PID 2>/dev/null || true
 TEST_PIDS=()
