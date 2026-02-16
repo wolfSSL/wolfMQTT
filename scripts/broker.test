@@ -64,12 +64,18 @@ start_broker() {
     fi
     generate_port
     local tls_args=""
+    local has_tls=0
+    local has_s_port=0
     for arg in "$@"; do
         if [ "$arg" = "-t" ]; then
-            tls_args="-s $port"
-            break
+            has_tls=1
+        elif [ "$arg" = "-s" ]; then
+            has_s_port=1
         fi
     done
+    if [ "$has_tls" -eq 1 ] && [ "$has_s_port" -eq 0 ]; then
+        tls_args="-s $port"
+    fi
     ./$broker_bin "$@" -p $port $tls_args &
     broker_pid=$!
     check_broker

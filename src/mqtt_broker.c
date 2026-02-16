@@ -2659,14 +2659,27 @@ int MqttBroker_Step(MqttBroker* broker)
         rc = broker->net.accept(broker->net.ctx, broker->listen_sock,
             &new_sock);
         if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
-            WBLOG_INFO(broker, "broker: accept sock=%d (plain)",
-                (int)new_sock);
-            if (BrokerClient_Add(broker, new_sock, 0) == NULL) {
+        #ifdef WOLFMQTT_POSIX_SOCKET
+            /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
+            if (new_sock >= FD_SETSIZE) {
                 WBLOG_ERR(broker,
-                    "broker: accept sock=%d rejected (alloc)", (int)new_sock);
+                    "broker: accept sock=%d rejected (>= FD_SETSIZE)",
+                    (int)new_sock);
                 broker->net.close(broker->net.ctx, new_sock);
             }
-            activity = 1;
+            else
+        #endif
+            {
+                WBLOG_INFO(broker, "broker: accept sock=%d (plain)",
+                    (int)new_sock);
+                if (BrokerClient_Add(broker, new_sock, 0) == NULL) {
+                    WBLOG_ERR(broker,
+                        "broker: accept sock=%d rejected (alloc)",
+                        (int)new_sock);
+                    broker->net.close(broker->net.ctx, new_sock);
+                }
+                activity = 1;
+            }
         }
     }
 
@@ -2677,14 +2690,27 @@ int MqttBroker_Step(MqttBroker* broker)
         rc = broker->net.accept(broker->net.ctx, broker->listen_sock_tls,
             &new_sock);
         if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
-            WBLOG_INFO(broker, "broker: accept sock=%d (TLS)",
-                (int)new_sock);
-            if (BrokerClient_Add(broker, new_sock, 1) == NULL) {
+        #ifdef WOLFMQTT_POSIX_SOCKET
+            /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
+            if (new_sock >= FD_SETSIZE) {
                 WBLOG_ERR(broker,
-                    "broker: accept sock=%d rejected (alloc)", (int)new_sock);
+                    "broker: accept sock=%d rejected (>= FD_SETSIZE)",
+                    (int)new_sock);
                 broker->net.close(broker->net.ctx, new_sock);
             }
-            activity = 1;
+            else
+        #endif
+            {
+                WBLOG_INFO(broker, "broker: accept sock=%d (TLS)",
+                    (int)new_sock);
+                if (BrokerClient_Add(broker, new_sock, 1) == NULL) {
+                    WBLOG_ERR(broker,
+                        "broker: accept sock=%d rejected (alloc)",
+                        (int)new_sock);
+                    broker->net.close(broker->net.ctx, new_sock);
+                }
+                activity = 1;
+            }
         }
     }
 #endif
@@ -2908,7 +2934,7 @@ static void BrokerUsage(const char* prog)
     PRINTF("  -p <port>   Plain port (default: %d)", MQTT_DEFAULT_PORT);
     PRINTF("  -v <level>  Log level: 1=error, 2=info (default), 3=debug");
 #ifdef ENABLE_MQTT_TLS
-    PRINTF("  -t          Enable TLS (listens on both plain and TLS ports)");
+    PRINTF("  -t          Enable TLS support");
     PRINTF("  -s <port>   TLS port (default: %d)", MQTT_SECURE_PORT);
     PRINTF("  -V <ver>    TLS version: 12=TLS 1.2, 13=TLS 1.3 (default: auto)");
     PRINTF("  -c <file>   Server certificate file (PEM)");
