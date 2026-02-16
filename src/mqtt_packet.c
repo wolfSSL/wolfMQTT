@@ -1375,7 +1375,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     /* Decode variable header */
     variable_len = MqttDecode_String(rx_payload, &publish->topic_name,
         &publish->topic_name_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
-    if (variable_len + header_len <= rx_buf_len) {
+    if ((variable_len >= 0) && (variable_len + header_len <= rx_buf_len)) {
         rx_payload += variable_len;
     }
     else {
