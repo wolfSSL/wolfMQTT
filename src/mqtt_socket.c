@@ -201,6 +201,8 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
         buf_len - client->write.pos, timeout_ms);
     if (rc >= 0) {
+        /* Clamp return value: write callback is user-provided and may
+         * return more than the requested length */
         if (rc > buf_len - client->write.pos) {
             rc = buf_len - client->write.pos;
         }
@@ -221,6 +223,8 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
         if (rc <= 0) {
             break;
         }
+        /* Clamp return value: write callback is user-provided and may
+         * return more than the requested length */
         if (rc > buf_len - client->write.pos) {
             rc = buf_len - client->write.pos;
         }
@@ -313,6 +317,8 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
         buf_len - client->read.pos, timeout_ms);
     if (rc >= 0) {
+        /* Clamp return value: read callback is user-provided and may
+         * return more than the requested length */
         if (rc > buf_len - client->read.pos) {
             rc = buf_len - client->read.pos;
         }
@@ -333,6 +339,8 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         if (rc <= 0) {
             break;
         }
+        /* Clamp return value: read callback is user-provided and may
+         * return more than the requested length */
         if (rc > buf_len - client->read.pos) {
             rc = buf_len - client->read.pos;
         }

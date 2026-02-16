@@ -143,6 +143,8 @@ static int NetRead(void *context, byte* buf, int buf_len,
                     break; /* Error */
                 }
                 else {
+                    /* Clamp return value: defensive check against
+                     * platform API returning more than requested */
                     if (rc > buf_len - (int)bytes) {
                         rc = buf_len - (int)bytes;
                     }
@@ -366,7 +368,8 @@ static int NetRead(void *context, byte* buf, int buf_len,
         rc = MQTT_CODE_ERROR_NETWORK;
     }
     else {
-        /* Try and build entire recv buffer before returning success */
+        /* Clamp return value: defensive check against
+         * platform API returning more than requested */
         if (rc > buf_len - sock->bytes) {
             rc = buf_len - sock->bytes;
         }
@@ -1015,6 +1018,8 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     #endif
 
         if (res == CURLE_OK) {
+            /* Clamp return value: defensive check against
+             * library API returning more than requested */
             if ((int)sent > buf_len - sock->bytes) {
                 sent = (size_t)(buf_len - sock->bytes);
             }
@@ -1670,6 +1675,8 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
                 goto exit; /* Error */
             }
             else {
+                /* Clamp return value: defensive check against
+                 * platform API returning more than requested */
                 if (rc > buf_len - bytes) {
                     rc = buf_len - bytes;
                 }
