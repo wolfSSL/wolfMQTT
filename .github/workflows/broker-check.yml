@@ -37,13 +37,23 @@ jobs:
           - name: "Broker TLS-only (no insecure)"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --enable-tls --disable-broker-insecure"
+          - name: "Broker with WebSocket"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-websocket"
+            extra_deps: "libwebsockets-dev"
+            wolfssl_opts: "--enable-opensslcoexist"
+          - name: "Broker with WebSocket + TLS"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-tls --enable-websocket"
+            extra_deps: "libwebsockets-dev"
+            wolfssl_opts: "--enable-opensslcoexist --enable-enckeys"
 
     steps:
     - name: Install dependencies
       run: |
         export DEBIAN_FRONTEND=noninteractive
         sudo apt-get update
-        sudo apt-get install -y mosquitto-clients
+        sudo apt-get install -y mosquitto-clients ${{ matrix.extra_deps }}
 
     - uses: actions/checkout@master
       with:
@@ -54,7 +64,7 @@ jobs:
       run: ./autogen.sh
     - name: wolfssl configure
       working-directory: ./wolfssl
-      run: ./configure --enable-enckeys
+      run: ./configure ${{ matrix.wolfssl_opts || '--enable-enckeys' }}
     - name: wolfssl make
       working-directory: ./wolfssl
       run: make

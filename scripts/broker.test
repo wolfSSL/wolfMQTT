@@ -887,7 +887,7 @@ if [ "$has_websocket" = "yes" ] && [ -x ./$ws_client_bin ]; then
         broker_pid=$no_pid
     fi
     ./$broker_bin -p $tcp_port -w $ws_port \
-        >"${TMP_DIR}/t17_broker.log" 2>&1 &
+        >"${TMP_DIR}/t22_broker.log" 2>&1 &
     broker_pid=$!
     check_broker $tcp_port
     check_broker $ws_port
@@ -899,29 +899,29 @@ if [ "$has_websocket" = "yes" ] && [ -x ./$ws_client_bin ]; then
     # Use stdbuf to force line-buffered stdout (otherwise printf output
     # is fully buffered when redirected to a file and lost on kill).
     timeout 15 stdbuf -oL ./$ws_client_bin -h 127.0.0.1 -p $ws_port \
-        >"${TMP_DIR}/t17.log" 2>&1 &
-    T17_WS_PID=$!
-    TEST_PIDS+=($T17_WS_PID)
+        >"${TMP_DIR}/t22.log" 2>&1 &
+    T22_WS_PID=$!
+    TEST_PIDS+=($T22_WS_PID)
     sleep 3
     # Verify WS client connected and subscribed before publishing.
     # Check both client log and broker log (broker always prints via
     # PRINTF which is unbuffered).
     ws_connected=no
-    if grep -q "MQTT Connected" "${TMP_DIR}/t17.log" 2>/dev/null; then
+    if grep -q "MQTT Connected" "${TMP_DIR}/t22.log" 2>/dev/null; then
         ws_connected=yes
-    elif grep -q "SUBACK sock=-1" "${TMP_DIR}/t17_broker.log" 2>/dev/null; then
+    elif grep -q "SUBACK sock=-1" "${TMP_DIR}/t22_broker.log" 2>/dev/null; then
         ws_connected=yes
     fi
     if [ "$ws_connected" = "yes" ]; then
         # Publish from TCP client to the WS client's subscribed topic
         ./$pub_bin -T -h 127.0.0.1 -p $tcp_port -n "test/topic" -m "ws_hello" \
-            >"${TMP_DIR}/t17_pub.log" 2>&1
+            >"${TMP_DIR}/t22_pub.log" 2>&1
         sleep 2
     fi
-    kill $T17_WS_PID 2>/dev/null
-    wait $T17_WS_PID 2>/dev/null || true
+    kill $T22_WS_PID 2>/dev/null
+    wait $T22_WS_PID 2>/dev/null || true
     TEST_PIDS=()
-    if grep -q "ws_hello" "${TMP_DIR}/t17.log" 2>/dev/null; then
+    if grep -q "ws_hello" "${TMP_DIR}/t22.log" 2>/dev/null; then
         echo "PASS: WebSocket connect and subscribe (message received)"
     elif [ "$ws_connected" = "yes" ]; then
         echo "PASS: WebSocket connect and subscribe (connected ok)"

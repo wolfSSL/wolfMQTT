@@ -167,6 +167,11 @@ typedef struct MqttBrokerNet {
 /* WebSocket per-client context                                                */
 /* -------------------------------------------------------------------------- */
 #ifdef ENABLE_MQTT_WEBSOCKET
+#ifdef WOLFMQTT_STATIC_MEMORY
+    #error "WebSocket support (ENABLE_MQTT_WEBSOCKET) is incompatible with " \
+           "static memory mode (WOLFMQTT_STATIC_MEMORY). libwebsockets " \
+           "requires dynamic allocation internally."
+#endif
 #ifndef BROKER_WS_RX_BUF_SZ
     #define BROKER_WS_RX_BUF_SZ  BROKER_RX_BUF_SZ
 #endif

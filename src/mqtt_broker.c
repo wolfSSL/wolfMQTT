@@ -465,6 +465,11 @@ static void BrokerTls_Free(MqttBroker* broker)
 
 #include <libwebsockets.h>
 
+/* Compatibility for older libwebsockets versions (pre-4.1) */
+#ifndef LWS_PROTOCOL_LIST_TERM
+    #define LWS_PROTOCOL_LIST_TERM { NULL, NULL, 0, 0, 0, NULL, 0 }
+#endif
+
 /* Forward declaration for the no-op connect callback (defined after WS section) */
 static int BrokerNetConnect(void* context, const char* host, word16 port,
     int timeout_ms);
@@ -622,25 +627,13 @@ static int callback_broker_mqtt(struct lws *wsi,
             ws->rx_len += len;
         }
         else {
-            WBLOG_ERR(broker, "broker: ws rx buffer overflow (wsi=%p)",
-                (void*)wsi);
-            /* Drop oldest data to make room */
-            if (len >= sizeof(ws->rx_buffer)) {
-                const byte* in_bytes = (const byte*)in;
-                XMEMCPY(ws->rx_buffer,
-                    &in_bytes[len - sizeof(ws->rx_buffer)],
-                    sizeof(ws->rx_buffer));
-                ws->rx_len = sizeof(ws->rx_buffer);
-            }
-            else {
-                size_t keep = sizeof(ws->rx_buffer) - len;
-                if (keep > 0 && ws->rx_len > 0) {
-                    XMEMMOVE(ws->rx_buffer,
-                        ws->rx_buffer + (ws->rx_len - keep), keep);
-                }
-                XMEMCPY(ws->rx_buffer + keep, in, len);
-                ws->rx_len = keep + len;
-            }
+            /* Dropping bytes would desynchronize MQTT packet framing,
+             * so treat overflow as a fatal protocol error. */
+            WBLOG_ERR(broker, "broker: ws rx buffer overflow "
+                "(wsi=%p, have=%d, need=%d, max=%d)",
+                (void*)wsi, (int)ws->rx_len, (int)len,
+                (int)sizeof(ws->rx_buffer));
+            return -1; /* close connection */
         }
     }
     else if (reason == LWS_CALLBACK_SERVER_WRITEABLE) {
@@ -653,14 +646,17 @@ static int callback_broker_mqtt(struct lws *wsi,
         if (ws->tx_pending != NULL && ws->tx_len > 0) {
             int n = lws_write(wsi, ws->tx_pending + LWS_PRE,
                 ws->tx_len, LWS_WRITE_BINARY);
+            if (n < (int)ws->tx_len) {
+                WBLOG_ERR(broker, "broker: ws write failed (wsi=%p, "
+                    "n=%d, len=%d)", (void*)wsi, n, (int)ws->tx_len);
+                WOLFMQTT_FREE(ws->tx_pending);
+                ws->tx_pending = NULL;
+                ws->tx_len = 0;
+                return -1;
+            }
             WOLFMQTT_FREE(ws->tx_pending);
             ws->tx_pending = NULL;
             ws->tx_len = 0;
-            if (n < 0) {
-                WBLOG_ERR(broker, "broker: ws write failed (wsi=%p)",
-                    (void*)wsi);
-                return -1;
-            }
         }
     }
     else if (reason == LWS_CALLBACK_CLOSED) {
@@ -804,7 +800,15 @@ static int BrokerWsNetDisconnect(void* context)
     }
 
     if (ws->wsi != NULL && ws->status > 0) {
+        BrokerClient **bc_ptr;
         WBLOG_INFO(bc->broker, "broker: ws disconnect (wsi=%p)", (void*)ws->wsi);
+        /* Clear lws per-session user data so that any later callbacks
+         * (e.g. LWS_CALLBACK_CLOSED) see NULL and skip processing.
+         * Without this, the callback would dereference the freed bc. */
+        bc_ptr = (BrokerClient**)lws_wsi_user(ws->wsi);
+        if (bc_ptr != NULL) {
+            *bc_ptr = NULL;
+        }
         lws_close_reason(ws->wsi, LWS_CLOSE_STATUS_NORMAL, NULL, 0);
         ws->wsi = NULL;
     }
