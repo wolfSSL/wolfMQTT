@@ -194,6 +194,8 @@ typedef struct _MQTTCtx {
 #endif
     unsigned int dynamicTopic:1;
     unsigned int dynamicClientId:1;
+    unsigned int skip_subscribe:1;
+    const char* ready_file; /* touch file when ready (e.g., after SUBACK) */
 #ifdef WOLFMQTT_NONBLOCK
     unsigned int useNonBlockMode:1; /* set to use non-blocking mode.
         network callbacks can return MQTT_CODE_CONTINUE to indicate "would block" */

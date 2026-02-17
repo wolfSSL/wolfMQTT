@@ -34,6 +34,9 @@ jobs:
           - name: "Broker minimal (no log, no retained, no will, no wildcards, no auth)"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --disable-broker-log --disable-broker-retained --disable-broker-will --disable-broker-wildcards --disable-broker-auth"
+          - name: "Broker TLS-only (no insecure)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-tls --disable-broker-insecure"
 
     steps:
     - name: Install dependencies

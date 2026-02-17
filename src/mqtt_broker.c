@@ -259,6 +259,9 @@ static int BrokerPosix_Read(void* ctx, BROKER_SOCKET_T sock,
     if (buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+    if (sock < 0 || sock >= FD_SETSIZE) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
 
     FD_ZERO(&rfds);
     FD_SET(sock, &rfds);
@@ -294,6 +297,9 @@ static int BrokerPosix_Write(void* ctx, BROKER_SOCKET_T sock,
 
     if (buf == NULL || buf_len <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    if (sock < 0 || sock >= FD_SETSIZE) {
+        return MQTT_CODE_ERROR_NETWORK;
     }
 
     FD_ZERO(&wfds);
@@ -508,10 +514,10 @@ static void BrokerClient_Free(BrokerClient* bc)
     if (bc == NULL) {
         return;
     }
-    (void)BrokerNetDisconnect(bc);
 #ifdef ENABLE_MQTT_TLS
     if (bc->client.tls.ssl) {
-        /* Only send close_notify if handshake completed successfully */
+        /* Send close_notify before closing the socket, because
+         * wolfSSL_shutdown uses I/O callbacks that need a valid fd */
         if (bc->tls_handshake_done) {
             wolfSSL_shutdown(bc->client.tls.ssl);
         }
@@ -519,6 +525,7 @@ static void BrokerClient_Free(BrokerClient* bc)
         bc->client.tls.ssl = NULL;
     }
 #endif
+    (void)BrokerNetDisconnect(bc);
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
     XMEMSET(bc, 0, sizeof(*bc));
@@ -554,7 +561,7 @@ static void BrokerClient_Free(BrokerClient* bc)
 }
 
 static BrokerClient* BrokerClient_Add(MqttBroker* broker,
-    BROKER_SOCKET_T sock)
+    BROKER_SOCKET_T sock, int is_tls)
 {
     BrokerClient* bc = NULL;
     int rc = MQTT_CODE_SUCCESS;
@@ -616,7 +623,7 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
 
 #ifdef ENABLE_MQTT_TLS
     if (rc == MQTT_CODE_SUCCESS) {
-        if (broker->use_tls && broker->tls_ctx) {
+        if (is_tls && broker->tls_ctx) {
             bc->client.tls.ssl = wolfSSL_new(broker->tls_ctx);
             if (bc->client.tls.ssl == NULL) {
                 WBLOG_ERR(broker, "broker: wolfSSL_new failed sock=%d", (int)sock);
@@ -629,10 +636,17 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
                 bc->tls_handshake_done = 0;
             }
         }
+        else if (is_tls) {
+            WBLOG_ERR(broker, "broker: TLS ctx not set, rejecting sock=%d",
+                (int)sock);
+            rc = MQTT_CODE_ERROR_BAD_ARG;
+        }
         else {
             bc->tls_handshake_done = 1;
         }
     }
+#else
+    (void)is_tls;
 #endif
 
     if (rc == MQTT_CODE_SUCCESS) {
@@ -681,6 +695,36 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
 /* -------------------------------------------------------------------------- */
 /* Subscription management                                                     */
 /* -------------------------------------------------------------------------- */
+
+/* Orphan subscriptions for session persistence (clean_session=0).
+ * Sets client pointer to NULL but keeps the subscription for reconnect. */
+static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
+{
+    int count = 0;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    int i;
+    for (i = 0; i < BROKER_MAX_SUBS; i++) {
+        if (broker->subs[i].in_use && broker->subs[i].client == bc) {
+            broker->subs[i].client = NULL;
+            count++;
+        }
+    }
+#else
+    BrokerSub* cur = broker->subs;
+    while (cur) {
+        if (cur->client == bc) {
+            cur->client = NULL;
+            count++;
+        }
+        cur = cur->next;
+    }
+#endif
+    if (count > 0) {
+        WBLOG_INFO(broker, "broker: orphaned %d subs for client_id=%s (session persist)",
+            count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+    }
+}
+
 static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -705,6 +749,9 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
             }
             if (cur->filter) {
                 WOLFMQTT_FREE(cur->filter);
+            }
+            if (cur->client_id) {
+                WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
         }
@@ -802,6 +849,25 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     if (rc == MQTT_CODE_SUCCESS) {
         sub->client = bc;
         sub->qos = qos;
+        /* Store client_id for session persistence */
+#ifdef WOLFMQTT_STATIC_MEMORY
+        if (BROKER_STR_VALID(bc->client_id)) {
+            int id_len = (int)XSTRLEN(bc->client_id);
+            if (id_len >= BROKER_MAX_CLIENT_ID_LEN) {
+                id_len = BROKER_MAX_CLIENT_ID_LEN - 1;
+            }
+            XMEMCPY(sub->client_id, bc->client_id, (size_t)id_len);
+            sub->client_id[id_len] = '\0';
+        }
+#else
+        if (BROKER_STR_VALID(bc->client_id)) {
+            int id_len = (int)XSTRLEN(bc->client_id);
+            sub->client_id = (char*)WOLFMQTT_MALLOC((size_t)id_len + 1);
+            if (sub->client_id != NULL) {
+                XMEMCPY(sub->client_id, bc->client_id, (size_t)id_len + 1);
+            }
+        }
+#endif
         WBLOG_INFO(broker, "broker: sub add sock=%d filter=%s qos=%d",
             (int)bc->sock, sub->filter, qos);
     }
@@ -916,9 +982,17 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
         int i;
         for (i = 0; i < BROKER_MAX_SUBS; i++) {
             BrokerSub* s = &broker->subs[i];
-            if (s->in_use && s->client != NULL &&
+            if (!s->in_use) continue;
+            /* Check active client subs */
+            if (s->client != NULL &&
                 s->client->client_id[0] != '\0' &&
                 XSTRCMP(s->client->client_id, client_id) == 0) {
+                XMEMSET(s, 0, sizeof(BrokerSub));
+            }
+            /* Check orphaned subs (stored client_id) */
+            else if (s->client == NULL &&
+                BROKER_STR_VALID(s->client_id) &&
+                XSTRCMP(s->client_id, client_id) == 0) {
                 XMEMSET(s, 0, sizeof(BrokerSub));
             }
         }
@@ -929,8 +1003,19 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
         BrokerSub* prev = NULL;
         while (cur) {
             BrokerSub* next = cur->next;
+            int remove = 0;
+            /* Check active client subs */
             if (cur->client != NULL && cur->client->client_id != NULL &&
                 XSTRCMP(cur->client->client_id, client_id) == 0) {
+                remove = 1;
+            }
+            /* Check orphaned subs (stored client_id) */
+            else if (cur->client == NULL &&
+                BROKER_STR_VALID(cur->client_id) &&
+                XSTRCMP(cur->client_id, client_id) == 0) {
+                remove = 1;
+            }
+            if (remove) {
                 if (prev) {
                     prev->next = next;
                 }
@@ -939,6 +1024,9 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
                 }
                 if (cur->filter) {
                     WOLFMQTT_FREE(cur->filter);
+                }
+                if (cur->client_id) {
+                    WOLFMQTT_FREE(cur->client_id);
                 }
                 WOLFMQTT_FREE(cur);
             }
@@ -954,6 +1042,7 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
 static void BrokerSubs_ReassociateClient(MqttBroker* broker,
     const char* client_id, BrokerClient* new_bc)
 {
+    int count = 0;
     if (broker == NULL || client_id == NULL || client_id[0] == '\0' ||
         new_bc == NULL) {
         return;
@@ -964,9 +1053,17 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
         for (i = 0; i < BROKER_MAX_SUBS; i++) {
             BrokerSub* s = &broker->subs[i];
             if (!s->in_use) continue;
-            if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
+            /* Check orphaned subs (client=NULL, client_id stored in sub) */
+            if (s->client == NULL && BROKER_STR_VALID(s->client_id) &&
+                XSTRCMP(s->client_id, client_id) == 0) {
+                s->client = new_bc;
+                count++;
+            }
+            /* Check subs with active client (takeover scenario) */
+            else if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
                 XSTRCMP(s->client->client_id, client_id) == 0) {
                 s->client = new_bc;
+                count++;
             }
         }
     }
@@ -974,14 +1071,26 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
     {
         BrokerSub* s = broker->subs;
         while (s) {
-            if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
+            /* Check orphaned subs (client=NULL, client_id stored in sub) */
+            if (s->client == NULL && BROKER_STR_VALID(s->client_id) &&
+                XSTRCMP(s->client_id, client_id) == 0) {
+                s->client = new_bc;
+                count++;
+            }
+            /* Check subs with active client (takeover scenario) */
+            else if (s->client != NULL && BROKER_STR_VALID(s->client->client_id) &&
                 XSTRCMP(s->client->client_id, client_id) == 0) {
                 s->client = new_bc;
+                count++;
             }
             s = s->next;
         }
     }
 #endif
+    if (count > 0) {
+        WBLOG_INFO(broker, "broker: reassociated %d subs for client_id=%s",
+            count, client_id);
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1891,6 +2000,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             BrokerSubs_RemoveClient(broker, old);
             BrokerClient_Remove(broker, old);
         }
+        else if (!mc.clean_session) {
+            /* No existing client, but check for orphaned subs from
+             * a previous session (clean_session=0 reconnect) */
+            BrokerSubs_ReassociateClient(broker, bc->client_id, bc);
+        }
         if (mc.clean_session) {
             /* Remove any remaining subs for this client_id */
             BrokerSubs_RemoveByClientId(broker, bc->client_id);
@@ -2519,7 +2633,13 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     else if (rc < 0) {
         WBLOG_ERR(broker, "broker: read failed sock=%d rc=%d", (int)bc->sock, rc);
         BrokerClient_PublishWill(broker, bc); /* abnormal disconnect */
-        BrokerSubs_RemoveClient(broker, bc);
+        /* Session persistence: keep subs if clean_session=0 */
+        if (bc->clean_session) {
+            BrokerSubs_RemoveClient(broker, bc);
+        }
+        else {
+            BrokerSubs_OrphanClient(broker, bc);
+        }
         BrokerClient_Remove(broker, bc);
         return 0;
     }
@@ -2573,7 +2693,13 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 break;
             case MQTT_PACKET_TYPE_DISCONNECT:
                 BrokerClient_ClearWill(bc); /* normal disconnect */
-                BrokerSubs_RemoveClient(broker, bc);
+                /* Session persistence: keep subs if clean_session=0 */
+                if (bc->clean_session) {
+                    BrokerSubs_RemoveClient(broker, bc);
+                }
+                else {
+                    BrokerSubs_OrphanClient(broker, bc);
+                }
                 BrokerClient_Remove(broker, bc);
                 return 0;
             default:
@@ -2591,7 +2717,13 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             BrokerSend_Disconnect(bc, MQTT_REASON_KEEP_ALIVE_TIMEOUT);
         #endif
             BrokerClient_PublishWill(broker, bc); /* abnormal disconnect */
-            BrokerSubs_RemoveClient(broker, bc);
+            /* Session persistence: keep subs if clean_session=0 */
+            if (bc->clean_session) {
+                BrokerSubs_RemoveClient(broker, bc);
+            }
+            else {
+                BrokerSubs_OrphanClient(broker, bc);
+            }
             BrokerClient_Remove(broker, bc);
             return 0;
         }
@@ -2612,6 +2744,10 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     XMEMCPY(&broker->net, net, sizeof(MqttBrokerNet));
     broker->listen_sock = BROKER_SOCKET_INVALID;
     broker->port = MQTT_DEFAULT_PORT;
+#ifdef ENABLE_MQTT_TLS
+    broker->listen_sock_tls = BROKER_SOCKET_INVALID;
+    broker->port_tls = MQTT_SECURE_PORT;
+#endif
     broker->running = 0;
     broker->log_level = BROKER_LOG_LEVEL_DEFAULT;
     broker->next_packet_id = 1;
@@ -2631,7 +2767,6 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
 int MqttBroker_Step(MqttBroker* broker)
 {
     int activity = 0;
-    BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
     int rc;
 
     if (broker == NULL) {
@@ -2641,16 +2776,69 @@ int MqttBroker_Step(MqttBroker* broker)
         return MQTT_CODE_SUCCESS;
     }
 
-    /* 1. Try to accept a new connection (non-blocking) */
-    rc = broker->net.accept(broker->net.ctx, broker->listen_sock, &new_sock);
-    if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
-        WBLOG_INFO(broker, "broker: accept sock=%d", (int)new_sock);
-        if (BrokerClient_Add(broker, new_sock) == NULL) {
-            WBLOG_ERR(broker, "broker: accept sock=%d rejected (alloc)", (int)new_sock);
-            broker->net.close(broker->net.ctx, new_sock);
+    /* 1. Try to accept new connections (non-blocking) */
+
+    /* Plain (non-TLS) listener */
+    if (broker->listen_sock != BROKER_SOCKET_INVALID) {
+        BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
+        rc = broker->net.accept(broker->net.ctx, broker->listen_sock,
+            &new_sock);
+        if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
+        #ifdef WOLFMQTT_POSIX_SOCKET
+            /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
+            if (new_sock >= FD_SETSIZE) {
+                WBLOG_ERR(broker,
+                    "broker: accept sock=%d rejected (>= FD_SETSIZE)",
+                    (int)new_sock);
+                broker->net.close(broker->net.ctx, new_sock);
+            }
+            else
+        #endif
+            {
+                WBLOG_INFO(broker, "broker: accept sock=%d (plain)",
+                    (int)new_sock);
+                if (BrokerClient_Add(broker, new_sock, 0) == NULL) {
+                    WBLOG_ERR(broker,
+                        "broker: accept sock=%d rejected (alloc)",
+                        (int)new_sock);
+                    broker->net.close(broker->net.ctx, new_sock);
+                }
+                activity = 1;
+            }
         }
-        activity = 1;
     }
+
+#ifdef ENABLE_MQTT_TLS
+    /* TLS listener */
+    if (broker->listen_sock_tls != BROKER_SOCKET_INVALID) {
+        BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
+        rc = broker->net.accept(broker->net.ctx, broker->listen_sock_tls,
+            &new_sock);
+        if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
+        #ifdef WOLFMQTT_POSIX_SOCKET
+            /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
+            if (new_sock >= FD_SETSIZE) {
+                WBLOG_ERR(broker,
+                    "broker: accept sock=%d rejected (>= FD_SETSIZE)",
+                    (int)new_sock);
+                broker->net.close(broker->net.ctx, new_sock);
+            }
+            else
+        #endif
+            {
+                WBLOG_INFO(broker, "broker: accept sock=%d (TLS)",
+                    (int)new_sock);
+                if (BrokerClient_Add(broker, new_sock, 1) == NULL) {
+                    WBLOG_ERR(broker,
+                        "broker: accept sock=%d rejected (alloc)",
+                        (int)new_sock);
+                    broker->net.close(broker->net.ctx, new_sock);
+                }
+                activity = 1;
+            }
+        }
+    }
+#endif
 
     /* 2. Process each client */
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -2709,34 +2897,80 @@ int MqttBroker_Run(MqttBroker* broker)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
-    /* Start listening */
+#ifdef ENABLE_MQTT_TLS
+    /* Initialize TLS context if TLS is enabled */
+    if (broker->use_tls) {
+    #if !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+        rc = BrokerTls_Init(broker);
+        if (rc != MQTT_CODE_SUCCESS) {
+            WBLOG_ERR(broker, "broker: TLS init failed rc=%d", rc);
+            return rc;
+        }
+    #else
+        if (broker->tls_ctx == NULL) {
+            WBLOG_ERR(broker, "broker: TLS ctx must be set before start");
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
+    #endif
+    }
+
+    /* Start plain (non-TLS) listener */
+  #ifndef WOLFMQTT_BROKER_NO_INSECURE
+    if (!broker->use_tls || broker->port != broker->port_tls) {
+        rc = broker->net.listen(broker->net.ctx, &broker->listen_sock,
+            broker->port, BROKER_LISTEN_BACKLOG);
+        if (rc != MQTT_CODE_SUCCESS) {
+            WBLOG_ERR(broker, "broker: listen (plain) failed rc=%d", rc);
+            return rc;
+        }
+        WBLOG_INFO(broker, "broker: listening on port %d (plain)",
+            broker->port);
+    }
+    else if (broker->use_tls && broker->port == broker->port_tls) {
+        WBLOG_INFO(broker,
+            "broker: plain port == TLS port (%d), TLS-only mode",
+            broker->port_tls);
+    }
+  #endif /* !WOLFMQTT_BROKER_NO_INSECURE */
+
+    /* Start TLS listener */
+    if (broker->use_tls) {
+        rc = broker->net.listen(broker->net.ctx, &broker->listen_sock_tls,
+            broker->port_tls, BROKER_LISTEN_BACKLOG);
+        if (rc != MQTT_CODE_SUCCESS) {
+            WBLOG_ERR(broker, "broker: listen (TLS) failed rc=%d", rc);
+            return rc;
+        }
+        WBLOG_INFO(broker, "broker: listening on port %d (TLS)",
+            broker->port_tls);
+    }
+#else
+    /* No TLS support compiled in: plain listener only */
     rc = broker->net.listen(broker->net.ctx, &broker->listen_sock,
         broker->port, BROKER_LISTEN_BACKLOG);
     if (rc != MQTT_CODE_SUCCESS) {
         WBLOG_ERR(broker, "broker: listen failed rc=%d", rc);
         return rc;
     }
-
-#if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
-    if (broker->use_tls) {
-        rc = BrokerTls_Init(broker);
-        if (rc != MQTT_CODE_SUCCESS) {
-            WBLOG_ERR(broker, "broker: TLS init failed rc=%d", rc);
-            return rc;
-        }
-        WBLOG_INFO(broker, "broker: listening on port %d (TLS)", broker->port);
-    }
-    else
+    WBLOG_INFO(broker, "broker: listening on port %d (no TLS)", broker->port);
 #endif
-    {
-        WBLOG_INFO(broker, "broker: listening on port %d (no TLS)", broker->port);
-    }
+
 #ifdef WOLFMQTT_BROKER_AUTH
     if (broker->auth_user || broker->auth_pass) {
         WBLOG_INFO(broker, "broker: auth enabled user=%s",
             broker->auth_user ? broker->auth_user : "(null)");
     }
 #endif
+
+    /* Ensure at least one listener is active */
+    if (broker->listen_sock == BROKER_SOCKET_INVALID
+#ifdef ENABLE_MQTT_TLS
+        && broker->listen_sock_tls == BROKER_SOCKET_INVALID
+#endif
+    ) {
+        WBLOG_ERR(broker, "broker: no listeners configured");
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
 
     broker->running = 1;
     while (broker->running) {
@@ -2794,11 +3028,17 @@ int MqttBroker_Free(MqttBroker* broker)
     BrokerTls_Free(broker);
 #endif
 
-    /* Close listen socket */
+    /* Close listen sockets */
     if (broker->listen_sock != BROKER_SOCKET_INVALID) {
         broker->net.close(broker->net.ctx, broker->listen_sock);
         broker->listen_sock = BROKER_SOCKET_INVALID;
     }
+#ifdef ENABLE_MQTT_TLS
+    if (broker->listen_sock_tls != BROKER_SOCKET_INVALID) {
+        broker->net.close(broker->net.ctx, broker->listen_sock_tls);
+        broker->listen_sock_tls = BROKER_SOCKET_INVALID;
+    }
+#endif
 
     return MQTT_CODE_SUCCESS;
 }
@@ -2813,12 +3053,14 @@ static void BrokerUsage(const char* prog)
            " [-u user] [-P pass]"
 #endif
 #ifdef ENABLE_MQTT_TLS
-           " [-t] [-V ver] [-c cert] [-K key] [-A ca]"
+           " [-t] [-s port] [-V ver] [-c cert] [-K key] [-A ca]"
 #endif
            , prog);
+    PRINTF("  -p <port>   Plain port (default: %d)", MQTT_DEFAULT_PORT);
     PRINTF("  -v <level>  Log level: 1=error, 2=info (default), 3=debug");
 #ifdef ENABLE_MQTT_TLS
-    PRINTF("  -t          Enable TLS");
+    PRINTF("  -t          Enable TLS support");
+    PRINTF("  -s <port>   TLS port (default: %d)", MQTT_SECURE_PORT);
     PRINTF("  -V <ver>    TLS version: 12=TLS 1.2, 13=TLS 1.3 (default: auto)");
     PRINTF("  -c <file>   Server certificate file (PEM)");
     PRINTF("  -K <file>   Server private key file (PEM)");
@@ -2836,6 +3078,9 @@ static void BrokerUsage(const char* prog)
 #endif
 #ifdef WOLFMQTT_BROKER_AUTH
            " auth"
+#endif
+#ifdef WOLFMQTT_BROKER_INSECURE
+           " insecure"
 #endif
 #ifdef ENABLE_MQTT_TLS
            " tls"
@@ -2903,9 +3148,9 @@ int wolfmqtt_broker(int argc, char** argv)
 #ifdef ENABLE_MQTT_TLS
         else if (XSTRCMP(argv[i], "-t") == 0) {
             broker.use_tls = 1;
-            if (broker.port == MQTT_DEFAULT_PORT) {
-                broker.port = MQTT_SECURE_PORT;
-            }
+        }
+        else if (XSTRCMP(argv[i], "-s") == 0 && i + 1 < argc) {
+            broker.port_tls = (word16)XATOI(argv[++i]);
         }
         else if (XSTRCMP(argv[i], "-V") == 0 && i + 1 < argc) {
             broker.tls_version = (byte)XATOI(argv[++i]);
