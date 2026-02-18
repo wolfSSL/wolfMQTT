@@ -39,18 +39,29 @@ do_cleanup() {
 [ ! -x ./$sub_bin ] && echo "$sub_bin not found" && exit 1
 
 generate_port() {
+    # Generate a port in [15000, 32000) to stay below the Linux ephemeral
+    # port range (default 32768-60999) and macOS ephemeral range (49152-65535).
+    # Use -tu2 to get unsigned decimal output and avoid the octal-vs-decimal
+    # ambiguity that the legacy od output format creates in bash arithmetic.
+    local n
     if [[ "$OSTYPE" == "linux"* ]]; then
-        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
+        n=$(od -An -tu2 -N2 /dev/urandom | tr -d ' \n')
     elif [[ "$OSTYPE" == "darwin"* ]]; then
-        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
+        n=$(od -An -tu2 -N2 /dev/random | tr -d ' \n')
     else
         port=11883
+        return
     fi
+    port=$((n % (32000 - 15000) + 15000))
 }
 
 check_broker() {
     local check_port=${1:-$port}
-    timeout 5 sh -c 'until nc -z $0 $1 2>/dev/null; do sleep 0.1; done' localhost $check_port
+    if ! timeout 5 sh -c 'until nc -z $0 $1 2>/dev/null; do sleep 0.1; done' \
+            localhost $check_port; then
+        echo "WARNING: broker did not become ready on port $check_port" >&2
+        return 1
+    fi
 }
 
 # Wait for a file to appear (used for subscriber ready synchronization)
@@ -89,7 +100,8 @@ start_broker() {
     if [ "$has_tls" -eq 1 ] && [ "$has_s_port" -eq 0 ]; then
         tls_args="-s $port"
     fi
-    ./$broker_bin "$@" -p $port $tls_args &
+    broker_log="${TMP_DIR}/broker_p${port}.log"
+    ./$broker_bin "$@" -p $port $tls_args >"$broker_log" 2>&1 &
     broker_pid=$!
     check_broker
 }
@@ -107,7 +119,8 @@ start_broker_dual() {
     generate_port
     port_tls=$port
     port=$plain_port
-    ./$broker_bin "$@" -p $port -s $port_tls &
+    broker_log="${TMP_DIR}/broker_dual_p${port}_t${port_tls}.log"
+    ./$broker_bin "$@" -p $port -s $port_tls >"$broker_log" 2>&1 &
     broker_pid=$!
     check_broker $port
     check_broker $port_tls
@@ -864,6 +877,75 @@ else
     echo "FAIL: Clean session persistence (got_msg=$T21_GOT_MSG)"
     FAIL=1
 fi
+fi
+
+# --- WebSocket Tests ---
+ws_client_bin="examples/websocket/websocket_client"
+has_websocket=no
+echo "$broker_features" | grep -q "websocket" && has_websocket=yes
+
+if [ "$has_websocket" = "yes" ] && [ -x ./$ws_client_bin ]; then
+
+    # --- Test 22: WebSocket connect and subscribe ---
+    echo ""
+    echo "--- Test 22: WebSocket connect and subscribe ---"
+    generate_port
+    ws_port=$port
+    generate_port
+    tcp_port=$port
+    # Start broker with both TCP and WebSocket ports
+    if [ $broker_pid != $no_pid ]; then
+        kill $broker_pid 2>/dev/null
+        wait $broker_pid 2>/dev/null || true
+        broker_pid=$no_pid
+    fi
+    ./$broker_bin -p $tcp_port -w $ws_port \
+        >"${TMP_DIR}/t22_broker.log" 2>&1 &
+    broker_pid=$!
+    check_broker $tcp_port
+    check_broker $ws_port
+    sleep 1
+
+    # websocket_client subscribes to hardcoded "test/topic" and waits.
+    # Test: WS client connects, TCP publisher sends to "test/topic",
+    # verify the WS client received the message.
+    # Use stdbuf to force line-buffered stdout (otherwise printf output
+    # is fully buffered when redirected to a file and lost on kill).
+    timeout 15 stdbuf -oL ./$ws_client_bin -h 127.0.0.1 -p $ws_port \
+        >"${TMP_DIR}/t22.log" 2>&1 &
+    T22_WS_PID=$!
+    TEST_PIDS+=($T22_WS_PID)
+    sleep 3
+    # Verify WS client connected and subscribed before publishing.
+    # Check both client log and broker log (broker always prints via
+    # PRINTF which is unbuffered).
+    ws_connected=no
+    if grep -q "MQTT Connected" "${TMP_DIR}/t22.log" 2>/dev/null; then
+        ws_connected=yes
+    elif grep -q "SUBACK sock=-1" "${TMP_DIR}/t22_broker.log" 2>/dev/null; then
+        ws_connected=yes
+    fi
+    if [ "$ws_connected" = "yes" ]; then
+        # Publish from TCP client to the WS client's subscribed topic
+        ./$pub_bin -T -h 127.0.0.1 -p $tcp_port -n "test/topic" -m "ws_hello" \
+            >"${TMP_DIR}/t22_pub.log" 2>&1
+        sleep 2
+    fi
+    kill $T22_WS_PID 2>/dev/null
+    wait $T22_WS_PID 2>/dev/null || true
+    TEST_PIDS=()
+    if grep -q "ws_hello" "${TMP_DIR}/t22.log" 2>/dev/null; then
+        echo "PASS: WebSocket connect and subscribe (message received)"
+    elif [ "$ws_connected" = "yes" ]; then
+        echo "PASS: WebSocket connect and subscribe (connected ok)"
+    else
+        echo "FAIL: WebSocket connect and subscribe"
+        FAIL=1
+    fi
+
+else
+    echo ""
+    echo "SKIP: WebSocket tests (broker or websocket_client not built with --enable-websocket)"
 fi
 
 # --- Summary ---

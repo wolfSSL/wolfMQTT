@@ -33,6 +33,11 @@
 
 #include <libwebsockets.h>
 
+/* Compatibility for older libwebsockets versions (pre-4.1) */
+#ifndef LWS_PROTOCOL_LIST_TERM
+    #define LWS_PROTOCOL_LIST_TERM { NULL, NULL, 0, 0, 0, NULL, 0 }
+#endif
+
 /* Network context for libwebsockets */
 typedef struct _LibwebsockContext {
     struct lws_context *context;
@@ -74,37 +79,14 @@ static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
                 XMEMCPY(net->rx_buffer + net->rx_len, in, len);
                 net->rx_len += len;
             } else {
-                /* Buffer overflow - handle error */
-                lwsl_err("WebSocket receive buffer overflow"
-                         "- dropping oldest data\n");
-
-                /* Simple approach: If new data is larger than buffer,
-                 * just keep newest data */
-                if (len >= sizeof(net->rx_buffer)) {
-                    /* New data is larger than entire buffer,
-                     * keep only what fits */
-                    /* Cast to byte pointer to allow pointer arithmetic */
-                    const byte* in_bytes = (const byte*)in;
-                    XMEMCPY(net->rx_buffer, 
-                            &in_bytes[len - sizeof(net->rx_buffer)], 
-                            sizeof(net->rx_buffer));
-                    net->rx_len = sizeof(net->rx_buffer);
-                } else {
-                    /* Keep as much new data as possible */
-                    size_t keep_bytes = sizeof(net->rx_buffer) - len;
-
-                    /* Move the portion of old data we want to
-                     * keep to the beginning */
-                    if (keep_bytes > 0 && net->rx_len > 0) {
-                        XMEMMOVE(net->rx_buffer, 
-                                net->rx_buffer + (net->rx_len - keep_bytes),
-                                keep_bytes);
-                    }
-
-                    /* Append all new data */
-                    XMEMCPY(net->rx_buffer + keep_bytes, in, len);
-                    net->rx_len = keep_bytes + len;
-                }
+                /* Dropping bytes would desynchronize MQTT packet framing,
+                 * so treat overflow as a fatal protocol error. */
+                lwsl_err("WebSocket receive buffer overflow "
+                         "(have=%d, need=%d, max=%d)\n",
+                         (int)net->rx_len, (int)len,
+                         (int)sizeof(net->rx_buffer));
+                net->status = -1;
+                return -1; /* close connection */
             }
         }
     }
