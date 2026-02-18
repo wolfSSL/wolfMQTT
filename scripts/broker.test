@@ -39,18 +39,29 @@ do_cleanup() {
 [ ! -x ./$sub_bin ] && echo "$sub_bin not found" && exit 1
 
 generate_port() {
+    # Generate a port in [15000, 32000) to stay below the Linux ephemeral
+    # port range (default 32768-60999) and macOS ephemeral range (49152-65535).
+    # Use -tu2 to get unsigned decimal output and avoid the octal-vs-decimal
+    # ambiguity that the legacy od output format creates in bash arithmetic.
+    local n
     if [[ "$OSTYPE" == "linux"* ]]; then
-        port=$(($(od -An -N2 /dev/urandom) % (65535-49152) + 49152))
+        n=$(od -An -tu2 -N2 /dev/urandom | tr -d ' \n')
     elif [[ "$OSTYPE" == "darwin"* ]]; then
-        port=$(($(od -An -N2 /dev/random) % (65535-49152) + 49152))
+        n=$(od -An -tu2 -N2 /dev/random | tr -d ' \n')
     else
         port=11883
+        return
     fi
+    port=$((n % (32000 - 15000) + 15000))
 }
 
 check_broker() {
     local check_port=${1:-$port}
-    timeout 5 sh -c 'until nc -z $0 $1 2>/dev/null; do sleep 0.1; done' localhost $check_port
+    if ! timeout 5 sh -c 'until nc -z $0 $1 2>/dev/null; do sleep 0.1; done' \
+            localhost $check_port; then
+        echo "WARNING: broker did not become ready on port $check_port" >&2
+        return 1
+    fi
 }
 
 # Wait for a file to appear (used for subscriber ready synchronization)
@@ -89,7 +100,8 @@ start_broker() {
     if [ "$has_tls" -eq 1 ] && [ "$has_s_port" -eq 0 ]; then
         tls_args="-s $port"
     fi
-    ./$broker_bin "$@" -p $port $tls_args &
+    broker_log="${TMP_DIR}/broker_p${port}.log"
+    ./$broker_bin "$@" -p $port $tls_args >"$broker_log" 2>&1 &
     broker_pid=$!
     check_broker
 }
@@ -107,7 +119,8 @@ start_broker_dual() {
     generate_port
     port_tls=$port
     port=$plain_port
-    ./$broker_bin "$@" -p $port -s $port_tls &
+    broker_log="${TMP_DIR}/broker_dual_p${port}_t${port_tls}.log"
+    ./$broker_bin "$@" -p $port -s $port_tls >"$broker_log" 2>&1 &
     broker_pid=$!
     check_broker $port
     check_broker $port_tls
