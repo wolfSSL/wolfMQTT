@@ -643,6 +643,14 @@ static int callback_broker_mqtt(struct lws *wsi,
         ws = (BrokerWsCtx*)bc->ws_ctx;
         if (ws == NULL) return 0;
 
+        if (ws->pending_close) {
+            /* Broker-initiated close: stage the close code here (inside a
+             * callback) where lws_close_reason() is actually effective, then
+             * return -1 to trigger the WebSocket close handshake. */
+            lws_close_reason(wsi, LWS_CLOSE_STATUS_NORMAL, NULL, 0);
+            return -1;
+        }
+
         if (ws->tx_pending != NULL && ws->tx_len > 0) {
             int n = lws_write(wsi, ws->tx_pending + LWS_PRE,
                 ws->tx_len, LWS_WRITE_BINARY);
@@ -672,13 +680,33 @@ static int callback_broker_mqtt(struct lws *wsi,
         if (ws != NULL) {
             ws->status = 0;
             ws->wsi = NULL;
+
+            if (ws->pending_close) {
+                /* Broker-initiated close: BrokerClient_Remove is already on
+                 * the call stack (BrokerWsNetDisconnect's spin loop drove us
+                 * here). Signal completion and return — do NOT call
+                 * BrokerClient_Remove again. */
+                *bc_ptr = NULL;
+                return 0;
+            }
         }
 
-        /* Publish will on abnormal disconnect */
+        /* Peer-initiated close: publish will and remove client. */
         BrokerClient_PublishWill(broker, bc);
         BrokerSubs_RemoveClient(broker, bc);
-        *bc_ptr = NULL; /* clear user data before removal */
-        BrokerClient_Remove(broker, bc);
+        *bc_ptr = NULL;
+        if (ws != NULL && ws->processing) {
+            /* bc is on the call stack inside BrokerClient_Process (a packet
+             * handler triggered a lws_service spin that delivered this CLOSED
+             * callback).  Freeing bc now would leave dangling pointers in the
+             * packet handler — e.g. the fan-out payload pointing into rx_buf,
+             * or the post-fan-out PUBACK write into tx_buf.  Defer the free;
+             * BrokerClient_Process will call BrokerClient_Remove on return. */
+            ws->pending_remove = 1;
+        }
+        else {
+            BrokerClient_Remove(broker, bc);
+        }
     }
 
     return 0;
@@ -800,17 +828,36 @@ static int BrokerWsNetDisconnect(void* context)
     }
 
     if (ws->wsi != NULL && ws->status > 0) {
-        BrokerClient **bc_ptr;
+        struct lws *wsi_local = (struct lws*)ws->wsi;
+        struct lws_context *lws_ctx = lws_get_context(wsi_local);
+        int attempts = 0;
+
         WBLOG_INFO(bc->broker, "broker: ws disconnect (wsi=%p)", (void*)ws->wsi);
-        /* Clear lws per-session user data so that any later callbacks
-         * (e.g. LWS_CALLBACK_CLOSED) see NULL and skip processing.
-         * Without this, the callback would dereference the freed bc. */
-        bc_ptr = (BrokerClient**)lws_wsi_user(ws->wsi);
-        if (bc_ptr != NULL) {
-            *bc_ptr = NULL;
+
+        /* Signal the WRITEABLE callback to send a close frame and return -1.
+         * lws_close_reason() is only effective from inside a callback, so the
+         * flag + writable-callback + return(-1) pattern is used here to
+         * properly initiate the WebSocket close handshake. */
+        ws->pending_close = 1;
+        lws_callback_on_writable(wsi_local);
+
+        /* Spin until LWS_CALLBACK_CLOSED fires and clears ws->wsi. */
+        while (ws->wsi != NULL && attempts < 100) {
+            lws_service(lws_ctx, 0);
+            attempts++;
         }
-        lws_close_reason(ws->wsi, LWS_CLOSE_STATUS_NORMAL, NULL, 0);
-        ws->wsi = NULL;
+
+        /* Fallback: if the close handshake did not complete in time, null out
+         * the per-session user data so any future callback cannot dereference
+         * the about-to-be-freed bc. The wsi is left for lws to reclaim via
+         * its own keep-alive machinery. */
+        if (ws->wsi != NULL) {
+            BrokerClient **bc_ptr = (BrokerClient**)lws_wsi_user(wsi_local);
+            if (bc_ptr != NULL) {
+                *bc_ptr = NULL;
+            }
+            ws->wsi = NULL;
+        }
     }
 
     if (ws->tx_pending != NULL) {
@@ -932,9 +979,6 @@ static void BrokerClient_Free(BrokerClient* bc)
     }
     else
 #endif
-    {
-        (void)BrokerNetDisconnect(bc);
-    }
 
 #ifdef ENABLE_MQTT_TLS
     if (bc->client.tls.ssl) {
@@ -3070,6 +3114,11 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
         activity = 1;
         WBLOG_DBG(broker, "broker: packet sock=%d type=%u len=%d",
             (int)bc->sock, type, rc);
+#ifdef ENABLE_MQTT_WEBSOCKET
+        if (bc->ws_ctx != NULL) {
+            ((BrokerWsCtx*)bc->ws_ctx)->processing = 1;
+        }
+#endif
         switch (type) {
             case MQTT_PACKET_TYPE_CONNECT:
             {
@@ -3125,6 +3174,18 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             default:
                 break;
         }
+#ifdef ENABLE_MQTT_WEBSOCKET
+        if (bc->ws_ctx != NULL) {
+            BrokerWsCtx *wsc = (BrokerWsCtx*)bc->ws_ctx;
+            wsc->processing = 0;
+            if (wsc->pending_remove) {
+                /* The peer closed bc's connection while we were dispatching a
+                 * packet (LWS_CALLBACK_CLOSED deferred the free to here). */
+                BrokerClient_Remove(broker, bc);
+                return 0;
+            }
+        }
+#endif
     }
 
     /* Check keepalive timeout (MQTT spec 3.1.2.10: 1.5x keep alive) */

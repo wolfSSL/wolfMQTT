@@ -182,6 +182,9 @@ typedef struct BrokerWsCtx {
     byte  *tx_pending;          /* allocated with LWS_PRE prefix room */
     size_t tx_len;
     int    status;              /* 1=established, 0=closed, -1=error */
+    int    pending_close;       /* 1 when broker-initiated close is in progress */
+    int    processing;          /* 1 while BrokerClient_Process is dispatching a packet */
+    int    pending_remove;      /* 1 when peer closed during processing; deferred free */
 } BrokerWsCtx;
 #endif /* ENABLE_MQTT_WEBSOCKET */
 
