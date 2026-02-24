@@ -1204,11 +1204,17 @@ static int NetConnect(void *context, const char* host, word16 port,
 
         case SOCK_CONN:
         {
-            /* Set up address and initiate connect */
+            /* Set up address and initiate connect.
+             * Note: atoip4() only supports dotted-quad IPv4 strings
+             * (e.g., "192.168.1.1") and does not resolve DNS hostnames. */
             XMEMSET(&addr, 0, sizeof(addr));
             addr.sin_family = AF_INET;
             addr.sin_port = ee16(port);
             addr.sin_addr.s_addr = atoip4(host);
+            if (addr.sin_addr.s_addr == 0) {
+                NetDisconnect(context);
+                return MQTT_CODE_ERROR_BAD_ARG;
+            }
 
             rc = wolfIP_sock_connect(sock->stack, sock->fd,
                 (struct wolfIP_sockaddr *)&addr, sizeof(addr));

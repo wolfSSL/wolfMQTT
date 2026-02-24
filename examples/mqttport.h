@@ -80,7 +80,11 @@ extern "C" {
     #define SOCKET_T        int
     #define SOCKET_INVALID  (-1)
     #define SOCK_ADDR_IN    struct wolfIP_sockaddr_in
-    #define NO_FILESYSTEM
+    /* For wolfIP targets without filesystem support, define NO_FILESYSTEM
+     * via build configuration (e.g., compiler flags or user_settings.h). */
+    #ifndef NO_FILESYSTEM
+        #define NO_FILESYSTEM
+    #endif
 
 /* User defined IO */
 #elif defined(WOLFMQTT_USER_IO)

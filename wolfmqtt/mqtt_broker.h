@@ -327,6 +327,7 @@ typedef struct MqttBroker {
     const char*  tls_ca;       /* CA cert for mutual auth (optional) */
     byte         use_tls;
     byte         tls_version;  /* 0=auto (v23), 12=TLS 1.2, 13=TLS 1.3 */
+    byte         tls_ctx_owned; /* 1 if BrokerTls_Init created tls_ctx */
 #endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerClient clients[BROKER_MAX_CLIENTS];
