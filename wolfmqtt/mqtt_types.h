@@ -328,7 +328,7 @@ enum MqttPacketResponseCodes {
         #include <stdio.h>
     #else
         #undef PRINTF
-        #define PRINTF
+        #define PRINTF(...) do { (void)0; } while(0)
     #endif
 #endif
 

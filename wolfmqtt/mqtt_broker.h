@@ -327,6 +327,7 @@ typedef struct MqttBroker {
     const char*  tls_ca;       /* CA cert for mutual auth (optional) */
     byte         use_tls;
     byte         tls_version;  /* 0=auto (v23), 12=TLS 1.2, 13=TLS 1.3 */
+    byte         tls_ctx_owned; /* 1 if BrokerTls_Init created tls_ctx */
 #endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerClient clients[BROKER_MAX_CLIENTS];
@@ -376,9 +377,20 @@ WOLFMQTT_API int MqttBroker_Stop(MqttBroker* broker);
 /* Clean up broker resources */
 WOLFMQTT_API int MqttBroker_Free(MqttBroker* broker);
 
+/* Start the broker (listen + TLS init). Call once before MqttBroker_Step().
+ * For embedded systems that use a cooperative main loop with Step(). */
+WOLFMQTT_API int MqttBroker_Start(MqttBroker* broker);
+
+/* wolfIP backend initializer.
+ * wolfIP_stack is a (struct wolfIP*) pointer to the wolfIP stack instance. */
+#ifdef WOLFMQTT_WOLFIP
+WOLFMQTT_API int MqttBrokerNet_wolfIP_Init(MqttBrokerNet* net,
+    void* wolfIP_stack);
+#endif
+
 /* Default POSIX backend initializer.
  * Only available when WOLFMQTT_BROKER_CUSTOM_NET is NOT defined. */
-#ifndef WOLFMQTT_BROKER_CUSTOM_NET
+#if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
 WOLFMQTT_API int MqttBrokerNet_Init(MqttBrokerNet* net);
 #endif
 

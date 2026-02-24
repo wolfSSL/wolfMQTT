@@ -71,6 +71,9 @@ typedef struct _SocketContext {
     NX_PACKET *nxPacket;
     ULONG     nxOffset;
 #endif
+#ifdef WOLFMQTT_WOLFIP
+    struct wolfIP *stack;
+#endif
     MQTTCtx* mqttCtx;
 } SocketContext;
 
