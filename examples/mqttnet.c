@@ -1215,7 +1215,7 @@ static int NetConnect(void *context, const char* host, word16 port,
             if (rc == 0) {
                 return MQTT_CODE_SUCCESS;
             }
-            if (rc == -WOLFIP_EAGAIN || rc == -11) {
+            if (rc == -WOLFIP_EAGAIN) {
                 return MQTT_CODE_CONTINUE;
             }
 
@@ -1243,6 +1243,7 @@ static int NetRead(void *context, byte* buf, int buf_len, int timeout_ms)
     }
 
     rc = wolfIP_sock_recv(sock->stack, sock->fd, buf, buf_len, 0);
+    /* -WOLFIP_EAGAIN: no data yet; -1: socket not yet in ESTABLISHED state */
     if (rc == -WOLFIP_EAGAIN || rc == -1) {
         return MQTT_CODE_CONTINUE;
     }
@@ -1265,6 +1266,7 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 
     rc = wolfIP_sock_send(sock->stack, sock->fd, buf, buf_len, 0);
+    /* -WOLFIP_EAGAIN: send buffer full; -1: socket not yet in ESTABLISHED state */
     if (rc == -WOLFIP_EAGAIN || rc == -1) {
         return MQTT_CODE_CONTINUE;
     }

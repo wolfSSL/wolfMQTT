@@ -69,7 +69,7 @@
 /* -------------------------------------------------------------------------- */
 #ifndef BROKER_SLEEP_MS
     #if defined(WOLFMQTT_WOLFIP)
-        #define BROKER_SLEEP_MS(ms) /* no-op: Step() returns to caller */
+        #define BROKER_SLEEP_MS(ms) /* no-op: cooperative scheduling - Step() returns to caller for task switching */
     #elif defined(USE_WINDOWS_API)
         #define BROKER_SLEEP_MS(ms) Sleep(ms)
     #else
