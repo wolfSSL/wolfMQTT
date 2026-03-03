@@ -230,6 +230,7 @@ typedef struct _SN_Connect {
 
     /* Optional Last will and testament */
     byte  enable_lwt;
+    byte  will_done;
     SN_Will will;
 
     /* Ack data */
