@@ -266,10 +266,13 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     if (gw_info != NULL) {
         gw_info->gwId = *rx_payload++;
 
-        /* TODO: validate size of gwAddr */
         if (total_len - 3 > 0) {
             /* The gateway address is only present if sent by a client */
-            XMEMCPY(gw_info->gwAddr, rx_payload, total_len - 3);
+            word16 addr_len = total_len - 3;
+            if (addr_len > (word16)sizeof(SN_GwAddr)) {
+                addr_len = (word16)sizeof(SN_GwAddr);
+            }
+            XMEMCPY(gw_info->gwAddr, rx_payload, addr_len);
         }
     }
     (void)rx_payload;
@@ -807,7 +810,7 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
         regist->topicName = (char*)rx_payload;
 
         /* Terminate the string */
-        rx_payload[total_len-6] = '\0';
+        rx_payload[total_len - (rx_payload - rx_buf)] = '\0';
     }
     (void)rx_payload;
 
@@ -849,7 +852,7 @@ int SN_Encode_RegAck(byte *tx_buf, int tx_buf_len, SN_RegAck *regack)
     tx_payload += MqttEncode_Num(tx_payload, regack->packet_id);
 
     /* Encode Return Code */
-    *tx_payload += regack->return_code;
+    *tx_payload = regack->return_code;
 
     (void)tx_payload;
 
@@ -1004,7 +1007,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 
 int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 {
-    word16 total_len;
+    int total_len;
     byte *tx_payload = tx_buf;
     byte flags = 0;
 
@@ -1014,7 +1017,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
 
     /* Determine packet length */
-    total_len = publish->total_len;
+    total_len = (int)publish->total_len;
 
     /* Add length, msgType, flags, topic ID (2), and msgID (2) */
     total_len += 7;

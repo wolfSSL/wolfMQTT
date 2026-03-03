@@ -1077,7 +1077,6 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
 int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 {
     int rc = 0;
-    static byte will_done;
 
     /* Validate required arguments */
     if ((client == NULL) || (mc_connect == NULL)) {
@@ -1086,7 +1085,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 
     if (mc_connect->stat.write == MQTT_MSG_BEGIN) {
 
-        will_done = 0;
+        mc_connect->will_done = 0;
 
     #ifdef WOLFMQTT_MULTITHREAD
         /* Lock send socket mutex */
@@ -1141,7 +1140,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         mc_connect->stat.write = MQTT_MSG_WAIT;
     }
 
-    if ((mc_connect->enable_lwt == 1) && (will_done != 1)) {
+    if ((mc_connect->enable_lwt == 1) && (mc_connect->will_done != 1)) {
         /* If the will is enabled, then the gateway requests the topic and
            message in separate packets. */
         rc = SN_WillTopic(client, &mc_connect->will);
@@ -1153,7 +1152,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         if (rc != 0) {
             return rc;
         }
-        will_done = 1;
+        mc_connect->will_done = 1;
     }
 
     /* Wait for connect ack packet */
@@ -1182,7 +1181,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
     int rc = 0;
 
     /* Validate required arguments */
-    if (client == NULL) {
+    if ((client == NULL) || (will == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
