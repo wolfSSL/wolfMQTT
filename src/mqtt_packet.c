@@ -1909,11 +1909,16 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
         {
             int payload_len = remain_len -
                     (int)(rx_payload - &rx_buf[header_len]);
-            if (payload_len < 0) {
+            int buf_remain = rx_buf_len - (int)(rx_payload - rx_buf);
+            if (payload_len < 0 || buf_remain < 0) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
+            if (payload_len > buf_remain) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             if (payload_len > MAX_MQTT_TOPICS)
                 payload_len = MAX_MQTT_TOPICS;
+            XMEMSET(subscribe_ack->return_codes, 0, MAX_MQTT_TOPICS);
             XMEMCPY(subscribe_ack->return_codes, rx_payload, payload_len);
         }
     }
