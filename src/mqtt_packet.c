@@ -558,7 +558,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         {
             case MQTT_DATA_TYPE_BYTE:
             {
-                if ((buf - pbuf) >= (int)buf_len) {
+                if ((buf - pbuf) >= (int)buf_len || prop_len < 1) {
                     rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
                     break;
                 }
@@ -583,6 +583,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_INT:
             {
+                if (prop_len < MQTT_DATA_INT_SIZE) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                    break;
+                }
                 tmp = MqttDecode_Int(buf, &cur_prop->data_int,
                         (word32)(buf_len - (buf - pbuf)));
                 if (tmp < 0) {
@@ -1902,9 +1906,16 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 #endif
 
         /* payload is list of return codes (MqttSubscribeAckReturnCodes) */
-        if (remain_len > MAX_MQTT_TOPICS)
-            remain_len = MAX_MQTT_TOPICS;
-        XMEMCPY(subscribe_ack->return_codes, rx_payload, remain_len);
+        {
+            int payload_len = remain_len -
+                    (int)(rx_payload - &rx_buf[header_len]);
+            if (payload_len < 0) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
+            if (payload_len > MAX_MQTT_TOPICS)
+                payload_len = MAX_MQTT_TOPICS;
+            XMEMCPY(subscribe_ack->return_codes, rx_payload, payload_len);
+        }
     }
 
     /* Return total length of packet */
