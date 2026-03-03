@@ -1185,9 +1185,11 @@ static void BrokerClient_Free(BrokerClient* bc)
     }
 #ifdef WOLFMQTT_BROKER_AUTH
     if (bc->username) {
+        XMEMSET(bc->username, 0, XSTRLEN(bc->username) + 1);
         WOLFMQTT_FREE(bc->username);
     }
     if (bc->password) {
+        XMEMSET(bc->password, 0, XSTRLEN(bc->password) + 1);
         WOLFMQTT_FREE(bc->password);
     }
 #endif
