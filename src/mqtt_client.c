@@ -2656,7 +2656,7 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
     int rc;
 
     /* Validate required arguments */
-    if (client == NULL) {
+    if (client == NULL || auth == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
