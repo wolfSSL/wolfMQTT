@@ -301,8 +301,11 @@ int MqttEncode_Num(byte *buf, word16 len)
 }
 
 /* Returns number of buffer bytes decoded */
-int MqttDecode_Int(byte* buf, word32* len)
+int MqttDecode_Int(byte* buf, word32* len, word32 buf_len)
 {
+    if (buf_len < MQTT_DATA_INT_SIZE) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
     if (len) {
         *len =  (word32)buf[0] << 24;
         *len += (word32)buf[1] << 16;
@@ -555,6 +558,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         {
             case MQTT_DATA_TYPE_BYTE:
             {
+                if ((buf - pbuf) >= (int)buf_len) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                    break;
+                }
                 cur_prop->data_byte = *buf++;
                 tmp++;
                 total++;
@@ -576,7 +583,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_INT:
             {
-                tmp = MqttDecode_Int(buf, &cur_prop->data_int);
+                tmp = MqttDecode_Int(buf, &cur_prop->data_int,
+                        (word32)(buf_len - (buf - pbuf)));
+                if (tmp < 0) {
+                    rc = tmp;
+                    break;
+                }
                 buf += tmp;
                 total += tmp;
                 prop_len -= tmp;

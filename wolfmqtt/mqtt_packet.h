@@ -658,7 +658,7 @@ WOLFMQTT_API int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf,
 WOLFMQTT_API int MqttDecode_Num(byte* buf, word16 *len, word32 buf_len);
 WOLFMQTT_API int MqttEncode_Num(byte *buf, word16 len);
 
-WOLFMQTT_LOCAL int MqttDecode_Int(byte* buf, word32* len);
+WOLFMQTT_LOCAL int MqttDecode_Int(byte* buf, word32* len, word32 buf_len);
 WOLFMQTT_LOCAL int MqttEncode_Int(byte* buf, word32 len);
 
 WOLFMQTT_LOCAL int MqttDecode_String(byte *buf, const char **pstr,
