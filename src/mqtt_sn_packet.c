@@ -810,7 +810,7 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
         regist->topicName = (char*)rx_payload;
 
         /* Terminate the string */
-        rx_payload[total_len-6] = '\0';
+        rx_payload[total_len - (rx_payload - rx_buf)] = '\0';
     }
     (void)rx_payload;
 
