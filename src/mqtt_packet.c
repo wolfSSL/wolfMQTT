@@ -570,6 +570,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_SHORT:
             {
+                if ((buf - pbuf) > (int)buf_len) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                    break;
+                }
                 tmp = MqttDecode_Num(buf, &cur_prop->data_short,
                         (word32)(buf_len - (buf - pbuf)));
                 if (tmp < 0) {
@@ -583,7 +587,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
             case MQTT_DATA_TYPE_INT:
             {
-                if (prop_len < MQTT_DATA_INT_SIZE) {
+                if ((buf - pbuf) > (int)buf_len ||
+                     prop_len < MQTT_DATA_INT_SIZE) {
                     rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
                     break;
                 }
