@@ -1004,7 +1004,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 
 int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 {
-    word16 total_len;
+    int total_len;
     byte *tx_payload = tx_buf;
     byte flags = 0;
 
@@ -1014,7 +1014,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
 
     /* Determine packet length */
-    total_len = publish->total_len;
+    total_len = (int)publish->total_len;
 
     /* Add length, msgType, flags, topic ID (2), and msgID (2) */
     total_len += 7;
