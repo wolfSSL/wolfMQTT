@@ -1,0 +1,86 @@
+name: Sanitizer Tests
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sanitizer_test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "ASan"
+            sanitizer_flags: "-fsanitize=address"
+          - name: "UBSan"
+            sanitizer_flags: "-fsanitize=undefined -fno-sanitize-recover=all"
+          - name: "LeakSan"
+            sanitizer_flags: "-fsanitize=leak"
+
+    steps:
+      - name: Workaround high-entropy ASLR
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Install dependencies
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y mosquitto bubblewrap
+
+      - name: Setup mosquitto broker
+        run: |
+          sudo service mosquitto stop
+          sleep 1
+
+      - name: Checkout wolfSSL
+        uses: actions/checkout@v4
+        with:
+          repository: wolfssl/wolfssl
+          path: wolfssl
+
+      - name: Build wolfSSL with ${{ matrix.name }}
+        working-directory: ./wolfssl
+        run: |
+          ./autogen.sh
+          ./configure CC="gcc ${{ matrix.sanitizer_flags }}" --enable-enckeys
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+      - name: Checkout wolfMQTT
+        uses: actions/checkout@v4
+        with:
+          path: wolfmqtt
+
+      - name: Build wolfMQTT with ${{ matrix.name }}
+        working-directory: ./wolfmqtt
+        run: |
+          ./autogen.sh
+          ./configure CC="gcc ${{ matrix.sanitizer_flags }}"
+          make -j$(nproc)
+
+      - name: Run tests
+        working-directory: ./wolfmqtt
+        run: make check
+
+      - name: Upload failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfmqtt-${{ matrix.name }}-logs
+          path: |
+            wolfmqtt/test-suite.log
+            wolfmqtt/scripts/*.log
+            wolfmqtt/config.log
+          retention-days: 5
