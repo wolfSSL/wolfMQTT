@@ -1182,7 +1182,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
     int rc = 0;
 
     /* Validate required arguments */
-    if (client == NULL) {
+    if ((client == NULL) || (will == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
