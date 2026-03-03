@@ -849,7 +849,7 @@ int SN_Encode_RegAck(byte *tx_buf, int tx_buf_len, SN_RegAck *regack)
     tx_payload += MqttEncode_Num(tx_payload, regack->packet_id);
 
     /* Encode Return Code */
-    *tx_payload += regack->return_code;
+    *tx_payload = regack->return_code;
 
     (void)tx_payload;
 
