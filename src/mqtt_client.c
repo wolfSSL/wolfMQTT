@@ -1768,6 +1768,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 
         /* Use the same authentication method property from connect */
         prop = MqttProps_Add(&p_auth->props);
+        if (prop == NULL) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MEMORY);
+        }
         prop->type = MQTT_PROP_AUTH_METHOD;
         prop->data_str.str = conn_prop->data_str.str;
         prop->data_str.len = conn_prop->data_str.len;
