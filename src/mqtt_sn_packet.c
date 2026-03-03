@@ -266,10 +266,13 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     if (gw_info != NULL) {
         gw_info->gwId = *rx_payload++;
 
-        /* TODO: validate size of gwAddr */
         if (total_len - 3 > 0) {
             /* The gateway address is only present if sent by a client */
-            XMEMCPY(gw_info->gwAddr, rx_payload, total_len - 3);
+            word16 addr_len = total_len - 3;
+            if (addr_len > (word16)sizeof(SN_GwAddr)) {
+                addr_len = (word16)sizeof(SN_GwAddr);
+            }
+            XMEMCPY(gw_info->gwAddr, rx_payload, addr_len);
         }
     }
     (void)rx_payload;
