@@ -26,7 +26,7 @@
 
 
 /* This is a start to an example use with ThreadX. It currently is being used
- * to confirm that compiling with all necessary NetX ThreadX API's succeds */
+ * to confirm that compiling with all necessary NetX ThreadX API's succeeds */
 
 #ifdef HAVE_NETX
 

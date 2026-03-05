@@ -1,0 +1,27 @@
+name: Codespell Check
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codespell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install codespell
+        run: pip install codespell
+
+      - name: Run codespell
+        run: >
+          codespell
+          --skip=".git,./IDE,./certs,./m4,*.der,*.pem"
+          --ignore-words-list="ser,parm,nd,inout,dout,ba,keypair,iterm,hel,assertIn,stoll,smb,childs,froms,regist,laf"
+          .
