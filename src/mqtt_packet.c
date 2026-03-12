@@ -1132,6 +1132,12 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     if (header_len < 0) {
         return header_len;
     }
+
+    /* Validate remain_len */
+    if (remain_len < 2) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     rx_payload = &rx_buf[header_len];
 
     /* Decode variable header */
