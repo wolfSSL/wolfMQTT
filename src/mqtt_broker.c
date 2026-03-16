@@ -162,9 +162,12 @@ static void BrokerStore_String(char* dst, int max_len,
 }
 #else
 static void BrokerStore_String(char** dst_ptr,
-    const char* src, word16 src_len)
+    const char* src, word16 src_len, int sensitive)
 {
     if (*dst_ptr != NULL) {
+        if (sensitive) {
+            XMEMSET(*dst_ptr, 0, XSTRLEN(*dst_ptr) + 1);
+        }
         WOLFMQTT_FREE(*dst_ptr);
         *dst_ptr = NULL;
     }
@@ -176,13 +179,17 @@ static void BrokerStore_String(char** dst_ptr,
 }
 #endif
 
-/* Wrapper macro to unify static/dynamic calling convention */
+/* Wrapper macros to unify static/dynamic calling convention */
 #ifdef WOLFMQTT_STATIC_MEMORY
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
         BrokerStore_String(dst, maxlen, src, len)
+    #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
+        BrokerStore_String(dst, maxlen, src, len)
 #else
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
-        BrokerStore_String(&(dst), src, len)
+        BrokerStore_String(&(dst), src, len, 0)
+    #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
+        BrokerStore_String(&(dst), src, len, 1)
 #endif
 
 #ifdef ENABLE_MQTT_TLS
@@ -2729,7 +2736,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 ulen = 0;
         if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
                 &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            BROKER_STORE_STR(bc->username, mc.username, ulen,
+            BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
                 BROKER_MAX_USERNAME_LEN);
         }
     }
@@ -2737,7 +2744,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 plen = 0;
         if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
                 &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            BROKER_STORE_STR(bc->password, mc.password, plen,
+            BROKER_STORE_STR_SENSITIVE(bc->password, mc.password, plen,
                 BROKER_MAX_PASSWORD_LEN);
         }
     }
