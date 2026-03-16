@@ -2678,11 +2678,14 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 mc.lwt_msg->topic_name_len, BROKER_MAX_TOPIC_LEN);
         }
         if (mc.lwt_msg->total_len > 0 && mc.lwt_msg->buffer != NULL) {
-            word16 wp_len = (word16)mc.lwt_msg->total_len;
-#ifdef WOLFMQTT_STATIC_MEMORY
-            if (wp_len > BROKER_MAX_WILL_PAYLOAD_LEN) {
+            word16 wp_len;
+            if (mc.lwt_msg->total_len > BROKER_MAX_WILL_PAYLOAD_LEN) {
                 wp_len = BROKER_MAX_WILL_PAYLOAD_LEN;
             }
+            else {
+                wp_len = (word16)mc.lwt_msg->total_len;
+            }
+#ifdef WOLFMQTT_STATIC_MEMORY
             XMEMCPY(bc->will_payload, mc.lwt_msg->buffer, wp_len);
 #else
             bc->will_payload = (byte*)WOLFMQTT_MALLOC(wp_len);
