@@ -2471,6 +2471,9 @@ static int BrokerTopicMatch(const char* filter, const char* topic)
     if (*f == '#') {
         return (f[1] == '\0');
     }
+    if (*f == '+' && f[1] == '\0' && *t == '\0') {
+        return 1;
+    }
     return (*f == '\0' && *t == '\0');
 }
 #else
