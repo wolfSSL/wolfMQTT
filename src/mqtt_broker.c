@@ -3304,6 +3304,15 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             ((BrokerWsCtx*)bc->ws_ctx)->processing = 1;
         }
 #endif
+        /* [MQTT-3.1.0-1] First packet must be CONNECT */
+        if (type != MQTT_PACKET_TYPE_CONNECT && !bc->connected) {
+            WBLOG_ERR(broker,
+                "broker: packet type %u before CONNECT sock=%d",
+                type, (int)bc->sock);
+            BrokerSubs_RemoveClient(broker, bc);
+            BrokerClient_Remove(broker, bc);
+            return 0;
+        }
         switch (type) {
             case MQTT_PACKET_TYPE_CONNECT:
             {
@@ -3314,6 +3323,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     BrokerClient_Remove(broker, bc);
                     return 0;
                 }
+                bc->connected = 1;
                 break;
             }
             case MQTT_PACKET_TYPE_PUBLISH:

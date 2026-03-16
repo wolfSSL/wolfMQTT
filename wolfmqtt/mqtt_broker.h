@@ -226,6 +226,7 @@ typedef struct BrokerClient {
     word16  keep_alive_sec;
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
+    byte    connected;       /* set after successful CONNECT handshake */
 #ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;
