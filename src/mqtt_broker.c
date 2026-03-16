@@ -1756,7 +1756,7 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
 /* -------------------------------------------------------------------------- */
 #ifdef WOLFMQTT_BROKER_RETAINED
 static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
-    const byte* payload, word16 payload_len, word32 expiry_sec)
+    const byte* payload, word32 payload_len, word32 expiry_sec)
 {
     BrokerRetainedMsg* msg = NULL;
     int rc = MQTT_CODE_SUCCESS;
@@ -3079,7 +3079,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             }
 #endif
             (void)BrokerRetained_Store(broker, topic, payload,
-                (word16)pub.total_len, expiry);
+                pub.total_len, expiry);
         }
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */

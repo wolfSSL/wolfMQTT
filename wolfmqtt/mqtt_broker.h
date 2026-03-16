@@ -276,7 +276,7 @@ typedef struct BrokerRetainedMsg {
     byte*   payload;
     struct BrokerRetainedMsg* next;
 #endif
-    word16  payload_len;
+    word32  payload_len;
     WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
 } BrokerRetainedMsg;
