@@ -2668,6 +2668,8 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     return header_len + remain_len;
 }
 
+/* Must be called once from a single thread before any concurrent access
+ * to MQTTv5 property functions. Not thread-safe if called concurrently. */
 int MqttProps_Init(void)
 {
     int ret = MQTT_CODE_SUCCESS;
@@ -2680,6 +2682,9 @@ int MqttProps_Init(void)
     return  ret;
 }
 
+/* Must be called once from a single thread after all concurrent access
+ * to MQTTv5 property functions has ceased. Not thread-safe if called
+ * concurrently. */
 int MqttProps_ShutDown(void)
 {
     int ret = MQTT_CODE_SUCCESS;
