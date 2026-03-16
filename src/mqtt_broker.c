@@ -2681,6 +2681,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             if (bc->will_payload != NULL) {
                 XMEMCPY(bc->will_payload, mc.lwt_msg->buffer, wp_len);
             }
+            else {
+                wp_len = 0;
+            }
 #endif
             bc->will_payload_len = wp_len;
         }
