@@ -12,7 +12,8 @@ noinst_PROGRAMS += examples/mqttclient/mqttclient \
                    examples/nbclient/nbclient \
                    examples/multithread/multithread \
                    examples/pub-sub/mqtt-pub \
-                   examples/pub-sub/mqtt-sub
+                   examples/pub-sub/mqtt-sub \
+                   examples/sparkplug/sparkplug
 if BUILD_SN
 noinst_PROGRAMS += examples/sn-client/sn-client \
                    examples/sn-client/sn-client_qos-1 \
@@ -32,7 +33,8 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/mqttport.h \
                    examples/nbclient/nbclient.h \
                    examples/multithread/multithread.h \
-                   examples/pub-sub/mqtt-pub-sub.h
+                   examples/pub-sub/mqtt-pub-sub.h \
+                   examples/sparkplug/sparkplug.h
 if BUILD_SN
 noinst_HEADERS +=  examples/sn-client/sn-client.h
 endif
@@ -151,6 +153,15 @@ examples_pub_sub_mqtt_sub_LDADD        = src/libwolfmqtt.la
 examples_pub_sub_mqtt_sub_DEPENDENCIES = src/libwolfmqtt.la
 examples_pub_sub_mqtt_sub_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
 
+
+# Sparkplug B Example (two-client industrial IoT)
+examples_sparkplug_sparkplug_SOURCES      = examples/sparkplug/sparkplug.c \
+                                            examples/mqttnet.c \
+                                            examples/mqttexample.c
+examples_sparkplug_sparkplug_LDADD        = src/libwolfmqtt.la
+examples_sparkplug_sparkplug_DEPENDENCIES = src/libwolfmqtt.la
+examples_sparkplug_sparkplug_CPPFLAGS     = -I$(top_srcdir)/examples $(AM_CPPFLAGS)
+
 # WebSocket example
 if BUILD_WEBSOCKET
 noinst_HEADERS += examples/websocket/net_libwebsockets.h
@@ -185,6 +196,7 @@ dist_example_DATA+= examples/sn-client/sn-multithread.c
 endif
 dist_example_DATA+= examples/pub-sub/mqtt-pub.c
 dist_example_DATA+= examples/pub-sub/mqtt-sub.c
+dist_example_DATA+= examples/sparkplug/sparkplug.c
 if BUILD_WEBSOCKET
 dist_example_DATA+= examples/websocket/websocket_client.c
 dist_example_DATA+= examples/websocket/net_libwebsockets.c
@@ -199,7 +211,8 @@ DISTCLEANFILES+=   examples/mqttclient/.libs/mqttclient \
                    examples/nbclient/.libs/nbclient \
                    examples/multithread/.libs/multithread \
                    examples/pub-sub/mqtt-pub \
-                   examples/pub-sub/mqtt-sub
+                   examples/pub-sub/mqtt-sub \
+                   examples/sparkplug/.libs/sparkplug
 if BUILD_SN
 DISTCLEANFILES+=   examples/sn-client/.libs/sn-client \
                    examples/sn-client/.libs/sn-client_qos-1 \

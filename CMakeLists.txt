@@ -334,6 +334,7 @@ if (WOLFMQTT_EXAMPLES)
     add_mqtt_example(fwclient firmware/fwclient.c)
     add_mqtt_example(mqtt-pub pub-sub/mqtt-pub.c)
     add_mqtt_example(mqtt-sub pub-sub/mqtt-sub.c)
+    add_mqtt_example(sparkplug sparkplug/sparkplug.c)
 endif()
 
 if (WOLFMQTT_BROKER)
