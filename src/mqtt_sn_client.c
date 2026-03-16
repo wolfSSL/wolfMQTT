@@ -1235,6 +1235,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
                 wm_SemUnlock(&client->lockClient);
             }
         #endif
+            return rc;
         }
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
@@ -1321,6 +1322,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
                 wm_SemUnlock(&client->lockClient);
             }
         #endif
+            return rc;
         }
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
@@ -1663,6 +1665,7 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
                 wm_SemUnlock(&client->lockClient);
             }
         #endif
+            return rc;
         }
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
