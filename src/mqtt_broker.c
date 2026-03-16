@@ -2521,6 +2521,11 @@ static int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
     }
 #endif
 
+    /* 1 (type) + 4 (max VBI) + remain_len */
+    if (1 + 4 + remain_len > (int)BROKER_CLIENT_TX_SZ(bc)) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+
     bc->tx_buf[pos++] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_SUBSCRIBE_ACK);
     pos += MqttEncode_Vbi(&bc->tx_buf[pos], remain_len);
     pos += MqttEncode_Num(&bc->tx_buf[pos], packet_id);
