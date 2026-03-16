@@ -2916,8 +2916,9 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
         return_codes[i] = (byte)granted_qos;
     }
 
-    rc = BrokerSend_SubAck(bc, sub.packet_id, return_codes,
-            sub.topic_count);
+    /* Use i (capped at MAX_MQTT_TOPICS) instead of sub.topic_count to
+     * avoid reading past the end of the return_codes array */
+    rc = BrokerSend_SubAck(bc, sub.packet_id, return_codes, i);
 
 #ifdef WOLFMQTT_V5
     if (sub.props) {
