@@ -2084,6 +2084,9 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
         if (pw->client_id) {
             WOLFMQTT_FREE(pw->client_id);
         }
+        if (pw->payload) {
+            WOLFMQTT_FREE(pw->payload);
+        }
         WOLFMQTT_FREE(pw);
     }
 #endif
