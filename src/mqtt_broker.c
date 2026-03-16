@@ -2707,7 +2707,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                     "broker: LWT payload too large (%u > %d) sock=%d",
                     (unsigned)mc.lwt_msg->total_len,
                     BROKER_MAX_WILL_PAYLOAD_LEN, (int)bc->sock);
-                return 0; /* reject CONNECT */
+                ack.return_code =
+                    MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+                goto send_connack;
             }
             else {
                 wp_len = (word16)mc.lwt_msg->total_len;
@@ -2867,6 +2869,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
+send_connack:
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
     if (rc > 0) {
         WBLOG_INFO(broker, "broker: CONNACK send sock=%d code=%d", (int)bc->sock,
