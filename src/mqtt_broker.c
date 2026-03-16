@@ -160,6 +160,17 @@ static void BrokerStore_String(char* dst, int max_len,
     XMEMCPY(dst, src, src_len);
     dst[src_len] = '\0';
 }
+static void BrokerStore_StringSensitive(char* dst, int max_len,
+    const char* src, word16 src_len)
+{
+    /* Wipe old value before overwriting */
+    XMEMSET(dst, 0, max_len);
+    if (src_len >= (word16)max_len) {
+        src_len = (word16)(max_len - 1);
+    }
+    XMEMCPY(dst, src, src_len);
+    dst[src_len] = '\0';
+}
 #else
 static void BrokerStore_String(char** dst_ptr,
     const char* src, word16 src_len, int sensitive)
@@ -184,7 +195,7 @@ static void BrokerStore_String(char** dst_ptr,
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
         BrokerStore_String(dst, maxlen, src, len)
     #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
-        BrokerStore_String(dst, maxlen, src, len)
+        BrokerStore_StringSensitive(dst, maxlen, src, len)
 #else
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
         BrokerStore_String(&(dst), src, len, 0)
@@ -2692,7 +2703,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         if (mc.lwt_msg->total_len > 0 && mc.lwt_msg->buffer != NULL) {
             word16 wp_len;
             if (mc.lwt_msg->total_len > BROKER_MAX_WILL_PAYLOAD_LEN) {
-                wp_len = BROKER_MAX_WILL_PAYLOAD_LEN;
+                WBLOG_ERR(broker,
+                    "broker: LWT payload too large (%u > %d) sock=%d",
+                    (unsigned)mc.lwt_msg->total_len,
+                    BROKER_MAX_WILL_PAYLOAD_LEN, (int)bc->sock);
+                return 0; /* reject CONNECT */
             }
             else {
                 wp_len = (word16)mc.lwt_msg->total_len;
