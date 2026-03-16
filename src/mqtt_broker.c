@@ -1202,9 +1202,11 @@ static void BrokerClient_Free(BrokerClient* bc)
 #endif
 #ifdef WOLFMQTT_BROKER_WILL
     if (bc->will_topic) {
+        XMEMSET(bc->will_topic, 0, XSTRLEN(bc->will_topic) + 1);
         WOLFMQTT_FREE(bc->will_topic);
     }
     if (bc->will_payload) {
+        XMEMSET(bc->will_payload, 0, bc->will_payload_len);
         WOLFMQTT_FREE(bc->will_payload);
     }
 #endif
