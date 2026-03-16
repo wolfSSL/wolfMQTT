@@ -2869,7 +2869,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
+#ifdef WOLFMQTT_BROKER_WILL
 send_connack:
+#endif
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
     if (rc > 0) {
         WBLOG_INFO(broker, "broker: CONNACK send sock=%d code=%d", (int)bc->sock,
