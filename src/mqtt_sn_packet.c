@@ -1094,7 +1094,9 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     else {
         /* Topic ID */
-        tx_payload += MqttEncode_Num(tx_payload, *(word16*)publish->topic_name);
+        word16 topic_id;
+        XMEMCPY(&topic_id, publish->topic_name, sizeof(topic_id));
+        tx_payload += MqttEncode_Num(tx_payload, topic_id);
     }
 
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
