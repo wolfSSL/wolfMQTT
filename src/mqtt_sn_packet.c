@@ -1510,12 +1510,6 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
         case MQTT_PK_READ_HEAD:
         {
             client->packet.stat = MQTT_PK_READ_HEAD;
-        }
-        FALL_THROUGH;
-
-        case MQTT_PK_READ:
-        {
-            client->packet.stat = MQTT_PK_READ;
 
             if (total_len > len) {
                 client->packet.remain_len = total_len - len;
@@ -1539,14 +1533,20 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 client->packet.remain_len = rx_buf_len -
                                             client->packet.header_len;
             }
+        }
+        FALL_THROUGH;
+
+        case MQTT_PK_READ:
+        {
+            client->packet.stat = MQTT_PK_READ;
+
             if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
-                total_len -= client->packet.header_len;
                 idx = client->packet.header_len;
             }
             /* Read whole message */
             if (client->packet.remain_len > 0) {
                 rc = MqttSocket_Read(client, &rx_buf[idx],
-                        total_len, timeout_ms);
+                        client->packet.remain_len, timeout_ms);
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
                 }
