@@ -2606,36 +2606,36 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     }
     rx_payload = &rx_buf[header_len];
 
-    /* Decode variable header */
-    auth->reason_code = *rx_payload++;
-    if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
-        (auth->reason_code == MQTT_REASON_CONT_AUTH))
-    {
-        auth->props = NULL;
-
-        /* Decode Length of Properties */
-        if (rx_buf_len < (rx_payload - rx_buf)) {
-            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-        }
-        tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                (word32)(rx_buf_len - (rx_payload - rx_buf)));
-        if (tmp < 0)
-            return tmp;
-
-        if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
-            rx_payload += tmp;
-            if ((rx_payload - rx_buf) > rx_buf_len) {
+    auth->props = NULL;
+    if (remain_len > 0) {
+        /* Decode variable header */
+        auth->reason_code = *rx_payload++;
+        if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
+            (auth->reason_code == MQTT_REASON_CONT_AUTH))
+        {
+            /* Decode Length of Properties */
+            if (rx_buf_len < (rx_payload - rx_buf)) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
-            if (props_len > 0) {
-                /* Decode the Properties */
-                tmp = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH,
-                        &auth->props, rx_payload,
-                        (word32)(rx_buf_len - (rx_payload - rx_buf)),
-                        props_len);
-                if (tmp < 0)
-                    return tmp;
+            tmp = MqttDecode_Vbi(rx_payload, &props_len,
+                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
+            if (tmp < 0)
+                return tmp;
+
+            if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
                 rx_payload += tmp;
+                if ((rx_payload - rx_buf) > rx_buf_len) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
+                if (props_len > 0) {
+                    /* Decode the Properties */
+                    tmp = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH,
+                            &auth->props, rx_payload,
+                            (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                            props_len);
+                    if (tmp < 0)
+                        return tmp;
+                    rx_payload += tmp;
             }
             else if (auth->reason_code != MQTT_REASON_SUCCESS) {
                 /* The Reason Code and Property Length can be omitted if the
@@ -2657,9 +2657,15 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
         else {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
         }
+        }
+        else {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
     else {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        /* Per MQTT 5.0 section 3.15.2: Remaining Length of 0 implies
+           Reason Code of 0x00 (Success) with no Properties */
+        auth->reason_code = MQTT_REASON_SUCCESS;
     }
 
     (void)rx_payload;
