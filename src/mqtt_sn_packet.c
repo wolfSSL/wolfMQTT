@@ -1020,7 +1020,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 
     type = *rx_payload++;
     if (type != SN_MSG_TYPE_SUBACK) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
     }
 
     /* Decode SubAck fields */
