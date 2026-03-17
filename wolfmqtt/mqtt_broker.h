@@ -226,6 +226,7 @@ typedef struct BrokerClient {
     word16  keep_alive_sec;
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
+    byte    connected;       /* set after successful CONNECT handshake */
 #ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;
@@ -275,7 +276,7 @@ typedef struct BrokerRetainedMsg {
     byte*   payload;
     struct BrokerRetainedMsg* next;
 #endif
-    word16  payload_len;
+    word32  payload_len;
     WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
 } BrokerRetainedMsg;
