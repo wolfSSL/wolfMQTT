@@ -158,7 +158,7 @@ then
     test "$enable_v5" = "" && enable_v5=yes
     test "$enable_discb" = "" && enable_discb=yes
     test "$enable_mt" = "" && enable_mt=yes
-    test "$enable_" = "" && enable_=yes
+    test "$enable_broker" = "" && enable_broker=yes
 fi
 
 # TLS Support with wolfSSL
@@ -491,6 +491,14 @@ AM_CONDITIONAL([BUILD_MULTITHREAD], [test "x$ENABLED_MULTITHREAD" = "xyes"])
 AM_CONDITIONAL([BUILD_WEBSOCKET], [test "x$ENABLED_WEBSOCKET" = "xyes"])
 AM_CONDITIONAL([BUILD_BROKER], [test "x$ENABLED_BROKER" = "xyes"])
 
+# Fuzz target
+AC_ARG_ENABLE([fuzz],
+    [AS_HELP_STRING([--enable-fuzz],[Enable libFuzzer targets (default: disabled)])],
+    [ ENABLED_FUZZ=$enableval ],
+    [ ENABLED_FUZZ=no ]
+    )
+AM_CONDITIONAL([BUILD_FUZZ], [test "x$ENABLED_FUZZ" = "xyes"])
+
 
 
 # HARDEN FLAGS
@@ -619,3 +627,4 @@ echo "   * Multi-thread:              $ENABLED_MULTITHREAD"
 echo "   * Stress:                    $ENABLED_STRESS"
 echo "   * WebSocket:                 $ENABLED_WEBSOCKET"
 echo "   * Broker:                    $ENABLED_BROKER"
+echo "   * Fuzz:                      $ENABLED_FUZZ"

@@ -809,7 +809,7 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
         rx_payload += MqttDecode_Num(rx_payload, (word16*)&total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
     }
 
-    if (total_len > rx_buf_len) {
+    if (total_len >= rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
     if (total_len < 7) {
@@ -1086,6 +1086,9 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     *tx_payload++ = flags;
 
     /* Encode topic */
+    if (publish->topic_name == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
     if ((publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) ||
         (publish->topic_type == SN_TOPIC_ID_TYPE_PREDEF)) {
         /* Short and predefined topic names are 2 chars */
@@ -1102,6 +1105,9 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
 
     /* Encode payload */
+    if (publish->total_len > 0 && publish->buffer == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
     XMEMCPY(tx_payload, publish->buffer, publish->total_len);
     tx_payload += publish->total_len;
 

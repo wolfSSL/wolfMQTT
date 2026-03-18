@@ -34,6 +34,7 @@ ACLOCAL_AMFLAGS= -I m4
 include src/include.am
 include wolfmqtt/include.am
 include examples/include.am
+include tests/include.am
 include scripts/include.am
 include IDE/include.am
 include cmake/include.am
@@ -56,6 +57,8 @@ test: check
 
 DISTCLEANFILES+= wolfmqtt-config
 
+clean-local:
+	-rm -rf tests/fuzz/corpus
 
 maintainer-clean-local:
 	-rm Makefile.in
@@ -118,3 +121,4 @@ dist-hook:
 	$(MKDIR_P) $(distdir)/examples/multithread
 	$(MKDIR_P) $(distdir)/examples/pub-sub
 	$(MKDIR_P) $(distdir)/examples/websocket
+	$(MKDIR_P) $(distdir)/tests/fuzz

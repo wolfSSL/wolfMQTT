@@ -27,3 +27,5 @@ endif # BUILD_EXAMPLES
 if BUILD_BROKER
 dist_noinst_SCRIPTS += scripts/broker.test
 endif # BUILD_BROKER
+
+EXTRA_DIST += scripts/fuzz.sh
