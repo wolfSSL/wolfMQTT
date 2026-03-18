@@ -183,13 +183,16 @@ int SN_Decode_Advertise(byte *rx_buf, int rx_buf_len, SN_Advertise *gw_info)
 
     /* Decode fixed header */
     total_len = *rx_payload++;
-
-    /* Check message type */
-    type = *rx_payload++;
     if (total_len != 5) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
+    /* Check message type */
+    type = *rx_payload++;
     if (type != SN_MSG_TYPE_ADVERTISE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
     }
@@ -354,6 +357,10 @@ int SN_Decode_WillTopicReq(byte *rx_buf, int rx_buf_len)
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     type = *rx_payload++;
     if (type != SN_MSG_TYPE_WILLTOPICREQ) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
@@ -448,6 +455,10 @@ int SN_Decode_WillMsgReq(byte *rx_buf, int rx_buf_len)
     /* Length and MsgType */
     if (total_len != 2){
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     /* Message Type */
@@ -582,7 +593,7 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     byte *rx_payload = rx_buf, type;
 
     /* Validate required arguments */
-    if (rx_buf == NULL || rx_buf_len <= 0) {
+    if (rx_buf == NULL || rx_buf_len <= 0 || ret_code == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -590,6 +601,10 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     total_len = *rx_payload++;
     if (total_len != 3) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     type = *rx_payload++;
@@ -659,7 +674,7 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     byte *rx_payload = rx_buf, type;
 
     /* Validate required arguments */
-    if (rx_buf == NULL || rx_buf_len <= 0) {
+    if (rx_buf == NULL || rx_buf_len <= 0 || ret_code == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -667,6 +682,10 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     total_len = *rx_payload++;
     if (total_len != 3) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     type = *rx_payload++;
@@ -696,6 +715,10 @@ int SN_Decode_ConnectAck(byte *rx_buf, int rx_buf_len,
     total_len = *rx_payload++;
     if (total_len != 3) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     type = *rx_payload++;
@@ -875,6 +898,10 @@ int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len, SN_RegAck *regack)
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     type = *rx_payload++;
     if (type != SN_MSG_TYPE_REGACK) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
@@ -987,9 +1014,13 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     type = *rx_payload++;
     if (type != SN_MSG_TYPE_SUBACK) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
     }
 
     /* Decode SubAck fields */
@@ -1063,7 +1094,9 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     else {
         /* Topic ID */
-        tx_payload += MqttEncode_Num(tx_payload, *(word16*)publish->topic_name);
+        word16 topic_id;
+        XMEMCPY(&topic_id, publish->topic_name, sizeof(topic_id));
+        tx_payload += MqttEncode_Num(tx_payload, topic_id);
     }
 
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
@@ -1128,9 +1161,12 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
 
     publish->topic_type = flags & SN_PACKET_FLAG_TOPICIDTYPE_MASK;
 
-    /* Decode payload */
-
-    publish->total_len = total_len - 7;
+    /* Decode payload: use pointer difference to account for both short (7)
+     * and extended-length (9) header formats */
+    if (total_len < (word16)(rx_payload - rx_buf)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+    publish->total_len = total_len - (word16)(rx_payload - rx_buf);
     publish->buffer = rx_payload;
     publish->buffer_pos = 0;
     publish->buffer_len = publish->total_len;
@@ -1310,6 +1346,10 @@ int SN_Decode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     type = *rx_payload++;
     if (type != SN_MSG_TYPE_UNSUBACK) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
@@ -1374,6 +1414,10 @@ int SN_Decode_Disconnect(byte *rx_buf, int rx_buf_len)
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     type = *rx_payload++;
     if (type != SN_MSG_TYPE_DISCONNECT) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
@@ -1432,6 +1476,10 @@ int SN_Decode_Ping(byte *rx_buf, int rx_buf_len)
     total_len = *rx_payload++;
     if (total_len != 2) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    if (total_len > rx_buf_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     type = *rx_payload++;
@@ -1510,12 +1558,6 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
         case MQTT_PK_READ_HEAD:
         {
             client->packet.stat = MQTT_PK_READ_HEAD;
-        }
-        FALL_THROUGH;
-
-        case MQTT_PK_READ:
-        {
-            client->packet.stat = MQTT_PK_READ;
 
             if (total_len > len) {
                 client->packet.remain_len = total_len - len;
@@ -1539,14 +1581,20 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 client->packet.remain_len = rx_buf_len -
                                             client->packet.header_len;
             }
+        }
+        FALL_THROUGH;
+
+        case MQTT_PK_READ:
+        {
+            client->packet.stat = MQTT_PK_READ;
+
             if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
-                total_len -= client->packet.header_len;
                 idx = client->packet.header_len;
             }
             /* Read whole message */
             if (client->packet.remain_len > 0) {
                 rc = MqttSocket_Read(client, &rx_buf[idx],
-                        total_len, timeout_ms);
+                        client->packet.remain_len, timeout_ms);
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
                 }

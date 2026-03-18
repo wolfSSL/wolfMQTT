@@ -708,7 +708,12 @@ WOLFMQTT_API int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
     byte* buf);
 WOLFMQTT_API int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
     byte* buf, word32 buf_len, word32 prop_len);
+/* Must be called once from a single thread before any concurrent access
+ * to MQTTv5 property functions. Not thread-safe if called concurrently. */
 WOLFMQTT_API int MqttProps_Init(void);
+/* Must be called once from a single thread after all concurrent access
+ * to MQTTv5 property functions has ceased. Not thread-safe if called
+ * concurrently. */
 WOLFMQTT_API int MqttProps_ShutDown(void);
 WOLFMQTT_API MqttProp* MqttProps_Add(MqttProp **head);
 WOLFMQTT_API int MqttProps_Free(MqttProp *head);
