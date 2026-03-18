@@ -1163,6 +1163,9 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
 
     /* Decode payload: use pointer difference to account for both short (7)
      * and extended-length (9) header formats */
+    if (total_len < (word16)(rx_payload - rx_buf)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
     publish->total_len = total_len - (word16)(rx_payload - rx_buf);
     publish->buffer = rx_payload;
     publish->buffer_pos = 0;
