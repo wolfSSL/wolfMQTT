@@ -158,7 +158,6 @@ then
     test "$enable_v5" = "" && enable_v5=yes
     test "$enable_discb" = "" && enable_discb=yes
     test "$enable_mt" = "" && enable_mt=yes
-    test "$enable_broker" = "" && enable_broker=yes
     test "$enable_" = "" && enable_=yes
 fi
 
