@@ -466,6 +466,10 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 goto exit;
             }
             wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_NONE, 0);
+        #ifdef WOLFMQTT_DEBUG_SOCKET
+            PRINTF("Warning: TLS set to VERIFY_NONE. Use MqttClient_SetTlsCb "
+                "to set peer verification in production");
+        #endif
         }
 
     #ifndef NO_DH
