@@ -1,5 +1,53 @@
 ## Release Notes
 
+### v2.0.0 (03/20/2026)
+Release 2.0.0 has been developed according to wolfSSL's development and QA
+process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* New Features
+    - Lightweight MQTT Broker — New built-in MQTT broker implementation (#457)
+    - MQTT v3.1.1 spec compliance checks (#462)
+    - Secure and non-secure port listening support (#465)
+    - WebSocket transport support (#466)
+    - wolfIP (embedded TCP/IP stack) support (#463)
+    - Retained messages, session persistence, graceful disconnect, QoS subscription updates (#465)
+    - libFuzzer-based broker fuzzing infrastructure (#474)
+    - wolfIP Integration — Added wolfIP support for both MQTT client and broker (#463)
+    - lastError Field — Preserve TLS error code via new lastError in the network context (#458)
+ 
+* Bug Fixes
+    - Fix race condition in wm_SemLock (#475)
+    - Fix wildcard topic matching (#472)
+    - Fix LWT (Last Will and Testament) length checks and payload free issues (#472, #473)
+    - Fix subAck buffer size check and topic count validation (#472)
+    - Fix MqttPacket_Write failure return handling (#473)
+    - Fix MQTT-SN: null pointer dereference, non-blocking read, encode/decode issues (#473)
+    - Fix MqttDecode_Auth reason code issue (#473)
+    - Fix broker client connect status check (#472)
+    - Fix SN_Client_WaitType issues (#456)
+    - Fix curl transport: use internal loops for partial read/write handling (#459)
+
+* Security Hardening
+    - Add overflow checks in network and socket IO (#467)
+    - Add checks for negative return values in MqttDecode_String calls (#467)
+    - Add encoding error checks (#467)
+    - Add remain_len validation check (#471)
+    - Static analysis fixes for MqttClient_Auth, MqttProps_Add, MqttDecode_SubscribeAck, MqttDecode_Props (#469)
+    - Static analysis fixes for SN_Decode_Register, SN_Decode_GWInfo, SN_Client_WillTopicUpdate, SN_Encode_Publish, SN_Encode_RegAck, SN_Client_Connect (#468)
+    - Add debug warning when using VERIFY_NONE (#475)
+
+* CI / Testing
+    - Add CI workflows for codespell, multi-compiler, and sanitizer tests (#470)
+    - Add Coverity workflow schedule (#450, #451)
+    - Add WebSocket broker configurations to CI (#466)
+    - Expanded broker edge case testing (#465)
+    - Improved broker test execution speed (#465)
+
+* Other
+    - Updated client certificates (#455)
+    - Added wolfSSL as submodule option (#452)
+
 ### v1.21.0 (12/03/2025)
 Release 1.21.0 has been developed according to wolfSSL's development and QA
 process (see link below) and successfully passed the quality criteria.

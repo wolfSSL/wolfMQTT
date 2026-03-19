@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # gen_corpus.py - Generate seed corpus for wolfMQTT broker fuzzer
 #
-# Copyright (C) 2006-2025 wolfSSL Inc.
+# Copyright (C) 2006-2026 wolfSSL Inc.
 #
 # Creates minimal valid (and intentionally malformed) MQTT packets as
 # seed files in tests/fuzz/corpus/. These bootstrap libFuzzer with

@@ -1,8 +1,8 @@
-# CMakeList.txt
+# CMakeLists.txt
 #
-# Copyright (C) 2006-2025 wolfSSL Inc.
+# Copyright (C) 2006-2026 wolfSSL Inc.
 #
-# This file is part of wolfSSL. (formerly known as CyaSSL)
+# This file is part of wolfMQTT
 #
 # Usage:
 # $ mkdir build
@@ -21,7 +21,7 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-project(wolfMQTT VERSION 1.21.0 LANGUAGES C)
+project(wolfMQTT VERSION 2.0.0 LANGUAGES C)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/functions.cmake)
