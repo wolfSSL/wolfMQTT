@@ -201,9 +201,8 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
         return 0;
     }
 
-    static UINT semstatus;
     int wm_SemLock(wm_Sem *s) {
-        semstatus = tx_semaphore_get(s, TX_WAIT_FOREVER);
+        UINT semstatus = tx_semaphore_get(s, TX_WAIT_FOREVER);
         if (semstatus != TX_SUCCESS) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
         }
