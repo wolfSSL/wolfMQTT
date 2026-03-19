@@ -1,0 +1,95 @@
+# MQTT fuzzer dictionary for libFuzzer
+# Contains protocol constants to help the fuzzer mutate inputs intelligently.
+
+# --- Packet type bytes (type << 4 | flags) ---
+connect="\x10"
+connack="\x20"
+publish_qos0="\x30"
+publish_qos0_retain="\x31"
+publish_qos1="\x32"
+publish_qos2="\x34"
+publish_dup="\x38"
+puback="\x40"
+pubrec="\x50"
+pubrel="\x62"
+pubcomp="\x70"
+subscribe="\x82"
+suback="\x90"
+unsubscribe="\xa2"
+unsuback="\xb0"
+pingreq="\xc0"
+pingresp="\xd0"
+disconnect="\xe0"
+auth="\xf0"
+
+# --- Protocol name and version ---
+mqtt_name="\x00\x04MQTT"
+proto_v311="\x04"
+proto_v5="\x05"
+
+# --- Connect flags ---
+clean_session="\x02"
+will_flag="\x04"
+will_clean="\x06"
+will_qos1="\x0e"
+will_retain="\x26"
+username_flag="\x80"
+password_flag="\x40"
+user_pass_clean="\xc2"
+all_flags="\xee"
+
+# --- Remaining length encodings ---
+len_0="\x00"
+len_10="\x0a"
+len_127="\x7f"
+len_128="\x80\x01"
+len_256="\x80\x02"
+len_16384="\x80\x80\x01"
+
+# --- Keep alive ---
+keepalive_0="\x00\x00"
+keepalive_60="\x00\x3c"
+keepalive_max="\xff\xff"
+
+# --- MQTT v5 property identifiers ---
+prop_payload_format="\x01"
+prop_msg_expiry="\x02"
+prop_content_type="\x03"
+prop_response_topic="\x08"
+prop_correlation_data="\x09"
+prop_sub_id="\x0b"
+prop_session_expiry="\x11"
+prop_assigned_client_id="\x12"
+prop_server_keepalive="\x13"
+prop_auth_method="\x15"
+prop_auth_data="\x16"
+prop_will_delay="\x18"
+prop_request_response="\x19"
+prop_receive_max="\x21"
+prop_topic_alias_max="\x22"
+prop_topic_alias="\x23"
+prop_max_qos="\x24"
+prop_retain_avail="\x25"
+prop_user_property="\x26"
+prop_max_packet_size="\x27"
+
+# --- Topic patterns ---
+topic_sep="/"
+wildcard_plus="+"
+wildcard_hash="#"
+topic_dollar="$"
+topic_sys="$SYS/"
+
+# --- Common string lengths ---
+strlen_0="\x00\x00"
+strlen_4="\x00\x04"
+strlen_test="\x00\x04test"
+
+# --- Packet IDs ---
+pkt_id_1="\x00\x01"
+pkt_id_max="\xff\xff"
+
+# --- QoS bytes (for SUBSCRIBE payload) ---
+qos_0="\x00"
+qos_1="\x01"
+qos_2="\x02"

@@ -35,6 +35,23 @@
 
 #ifdef WOLFMQTT_BROKER
 
+/* Secure memory zeroing - prevents compiler dead-store elimination */
+#ifdef ENABLE_MQTT_TLS
+    #include <wolfssl/wolfcrypt/memory.h>
+    #define BROKER_FORCE_ZERO(mem, len) wc_ForceZero(mem, (word32)(len))
+#else
+    /* Local implementation matching wolfCrypt's ForceZero */
+    static void BrokerForceZero(void* mem, word32 len)
+    {
+        volatile byte* p = (volatile byte*)mem;
+        word32 i;
+        for (i = 0; i < len; i++) {
+            p[i] = 0;
+        }
+    }
+    #define BROKER_FORCE_ZERO(mem, len) BrokerForceZero(mem, (word32)(len))
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* Platform includes                                                           */
 /* -------------------------------------------------------------------------- */
@@ -137,10 +154,14 @@ static int BrokerStrCompare(const char* a, const char* b)
     int result = 0;
     int len_a = (int)XSTRLEN(a);
     int len_b = (int)XSTRLEN(b);
-    int len = (len_a < len_b) ? len_a : len_b;
+    int max_len = (len_a > len_b) ? len_a : len_b;
     int i;
-    for (i = 0; i < len; i++) {
-        result |= (a[i] ^ b[i]);
+    for (i = 0; i < max_len; i++) {
+        /* Branchless index clamp: when i >= len, reads position 0.
+         * Length mismatch is caught by the final XOR below. */
+        int ia = i & ((i - len_a) >> (sizeof(int) * 8 - 1));
+        int ib = i & ((i - len_b) >> (sizeof(int) * 8 - 1));
+        result |= (a[ia] ^ b[ib]);
     }
     result |= (len_a ^ len_b);
     return result;
@@ -164,7 +185,7 @@ static void BrokerStore_StringSensitive(char* dst, int max_len,
     const char* src, word16 src_len)
 {
     /* Wipe old value before overwriting */
-    XMEMSET(dst, 0, max_len);
+    BROKER_FORCE_ZERO(dst, max_len);
     if (src_len >= (word16)max_len) {
         src_len = (word16)(max_len - 1);
     }
@@ -177,7 +198,7 @@ static void BrokerStore_String(char** dst_ptr,
 {
     if (*dst_ptr != NULL) {
         if (sensitive) {
-            XMEMSET(*dst_ptr, 0, XSTRLEN(*dst_ptr) + 1);
+            BROKER_FORCE_ZERO(*dst_ptr, XSTRLEN(*dst_ptr) + 1);
         }
         WOLFMQTT_FREE(*dst_ptr);
         *dst_ptr = NULL;
@@ -203,7 +224,7 @@ static void BrokerStore_String(char** dst_ptr,
         BrokerStore_String(&(dst), src, len, 1)
 #endif
 
-#ifdef ENABLE_MQTT_TLS
+#if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
 static int BrokerTls_Init(MqttBroker* broker)
 {
     WOLFSSL_CTX* ctx = NULL;
@@ -225,6 +246,9 @@ static int BrokerTls_Init(MqttBroker* broker)
     }
     else {
         ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+        if (ctx != NULL) {
+            wolfSSL_CTX_SetMinVersion(ctx, WOLFSSL_TLSV1_2);
+        }
     }
     if (ctx == NULL) {
         WBLOG_ERR(broker, "broker: wolfSSL_CTX_new failed");
@@ -323,7 +347,7 @@ static void BrokerTls_Free(MqttBroker* broker)
     }
     wolfSSL_Cleanup();
 }
-#endif /* ENABLE_MQTT_TLS */
+#endif /* ENABLE_MQTT_TLS && !WOLFMQTT_BROKER_CUSTOM_NET */
 
 /* -------------------------------------------------------------------------- */
 /* wolfIP network backend                                                      */
@@ -1203,21 +1227,21 @@ static void BrokerClient_Free(BrokerClient* bc)
     }
 #ifdef WOLFMQTT_BROKER_AUTH
     if (bc->username) {
-        XMEMSET(bc->username, 0, XSTRLEN(bc->username) + 1);
+        BROKER_FORCE_ZERO(bc->username, XSTRLEN(bc->username) + 1);
         WOLFMQTT_FREE(bc->username);
     }
     if (bc->password) {
-        XMEMSET(bc->password, 0, XSTRLEN(bc->password) + 1);
+        BROKER_FORCE_ZERO(bc->password, XSTRLEN(bc->password) + 1);
         WOLFMQTT_FREE(bc->password);
     }
 #endif
 #ifdef WOLFMQTT_BROKER_WILL
     if (bc->will_topic) {
-        XMEMSET(bc->will_topic, 0, XSTRLEN(bc->will_topic) + 1);
+        BROKER_FORCE_ZERO(bc->will_topic, XSTRLEN(bc->will_topic) + 1);
         WOLFMQTT_FREE(bc->will_topic);
     }
     if (bc->will_payload) {
-        XMEMSET(bc->will_payload, 0, bc->will_payload_len);
+        BROKER_FORCE_ZERO(bc->will_payload, bc->will_payload_len);
         WOLFMQTT_FREE(bc->will_payload);
     }
 #endif
@@ -1581,6 +1605,9 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
                 (int)bc->sock, cur->filter);
             WOLFMQTT_FREE(cur->filter);
+            if (cur->client_id) {
+                WOLFMQTT_FREE(cur->client_id);
+            }
             WOLFMQTT_FREE(cur);
             return;
         }
@@ -2465,6 +2492,11 @@ static int BrokerTopicMatch(const char* filter, const char* topic)
         return 0;
     }
 
+    /* [MQTT-4.7.2] Wildcard filters must not match $-prefixed topics */
+    if (*t == '$' && (*f == '+' || *f == '#')) {
+        return 0;
+    }
+
     while (*f && *t) {
         if (*f == '#') {
             return (f[1] == '\0');
@@ -2625,6 +2657,10 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     rc = MqttDecode_Connect(bc->rx_buf, rx_len, &mc);
     if (rc < 0) {
         WBLOG_ERR(broker, "broker: CONNECT decode failed rc=%d", rc);
+    #ifdef WOLFMQTT_V5
+        if (mc.props) { (void)MqttProps_Free(mc.props); }
+        if (lwt.props) { (void)MqttProps_Free(lwt.props); }
+    #endif
         return rc;
     }
 
@@ -3060,6 +3096,19 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         return rc;
     }
 
+    /* [MQTT-3.3.2-2] PUBLISH topic must not contain wildcard characters */
+    if (pub.topic_name && pub.topic_name_len > 0) {
+        word16 i;
+        for (i = 0; i < pub.topic_name_len; i++) {
+            if (pub.topic_name[i] == '+' || pub.topic_name[i] == '#') {
+                WBLOG_ERR(broker,
+                    "broker: PUBLISH topic contains wildcard sock=%d",
+                    (int)bc->sock);
+                return MQTT_CODE_ERROR_BAD_ARG;
+            }
+        }
+    }
+
     /* Create null-terminated topic copy for matching/logging */
     if (pub.topic_name && pub.topic_name_len > 0) {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -3360,12 +3409,21 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             BrokerClient_Remove(broker, bc);
             return 0;
         }
+        /* [MQTT-3.1.0-2] Second CONNECT is a protocol violation */
+        if (type == MQTT_PACKET_TYPE_CONNECT && bc->connected) {
+            WBLOG_ERR(broker,
+                "broker: second CONNECT on sock=%d [MQTT-3.1.0-2]",
+                (int)bc->sock);
+            BrokerSubs_RemoveClient(broker, bc);
+            BrokerClient_Remove(broker, bc);
+            return 0;
+        }
         switch (type) {
             case MQTT_PACKET_TYPE_CONNECT:
             {
                 int c_rc = BrokerHandle_Connect(bc, rc, broker);
-                if (c_rc == 0) {
-                    /* Auth rejected, disconnect */
+                if (c_rc <= 0) {
+                    /* Decode failed or auth rejected, disconnect */
                     BrokerSubs_RemoveClient(broker, bc);
                     BrokerClient_Remove(broker, bc);
                     return 0;
@@ -3774,6 +3832,18 @@ int MqttBroker_Free(MqttBroker* broker)
         BrokerSubs_RemoveClient(broker, broker->clients);
         BrokerClient_Remove(broker, broker->clients);
     }
+    /* Free any orphaned subs (e.g. from clean_session=0 clients) */
+    while (broker->subs) {
+        BrokerSub* next = broker->subs->next;
+        if (broker->subs->filter) {
+            WOLFMQTT_FREE(broker->subs->filter);
+        }
+        if (broker->subs->client_id) {
+            WOLFMQTT_FREE(broker->subs->client_id);
+        }
+        WOLFMQTT_FREE(broker->subs);
+        broker->subs = next;
+    }
 #endif
 
     /* Clean up pending wills and retained messages */
@@ -3782,11 +3852,14 @@ int MqttBroker_Free(MqttBroker* broker)
 
 #ifdef ENABLE_MQTT_TLS
     if (broker->tls_ctx != NULL) {
+    #if !defined(WOLFMQTT_BROKER_CUSTOM_NET)
         if (broker->tls_ctx_owned) {
             /* Context was created by BrokerTls_Init: full cleanup */
             BrokerTls_Free(broker);
         }
-        else {
+        else
+    #endif
+        {
             /* Application-provided TLS context: free ctx but skip
              * wolfSSL_Cleanup() since wolfSSL may be shared */
             wolfSSL_CTX_free(broker->tls_ctx);
@@ -3869,10 +3942,9 @@ static void BrokerUsage(const char* prog)
            );
 }
 
-static MqttBroker* g_broker = NULL;
-
 #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET) && \
     !defined(NO_MAIN_DRIVER)
+static MqttBroker* g_broker = NULL;
 #include <signal.h>
 static void broker_signal_handler(int signo)
 {

@@ -338,6 +338,9 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
     if (len < 0) {
         return len;
     }
+    if ((word32)str_len > buf_len - (word32)len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
     buf += len;
     if (pstr_len) {
         *pstr_len = str_len;
@@ -353,7 +356,13 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
 int MqttEncode_String(byte *buf, const char *str)
 {
     int str_len = (int)XSTRLEN(str);
-    int len = MqttEncode_Num(buf, (word16)str_len);
+    int len;
+
+    /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3] */
+    if (str_len > (int)0xFFFF) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    len = MqttEncode_Num(buf, (word16)str_len);
 
     if (buf != NULL) {
         buf += len;
@@ -441,8 +450,9 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_STRING:
             {
-                tmp = MqttEncode_String(buf,
-                        (const char*)cur_prop->data_str.str);
+                tmp = MqttEncode_Data(buf,
+                        (const byte*)cur_prop->data_str.str,
+                        cur_prop->data_str.len);
                 rc += tmp;
                 if (buf != NULL) {
                     buf += tmp;
@@ -475,15 +485,17 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             {
                 /* String is prefixed with a Two Byte Integer length field that
                    gives the number of bytes */
-                tmp = MqttEncode_String(buf,
-                        (const char*)cur_prop->data_str.str);
+                tmp = MqttEncode_Data(buf,
+                        (const byte*)cur_prop->data_str.str,
+                        cur_prop->data_str.len);
                 rc += tmp;
                 if (buf != NULL) {
                     buf += tmp;
                 }
 
-                tmp = MqttEncode_String(buf,
-                        (const char*)cur_prop->data_str2.str);
+                tmp = MqttEncode_Data(buf,
+                        (const byte*)cur_prop->data_str2.str,
+                        cur_prop->data_str2.len);
                 rc += tmp;
                 if (buf != NULL) {
                     buf += tmp;
@@ -634,7 +646,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp = MqttDecode_Vbi(buf, &cur_prop->data_int,
                         (word32)(buf_len - (buf - pbuf)));
                 if (tmp < 0) {
-                    return tmp;
+                    rc = tmp;
+                    break;
                 }
                 buf += tmp;
                 total += tmp;
@@ -787,6 +800,10 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
 
         remain_len += (int)XSTRLEN(mc_connect->lwt_msg->topic_name);
         remain_len += MQTT_DATA_LEN_SIZE;
+        /* LWT payload uses word16 length prefix, validate it fits */
+        if (mc_connect->lwt_msg->total_len > (word32)0xFFFF) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         remain_len += mc_connect->lwt_msg->total_len;
         remain_len += MQTT_DATA_LEN_SIZE;
 #ifdef WOLFMQTT_V5
@@ -1463,6 +1480,9 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 #endif
 
     /* Decode Payload */
+    if (variable_len > remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
     payload_len = remain_len - variable_len;
     publish->buffer = rx_payload;
     publish->buffer_new = 1;
@@ -2681,9 +2701,9 @@ int MqttProps_Init(void)
     int ret = MQTT_CODE_SUCCESS;
 #if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     if (clientPropStack_lockInit == 0) {
-        clientPropStack_lockInit++;
         ret = wm_SemInit(&clientPropStack_lock);
     }
+    clientPropStack_lockInit++;
 #endif
     return  ret;
 }

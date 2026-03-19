@@ -1,0 +1,24 @@
+# vim:ft=automake
+# included from Top Level Makefile.am
+# All paths should be given relative to the root
+
+if BUILD_FUZZ
+if BUILD_BROKER
+noinst_PROGRAMS += tests/fuzz/broker_fuzz
+tests_fuzz_broker_fuzz_SOURCES = \
+    tests/fuzz/broker_fuzz.c \
+    src/mqtt_broker.c
+tests_fuzz_broker_fuzz_CFLAGS   = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
+    -DWOLFMQTT_BROKER_NO_LOG -DNO_MAIN_DRIVER \
+    '-DWOLFMQTT_BROKER_GET_TIME_S()=((WOLFMQTT_BROKER_TIME_T)0)' \
+    '-DBROKER_SLEEP_MS(ms)=do{}while(0)' \
+    $(AM_CFLAGS)
+tests_fuzz_broker_fuzz_CPPFLAGS = $(AM_CPPFLAGS)
+tests_fuzz_broker_fuzz_LDFLAGS  = -fsanitize=fuzzer $(AM_LDFLAGS)
+tests_fuzz_broker_fuzz_LDADD    = src/libwolfmqtt.la $(LIB_STATIC_ADD)
+tests_fuzz_broker_fuzz_DEPENDENCIES = src/libwolfmqtt.la
+endif
+endif
+
+EXTRA_DIST += tests/fuzz/gen_corpus.py
+EXTRA_DIST += tests/fuzz/mqtt.dict

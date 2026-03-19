@@ -125,3 +125,6 @@ examples/websocket/websocket_client
 !/IDE/Espressif/**/config.h
 
 src/mqtt_broker
+
+tests/fuzz/broker_fuzz
+tests/fuzz/corpus/

@@ -70,9 +70,10 @@ wait_for_file() {
     local file="$1"
     local timeout_sec="${2:-5}"
     local waited=0
-    while [ ! -f "$file" ] && [ $waited -lt $timeout_sec ]; do
+    local max_iters=$((timeout_sec * 10))
+    while [ ! -f "$file" ] && [ $waited -lt $max_iters ]; do
         sleep 0.1
-        waited=$(echo "$waited + 0.1" | bc)
+        waited=$((waited + 1))
     done
     [ -f "$file" ]
 }
