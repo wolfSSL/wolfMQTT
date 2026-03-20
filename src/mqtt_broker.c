@@ -2872,11 +2872,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 BROKER_STORE_STR(bc->client_id, auto_id, (word16)id_len,
                     BROKER_MAX_CLIENT_ID_LEN);
             }
-            prop = MqttProps_Add(&ack.props);
-            if (prop != NULL) {
-                prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
-                prop->data_str.str = bc->client_id;
-                prop->data_str.len = (word16)XSTRLEN(bc->client_id);
+            if (BROKER_STR_VALID(bc->client_id)) {
+                prop = MqttProps_Add(&ack.props);
+                if (prop != NULL) {
+                    prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
+                    prop->data_str.str = bc->client_id;
+                    prop->data_str.len = (word16)XSTRLEN(bc->client_id);
+                }
             }
         }
 
