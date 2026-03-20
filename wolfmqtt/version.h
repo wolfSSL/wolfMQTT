@@ -1,6 +1,6 @@
 /* version.h.in
  *
- * Copyright (C) 2006-2025 wolfSSL Inc.
+ * Copyright (C) 2006-2026 wolfSSL Inc.
  *
  * This file is part of wolfMQTT.
  *
@@ -34,8 +34,8 @@
 extern "C" {
 #endif
 
-#define LIBWOLFMQTT_VERSION_STRING "1.21.0"
-#define LIBWOLFMQTT_VERSION_HEX 0x01021000
+#define LIBWOLFMQTT_VERSION_STRING "2.0.0"
+#define LIBWOLFMQTT_VERSION_HEX 0x02000000
 
 #ifdef __cplusplus
 }

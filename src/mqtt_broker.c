@@ -1,6 +1,6 @@
 /* mqtt_broker.c
  *
- * Copyright (C) 2006-2025 wolfSSL Inc.
+ * Copyright (C) 2006-2026 wolfSSL Inc.
  *
  * This file is part of wolfMQTT.
  *
@@ -1877,6 +1877,8 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
                 XMEMSET(msg, 0, sizeof(*msg));
                 msg->topic = (char*)WOLFMQTT_MALLOC((size_t)tlen + 1);
                 if (msg->topic == NULL) {
+                    WOLFMQTT_FREE(msg);
+                    msg = NULL;
                     rc = MQTT_CODE_ERROR_MEMORY;
                 }
             }
