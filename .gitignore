@@ -81,6 +81,7 @@ examples/multithread/multithread
 examples/wiot/wiot
 examples/pub-sub/mqtt-pub
 examples/pub-sub/mqtt-sub
+examples/sparkplug/sparkplug
 examples/websocket/websocket_client
 
 # eclipse
