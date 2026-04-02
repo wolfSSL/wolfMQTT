@@ -2454,8 +2454,12 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             BrokerRetained_Delete(broker, topic);
         }
         else {
-            (void)BrokerRetained_Store(broker, topic, payload,
+            int ret_rc = BrokerRetained_Store(broker, topic, payload,
                 payload_len, 0);
+            if (ret_rc != MQTT_CODE_SUCCESS) {
+                WBLOG_ERR(broker, "Retained store failed: %s",
+                    MqttClient_ReturnCodeToString(ret_rc));
+            }
         }
     }
 
@@ -3072,7 +3076,10 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
 
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            (void)BrokerSubs_Add(broker, bc, f, flen, topic_qos);
+            int sub_rc = BrokerSubs_Add(broker, bc, f, flen, topic_qos);
+            if (sub_rc != MQTT_CODE_SUCCESS) {
+                granted_qos = (MqttQoS)MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
+            }
 
 #ifdef WOLFMQTT_BROKER_RETAINED
             /* Deliver retained messages matching this filter */
@@ -3249,8 +3256,14 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 }
             }
 #endif
-            (void)BrokerRetained_Store(broker, topic, payload,
-                pub.total_len, expiry);
+            {
+                int ret_rc = BrokerRetained_Store(broker, topic, payload,
+                    pub.total_len, expiry);
+                if (ret_rc != MQTT_CODE_SUCCESS) {
+                    WBLOG_ERR(broker, "Retained store failed: %s",
+                        MqttClient_ReturnCodeToString(ret_rc));
+                }
+            }
         }
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */
