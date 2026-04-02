@@ -1343,6 +1343,14 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
+    /* When not using a callback, the entire payload must fit in the buffer.
+     * Otherwise the header remaining-length would declare more bytes than
+     * are actually written, desynchronizing the receiver. */
+    if (use_cb == 0 && payload_len > 0 &&
+        tx_buf_len < header_len + variable_len + payload_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     /* Encode variable header */
     tx_payload += MqttEncode_String(tx_payload, publish->topic_name);
     if (publish->qos > MQTT_QOS_0) {
