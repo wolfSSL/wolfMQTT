@@ -123,6 +123,7 @@ enum SN_PacketFlags {
 #define SN_PACKET_LEN_IND        0x01
 
 #define SN_PACKET_MAX_SMALL_SIZE 0xFF
+#define SN_PACKET_MAX_LEN        0xFFFF
 
 /* Gateway (GW) messages */
 /* Advertise message */

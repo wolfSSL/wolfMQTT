@@ -401,8 +401,7 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         }
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -494,8 +493,7 @@ int SN_Encode_WillMsg(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -548,8 +546,7 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         }
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -641,8 +638,7 @@ int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -758,8 +754,7 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -951,8 +946,7 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -1058,8 +1052,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -1289,8 +1282,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
