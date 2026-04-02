@@ -1290,8 +1290,8 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
                 client->tx_buf_len, will);
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d)",
-            rc, SN_Packet_TypeDesc(SN_MSG_TYPE_WILLTOPICUPD),
-            SN_MSG_TYPE_WILLTOPICUPD);
+            rc, SN_Packet_TypeDesc(SN_MSG_TYPE_WILLMSGUPD),
+            SN_MSG_TYPE_WILLMSGUPD);
     #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
