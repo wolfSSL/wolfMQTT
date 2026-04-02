@@ -159,8 +159,10 @@ static int BrokerStrCompare(const char* a, const char* b)
     for (i = 0; i < max_len; i++) {
         /* Branchless index clamp: when i >= len, reads position 0.
          * Length mismatch is caught by the final XOR below. */
-        int ia = i & -(i < len_a);
-        int ib = i & -(i < len_b);
+        unsigned int maskA = 0u - (unsigned int)(i < len_a);
+        unsigned int maskB = 0u - (unsigned int)(i < len_b);
+        int ia = (int)((unsigned int)i & maskA);
+        int ib = (int)((unsigned int)i & maskB);
         result |= (a[ia] ^ b[ib]);
     }
     result |= (len_a ^ len_b);
@@ -3080,10 +3082,9 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
             if (sub_rc != MQTT_CODE_SUCCESS) {
                 granted_qos = (MqttQoS)MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
             }
-
 #ifdef WOLFMQTT_BROKER_RETAINED
-            /* Deliver retained messages matching this filter */
-            {
+            else {
+                /* Deliver retained messages matching this filter */
                 char filter_z[BROKER_MAX_FILTER_LEN];
                 word16 copy_len = flen;
                 if (copy_len >= BROKER_MAX_FILTER_LEN) {
