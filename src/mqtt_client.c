@@ -2913,9 +2913,11 @@ int MqttClient_NetDisconnect(MqttClient *client)
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("Net Disconnect: Removing pending responses");
     #endif
+        MqttPendResp *nextResp;
         for (tmpResp = client->firstPendResp;
              tmpResp != NULL;
-             tmpResp = tmpResp->next) {
+             tmpResp = nextResp) {
+            nextResp = tmpResp->next;
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("\tPendResp: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
                 tmpResp, tmpResp->packet_obj,
