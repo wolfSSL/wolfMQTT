@@ -43,7 +43,7 @@ jobs:
 
     - name: Download libwebsockets
       run: |
-        git clone https://github.com/warmcat/libwebsockets
+        git clone https://github.com/warmcat/libwebsockets --branch v4.3.3 --single-branch
 
     - name: Build libwebsockets with wolfSSL
       run: |
