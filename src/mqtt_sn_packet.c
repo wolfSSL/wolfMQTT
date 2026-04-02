@@ -238,7 +238,7 @@ int SN_Encode_SearchGW(byte *tx_buf, int tx_buf_len, byte hops)
 
 int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
 {
-    int total_len;
+    word16 total_len;
     byte *rx_payload = rx_buf, type;
 
     /* Validate required arguments */
@@ -250,7 +250,7 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     total_len = *rx_payload++;
     if (total_len == SN_PACKET_LEN_IND) {
         /* The length is stored in the next two bytes */
-        rx_payload += MqttDecode_Num(rx_payload, (word16*)&total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
+        rx_payload += MqttDecode_Num(rx_payload, &total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
     }
 
     if (total_len > rx_buf_len) {
@@ -794,7 +794,7 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
 
 int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
 {
-    int total_len;
+    word16 total_len;
     byte *rx_payload = rx_buf, type;
 
     /* Validate required arguments */
@@ -806,7 +806,7 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
     total_len = *rx_payload++;
     if (total_len == SN_PACKET_LEN_IND) {
         /* The length is stored in the next two bytes */
-        rx_payload += MqttDecode_Num(rx_payload, (word16*)&total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
+        rx_payload += MqttDecode_Num(rx_payload, &total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
     }
 
     if (total_len >= rx_buf_len) {
