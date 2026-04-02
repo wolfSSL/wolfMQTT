@@ -159,8 +159,8 @@ static int BrokerStrCompare(const char* a, const char* b)
     for (i = 0; i < max_len; i++) {
         /* Branchless index clamp: when i >= len, reads position 0.
          * Length mismatch is caught by the final XOR below. */
-        int ia = i & ((i - len_a) >> (sizeof(int) * 8 - 1));
-        int ib = i & ((i - len_b) >> (sizeof(int) * 8 - 1));
+        int ia = i & -(i < len_a);
+        int ib = i & -(i < len_b);
         result |= (a[ia] ^ b[ib]);
     }
     result |= (len_a ^ len_b);
