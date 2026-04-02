@@ -2891,6 +2891,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             char auto_id[32];
             int id_len = XSNPRINTF(auto_id, (int)sizeof(auto_id),
                 "auto-%04x", broker->next_packet_id++);
+            if (broker->next_packet_id == 0) {
+                broker->next_packet_id = 1;
+            }
             if (id_len > 0) {
                 BROKER_STORE_STR(bc->client_id, auto_id, (word16)id_len,
                     BROKER_MAX_CLIENT_ID_LEN);
