@@ -1509,11 +1509,13 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             rc = MQTT_CODE_ERROR_MEMORY;
         }
         if (rc == MQTT_CODE_SUCCESS) {
+            if (filter_len >= BROKER_MAX_FILTER_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+        }
+        if (rc == MQTT_CODE_SUCCESS) {
             XMEMSET(sub, 0, sizeof(*sub));
             sub->in_use = 1;
-            if (filter_len >= BROKER_MAX_FILTER_LEN) {
-                filter_len = BROKER_MAX_FILTER_LEN - 1;
-            }
             XMEMCPY(sub->filter, filter, filter_len);
             sub->filter[filter_len] = '\0';
         }
@@ -1830,20 +1832,22 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         }
         if (rc == MQTT_CODE_SUCCESS) {
             int tlen = (int)XSTRLEN(topic);
-            XMEMSET(msg, 0, sizeof(*msg));
-            msg->in_use = 1;
             if (tlen >= BROKER_MAX_TOPIC_LEN) {
-                tlen = BROKER_MAX_TOPIC_LEN - 1;
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
-            XMEMCPY(msg->topic, topic, (size_t)tlen);
-            msg->topic[tlen] = '\0';
-            if (payload_len > 0 && payload != NULL) {
-                if (payload_len > BROKER_MAX_PAYLOAD_LEN) {
-                    payload_len = BROKER_MAX_PAYLOAD_LEN;
+            else if (payload_len > BROKER_MAX_PAYLOAD_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+            if (rc == MQTT_CODE_SUCCESS) {
+                XMEMSET(msg, 0, sizeof(*msg));
+                msg->in_use = 1;
+                XMEMCPY(msg->topic, topic, (size_t)tlen);
+                msg->topic[tlen] = '\0';
+                if (payload_len > 0 && payload != NULL) {
+                    XMEMCPY(msg->payload, payload, payload_len);
                 }
-                XMEMCPY(msg->payload, payload, payload_len);
+                msg->payload_len = payload_len;
             }
-            msg->payload_len = payload_len;
         }
     }
 #else
@@ -2054,31 +2058,29 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
             rc = MQTT_CODE_ERROR_MEMORY;
         }
         if (rc == MQTT_CODE_SUCCESS) {
-            XMEMSET(pw, 0, sizeof(*pw));
-            pw->in_use = 1;
-            {
-                int len = (int)XSTRLEN(bc->client_id);
-                if (len >= BROKER_MAX_CLIENT_ID_LEN) {
-                    len = BROKER_MAX_CLIENT_ID_LEN - 1;
-                }
-                XMEMCPY(pw->client_id, bc->client_id, len);
-                pw->client_id[len] = '\0';
+            int id_len = (int)XSTRLEN(bc->client_id);
+            int t_len = (int)XSTRLEN(bc->will_topic);
+            if (id_len >= BROKER_MAX_CLIENT_ID_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
-            {
-                int len = (int)XSTRLEN(bc->will_topic);
-                if (len >= BROKER_MAX_TOPIC_LEN) {
-                    len = BROKER_MAX_TOPIC_LEN - 1;
-                }
-                XMEMCPY(pw->topic, bc->will_topic, len);
-                pw->topic[len] = '\0';
+            else if (t_len >= BROKER_MAX_TOPIC_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
-            if (bc->will_payload_len > 0) {
-                word16 len = bc->will_payload_len;
-                if (len > BROKER_MAX_WILL_PAYLOAD_LEN) {
-                    len = BROKER_MAX_WILL_PAYLOAD_LEN;
+            else if (bc->will_payload_len > BROKER_MAX_WILL_PAYLOAD_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+            if (rc == MQTT_CODE_SUCCESS) {
+                XMEMSET(pw, 0, sizeof(*pw));
+                pw->in_use = 1;
+                XMEMCPY(pw->client_id, bc->client_id, id_len);
+                pw->client_id[id_len] = '\0';
+                XMEMCPY(pw->topic, bc->will_topic, t_len);
+                pw->topic[t_len] = '\0';
+                if (bc->will_payload_len > 0) {
+                    XMEMCPY(pw->payload, bc->will_payload,
+                        bc->will_payload_len);
+                    pw->payload_len = bc->will_payload_len;
                 }
-                XMEMCPY(pw->payload, bc->will_payload, len);
-                pw->payload_len = len;
             }
         }
     }
