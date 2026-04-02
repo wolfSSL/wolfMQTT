@@ -2699,6 +2699,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 id_len = 0;
         if (MqttDecode_Num((byte*)mc.client_id - MQTT_DATA_LEN_SIZE,
                 &id_len, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (id_len >= BROKER_MAX_CLIENT_ID_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: client_id too long (%u >= %d) sock=%d",
+                    (unsigned)id_len, BROKER_MAX_CLIENT_ID_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_CLIENT_ID_NOT_VALID;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_ID;
+                }
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR(bc->client_id, mc.client_id, id_len,
                 BROKER_MAX_CLIENT_ID_LEN);
         }
@@ -2760,6 +2779,17 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     if (mc.enable_lwt && mc.lwt_msg != NULL) {
         if (mc.lwt_msg->topic_name != NULL &&
             mc.lwt_msg->topic_name_len > 0) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (mc.lwt_msg->topic_name_len >= BROKER_MAX_TOPIC_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: LWT topic too long (%u >= %d) sock=%d",
+                    (unsigned)mc.lwt_msg->topic_name_len,
+                    BROKER_MAX_TOPIC_LEN, (int)bc->sock);
+                ack.return_code =
+                    MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR(bc->will_topic, mc.lwt_msg->topic_name,
                 mc.lwt_msg->topic_name_len, BROKER_MAX_TOPIC_LEN);
         }
@@ -2821,6 +2851,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 ulen = 0;
         if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
                 &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (ulen >= BROKER_MAX_USERNAME_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: username too long (%u >= %d) sock=%d",
+                    (unsigned)ulen, BROKER_MAX_USERNAME_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
                 BROKER_MAX_USERNAME_LEN);
         }
@@ -2829,6 +2878,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 plen = 0;
         if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
                 &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (plen >= BROKER_MAX_PASSWORD_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: password too long (%u >= %d) sock=%d",
+                    (unsigned)plen, BROKER_MAX_PASSWORD_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR_SENSITIVE(bc->password, mc.password, plen,
                 BROKER_MAX_PASSWORD_LEN);
         }
@@ -2937,7 +3005,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
-#ifdef WOLFMQTT_BROKER_WILL
+#if defined(WOLFMQTT_BROKER_WILL) || defined(WOLFMQTT_STATIC_MEMORY)
 send_connack:
 #endif
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
