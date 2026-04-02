@@ -2012,18 +2012,21 @@ static void BrokerClient_ClearWill(BrokerClient* bc)
     bc->will_qos = MQTT_QOS_0;
     bc->will_retain = 0;
     bc->will_delay_sec = 0;
-    bc->will_payload_len = 0;
 #ifdef WOLFMQTT_STATIC_MEMORY
+    bc->will_payload_len = 0;
     bc->will_topic[0] = '\0';
 #else
     if (bc->will_topic) {
+        BROKER_FORCE_ZERO(bc->will_topic, XSTRLEN(bc->will_topic) + 1);
         WOLFMQTT_FREE(bc->will_topic);
         bc->will_topic = NULL;
     }
     if (bc->will_payload) {
+        BROKER_FORCE_ZERO(bc->will_payload, bc->will_payload_len);
         WOLFMQTT_FREE(bc->will_payload);
         bc->will_payload = NULL;
     }
+    bc->will_payload_len = 0;
 #endif
 }
 
@@ -2121,12 +2124,14 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
     }
     else if (pw != NULL) {
         if (pw->topic) {
+            BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
             WOLFMQTT_FREE(pw->topic);
         }
         if (pw->client_id) {
             WOLFMQTT_FREE(pw->client_id);
         }
         if (pw->payload) {
+            BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
             WOLFMQTT_FREE(pw->payload);
         }
         WOLFMQTT_FREE(pw);
@@ -2179,8 +2184,14 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
                     broker->pending_wills = next;
                 }
                 WOLFMQTT_FREE(pw->client_id);
-                if (pw->topic) WOLFMQTT_FREE(pw->topic);
-                if (pw->payload) WOLFMQTT_FREE(pw->payload);
+                if (pw->topic) {
+                    BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
+                    WOLFMQTT_FREE(pw->topic);
+                }
+                if (pw->payload) {
+                    BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
+                    WOLFMQTT_FREE(pw->payload);
+                }
                 WOLFMQTT_FREE(pw);
                 return;
             }
@@ -2204,8 +2215,14 @@ static void BrokerPendingWill_FreeAll(MqttBroker* broker)
         while (pw) {
             BrokerPendingWill* next = pw->next;
             if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
-            if (pw->topic) WOLFMQTT_FREE(pw->topic);
-            if (pw->payload) WOLFMQTT_FREE(pw->payload);
+            if (pw->topic) {
+                BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
+                WOLFMQTT_FREE(pw->topic);
+            }
+            if (pw->payload) {
+                BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
+                WOLFMQTT_FREE(pw->payload);
+            }
             WOLFMQTT_FREE(pw);
             pw = next;
         }
@@ -2266,8 +2283,14 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
                     broker->pending_wills = next;
                 }
                 if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
-                if (pw->topic) WOLFMQTT_FREE(pw->topic);
-                if (pw->payload) WOLFMQTT_FREE(pw->payload);
+                if (pw->topic) {
+                    BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
+                    WOLFMQTT_FREE(pw->topic);
+                }
+                if (pw->payload) {
+                    BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
+                    WOLFMQTT_FREE(pw->payload);
+                }
                 WOLFMQTT_FREE(pw);
                 activity = 1;
             }
