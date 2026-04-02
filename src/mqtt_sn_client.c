@@ -1935,9 +1935,11 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     if (rc != client->write.len) {
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
-        if (wm_SemLock(&client->lockClient) == 0) {
-            MqttClient_RespList_Remove(client, &disconnect->pendResp);
-            wm_SemUnlock(&client->lockClient);
+        if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
+            if (wm_SemLock(&client->lockClient) == 0) {
+                MqttClient_RespList_Remove(client, &disconnect->pendResp);
+                wm_SemUnlock(&client->lockClient);
+            }
         }
     #endif
         return rc;
