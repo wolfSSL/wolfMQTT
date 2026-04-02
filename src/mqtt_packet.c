@@ -127,13 +127,13 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_TYPE_MAX, MQTT_DATA_TYPE_NONE, 0 }
 };
 
-/* WOLFMQTT_DYN_PROP allows property allocation using malloc */
-#ifndef WOLFMQTT_DYN_PROP
-
-/* Maximum number of active static properties - overridable */
+/* Maximum number of active properties - overridable */
 #ifndef MQTT_MAX_PROPS
 #define MQTT_MAX_PROPS 30
 #endif
+
+/* WOLFMQTT_DYN_PROP allows property allocation using malloc */
+#ifndef WOLFMQTT_DYN_PROP
 
 /* Property structure allocation array. Property type equal
    to zero indicates unused element. */
