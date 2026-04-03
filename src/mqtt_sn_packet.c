@@ -238,7 +238,7 @@ int SN_Encode_SearchGW(byte *tx_buf, int tx_buf_len, byte hops)
 
 int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
 {
-    int total_len;
+    word16 total_len;
     byte *rx_payload = rx_buf, type;
 
     /* Validate required arguments */
@@ -250,7 +250,7 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     total_len = *rx_payload++;
     if (total_len == SN_PACKET_LEN_IND) {
         /* The length is stored in the next two bytes */
-        rx_payload += MqttDecode_Num(rx_payload, (word16*)&total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
+        rx_payload += MqttDecode_Num(rx_payload, &total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
     }
 
     if (total_len > rx_buf_len) {
@@ -401,8 +401,7 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         }
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -494,8 +493,7 @@ int SN_Encode_WillMsg(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -548,8 +546,7 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
         }
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -641,8 +638,7 @@ int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -758,8 +754,7 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -794,7 +789,7 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
 
 int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
 {
-    int total_len;
+    word16 total_len;
     byte *rx_payload = rx_buf, type;
 
     /* Validate required arguments */
@@ -806,7 +801,7 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
     total_len = *rx_payload++;
     if (total_len == SN_PACKET_LEN_IND) {
         /* The length is stored in the next two bytes */
-        rx_payload += MqttDecode_Num(rx_payload, (word16*)&total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
+        rx_payload += MqttDecode_Num(rx_payload, &total_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
     }
 
     if (total_len >= rx_buf_len) {
@@ -951,8 +946,7 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -1058,8 +1052,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -1289,8 +1282,7 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
         total_len += 2;
     }
 
-    if (total_len > tx_buf_len) {
-        /* Buffer too small */
+    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 

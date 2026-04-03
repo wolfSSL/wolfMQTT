@@ -127,13 +127,13 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_TYPE_MAX, MQTT_DATA_TYPE_NONE, 0 }
 };
 
-/* WOLFMQTT_DYN_PROP allows property allocation using malloc */
-#ifndef WOLFMQTT_DYN_PROP
-
-/* Maximum number of active static properties - overridable */
+/* Maximum number of active properties - overridable */
 #ifndef MQTT_MAX_PROPS
 #define MQTT_MAX_PROPS 30
 #endif
+
+/* WOLFMQTT_DYN_PROP allows property allocation using malloc */
+#ifndef WOLFMQTT_DYN_PROP
 
 /* Property structure allocation array. Property type equal
    to zero indicates unused element. */
@@ -391,14 +391,17 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
 int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
 {
     int rc = 0, tmp;
+    int prop_count = 0;
     MqttProp* cur_prop = props;
-
-    /* TODO: Check against max size. Sometimes all properties are not
-             expected to be added */
 
     /* loop through the list properties */
     while ((cur_prop != NULL) && (rc >= 0))
     {
+        /* Guard against a corrupted or circular property list */
+        if (++prop_count > MQTT_MAX_PROPS) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+            break;
+        }
         if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
             break;
@@ -509,6 +512,12 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
                 rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 break;
             }
+        }
+
+        /* Check cumulative size against MQTT v5 max remaining length */
+        if (rc > (int)MQTT_PACKET_MAX_REMAIN_LEN) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            break;
         }
 
         cur_prop = cur_prop->next;

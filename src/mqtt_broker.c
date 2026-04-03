@@ -159,8 +159,10 @@ static int BrokerStrCompare(const char* a, const char* b)
     for (i = 0; i < max_len; i++) {
         /* Branchless index clamp: when i >= len, reads position 0.
          * Length mismatch is caught by the final XOR below. */
-        int ia = i & ((i - len_a) >> (sizeof(int) * 8 - 1));
-        int ib = i & ((i - len_b) >> (sizeof(int) * 8 - 1));
+        unsigned int maskA = 0u - (unsigned int)(i < len_a);
+        unsigned int maskB = 0u - (unsigned int)(i < len_b);
+        int ia = (int)((unsigned int)i & maskA);
+        int ib = (int)((unsigned int)i & maskB);
         result |= (a[ia] ^ b[ib]);
     }
     result |= (len_a ^ len_b);
@@ -1509,11 +1511,13 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             rc = MQTT_CODE_ERROR_MEMORY;
         }
         if (rc == MQTT_CODE_SUCCESS) {
+            if (filter_len >= BROKER_MAX_FILTER_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+        }
+        if (rc == MQTT_CODE_SUCCESS) {
             XMEMSET(sub, 0, sizeof(*sub));
             sub->in_use = 1;
-            if (filter_len >= BROKER_MAX_FILTER_LEN) {
-                filter_len = BROKER_MAX_FILTER_LEN - 1;
-            }
             XMEMCPY(sub->filter, filter, filter_len);
             sub->filter[filter_len] = '\0';
         }
@@ -1830,20 +1834,22 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         }
         if (rc == MQTT_CODE_SUCCESS) {
             int tlen = (int)XSTRLEN(topic);
-            XMEMSET(msg, 0, sizeof(*msg));
-            msg->in_use = 1;
             if (tlen >= BROKER_MAX_TOPIC_LEN) {
-                tlen = BROKER_MAX_TOPIC_LEN - 1;
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
-            XMEMCPY(msg->topic, topic, (size_t)tlen);
-            msg->topic[tlen] = '\0';
-            if (payload_len > 0 && payload != NULL) {
-                if (payload_len > BROKER_MAX_PAYLOAD_LEN) {
-                    payload_len = BROKER_MAX_PAYLOAD_LEN;
+            else if (payload_len > BROKER_MAX_PAYLOAD_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+            if (rc == MQTT_CODE_SUCCESS) {
+                XMEMSET(msg, 0, sizeof(*msg));
+                msg->in_use = 1;
+                XMEMCPY(msg->topic, topic, (size_t)tlen);
+                msg->topic[tlen] = '\0';
+                if (payload_len > 0 && payload != NULL) {
+                    XMEMCPY(msg->payload, payload, payload_len);
                 }
-                XMEMCPY(msg->payload, payload, payload_len);
+                msg->payload_len = payload_len;
             }
-            msg->payload_len = payload_len;
         }
     }
 #else
@@ -2012,18 +2018,21 @@ static void BrokerClient_ClearWill(BrokerClient* bc)
     bc->will_qos = MQTT_QOS_0;
     bc->will_retain = 0;
     bc->will_delay_sec = 0;
-    bc->will_payload_len = 0;
 #ifdef WOLFMQTT_STATIC_MEMORY
+    bc->will_payload_len = 0;
     bc->will_topic[0] = '\0';
 #else
     if (bc->will_topic) {
+        BROKER_FORCE_ZERO(bc->will_topic, XSTRLEN(bc->will_topic) + 1);
         WOLFMQTT_FREE(bc->will_topic);
         bc->will_topic = NULL;
     }
     if (bc->will_payload) {
+        BROKER_FORCE_ZERO(bc->will_payload, bc->will_payload_len);
         WOLFMQTT_FREE(bc->will_payload);
         bc->will_payload = NULL;
     }
+    bc->will_payload_len = 0;
 #endif
 }
 
@@ -2051,31 +2060,29 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
             rc = MQTT_CODE_ERROR_MEMORY;
         }
         if (rc == MQTT_CODE_SUCCESS) {
-            XMEMSET(pw, 0, sizeof(*pw));
-            pw->in_use = 1;
-            {
-                int len = (int)XSTRLEN(bc->client_id);
-                if (len >= BROKER_MAX_CLIENT_ID_LEN) {
-                    len = BROKER_MAX_CLIENT_ID_LEN - 1;
-                }
-                XMEMCPY(pw->client_id, bc->client_id, len);
-                pw->client_id[len] = '\0';
+            int id_len = (int)XSTRLEN(bc->client_id);
+            int t_len = (int)XSTRLEN(bc->will_topic);
+            if (id_len >= BROKER_MAX_CLIENT_ID_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
-            {
-                int len = (int)XSTRLEN(bc->will_topic);
-                if (len >= BROKER_MAX_TOPIC_LEN) {
-                    len = BROKER_MAX_TOPIC_LEN - 1;
-                }
-                XMEMCPY(pw->topic, bc->will_topic, len);
-                pw->topic[len] = '\0';
+            else if (t_len >= BROKER_MAX_TOPIC_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
             }
-            if (bc->will_payload_len > 0) {
-                word16 len = bc->will_payload_len;
-                if (len > BROKER_MAX_WILL_PAYLOAD_LEN) {
-                    len = BROKER_MAX_WILL_PAYLOAD_LEN;
+            else if (bc->will_payload_len > BROKER_MAX_WILL_PAYLOAD_LEN) {
+                rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+            }
+            if (rc == MQTT_CODE_SUCCESS) {
+                XMEMSET(pw, 0, sizeof(*pw));
+                pw->in_use = 1;
+                XMEMCPY(pw->client_id, bc->client_id, id_len);
+                pw->client_id[id_len] = '\0';
+                XMEMCPY(pw->topic, bc->will_topic, t_len);
+                pw->topic[t_len] = '\0';
+                if (bc->will_payload_len > 0) {
+                    XMEMCPY(pw->payload, bc->will_payload,
+                        bc->will_payload_len);
+                    pw->payload_len = bc->will_payload_len;
                 }
-                XMEMCPY(pw->payload, bc->will_payload, len);
-                pw->payload_len = len;
             }
         }
     }
@@ -2121,12 +2128,14 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
     }
     else if (pw != NULL) {
         if (pw->topic) {
+            BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
             WOLFMQTT_FREE(pw->topic);
         }
         if (pw->client_id) {
             WOLFMQTT_FREE(pw->client_id);
         }
         if (pw->payload) {
+            BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
             WOLFMQTT_FREE(pw->payload);
         }
         WOLFMQTT_FREE(pw);
@@ -2179,8 +2188,14 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
                     broker->pending_wills = next;
                 }
                 WOLFMQTT_FREE(pw->client_id);
-                if (pw->topic) WOLFMQTT_FREE(pw->topic);
-                if (pw->payload) WOLFMQTT_FREE(pw->payload);
+                if (pw->topic) {
+                    BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
+                    WOLFMQTT_FREE(pw->topic);
+                }
+                if (pw->payload) {
+                    BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
+                    WOLFMQTT_FREE(pw->payload);
+                }
                 WOLFMQTT_FREE(pw);
                 return;
             }
@@ -2204,8 +2219,14 @@ static void BrokerPendingWill_FreeAll(MqttBroker* broker)
         while (pw) {
             BrokerPendingWill* next = pw->next;
             if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
-            if (pw->topic) WOLFMQTT_FREE(pw->topic);
-            if (pw->payload) WOLFMQTT_FREE(pw->payload);
+            if (pw->topic) {
+                BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
+                WOLFMQTT_FREE(pw->topic);
+            }
+            if (pw->payload) {
+                BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
+                WOLFMQTT_FREE(pw->payload);
+            }
             WOLFMQTT_FREE(pw);
             pw = next;
         }
@@ -2266,8 +2287,14 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
                     broker->pending_wills = next;
                 }
                 if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
-                if (pw->topic) WOLFMQTT_FREE(pw->topic);
-                if (pw->payload) WOLFMQTT_FREE(pw->payload);
+                if (pw->topic) {
+                    BROKER_FORCE_ZERO(pw->topic, XSTRLEN(pw->topic) + 1);
+                    WOLFMQTT_FREE(pw->topic);
+                }
+                if (pw->payload) {
+                    BROKER_FORCE_ZERO(pw->payload, pw->payload_len);
+                    WOLFMQTT_FREE(pw->payload);
+                }
                 WOLFMQTT_FREE(pw);
                 activity = 1;
             }
@@ -2429,8 +2456,12 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             BrokerRetained_Delete(broker, topic);
         }
         else {
-            (void)BrokerRetained_Store(broker, topic, payload,
+            int ret_rc = BrokerRetained_Store(broker, topic, payload,
                 payload_len, 0);
+            if (ret_rc != MQTT_CODE_SUCCESS) {
+                WBLOG_ERR(broker, "Retained store failed: %s",
+                    MqttClient_ReturnCodeToString(ret_rc));
+            }
         }
     }
 
@@ -2674,6 +2705,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 id_len = 0;
         if (MqttDecode_Num((byte*)mc.client_id - MQTT_DATA_LEN_SIZE,
                 &id_len, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (id_len >= BROKER_MAX_CLIENT_ID_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: client_id too long (%u >= %d) sock=%d",
+                    (unsigned)id_len, BROKER_MAX_CLIENT_ID_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_CLIENT_ID_NOT_VALID;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_ID;
+                }
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR(bc->client_id, mc.client_id, id_len,
                 BROKER_MAX_CLIENT_ID_LEN);
         }
@@ -2735,6 +2785,17 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     if (mc.enable_lwt && mc.lwt_msg != NULL) {
         if (mc.lwt_msg->topic_name != NULL &&
             mc.lwt_msg->topic_name_len > 0) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (mc.lwt_msg->topic_name_len >= BROKER_MAX_TOPIC_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: LWT topic too long (%u >= %d) sock=%d",
+                    (unsigned)mc.lwt_msg->topic_name_len,
+                    BROKER_MAX_TOPIC_LEN, (int)bc->sock);
+                ack.return_code =
+                    MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR(bc->will_topic, mc.lwt_msg->topic_name,
                 mc.lwt_msg->topic_name_len, BROKER_MAX_TOPIC_LEN);
         }
@@ -2796,6 +2857,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 ulen = 0;
         if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
                 &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (ulen >= BROKER_MAX_USERNAME_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: username too long (%u >= %d) sock=%d",
+                    (unsigned)ulen, BROKER_MAX_USERNAME_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
                 BROKER_MAX_USERNAME_LEN);
         }
@@ -2804,6 +2884,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         word16 plen = 0;
         if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
                 &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (plen >= BROKER_MAX_PASSWORD_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: password too long (%u >= %d) sock=%d",
+                    (unsigned)plen, BROKER_MAX_PASSWORD_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
             BROKER_STORE_STR_SENSITIVE(bc->password, mc.password, plen,
                 BROKER_MAX_PASSWORD_LEN);
         }
@@ -2868,6 +2967,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             char auto_id[32];
             int id_len = XSNPRINTF(auto_id, (int)sizeof(auto_id),
                 "auto-%04x", broker->next_packet_id++);
+            if (broker->next_packet_id == 0) {
+                broker->next_packet_id = 1;
+            }
             if (id_len > 0) {
                 BROKER_STORE_STR(bc->client_id, auto_id, (word16)id_len,
                     BROKER_MAX_CLIENT_ID_LEN);
@@ -2909,7 +3011,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
-#ifdef WOLFMQTT_BROKER_WILL
+#if defined(WOLFMQTT_BROKER_WILL) || defined(WOLFMQTT_STATIC_MEMORY)
 send_connack:
 #endif
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
@@ -2976,11 +3078,13 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
 
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            (void)BrokerSubs_Add(broker, bc, f, flen, topic_qos);
-
+            int sub_rc = BrokerSubs_Add(broker, bc, f, flen, topic_qos);
+            if (sub_rc != MQTT_CODE_SUCCESS) {
+                granted_qos = (MqttQoS)MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
+            }
 #ifdef WOLFMQTT_BROKER_RETAINED
-            /* Deliver retained messages matching this filter */
-            {
+            else {
+                /* Deliver retained messages matching this filter */
                 char filter_z[BROKER_MAX_FILTER_LEN];
                 word16 copy_len = flen;
                 if (copy_len >= BROKER_MAX_FILTER_LEN) {
@@ -3153,8 +3257,14 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 }
             }
 #endif
-            (void)BrokerRetained_Store(broker, topic, payload,
-                pub.total_len, expiry);
+            {
+                int ret_rc = BrokerRetained_Store(broker, topic, payload,
+                    pub.total_len, expiry);
+                if (ret_rc != MQTT_CODE_SUCCESS) {
+                    WBLOG_ERR(broker, "Retained store failed: %s",
+                        MqttClient_ReturnCodeToString(ret_rc));
+                }
+            }
         }
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */

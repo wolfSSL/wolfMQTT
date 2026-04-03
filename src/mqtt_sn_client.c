@@ -1130,6 +1130,10 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         if (rc != client->write.len) {
         #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockSend);
+            if (wm_SemLock(&client->lockClient) == 0) {
+                MqttClient_RespList_Remove(client, &mc_connect->pendResp);
+                wm_SemUnlock(&client->lockClient);
+            }
         #endif
             return rc;
         }
@@ -1286,8 +1290,8 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
                 client->tx_buf_len, will);
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d)",
-            rc, SN_Packet_TypeDesc(SN_MSG_TYPE_WILLTOPICUPD),
-            SN_MSG_TYPE_WILLTOPICUPD);
+            rc, SN_Packet_TypeDesc(SN_MSG_TYPE_WILLMSGUPD),
+            SN_MSG_TYPE_WILLMSGUPD);
     #endif
         if (rc <= 0) {
         #ifdef WOLFMQTT_MULTITHREAD
@@ -1935,9 +1939,11 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     if (rc != client->write.len) {
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
-        if (wm_SemLock(&client->lockClient) == 0) {
-            MqttClient_RespList_Remove(client, &disconnect->pendResp);
-            wm_SemUnlock(&client->lockClient);
+        if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
+            if (wm_SemLock(&client->lockClient) == 0) {
+                MqttClient_RespList_Remove(client, &disconnect->pendResp);
+                wm_SemUnlock(&client->lockClient);
+            }
         }
     #endif
         return rc;
