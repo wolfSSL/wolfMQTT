@@ -2114,6 +2114,206 @@ TEST(decode_unsuback_malformed_remain_len_one)
 }
 
 /* ============================================================================
+ * Fixed-header reserved-flag validation [MQTT-2.2.2-2]
+ *
+ * The first byte of every MQTT packet packs the type (high nibble) and a
+ * reserved-flag nibble. Most packet types fix that nibble to a single
+ * required value; PUBLISH carries DUP/QoS/RETAIN. Invalid values MUST be
+ * treated as malformed and cause the receiver to close the connection.
+ *
+ * MqttPacket_FixedHeaderFlagsValid is the single source of truth used by
+ * MqttDecode_FixedHeader (covers SUBSCRIBE, UNSUBSCRIBE, PUBREL, etc.) and
+ * by the broker dispatch (covers types with no decoder: PUBACK, PUBCOMP,
+ * PINGREQ, DISCONNECT). These tests pin both surfaces.
+ * ============================================================================ */
+
+TEST(fixed_header_flags_valid_canonical_values)
+{
+    /* Canonical first-byte values for each fixed-flag packet type. */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x10)); /* CONNECT */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x20)); /* CONNACK */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x40)); /* PUBACK */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x50)); /* PUBREC */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x62)); /* PUBREL */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x70)); /* PUBCOMP */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x82)); /* SUBSCRIBE */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x90)); /* SUBACK */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xA2)); /* UNSUBSCRIBE */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xB0)); /* UNSUBACK */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xC0)); /* PINGREQ */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xD0)); /* PINGRESP */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xE0)); /* DISCONNECT */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xF0)); /* AUTH (v5) */
+}
+
+TEST(fixed_header_flags_valid_zero_required_rejects_nonzero)
+{
+    /* Types whose reserved nibble MUST be 0000. Each non-zero permutation
+     * is malformed. */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x11)); /* CONNECT */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x18));
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x21)); /* CONNACK */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x42)); /* PUBACK */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x52)); /* PUBREC */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x72)); /* PUBCOMP */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x91)); /* SUBACK */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0xB2)); /* UNSUBACK */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0xC1)); /* PINGREQ */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0xD1)); /* PINGRESP */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0xE2)); /* DISCONNECT */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0xFF)); /* AUTH */
+}
+
+TEST(fixed_header_flags_valid_two_required_rejects_other)
+{
+    /* [MQTT-3.6.1-1] PUBREL, [MQTT-3.8.1-1] SUBSCRIBE, [MQTT-3.10.1-1]
+     * UNSUBSCRIBE all require the low nibble = 0010. Any other value is
+     * malformed. */
+    int v;
+    for (v = 0x60; v <= 0x6F; v++) {
+        if (v == 0x62) continue;
+        ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid((byte)v));
+    }
+    for (v = 0x80; v <= 0x8F; v++) {
+        if (v == 0x82) continue;
+        ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid((byte)v));
+    }
+    for (v = 0xA0; v <= 0xAF; v++) {
+        if (v == 0xA2) continue;
+        ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid((byte)v));
+    }
+}
+
+TEST(fixed_header_flags_valid_publish_qos_and_dup)
+{
+    /* PUBLISH carries DUP/QoS/RETAIN: 0x3X where X = DUP|QoS|RETAIN. */
+    /* QoS 0..2 with DUP=0 are all legal regardless of RETAIN. */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x30)); /* QoS0, no DUP */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x31)); /* QoS0, RETAIN */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x32)); /* QoS1 */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x33)); /* QoS1, RETAIN */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x34)); /* QoS2 */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x35)); /* QoS2, RETAIN */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x3A)); /* QoS1, DUP */
+    ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0x3C)); /* QoS2, DUP */
+
+    /* [MQTT-3.3.1-4] QoS = 3 (bits 1-2 = 11) is reserved/malformed. */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x36));
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x37));
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x3E));
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x3F));
+
+    /* [MQTT-3.3.1-2] DUP MUST be 0 when QoS = 0. */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x38)); /* QoS0, DUP=1 */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x39)); /* QoS0, DUP, RET */
+}
+
+/* End-to-end: the SUBSCRIBE decoder rejects each invalid first-byte
+ * variant cited in the issue report (0x80, 0x81, 0x83) and the broker's
+ * dispatch uses the same helper, so both surfaces close the connection. */
+#ifdef WOLFMQTT_BROKER
+TEST(decode_subscribe_invalid_fixed_header_flags)
+{
+    /* Body matches the valid SUBSCRIBE wire from decode_subscribe_v311_
+     * single_topic; only the leading type+flags byte varies. */
+    byte rx_buf[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01,
+        0x61,
+        0x01
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+    byte invalid[] = { 0x80, 0x81, 0x83, 0x84, 0x86, 0x88, 0x8F };
+    size_t i;
+
+    for (i = 0; i < sizeof(invalid); i++) {
+        rx_buf[0] = invalid[i];
+        XMEMSET(&sub, 0, sizeof(sub));
+        XMEMSET(topic_arr, 0, sizeof(topic_arr));
+        sub.topics = topic_arr;
+        rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+        ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    }
+}
+
+TEST(decode_unsubscribe_invalid_fixed_header_flags)
+{
+    /* Wire: type|flags=0xA2, remaining=5, packet_id=0x0001, topic_len=0x0001,
+     * "a". Per [MQTT-3.10.1-1] only 0xA2 is legal. */
+    byte rx_buf[] = {
+        0xA2, 0x05,
+        0x00, 0x01,
+        0x00, 0x01,
+        0x61
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+    byte invalid[] = { 0xA0, 0xA1, 0xA3, 0xA4, 0xA6, 0xA8, 0xAF };
+    size_t i;
+
+    for (i = 0; i < sizeof(invalid); i++) {
+        rx_buf[0] = invalid[i];
+        XMEMSET(&unsub, 0, sizeof(unsub));
+        XMEMSET(topic_arr, 0, sizeof(topic_arr));
+        unsub.topics = topic_arr;
+        rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+        ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    }
+}
+#endif /* WOLFMQTT_BROKER */
+
+TEST(decode_pubrel_invalid_fixed_header_flags)
+{
+    /* Wire: type|flags=0x62, remain=2, packet_id=0x0001. */
+    byte rx_buf[] = { 0x62, 0x02, 0x00, 0x01 };
+    MqttPublishResp resp;
+    int rc;
+
+    rx_buf[0] = 0x60; /* PUBREL with reserved nibble = 0000 */
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(rx_buf, (int)sizeof(rx_buf),
+            MQTT_PACKET_TYPE_PUBLISH_REL, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+
+    rx_buf[0] = 0x63;
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(rx_buf, (int)sizeof(rx_buf),
+            MQTT_PACKET_TYPE_PUBLISH_REL, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_publish_qos3_rejected)
+{
+    /* [MQTT-3.3.1-4] QoS 3 (reserved) MUST be treated as malformed. */
+    byte buf[] = { 0x36, 7,
+                   0x00, 0x03, 'a', '/', 'b',
+                   'H', 'I' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_publish_qos0_with_dup_rejected)
+{
+    /* [MQTT-3.3.1-2] DUP MUST be 0 when QoS = 0. */
+    byte buf[] = { 0x38, 5,
+                   0x00, 0x03, 'a', '/', 'b' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* ============================================================================
  * MqttEncode/Decode_PublishResp v5 roundtrip
  * ============================================================================ */
 
@@ -2481,6 +2681,19 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_valid);
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
+
+    /* Fixed-header reserved-flag validation [MQTT-2.2.2-2] */
+    RUN_TEST(fixed_header_flags_valid_canonical_values);
+    RUN_TEST(fixed_header_flags_valid_zero_required_rejects_nonzero);
+    RUN_TEST(fixed_header_flags_valid_two_required_rejects_other);
+    RUN_TEST(fixed_header_flags_valid_publish_qos_and_dup);
+#ifdef WOLFMQTT_BROKER
+    RUN_TEST(decode_subscribe_invalid_fixed_header_flags);
+    RUN_TEST(decode_unsubscribe_invalid_fixed_header_flags);
+#endif
+    RUN_TEST(decode_pubrel_invalid_fixed_header_flags);
+    RUN_TEST(decode_publish_qos3_rejected);
+    RUN_TEST(decode_publish_qos0_with_dup_rejected);
 
 #ifdef WOLFMQTT_V5
     RUN_TEST(publish_resp_v5_success_with_props_roundtrip);

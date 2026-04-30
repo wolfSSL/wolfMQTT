@@ -654,6 +654,14 @@ WOLFMQTT_API int MqttPacket_Write(struct _MqttClient *client, byte* tx_buf,
 WOLFMQTT_API int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf,
     int rx_buf_len, int timeout_ms);
 
+/* [MQTT-2.2.2-2] Validate the fixed-header reserved-flag bits for the given
+ * first packet byte (type+flags). Returns 1 if the flags are valid for the
+ * packet type, 0 if malformed. PUBLISH (type 3) carries DUP/QoS/RETAIN; QoS
+ * value 3 ([MQTT-3.3.1-4]) and DUP=1 with QoS=0 ([MQTT-3.3.1-2]) are
+ * rejected. The receiver MUST close the network connection on a malformed
+ * packet. */
+WOLFMQTT_API int MqttPacket_FixedHeaderFlagsValid(byte type_flags);
+
 /* Packet Element Encoders/Decoders */
 WOLFMQTT_API int MqttDecode_Num(byte* buf, word16 *len, word32 buf_len);
 WOLFMQTT_API int MqttEncode_Num(byte *buf, word16 len);

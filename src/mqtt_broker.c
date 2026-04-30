@@ -3243,7 +3243,8 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         return rc;
     }
 
-    /* [MQTT-3.3.2-2] PUBLISH topic must not contain wildcard characters */
+    /* [MQTT-3.3.2-2] PUBLISH topic must not contain wildcard characters.
+     * Return MALFORMED_DATA so dispatch closes the connection. */
     if (pub.topic_name && pub.topic_name_len > 0) {
         word16 i;
         for (i = 0; i < pub.topic_name_len; i++) {
@@ -3251,7 +3252,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 WBLOG_ERR(broker,
                     "broker: PUBLISH topic contains wildcard sock=%d",
                     (int)bc->sock);
-                return MQTT_CODE_ERROR_BAD_ARG;
+                return MQTT_CODE_ERROR_MALFORMED_DATA;
             }
         }
     }
@@ -3465,6 +3466,28 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
     return rc;
 }
 
+/* [MQTT-2.2.2-2] / [MQTT-3.8.1-1] etc.: a malformed packet MUST cause the
+ * server to close the network connection. Mirrors the read-failure close
+ * path: publish will, honor session persistence, then remove the client. */
+static void BrokerClient_AbnormalClose(MqttBroker* broker, BrokerClient* bc)
+{
+    BrokerClient_PublishWill(broker, bc);
+    if (bc->clean_session) {
+        BrokerSubs_RemoveClient(broker, bc);
+    }
+    else {
+        BrokerSubs_OrphanClient(broker, bc);
+    }
+    BrokerClient_Remove(broker, bc);
+}
+
+/* Decode-level errors that indicate a malformed packet on the wire. */
+static int BrokerRcIsMalformed(int rc)
+{
+    return (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
+            rc == MQTT_CODE_ERROR_PACKET_TYPE);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Per-client processing (called from Step)                                    */
 /* -------------------------------------------------------------------------- */
@@ -3526,15 +3549,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     }
     else if (rc < 0) {
         WBLOG_ERR(broker, "broker: read failed sock=%d rc=%d", (int)bc->sock, rc);
-        BrokerClient_PublishWill(broker, bc); /* abnormal disconnect */
-        /* Session persistence: keep subs if clean_session=0 */
-        if (bc->clean_session) {
-            BrokerSubs_RemoveClient(broker, bc);
-        }
-        else {
-            BrokerSubs_OrphanClient(broker, bc);
-        }
-        BrokerClient_Remove(broker, bc);
+        BrokerClient_AbnormalClose(broker, bc);
         return 0;
     }
 
@@ -3549,6 +3564,24 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             ((BrokerWsCtx*)bc->ws_ctx)->processing = 1;
         }
 #endif
+        /* [MQTT-2.2.2-2] Reject malformed fixed-header reserved flags. The
+         * per-type decoders also enforce this (see MqttDecode_FixedHeader),
+         * but PUBACK / PUBCOMP / PINGREQ / DISCONNECT are not run through a
+         * decoder here, so the broker enforces it directly before dispatch. */
+        if (!MqttPacket_FixedHeaderFlagsValid(bc->rx_buf[0])) {
+            WBLOG_ERR(broker,
+                "broker: invalid fixed-header flags type=%u byte=0x%02X "
+                "sock=%d [MQTT-2.2.2-2]",
+                type, bc->rx_buf[0], (int)bc->sock);
+            if (bc->connected) {
+                BrokerClient_AbnormalClose(broker, bc);
+            }
+            else {
+                BrokerSubs_RemoveClient(broker, bc);
+                BrokerClient_Remove(broker, bc);
+            }
+            return 0;
+        }
         /* [MQTT-3.1.0-1] First packet must be CONNECT */
         if (type != MQTT_PACKET_TYPE_CONNECT && !bc->connected) {
             WBLOG_ERR(broker,
@@ -3581,31 +3614,61 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 break;
             }
             case MQTT_PACKET_TYPE_PUBLISH:
-                (void)BrokerHandle_Publish(bc, rc, broker);
+            {
+                int p_rc = BrokerHandle_Publish(bc, rc, broker);
+                if (BrokerRcIsMalformed(p_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 break;
+            }
             case MQTT_PACKET_TYPE_PUBLISH_ACK:
                 /* QoS 1 ack from subscriber - delivery complete */
                 break;
             case MQTT_PACKET_TYPE_PUBLISH_REC:
+            {
                 /* QoS 2 step 2: subscriber sends PUBREC, broker
                  * responds with PUBREL */
-                (void)BrokerHandle_PublishRec(bc, rc);
+                int p_rc = BrokerHandle_PublishRec(bc, rc);
+                if (BrokerRcIsMalformed(p_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 break;
+            }
             case MQTT_PACKET_TYPE_PUBLISH_REL:
+            {
                 /* QoS 2 step 3: publisher sends PUBREL, broker
                  * responds with PUBCOMP */
-                (void)BrokerHandle_PublishRel(bc, rc);
+                int p_rc = BrokerHandle_PublishRel(bc, rc);
+                if (BrokerRcIsMalformed(p_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 break;
+            }
             case MQTT_PACKET_TYPE_PUBLISH_COMP:
                 /* QoS 2 step 4: subscriber sends PUBCOMP - delivery
                  * complete */
                 break;
             case MQTT_PACKET_TYPE_SUBSCRIBE:
-                (void)BrokerHandle_Subscribe(bc, rc, broker);
+            {
+                int s_rc = BrokerHandle_Subscribe(bc, rc, broker);
+                if (BrokerRcIsMalformed(s_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 break;
+            }
             case MQTT_PACKET_TYPE_UNSUBSCRIBE:
-                (void)BrokerHandle_Unsubscribe(bc, rc, broker);
+            {
+                int u_rc = BrokerHandle_Unsubscribe(bc, rc, broker);
+                if (BrokerRcIsMalformed(u_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 break;
+            }
             case MQTT_PACKET_TYPE_PING_REQ:
                 (void)BrokerSend_PingResp(bc);
                 break;

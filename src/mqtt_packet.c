@@ -182,6 +182,59 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     return header_len;
 }
 
+/* [MQTT-2.2.2-1] Required fixed-header reserved-flag values per packet type.
+ * PUBLISH (type 3) carries DUP/QoS/RETAIN and is validated separately. */
+static int FixedHeaderFlagsExpected(byte type, byte *expected)
+{
+    switch (type) {
+        case MQTT_PACKET_TYPE_CONNECT:
+        case MQTT_PACKET_TYPE_CONNECT_ACK:
+        case MQTT_PACKET_TYPE_PUBLISH_ACK:
+        case MQTT_PACKET_TYPE_PUBLISH_REC:
+        case MQTT_PACKET_TYPE_PUBLISH_COMP:
+        case MQTT_PACKET_TYPE_SUBSCRIBE_ACK:
+        case MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK:
+        case MQTT_PACKET_TYPE_PING_REQ:
+        case MQTT_PACKET_TYPE_PING_RESP:
+        case MQTT_PACKET_TYPE_DISCONNECT:
+        case MQTT_PACKET_TYPE_AUTH:
+            *expected = 0x0;
+            return 1;
+        case MQTT_PACKET_TYPE_PUBLISH_REL:
+        case MQTT_PACKET_TYPE_SUBSCRIBE:
+        case MQTT_PACKET_TYPE_UNSUBSCRIBE:
+            *expected = 0x2;
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+int MqttPacket_FixedHeaderFlagsValid(byte type_flags)
+{
+    byte type = (byte)MQTT_PACKET_TYPE_GET(type_flags);
+    byte flags = (byte)MQTT_PACKET_FLAGS_GET(type_flags);
+    byte expected;
+
+    if (type == MQTT_PACKET_TYPE_PUBLISH) {
+        byte qos = (byte)MQTT_PACKET_FLAGS_GET_QOS(type_flags);
+        byte dup = (flags & MQTT_PACKET_FLAG_DUPLICATE) ? 1 : 0;
+        if (qos > MQTT_QOS_2) {
+            return 0;
+        }
+        if (qos == MQTT_QOS_0 && dup) {
+            return 0;
+        }
+        return 1;
+    }
+    if (FixedHeaderFlagsExpected(type, &expected)) {
+        return (flags == expected) ? 1 : 0;
+    }
+    /* Unknown/reserved type: this helper validates the flag nibble only.
+     * Callers are responsible for rejecting unknown packet types. */
+    return 1;
+}
+
 static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     byte type, MqttQoS *p_qos, byte *p_retain, byte *p_duplicate)
 {
@@ -197,6 +250,11 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     /* Validate packet type */
     if (MQTT_PACKET_TYPE_GET(header->type_flags) != type) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
+    }
+
+    /* [MQTT-2.2.2-2] Reject invalid fixed-header reserved flags. */
+    if (!MqttPacket_FixedHeaderFlagsValid(header->type_flags)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
     /* Extract header flags */
