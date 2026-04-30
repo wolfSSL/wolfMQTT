@@ -15,6 +15,24 @@ tests_unit_tests_DEPENDENCIES = src/libwolfmqtt.la
 # Test framework header
 noinst_HEADERS += tests/unit_test.h
 
+# Broker CONNECT handler tests. Compiles src/mqtt_broker.c into the test
+# binary with WOLFMQTT_BROKER_CUSTOM_NET so the network layer is replaced
+# with mock callbacks driven by the harness.
+if BUILD_BROKER
+check_PROGRAMS += tests/test_broker_connect
+tests_test_broker_connect_SOURCES = \
+    tests/test_broker_connect.c \
+    src/mqtt_broker.c
+tests_test_broker_connect_CFLAGS   = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
+    -DWOLFMQTT_BROKER_NO_LOG -DNO_MAIN_DRIVER \
+    '-DWOLFMQTT_BROKER_GET_TIME_S()=((WOLFMQTT_BROKER_TIME_T)0)' \
+    '-DBROKER_SLEEP_MS(ms)=do{}while(0)' \
+    $(AM_CFLAGS)
+tests_test_broker_connect_CPPFLAGS = -I$(top_srcdir) $(AM_CPPFLAGS)
+tests_test_broker_connect_LDADD    = src/libwolfmqtt.la $(LIB_STATIC_ADD)
+tests_test_broker_connect_DEPENDENCIES = src/libwolfmqtt.la
+endif
+
 if BUILD_FUZZ
 if BUILD_BROKER
 noinst_PROGRAMS += tests/fuzz/broker_fuzz

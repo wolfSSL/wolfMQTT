@@ -319,6 +319,8 @@ typedef struct MqttBroker {
 #endif
     MqttBrokerNet net;
     word16  next_packet_id;
+    word32  next_auto_id; /* monotonically increasing counter for
+                           * server-assigned ClientIds (empty-ID accepts) */
 #ifdef ENABLE_MQTT_TLS
     BROKER_SOCKET_T listen_sock_tls; /* TLS listener socket */
     word16       port_tls;           /* TLS port (default 8883) */

@@ -2711,6 +2711,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     MqttConnect mc;
     MqttConnectAck ack;
     MqttMessage lwt;
+    word16 id_len = 0;
+    int auto_assigned = 0;
 
     XMEMSET(&mc, 0, sizeof(mc));
     XMEMSET(&ack, 0, sizeof(ack));
@@ -2740,7 +2742,6 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     bc->client_id[0] = '\0';
 #endif
     if (mc.client_id) {
-        word16 id_len = 0;
         if (MqttDecode_Num((byte*)mc.client_id - MQTT_DATA_LEN_SIZE,
                 &id_len, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
         #ifdef WOLFMQTT_STATIC_MEMORY
@@ -2762,14 +2763,101 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 goto send_connack;
             }
         #endif
-            BROKER_STORE_STR(bc->client_id, mc.client_id, id_len,
-                BROKER_MAX_CLIENT_ID_LEN);
+            if (id_len > 0) {
+                BROKER_STORE_STR(bc->client_id, mc.client_id, id_len,
+                    BROKER_MAX_CLIENT_ID_LEN);
+            }
         }
+    }
+
+    /* Reserve the "auto-" prefix for server-assigned IDs. Without this an
+     * attacker could observe their own assigned auto-XXXXXXXX, then reconnect
+     * with an explicit client_id matching a predicted future value and
+     * hijack a victim's session via the duplicate-takeover path below. */
+    if (id_len >= 5 && BROKER_STR_VALID(bc->client_id) &&
+        XSTRNCMP(bc->client_id, "auto-", 5) == 0) {
+        WBLOG_ERR(broker,
+            "broker: client_id with reserved 'auto-' prefix sock=%d",
+            (int)bc->sock);
+    #ifdef WOLFMQTT_V5
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            ack.return_code = MQTT_REASON_CLIENT_ID_NOT_VALID;
+        }
+        else
+    #endif
+        {
+            ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_ID;
+        }
+        goto send_connack;
+    }
+
+    /* [MQTT-3.1.3-8] v3.1.1: zero-length ClientId requires CleanSession=1.
+     * The server MUST respond with CONNACK 0x02 (Identifier rejected) and
+     * close the connection. v5 dropped this restriction in favor of Clean
+     * Start + Session Expiry Interval, so it is enforced for v3.1.1 only. */
+    if (id_len == 0 && !mc.clean_session
+#ifdef WOLFMQTT_V5
+        && mc.protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5
+#endif
+        ) {
+        WBLOG_ERR(broker,
+            "broker: empty ClientId with clean_session=0 sock=%d "
+            "[MQTT-3.1.3-8]", (int)bc->sock);
+        ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_ID;
+        goto send_connack;
     }
 
     bc->protocol_level = mc.protocol_level;
     bc->keep_alive_sec = mc.keep_alive_sec;
     bc->last_rx = WOLFMQTT_BROKER_GET_TIME_S();
+
+    /* [MQTT-3.1.3-6] If we accepted a zero-length ClientId, assign a unique
+     * server-generated one before the duplicate-check / session-resume block
+     * below so the assigned ID flows through normal handling. v5 also echoes
+     * it back to the client via the Assigned Client Identifier property
+     * (emitted in the v5 CONNACK construction below); v3.1.1 has no such
+     * field, so the assignment is server-internal. */
+    if (id_len == 0 && !BROKER_STR_VALID(bc->client_id)) {
+        /* "auto-" + at least 8 hex chars + NUL. On a 16-bit-int platform the
+         * full 32-bit counter prints as more than 8 nibbles, so size for
+         * headroom rather than the minimum. The counter advances on every
+         * empty-ID CONNECT that reaches this point — including connects that
+         * are later refused (e.g., auth failure below) — so it is not a
+         * count of accepted clients. */
+        char auto_id[32];
+        int auto_len;
+        unsigned long id_value = (unsigned long)broker->next_auto_id++;
+        if (broker->next_auto_id == 0) {
+            /* Skip 0 on wrap for stylistic consistency with next_packet_id;
+             * unlike packet IDs, 0 has no protocol significance here. */
+            broker->next_auto_id = 1;
+        }
+        auto_len = XSNPRINTF(auto_id, (int)sizeof(auto_id),
+            "auto-%08lx", id_value);
+        if (auto_len > 0) {
+            BROKER_STORE_STR(bc->client_id, auto_id, (word16)auto_len,
+                BROKER_MAX_CLIENT_ID_LEN);
+        }
+        if (!BROKER_STR_VALID(bc->client_id)) {
+            /* Storage failed (e.g., WOLFMQTT_MALLOC returned NULL in the
+             * dynamic-memory path). Refuse rather than proceeding with an
+             * untracked client. */
+            WBLOG_ERR(broker,
+                "broker: auto-id store failed sock=%d", (int)bc->sock);
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+            }
+            else
+        #endif
+            {
+                ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+            }
+            goto send_connack;
+        }
+        auto_assigned = 1;
+    }
+
     WBLOG_INFO(broker, "broker: CONNECT proto=%u clean=%d will=%d client_id=%s",
         mc.protocol_level, mc.clean_session, mc.enable_lwt,
         BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
@@ -3001,25 +3089,16 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         ack.return_code == MQTT_CONNECT_ACK_CODE_ACCEPTED) {
         MqttProp* prop;
 
-        /* If client sent empty client ID, generate one and inform client */
-        if (!BROKER_STR_VALID(bc->client_id)) {
-            char auto_id[32];
-            int id_len = XSNPRINTF(auto_id, (int)sizeof(auto_id),
-                "auto-%04x", broker->next_packet_id++);
-            if (broker->next_packet_id == 0) {
-                broker->next_packet_id = 1;
-            }
-            if (id_len > 0) {
-                BROKER_STORE_STR(bc->client_id, auto_id, (word16)id_len,
-                    BROKER_MAX_CLIENT_ID_LEN);
-            }
-            if (BROKER_STR_VALID(bc->client_id)) {
-                prop = MqttProps_Add(&ack.props);
-                if (prop != NULL) {
-                    prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
-                    prop->data_str.str = bc->client_id;
-                    prop->data_str.len = (word16)XSTRLEN(bc->client_id);
-                }
+        /* [MQTT-3.1.3-6] Echo any server-assigned ClientId to v5 clients.
+         * Keyed off auto_assigned (set in the auto-id branch above) so this
+         * stays true to its name even if a future code path populates
+         * bc->client_id from another source (e.g., a TLS-cert identity). */
+        if (auto_assigned) {
+            prop = MqttProps_Add(&ack.props);
+            if (prop != NULL) {
+                prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
+                prop->data_str.str = bc->client_id;
+                prop->data_str.len = (word16)XSTRLEN(bc->client_id);
             }
         }
 
@@ -3050,9 +3129,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
-#if defined(WOLFMQTT_BROKER_WILL) || defined(WOLFMQTT_STATIC_MEMORY)
 send_connack:
-#endif
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
     if (rc > 0) {
         WBLOG_INFO(broker, "broker: CONNACK send sock=%d code=%d", (int)bc->sock,
@@ -3744,6 +3821,7 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     broker->running = 0;
     broker->log_level = BROKER_LOG_LEVEL_DEFAULT;
     broker->next_packet_id = 1;
+    broker->next_auto_id = 1;
 
 #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
     /* For the default POSIX backend, the net callbacks expect ctx to be a
