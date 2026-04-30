@@ -308,6 +308,362 @@ TEST(encode_decode_vbi_roundtrip)
 }
 
 /* ============================================================================
+ * UTF-8 well-formedness validation [MQTT-1.5.3-1]
+ *
+ * MqttDecode_String validates that the bytes following the 2-byte length
+ * prefix are well-formed UTF-8 per RFC 3629, including the surrogate-code-
+ * point ban (U+D800..U+DFFF). The internal validator is static; we exercise
+ * it through the protocol-level decoders (Subscribe, Publish, Connect) since
+ * those are what enforce the spec rule on the wire.
+ *
+ * Each test below builds a SUBSCRIBE packet whose topic-filter bytes carry
+ * the UTF-8 sequence under test, and asserts:
+ *   - well-formed bytes -> decode succeeds (rc > 0)
+ *   - ill-formed bytes  -> MQTT_CODE_ERROR_MALFORMED_DATA (which the broker's
+ *     existing error path translates into a connection close).
+ *
+ * Bytes used by the tests:
+ *   ASCII "ab"               61 62
+ *   2-byte U+00E9 (é)        C3 A9
+ *   3-byte U+20AC (€)        E2 82 AC
+ *   3-byte U+0800 (low edge) E0 A0 80
+ *   3-byte U+D7FF (last pre- ED 9F BF
+ *                  surrogate)
+ *   3-byte U+E000 (first post-EE 80 80
+ *                  surrogate)
+ *   4-byte U+10000           F0 90 80 80
+ *   4-byte U+10FFFF (max)    F4 8F BF BF
+ *   overlong 2-byte 0x2F     C0 AF
+ *   overlong 3-byte 0x2F     E0 80 AF
+ *   overlong 4-byte 0x2F     F0 80 80 AF
+ *   surrogate U+D800         ED A0 80
+ *   surrogate U+DFFF         ED BF BF
+ *   > U+10FFFF               F4 90 80 80
+ *   F5+ leading byte         F5 80 80 80
+ *   lone continuation        80
+ *   truncated 2-byte         C2
+ *   truncated 4-byte         F0 90 80
+ *   invalid leading FE/FF    FE / FF
+ * ============================================================================ */
+
+#ifdef WOLFMQTT_BROKER
+/* Build a v3.1.1 SUBSCRIBE wire buffer with the given topic_filter bytes
+ * and write it into out. Returns the total wire length. */
+static int build_subscribe_with_topic(byte* out, size_t out_sz,
+    const byte* topic, word16 topic_len)
+{
+    /* type=0x82, remain=VBI, packet_id=0x0001, topic_len=word16,
+     * topic..., options=0x01. remain = 2 + 2 + topic_len + 1 = topic_len+5 */
+    int remain = (int)topic_len + 5;
+    int written = 0;
+    if ((size_t)remain + 2 > out_sz || remain > 127) {
+        return -1;
+    }
+    out[written++] = 0x82;
+    out[written++] = (byte)remain;
+    out[written++] = 0x00; out[written++] = 0x01;            /* packet_id */
+    out[written++] = (byte)(topic_len >> 8);
+    out[written++] = (byte)(topic_len & 0xFF);
+    if (topic_len > 0) {
+        XMEMCPY(out + written, topic, topic_len);
+        written += topic_len;
+    }
+    out[written++] = 0x01; /* options: QoS 1 */
+    return written;
+}
+
+/* Run a SUBSCRIBE through the decoder with the given topic-filter bytes and
+ * return the decoder's return code. */
+static int decode_subscribe_with_topic(const byte* topic, word16 topic_len)
+{
+    byte rx_buf[128];
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int wire_len = build_subscribe_with_topic(rx_buf, sizeof(rx_buf),
+        topic, topic_len);
+    if (wire_len < 0) {
+        return -1;
+    }
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    return MqttDecode_Subscribe(rx_buf, wire_len, &sub);
+}
+
+TEST(decode_string_utf8_valid_ascii)
+{
+    byte t[] = { 'a', 'b' };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_valid_2byte)
+{
+    /* "café" tail: U+00E9 = C3 A9 */
+    byte t[] = { 'c', 0xC3, 0xA9 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_valid_3byte)
+{
+    /* U+20AC € = E2 82 AC */
+    byte t[] = { 0xE2, 0x82, 0xAC };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_valid_4byte)
+{
+    /* U+10000 = F0 90 80 80 */
+    byte t[] = { 0xF0, 0x90, 0x80, 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_valid_max_codepoint)
+{
+    /* U+10FFFF = F4 8F BF BF */
+    byte t[] = { 0xF4, 0x8F, 0xBF, 0xBF };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_valid_d7ff_just_below_surrogate)
+{
+    /* U+D7FF = ED 9F BF (last code point before the surrogate range) */
+    byte t[] = { 0xED, 0x9F, 0xBF };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_valid_e000_just_above_surrogate)
+{
+    /* U+E000 = EE 80 80 (first code point after the surrogate range) */
+    byte t[] = { 0xEE, 0x80, 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_string_utf8_invalid_overlong_2byte)
+{
+    /* 0xC0 0xAF encodes '/' (0x2F) overlong; RFC 3629 forbids overlong. */
+    byte t[] = { 0xC0, 0xAF };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_overlong_3byte)
+{
+    /* 0xE0 0x80 0xAF encodes '/' overlong */
+    byte t[] = { 0xE0, 0x80, 0xAF };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_overlong_4byte)
+{
+    /* 0xF0 0x80 0x80 0xAF encodes '/' overlong */
+    byte t[] = { 0xF0, 0x80, 0x80, 0xAF };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_surrogate_low)
+{
+    /* U+D800 = ED A0 80 — first surrogate, [MQTT-1.5.3-1] forbids. */
+    byte t[] = { 0xED, 0xA0, 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_surrogate_high)
+{
+    /* U+DFFF = ED BF BF — last surrogate */
+    byte t[] = { 0xED, 0xBF, 0xBF };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_above_max)
+{
+    /* F4 90 80 80 encodes U+110000 (above U+10FFFF). */
+    byte t[] = { 0xF4, 0x90, 0x80, 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_f5_leading)
+{
+    /* F5..FF are not valid UTF-8 leading bytes. */
+    byte t[] = { 0xF5, 0x80, 0x80, 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_lone_continuation)
+{
+    /* 0x80 alone — continuation byte without a leading byte. */
+    byte t[] = { 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_truncated_2byte)
+{
+    /* 0xC2 needs one continuation but is alone. */
+    byte t[] = { 0xC2 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_truncated_4byte)
+{
+    /* 0xF0 0x90 0x80 needs one more continuation. */
+    byte t[] = { 0xF0, 0x90, 0x80 };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_string_utf8_invalid_FE_FF)
+{
+    /* FE / FF are not valid UTF-8 anywhere. */
+    byte t[] = { 0xFE };
+    int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_connect_invalid_utf8_clientid_overlong)
+{
+    /* CONNECT v3.1.1 with ClientId bytes 0xC0 0xAF (overlong). Reporter's
+     * dynamic test case `connect_clientid_overlong` — should now refuse.
+     * Wire: 0x10 + remain=14, "MQTT", level=4, flags=0x02, keepalive=60,
+     *       client_id_len=0x0002, [C0 AF]. */
+    byte rx_buf[] = {
+        0x10, 14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,
+        0x00, 0x3C,
+        0x00, 0x02, 0xC0, 0xAF
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_connect_invalid_utf8_clientid_surrogate)
+{
+    /* Reporter's `connect_clientid_surrogate` case: ClientId bytes ED A0 80
+     * (U+D800). */
+    byte rx_buf[] = {
+        0x10, 15,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,
+        0x00, 0x3C,
+        0x00, 0x03, 0xED, 0xA0, 0x80
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_BROKER */
+
+TEST(decode_publish_invalid_utf8_topic)
+{
+    /* PUBLISH QoS 0 with topic bytes ED A0 80 (surrogate U+D800).
+     * Wire: 0x30, remain=7, topic_len=0x0003, [ED A0 80], payload "x". */
+    byte buf[] = {
+        0x30, 7,
+        0x00, 0x03, 0xED, 0xA0, 0x80,
+        'x', 'x' /* dummy payload bytes */
+    };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+#ifdef WOLFMQTT_BROKER
+/* CONNECT with a binary (non-UTF-8) password must decode successfully,
+ * because MQTT defines the Password field as Binary Data — not a UTF-8
+ * string. The diff routes the password decode around MqttDecode_String to
+ * avoid spuriously rejecting valid binary passwords containing bytes like
+ * 0xC0 (which are not legal UTF-8 leading bytes). */
+TEST(decode_connect_v311_binary_password)
+{
+    /* Hand-built v3.1.1 CONNECT wire:
+     *   fixed:   0x10, remain=20
+     *   var hdr: "MQTT" (4 + len2), level 4, flags 0xC2 (user|pass|clean),
+     *            keepalive 60
+     *   payload: client_id "c" (3), username "u" (3),
+     *            password [0xC0 0xAF] (length 2 + 2 = 4)
+     * remain = 10 + 3 + 3 + 4 = 20 */
+    byte rx_buf[] = {
+        0x10, 20,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0xC2,           /* flags: USER|PASS|CLEAN */
+        0x00, 0x3C,
+        0x00, 0x01, 'c',
+        0x00, 0x01, 'u',
+        0x00, 0x02, 0xC0, 0xAF
+    };
+    MqttConnect dec;
+    int rc;
+    word16 plen = 0;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_NOT_NULL(dec.password);
+
+    /* The broker reads the password length by stepping back 2 bytes from
+     * the password pointer (see src/mqtt_broker.c). Pin that contract: the
+     * 2 bytes preceding mc_connect->password must encode 0x0002. */
+    ASSERT_EQ(MQTT_DATA_LEN_SIZE,
+        MqttDecode_Num((byte*)dec.password - MQTT_DATA_LEN_SIZE,
+            &plen, MQTT_DATA_LEN_SIZE));
+    ASSERT_EQ(2, plen);
+    ASSERT_EQ((byte)0xC0, ((byte*)dec.password)[0]);
+    ASSERT_EQ((byte)0xAF, ((byte*)dec.password)[1]);
+}
+
+/* CONNECT with an invalid UTF-8 username must be refused. Username is a
+ * UTF-8 string per [MQTT-3.1.3.4] and goes through MqttDecode_String. */
+TEST(decode_connect_invalid_utf8_username)
+{
+    /* Same shape as decode_connect_v311_binary_password but no password
+     * flag; username = surrogate ED A0 80.
+     * remain = 10 + 3 + 5 = 18 */
+    byte rx_buf[] = {
+        0x10, 18,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x82,           /* flags: USER|CLEAN */
+        0x00, 0x3C,
+        0x00, 0x01, 'c',
+        0x00, 0x03, 0xED, 0xA0, 0x80
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_BROKER */
+
+/* ============================================================================
  * MqttEncode_Publish
  * ============================================================================ */
 
@@ -2566,6 +2922,33 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_vbi_overlong_4byte_zero);
     RUN_TEST(decode_vbi_overlong_2byte_127);
     RUN_TEST(encode_decode_vbi_roundtrip);
+
+    /* UTF-8 well-formedness validation [MQTT-1.5.3-1] */
+#ifdef WOLFMQTT_BROKER
+    RUN_TEST(decode_string_utf8_valid_ascii);
+    RUN_TEST(decode_string_utf8_valid_2byte);
+    RUN_TEST(decode_string_utf8_valid_3byte);
+    RUN_TEST(decode_string_utf8_valid_4byte);
+    RUN_TEST(decode_string_utf8_valid_max_codepoint);
+    RUN_TEST(decode_string_utf8_valid_d7ff_just_below_surrogate);
+    RUN_TEST(decode_string_utf8_valid_e000_just_above_surrogate);
+    RUN_TEST(decode_string_utf8_invalid_overlong_2byte);
+    RUN_TEST(decode_string_utf8_invalid_overlong_3byte);
+    RUN_TEST(decode_string_utf8_invalid_overlong_4byte);
+    RUN_TEST(decode_string_utf8_invalid_surrogate_low);
+    RUN_TEST(decode_string_utf8_invalid_surrogate_high);
+    RUN_TEST(decode_string_utf8_invalid_above_max);
+    RUN_TEST(decode_string_utf8_invalid_f5_leading);
+    RUN_TEST(decode_string_utf8_invalid_lone_continuation);
+    RUN_TEST(decode_string_utf8_invalid_truncated_2byte);
+    RUN_TEST(decode_string_utf8_invalid_truncated_4byte);
+    RUN_TEST(decode_string_utf8_invalid_FE_FF);
+    RUN_TEST(decode_connect_invalid_utf8_clientid_overlong);
+    RUN_TEST(decode_connect_invalid_utf8_clientid_surrogate);
+    RUN_TEST(decode_connect_v311_binary_password);
+    RUN_TEST(decode_connect_invalid_utf8_username);
+#endif
+    RUN_TEST(decode_publish_invalid_utf8_topic);
 
     /* MqttEncode_Publish */
     RUN_TEST(encode_publish_qos1_packet_id_zero);

@@ -391,10 +391,76 @@ int MqttEncode_Int(byte* buf, word32 len)
     return MQTT_DATA_INT_SIZE;
 }
 
-/* Returns number of buffer bytes decoded */
-/* Returns pointer to string (which is not guaranteed to be null terminated) */
-/* Note: MqttDecode_Password mirrors this implementation for the CONNECT
- * Password binary-data field. Keep length and bounds handling in sync. */
+/* [MQTT-1.5.3-1] Validate that the given byte sequence is well-formed UTF-8
+ * per RFC 3629, including the surrogate-code-point ban (U+D800..U+DFFF MUST
+ * NOT be encoded). Returns 1 if valid, 0 if malformed.
+ *
+ * RFC 3629 byte-pattern table:
+ *   1-byte: 00..7F                             -> U+0000..U+007F
+ *   2-byte: C2..DF 80..BF                      -> U+0080..U+07FF
+ *   3-byte: E0    A0..BF 80..BF                -> U+0800..U+0FFF
+ *           E1..EC 80..BF 80..BF               -> U+1000..U+CFFF
+ *           ED    80..9F 80..BF                -> U+D000..U+D7FF
+ *           EE..EF 80..BF 80..BF               -> U+E000..U+FFFF
+ *   4-byte: F0    90..BF 80..BF 80..BF         -> U+10000..U+3FFFF
+ *           F1..F3 80..BF 80..BF 80..BF        -> U+40000..U+FFFFF
+ *           F4    80..8F 80..BF 80..BF         -> U+100000..U+10FFFF
+ * Anything else (overlong, surrogate, > U+10FFFF, lone continuation,
+ * truncated multi-byte) is malformed. */
+static int Utf8WellFormed(const byte* s, word16 len)
+{
+    word16 i = 0;
+    while (i < len) {
+        byte b0 = s[i];
+        byte b1, b2, b3;
+
+        if (b0 < 0x80) {
+            i++;
+            continue;
+        }
+        if (b0 < 0xC2 || b0 > 0xF4) {
+            /* C0/C1 are overlong-only; F5..FF exceed U+10FFFF or are not
+             * UTF-8 leading bytes. */
+            return 0;
+        }
+        if (b0 < 0xE0) {
+            /* 2-byte */
+            if ((word32)i + 1 >= (word32)len) return 0;
+            b1 = s[i+1];
+            if ((b1 & 0xC0) != 0x80) return 0;
+            i += 2;
+        }
+        else if (b0 < 0xF0) {
+            /* 3-byte */
+            if ((word32)i + 2 >= (word32)len) return 0;
+            b1 = s[i+1];
+            b2 = s[i+2];
+            if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return 0;
+            if (b0 == 0xE0 && b1 < 0xA0) return 0;          /* overlong */
+            if (b0 == 0xED && b1 >= 0xA0) return 0;         /* surrogate */
+            i += 3;
+        }
+        else {
+            /* 4-byte (b0 in F0..F4) */
+            if ((word32)i + 3 >= (word32)len) return 0;
+            b1 = s[i+1];
+            b2 = s[i+2];
+            b3 = s[i+3];
+            if ((b1 & 0xC0) != 0x80 ||
+                (b2 & 0xC0) != 0x80 ||
+                (b3 & 0xC0) != 0x80) return 0;
+            if (b0 == 0xF0 && b1 < 0x90) return 0;          /* overlong */
+            if (b0 == 0xF4 && b1 >= 0x90) return 0;         /* > U+10FFFF */
+            i += 4;
+        }
+    }
+    return 1;
+}
+
+/* Returns pointer to string (which is not guaranteed to be null terminated).
+ * [MQTT-1.5.3-1] Rejects ill-formed UTF-8 with MQTT_CODE_ERROR_MALFORMED_DATA;
+ * receivers MUST close the network connection on malformed packets, which the
+ * existing decode-error propagation in the broker handles. */
 int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf_len)
 {
     int len;
@@ -407,10 +473,7 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
     buf += len;
-    /* [MQTT-1.5.3-2] / [MQTT-1.5.4-2]: a UTF-8 encoded string MUST NOT
-     * include U+0000. Reject so downstream C-string handling cannot be
-     * tricked by an embedded NUL truncating the value. */
-    if (str_len > 0 && XMEMCHR(buf, 0x00, str_len) != NULL) {
+    if (str_len > 0 && !Utf8WellFormed(buf, str_len)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
     if (pstr_len) {
@@ -706,15 +769,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len,
                         (word32)(buf_len - (buf - pbuf)));
-                if (tmp == MQTT_CODE_ERROR_MALFORMED_DATA) {
-                    /* Propagate spec-required NUL rejection so callers can
-                     * distinguish malformed UTF-8 from generic property
-                     * decode failures. Other negative codes keep their
-                     * legacy MQTT_CODE_ERROR_PROPERTY mapping below. */
+                if (tmp < 0) {
+                    /* Preserve specific error (e.g., MALFORMED_DATA from
+                     * UTF-8 check) instead of masking as PROPERTY. */
                     rc = tmp;
-                }
-                else if (tmp < 0) {
-                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 }
                 else if ((word32)tmp <= (buf_len - (buf - pbuf))) {
                     buf += tmp;
@@ -778,13 +836,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                         (const char**)&cur_prop->data_str.str,
                         &cur_prop->data_str.len,
                         (word32)(buf_len - (buf - pbuf)));
-                /* See MQTT_DATA_TYPE_STRING above for the rationale on
-                 * propagating MALFORMED_DATA distinctly from other errors. */
-                if (tmp == MQTT_CODE_ERROR_MALFORMED_DATA) {
+                if (tmp < 0) {
                     rc = tmp;
-                }
-                else if (tmp < 0) {
-                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 }
                 else if ((word32)tmp <= (buf_len - (buf - pbuf))) {
                     buf += tmp;
@@ -795,12 +848,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                                 (const char**)&cur_prop->data_str2.str,
                                 &cur_prop->data_str2.len,
                                 (word32)(buf_len - (buf - pbuf)));
-                        /* See MQTT_DATA_TYPE_STRING above. */
-                        if (tmp == MQTT_CODE_ERROR_MALFORMED_DATA) {
+                        if (tmp < 0) {
                             rc = tmp;
-                        }
-                        else if (tmp < 0) {
-                            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                         }
                         else if ((word32)tmp <=
                                  (buf_len - (buf - pbuf))) {
@@ -1274,15 +1323,25 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
     }
 
     if (packet.flags & MQTT_CONNECT_FLAG_PASSWORD) {
-        tmp = MqttDecode_Password(rx_payload, &mc_connect->password, NULL,
+        /* Password is binary data, not a UTF-8 string ([MQTT-3.1.3.5]). Decode
+         * the length prefix directly so MqttDecode_String's UTF-8 validation
+         * does not reject non-UTF-8 password bytes. */
+        word16 plen = 0;
+        tmp = MqttDecode_Num(rx_payload, &plen,
                 (word32)(rx_buf_len - (rx_payload - rx_buf)));
         if (tmp < 0) {
             return tmp;
         }
-        if ((rx_payload - rx_buf) + tmp > header_len + remain_len) {
+        if ((word32)plen >
+            (word32)(rx_buf_len - (rx_payload - rx_buf) - tmp)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
         }
-        rx_payload += tmp;
+        if ((rx_payload - rx_buf) + tmp + (int)plen >
+            header_len + remain_len) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
+        mc_connect->password = (char*)(rx_payload + tmp);
+        rx_payload += tmp + plen;
     }
 
     (void)rx_payload;
@@ -1589,6 +1648,7 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     variable_len = MqttDecode_String(rx_payload, &publish->topic_name,
         &publish->topic_name_len, (word32)(rx_buf_len - (rx_payload - rx_buf)));
     if (variable_len < 0) {
+        /* Preserve specific error (e.g., MALFORMED_DATA from UTF-8 check). */
         return variable_len;
     }
     if (variable_len + header_len > rx_buf_len) {
