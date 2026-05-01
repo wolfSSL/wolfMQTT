@@ -360,6 +360,88 @@ TEST(connect_v311_explicit_auto_prefix_refused)
     MqttBroker_Free(&broker);
 }
 
+/* [MQTT-3.1.2-2] Unsupported Protocol Level must be refused with CONNACK
+ * 0x01 (REFUSED_PROTO) followed by disconnect. The CONNACK MUST come back
+ * in v3.1.1 wire shape (4 bytes: type, remain=2, flags, code) regardless
+ * of the level the client claimed — we don't know what their wire format
+ * actually is, and the spec text specifies "CONNACK return code 0x01"
+ * verbatim.
+ *
+ * Cases below mirror the dynamic test evidence in the issue report:
+ *   level 0x03 -> refused
+ *   level 0x06 -> refused (and not silently accepted as v5 just because
+ *                          the encoder uses level >= 5 as a mode switch).
+ */
+static void run_unsupported_level(byte level)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* Wire matches the reporter's case for level X with ClientId "A":
+     *   10 0d 00 04 4d 51 54 54 LL 02 00 3c 00 01 41
+     * (15 bytes total: fixed header 2 + remain 13 = type+nameLen+name+
+     *  level+flags+keepalive+idLen+id) */
+    byte connect[] = {
+        0x10, 13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x00, /* protocol_level placeholder */
+        0x02, /* CleanSession=1 */
+        0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    connect[8] = level;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Expect a v3.1.1-shaped CONNACK: 0x20, 0x02, flags, REFUSED_PROTO.
+     * [MQTT-3.1.2-2] mandates 0x01 for any unsupported level regardless of
+     * what the client claimed they spoke. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_PROTO, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+TEST(connect_unsupported_level_3_refused)
+{
+    run_unsupported_level(0x03);
+}
+
+TEST(connect_unsupported_level_6_refused)
+{
+    /* Catches the secondary issue the reporter flagged in section 3 of #496:
+     * pre-fix MqttDecode_Connect treated `protocol_level >= 5` as v5, so for
+     * level 6 the decoder consumed the byte at the v5 props_len position
+     * (0x00 here, parsed as zero-length props), then read the next two bytes
+     * (0x00 0x01) as the ClientId length prefix and 'A' as the start of a
+     * 1-byte ClientId. With WOLFMQTT_V5 the decoder still returned success
+     * for this particular wire, but it produced a misaligned MqttConnect with
+     * ClientId="" — so the test below also fails on the post-decode path
+     * unless the broker's [MQTT-3.1.2-2] check rejects the level. (For wires
+     * without enough trailing bytes, the pre-fix decoder instead returned
+     * OUT_OF_BUFFER and never emitted a CONNACK at all, which would also
+     * fail the `g_out_len >= 4` assertion.) Either way, this test pins the
+     * fix at both layers. */
+    run_unsupported_level(0x06);
+}
+
+TEST(connect_unsupported_level_127_refused)
+{
+    /* Top of the byte range — guards against a future "treat high values
+     * as latest known" mutation. */
+    run_unsupported_level(0x7F);
+}
+
 #ifdef WOLFMQTT_V5
 /* v5 dropped the [MQTT-3.1.3-8] CleanSession=1-only restriction; an empty
  * ClientId is acceptable with any Clean Start value. The broker MUST emit
@@ -463,6 +545,9 @@ int main(int argc, char** argv)
     RUN_TEST(connect_v311_emptyid_clean1_accepted);
     RUN_TEST(connect_v311_nonempty_clean0_accepted);
     RUN_TEST(connect_v311_explicit_auto_prefix_refused);
+    RUN_TEST(connect_unsupported_level_3_refused);
+    RUN_TEST(connect_unsupported_level_6_refused);
+    RUN_TEST(connect_unsupported_level_127_refused);
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
     RUN_TEST(connect_v5_emptyid_clean0_accepted);

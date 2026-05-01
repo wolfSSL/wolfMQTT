@@ -2737,6 +2737,31 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     ack.protocol_level = mc.protocol_level;
 #endif
 
+    /* [MQTT-3.1.2-2] Reject unsupported Protocol Level. Per spec, the server
+     * MUST respond with CONNACK 0x01 (unacceptable protocol level) and then
+     * disconnect. v3.1.1 (level 4) is always supported; v5 (level 5) only
+     * when WOLFMQTT_V5 is compiled in. Other values reach this branch and
+     * are refused before any session/will/auth processing. */
+    if (mc.protocol_level != MQTT_CONNECT_PROTOCOL_LEVEL_4
+#ifdef WOLFMQTT_V5
+        && mc.protocol_level != MQTT_CONNECT_PROTOCOL_LEVEL_5
+#endif
+        ) {
+        WBLOG_ERR(broker,
+            "broker: unsupported protocol level %u sock=%d [MQTT-3.1.2-2]",
+            (unsigned)mc.protocol_level, (int)bc->sock);
+        ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_PROTO;
+#ifdef WOLFMQTT_V5
+        /* The client claimed an unknown protocol; we don't know what wire
+         * format they expect for the CONNACK. Fall back to the v3.1.1
+         * shape (no properties), which is what [MQTT-3.1.2-2] specifies
+         * verbatim and is the simplest format any reasonable client can
+         * parse. */
+        ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+        goto send_connack;
+    }
+
     /* Store client ID */
 #ifdef WOLFMQTT_STATIC_MEMORY
     bc->client_id[0] = '\0';

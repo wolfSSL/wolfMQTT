@@ -1205,7 +1205,13 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
 
 #ifdef WOLFMQTT_V5
     mc_connect->props = NULL;
-    if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+    /* Only decode v5 properties when the level is exactly 5. Treating any
+     * level >= 5 as v5 incorrectly consumes a properties-length byte for
+     * unsupported levels (e.g., 6) — the broker's [MQTT-3.1.2-2] rejection
+     * runs after this function, so we must let the wire decode under the
+     * level the spec actually defines for it (here: nothing, fall through
+     * to the v3.1.1-shape payload). */
+    if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         /* Decode Length of Properties */
         if (rx_buf_len < (rx_payload - rx_buf)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
@@ -1252,7 +1258,8 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
 
 #ifdef WOLFMQTT_V5
         mc_connect->lwt_msg->props = NULL;
-        if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        /* See note above: only level 5 carries v5 LWT properties on the wire. */
+        if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             word32 lwt_props_len = 0;
             int lwt_tmp;
             /* Decode Length of LWT Properties */
