@@ -1547,6 +1547,13 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         }
         variable_len += MQTT_DATA_LEN_SIZE; /* For packet_id */
     }
+    else if (publish->duplicate) {
+        /* [MQTT-3.3.1-2] DUP MUST be 0 for all QoS 0 PUBLISH messages.
+         * The decoder rejects this combination via MqttPacket_FixedHeader
+         * FlagsValid; mirror the constraint at the encoder boundary so the
+         * library never produces a forbidden wire packet for a caller. */
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
 
 #ifdef WOLFMQTT_V5
     if (publish->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {

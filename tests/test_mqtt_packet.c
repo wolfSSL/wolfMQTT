@@ -794,6 +794,73 @@ TEST(encode_publish_qos0_no_flags_in_header)
     ASSERT_EQ(0, (int)MQTT_PACKET_FLAGS_GET(tx_buf[0]));
 }
 
+/* [MQTT-3.3.1-2] DUP MUST be 0 for all QoS 0 messages. The encoder must
+ * refuse the forbidden combination at the API boundary so the library can't
+ * produce a wire packet that the decoder (and any spec-compliant receiver)
+ * would reject as malformed. */
+TEST(encode_publish_qos0_with_dup_rejected)
+{
+    byte tx_buf[64];
+    byte payload[] = { 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "a";
+    pub.qos = MQTT_QOS_0;
+    pub.duplicate = 1;
+    pub.buffer = payload;
+    pub.total_len = sizeof(payload);
+
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+/* QoS 1 with DUP=1 is a legitimate retransmission shape per [MQTT-4.3.2].
+ * Pin that the new check is QoS-0-specific and doesn't break retransmits. */
+TEST(encode_publish_qos1_with_dup_accepted)
+{
+    byte tx_buf[64];
+    byte payload[] = { 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "a";
+    pub.qos = MQTT_QOS_1;
+    pub.packet_id = 42;
+    pub.duplicate = 1;
+    pub.buffer = payload;
+    pub.total_len = sizeof(payload);
+
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+    /* Fixed-header low nibble: DUP|QoS1 = 0x8 | 0x2 = 0xA. */
+    ASSERT_EQ(0xA, (int)MQTT_PACKET_FLAGS_GET(tx_buf[0]));
+}
+
+/* QoS 2 with DUP=1 is also a legitimate retransmission shape per [MQTT-4.3.3]. */
+TEST(encode_publish_qos2_with_dup_accepted)
+{
+    byte tx_buf[64];
+    byte payload[] = { 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "a";
+    pub.qos = MQTT_QOS_2;
+    pub.packet_id = 42;
+    pub.duplicate = 1;
+    pub.buffer = payload;
+    pub.total_len = sizeof(payload);
+
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+    /* DUP|QoS2 = 0x8 | 0x4 = 0xC. */
+    ASSERT_EQ(0xC, (int)MQTT_PACKET_FLAGS_GET(tx_buf[0]));
+}
+
 /* f-2360: topic_name with strlen > 65535 must not produce a "successful"
  * encode. MqttEncode_String returns -1 for oversize strings; the encoder
  * must surface that as a negative return rather than adding -1 to the
@@ -3038,6 +3105,9 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_qos1_retain_flags_in_header);
     RUN_TEST(encode_publish_qos2_duplicate_flags_in_header);
     RUN_TEST(encode_publish_qos0_no_flags_in_header);
+    RUN_TEST(encode_publish_qos0_with_dup_rejected);
+    RUN_TEST(encode_publish_qos1_with_dup_accepted);
+    RUN_TEST(encode_publish_qos2_with_dup_accepted);
     RUN_TEST(encode_publish_topic_oversized_rejected);
 
     /* MqttDecode_Publish */
