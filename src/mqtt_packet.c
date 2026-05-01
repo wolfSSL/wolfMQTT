@@ -1388,6 +1388,21 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
         connect_ack->flags = *rx_payload++;
         connect_ack->return_code = *rx_payload++;
 
+        /* [MQTT-3.2.2-1] Bits 7-1 of the Connect Acknowledge Flags byte are
+         * reserved and MUST be 0. Any other value is a protocol violation;
+         * [MQTT-4.8.0-1] requires the receiver to close the connection. */
+        if ((connect_ack->flags &
+             (byte)~MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) != 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+        /* [MQTT-3.2.2-4] If the CONNACK return code is non-zero (CONNECT
+         * refused), Session Present MUST be 0. A refused CONNACK that
+         * claims an existing session is malformed. */
+        if (connect_ack->return_code != MQTT_CONNECT_ACK_CODE_ACCEPTED &&
+            (connect_ack->flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+
 #ifdef WOLFMQTT_V5
         connect_ack->props = NULL;
         if (connect_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {

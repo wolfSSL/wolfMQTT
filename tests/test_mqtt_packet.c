@@ -1092,6 +1092,86 @@ TEST(decode_connack_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] CONNACK Flags receive-side validation.
+ *
+ * The Connect Acknowledge Flags byte has only bit 0 (Session Present)
+ * defined; bits 7-1 are reserved and MUST be 0. Additionally, a non-zero
+ * return code (refusal) MUST come back with Session Present = 0. The
+ * decoder must reject violations so the client closes the connection
+ * per [MQTT-4.8.0-1].
+ *
+ * Helper: build a 4-byte v3.1.1 CONNACK with the given flags+return_code
+ * and ask MqttDecode_ConnectAck what it returns. */
+static int decode_connack_flags(byte flags, byte return_code)
+{
+    byte buf[4];
+    MqttConnectAck ack;
+    buf[0] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_CONNECT_ACK);
+    buf[1] = 2;
+    buf[2] = flags;
+    buf[3] = return_code;
+    XMEMSET(&ack, 0, sizeof(ack));
+    return MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+}
+
+TEST(decode_connack_flags_session_present_accepted)
+{
+    /* SP=1 with return_code=0 is the canonical resumed-session case. */
+    int rc = decode_connack_flags(0x01, MQTT_CONNECT_ACK_CODE_ACCEPTED);
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_connack_flags_no_session_accepted)
+{
+    int rc = decode_connack_flags(0x00, MQTT_CONNECT_ACK_CODE_ACCEPTED);
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(decode_connack_flags_reserved_bit_1_rejected)
+{
+    /* 0x02: bit 1 set (reserved). */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x02, MQTT_CONNECT_ACK_CODE_ACCEPTED));
+}
+
+TEST(decode_connack_flags_reserved_bit_7_rejected)
+{
+    /* 0x80: bit 7 set (reserved). */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x80, MQTT_CONNECT_ACK_CODE_ACCEPTED));
+}
+
+TEST(decode_connack_flags_all_reserved_rejected)
+{
+    /* 0xFE: bits 7-1 all set, SP=0. */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0xFE, MQTT_CONNECT_ACK_CODE_ACCEPTED));
+}
+
+TEST(decode_connack_flags_all_bits_rejected)
+{
+    /* 0xFF: bits 7-1 set + SP=1. Reserved-bit check fires first. */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0xFF, MQTT_CONNECT_ACK_CODE_ACCEPTED));
+}
+
+TEST(decode_connack_refused_with_session_present_rejected)
+{
+    /* [MQTT-3.2.2-4]: refused CONNACK MUST have SP=0. flags=0x01 with a
+     * non-zero return code is malformed. */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x01, MQTT_CONNECT_ACK_CODE_REFUSED_PROTO));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x01, MQTT_CONNECT_ACK_CODE_REFUSED_ID));
+}
+
+TEST(decode_connack_refused_without_session_present_accepted)
+{
+    /* Refusal with SP=0 is the legal shape. */
+    int rc = decode_connack_flags(0x00, MQTT_CONNECT_ACK_CODE_REFUSED_PROTO);
+    ASSERT_TRUE(rc > 0);
+}
+
 /* ============================================================================
  * MqttEncode_Subscribe
  * ============================================================================ */
@@ -2977,6 +3057,14 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connack_valid);
     RUN_TEST(decode_connack_malformed_remain_len_zero);
     RUN_TEST(decode_connack_malformed_remain_len_one);
+    RUN_TEST(decode_connack_flags_session_present_accepted);
+    RUN_TEST(decode_connack_flags_no_session_accepted);
+    RUN_TEST(decode_connack_flags_reserved_bit_1_rejected);
+    RUN_TEST(decode_connack_flags_reserved_bit_7_rejected);
+    RUN_TEST(decode_connack_flags_all_reserved_rejected);
+    RUN_TEST(decode_connack_flags_all_bits_rejected);
+    RUN_TEST(decode_connack_refused_with_session_present_rejected);
+    RUN_TEST(decode_connack_refused_without_session_present_accepted);
 
     /* MqttEncode_Subscribe */
     RUN_TEST(encode_subscribe_packet_id_zero);
