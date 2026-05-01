@@ -113,6 +113,13 @@
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
 #endif
+/* Maximum concurrent inbound QoS 2 packet IDs awaiting PUBREL per client.
+ * Used to dedup duplicate PUBLISHes per [MQTT-4.3.3] (Method B). 16 covers
+ * any reasonable client; a misbehaving client that exceeds this gets a
+ * malformed-packet rejection. */
+#ifndef BROKER_MAX_INBOUND_QOS2
+    #define BROKER_MAX_INBOUND_QOS2 16
+#endif
 
 /* -------------------------------------------------------------------------- */
 /* Feature toggles (opt-out: define WOLFMQTT_BROKER_NO_xxx to disable)        */
@@ -189,6 +196,19 @@ typedef struct BrokerWsCtx {
 #endif /* ENABLE_MQTT_WEBSOCKET */
 
 /* -------------------------------------------------------------------------- */
+/* Inbound QoS 2 dedup state                                                   */
+/* -------------------------------------------------------------------------- */
+/* Per-client set of QoS 2 packet IDs that have been received and PUBREC'd
+ * but not yet PUBREL'd. Used to skip the fan-out for duplicate PUBLISHes
+ * per [MQTT-4.3.3] / Method B. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+typedef struct BrokerInboundQos2 {
+    word16  packet_id;
+    struct BrokerInboundQos2* next;
+} BrokerInboundQos2;
+#endif
+
+/* -------------------------------------------------------------------------- */
 /* Broker client tracking                                                      */
 /* -------------------------------------------------------------------------- */
 typedef struct BrokerClient {
@@ -237,6 +257,17 @@ typedef struct BrokerClient {
     MqttNet net;
     MqttClient client;
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
+    /* [MQTT-4.3.3] Inbound QoS 2 packet IDs that have been PUBREC'd but
+     * not yet PUBREL'd. A duplicate PUBLISH carrying one of these IDs is
+     * acked again (PUBREC) but NOT re-fanned-out to subscribers. The
+     * BROKER_MAX_INBOUND_QOS2 cap is enforced in both memory modes; a
+     * client that exceeds it is disconnected with malformed-packet error. */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    word16  qos2_pending[BROKER_MAX_INBOUND_QOS2]; /* 0 = empty slot */
+#else
+    BrokerInboundQos2* qos2_pending;
+    int                qos2_pending_count;
+#endif
 #ifdef ENABLE_MQTT_TLS
     byte    tls_handshake_done;
 #endif

@@ -1220,11 +1220,158 @@ static int BrokerNetDisconnect(void* context)
 /* -------------------------------------------------------------------------- */
 /* Client management                                                           */
 /* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+/* Inbound QoS 2 dedup state (per [MQTT-4.3.3])                                */
+/*                                                                             */
+/* Track packet IDs for which we've sent PUBREC and are waiting for PUBREL.    */
+/* A duplicate PUBLISH carrying the same packet ID gets PUBREC'd again but     */
+/* must NOT be re-delivered to subscribers. The state is per-client and is    */
+/* cleared on disconnect; surviving across reconnect would require the         */
+/* broader session-state work (see #485/#489/#494).                            */
+/* -------------------------------------------------------------------------- */
+
+/* Returns 1 if packet_id is currently awaiting PUBREL, 0 otherwise. */
+static int BrokerInboundQos2_Contains(BrokerClient* bc, word16 packet_id)
+{
+    if (bc == NULL || packet_id == 0) {
+        return 0;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    {
+        int i;
+        for (i = 0; i < BROKER_MAX_INBOUND_QOS2; i++) {
+            if (bc->qos2_pending[i] == packet_id) {
+                return 1;
+            }
+        }
+    }
+#else
+    {
+        BrokerInboundQos2* cur = bc->qos2_pending;
+        while (cur != NULL) {
+            if (cur->packet_id == packet_id) {
+                return 1;
+            }
+            cur = cur->next;
+        }
+    }
+#endif
+    return 0;
+}
+
+/* Add packet_id to the awaiting-PUBREL set. Returns MQTT_CODE_SUCCESS on
+ * success, MQTT_CODE_ERROR_OUT_OF_BUFFER if the per-client cap is reached,
+ * or MQTT_CODE_ERROR_MEMORY if the underlying allocator fails. Idempotent:
+ * a second add of an already-present packet_id is a no-op success. */
+static int BrokerInboundQos2_Add(BrokerClient* bc, word16 packet_id)
+{
+    if (bc == NULL || packet_id == 0) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    if (BrokerInboundQos2_Contains(bc, packet_id)) {
+        return MQTT_CODE_SUCCESS;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    {
+        int i;
+        for (i = 0; i < BROKER_MAX_INBOUND_QOS2; i++) {
+            if (bc->qos2_pending[i] == 0) {
+                bc->qos2_pending[i] = packet_id;
+                return MQTT_CODE_SUCCESS;
+            }
+        }
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    }
+#else
+    {
+        BrokerInboundQos2* node;
+        /* Enforce the same per-client cap in dynamic-memory builds so a
+         * misbehaving client cannot grow the list to ~65 535 entries. */
+        if (bc->qos2_pending_count >= BROKER_MAX_INBOUND_QOS2) {
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        }
+        node = (BrokerInboundQos2*)WOLFMQTT_MALLOC(sizeof(*node));
+        if (node == NULL) {
+            return MQTT_CODE_ERROR_MEMORY;
+        }
+        node->packet_id = packet_id;
+        node->next = bc->qos2_pending;
+        bc->qos2_pending = node;
+        bc->qos2_pending_count++;
+        return MQTT_CODE_SUCCESS;
+    }
+#endif
+}
+
+/* Remove packet_id from the awaiting-PUBREL set. No-op if not present. */
+static void BrokerInboundQos2_Remove(BrokerClient* bc, word16 packet_id)
+{
+    if (bc == NULL || packet_id == 0) {
+        return;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    {
+        int i;
+        for (i = 0; i < BROKER_MAX_INBOUND_QOS2; i++) {
+            if (bc->qos2_pending[i] == packet_id) {
+                bc->qos2_pending[i] = 0;
+                return;
+            }
+        }
+    }
+#else
+    {
+        BrokerInboundQos2* prev = NULL;
+        BrokerInboundQos2* cur = bc->qos2_pending;
+        while (cur != NULL) {
+            if (cur->packet_id == packet_id) {
+                if (prev == NULL) {
+                    bc->qos2_pending = cur->next;
+                }
+                else {
+                    prev->next = cur->next;
+                }
+                WOLFMQTT_FREE(cur);
+                if (bc->qos2_pending_count > 0) {
+                    bc->qos2_pending_count--;
+                }
+                return;
+            }
+            prev = cur;
+            cur = cur->next;
+        }
+    }
+#endif
+}
+
+/* Clear all entries (called on client free / disconnect). */
+static void BrokerInboundQos2_Clear(BrokerClient* bc)
+{
+    if (bc == NULL) {
+        return;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    XMEMSET(bc->qos2_pending, 0, sizeof(bc->qos2_pending));
+#else
+    {
+        BrokerInboundQos2* cur = bc->qos2_pending;
+        while (cur != NULL) {
+            BrokerInboundQos2* next = cur->next;
+            WOLFMQTT_FREE(cur);
+            cur = next;
+        }
+        bc->qos2_pending = NULL;
+        bc->qos2_pending_count = 0;
+    }
+#endif
+}
+
 static void BrokerClient_Free(BrokerClient* bc)
 {
     if (bc == NULL) {
         return;
     }
+    BrokerInboundQos2_Clear(bc);
 
 #ifdef ENABLE_MQTT_WEBSOCKET
     if (bc->ws_ctx != NULL) {
@@ -3330,6 +3477,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     MqttPublishResp resp;
     byte* payload = NULL;
     char* topic = NULL;
+    int qos2_duplicate = 0;
 #ifdef WOLFMQTT_STATIC_MEMORY
     char topic_buf[BROKER_MAX_TOPIC_LEN];
 #endif
@@ -3346,7 +3494,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     }
 
     /* [MQTT-3.3.2-2] PUBLISH topic must not contain wildcard characters.
-     * Return MALFORMED_DATA so dispatch closes the connection. */
+     * Run before any state-mutating logic so a malformed PUBLISH cannot
+     * briefly populate the QoS 2 dedup set. Set rc and jump to cleanup so
+     * dispatch closes the connection AND any v5 props/topic allocations
+     * are freed. */
     if (pub.topic_name && pub.topic_name_len > 0) {
         word16 i;
         for (i = 0; i < pub.topic_name_len; i++) {
@@ -3354,7 +3505,36 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 WBLOG_ERR(broker,
                     "broker: PUBLISH topic contains wildcard sock=%d",
                     (int)bc->sock);
-                return MQTT_CODE_ERROR_MALFORMED_DATA;
+                rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+                goto publish_cleanup;
+            }
+        }
+    }
+
+    /* [MQTT-4.3.3] QoS 2 duplicate detection. If we already PUBREC'd this
+     * packet_id and are still waiting for PUBREL, treat the inbound PUBLISH
+     * as a retransmission: send another PUBREC but DO NOT re-deliver the
+     * application message to subscribers and DO NOT re-store the retained
+     * payload. */
+    if (pub.qos == MQTT_QOS_2) {
+        if (BrokerInboundQos2_Contains(bc, pub.packet_id)) {
+            WBLOG_DBG(broker,
+                "broker: QoS2 duplicate PUBLISH sock=%d packet_id=%u "
+                "[MQTT-4.3.3]", (int)bc->sock, pub.packet_id);
+            qos2_duplicate = 1;
+        }
+        else {
+            int add_rc = BrokerInboundQos2_Add(bc, pub.packet_id);
+            if (add_rc != MQTT_CODE_SUCCESS) {
+                /* Either per-client cap reached or allocation failure.
+                 * Treat as a protocol-level error so dispatch closes the
+                 * connection. Log the underlying rc so operators can tell
+                 * "client misbehaved" from "broker out of memory". */
+                WBLOG_ERR(broker,
+                    "broker: QoS2 inbound add failed sock=%d packet_id=%u "
+                    "rc=%d", (int)bc->sock, pub.packet_id, add_rc);
+                rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+                goto publish_cleanup;
             }
         }
     }
@@ -3383,8 +3563,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     payload = pub.buffer;
 
 #ifdef WOLFMQTT_BROKER_RETAINED
-    /* Handle retained messages */
-    if (topic != NULL && pub.retain) {
+    /* Handle retained messages — skipped for QoS 2 duplicates: the original
+     * PUBLISH already updated the retained store. */
+    if (!qos2_duplicate && topic != NULL && pub.retain) {
         if (pub.total_len == 0) {
             BrokerRetained_Delete(broker, topic);
         }
@@ -3411,7 +3592,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
-    if (topic != NULL && (payload != NULL || pub.total_len == 0)) {
+    /* Fan-out is skipped for QoS 2 duplicates: subscribers already received
+     * the application message from the original PUBLISH ([MQTT-4.3.3]). */
+    if (!qos2_duplicate &&
+        topic != NULL && (payload != NULL || pub.total_len == 0)) {
         /* Fan out to matching subscribers */
 #ifdef WOLFMQTT_STATIC_MEMORY
         {
@@ -3484,6 +3668,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         }
     }
 
+publish_cleanup:
 #ifdef WOLFMQTT_V5
     if (pub.props) {
         (void)MqttProps_Free(pub.props);
@@ -3514,6 +3699,11 @@ static int BrokerHandle_PublishRel(BrokerClient* bc, int rx_len)
         WBLOG_ERR(bc->broker, "broker: PUBLISH_REL decode failed rc=%d", rc);
         return rc;
     }
+
+    /* [MQTT-4.3.3] QoS 2 step 3: discard the stored Packet Identifier so a
+     * later PUBLISH with the same ID is treated as a fresh delivery. PUBREL
+     * for an unknown ID is idempotent — we still PUBCOMP it. */
+    BrokerInboundQos2_Remove(bc, resp.packet_id);
 
 #ifdef WOLFMQTT_V5
     if (resp.props) {

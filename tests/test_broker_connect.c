@@ -47,18 +47,43 @@
 #include "tests/unit_test.h"
 
 /* Mock socket constants */
-#define MOCK_LISTEN_SOCK 100
-#define MOCK_CLIENT_SOCK 101
-#define MOCK_BUF_SZ      1024
+#define MOCK_LISTEN_SOCK       100
+#define MOCK_CLIENT_SOCK_BASE  101 /* sock = base + index */
+#define MOCK_BUF_SZ            1024
+#define MOCK_MAX_CLIENTS       4
 
-/* Per-test mock state. Reset by reset_mock_state() before each scenario. */
-static byte   g_in_buf[MOCK_BUF_SZ];
-static size_t g_in_len;
-static size_t g_in_pos;
-static byte   g_out_buf[MOCK_BUF_SZ];
-static size_t g_out_len;
-static int    g_client_accepted;
-static int    g_client_closed;
+/* Per-mock-client state. Multi-client tests (e.g. QoS 2 dedup) need a
+ * subscriber and a publisher running through the same broker instance. */
+typedef struct MockClient {
+    byte   in_buf[MOCK_BUF_SZ];
+    size_t in_len;
+    size_t in_pos;
+    byte   out_buf[MOCK_BUF_SZ];
+    size_t out_len;
+    int    closed;
+} MockClient;
+
+static MockClient g_clients[MOCK_MAX_CLIENTS];
+static int g_clients_active;   /* how many clients accept() will hand out */
+static int g_accept_count;     /* incremented per successful accept() */
+
+/* Legacy single-client tests use g_in_buf / g_out_buf / g_client_closed
+ * directly. Map them to client 0 so existing code keeps working. */
+#define g_in_buf         (g_clients[0].in_buf)
+#define g_in_len         (g_clients[0].in_len)
+#define g_in_pos         (g_clients[0].in_pos)
+#define g_out_buf        (g_clients[0].out_buf)
+#define g_out_len        (g_clients[0].out_len)
+#define g_client_closed  (g_clients[0].closed)
+
+static int sock_to_idx(BROKER_SOCKET_T sock)
+{
+    int idx = (int)(sock - MOCK_CLIENT_SOCK_BASE);
+    if (idx < 0 || idx >= MOCK_MAX_CLIENTS) {
+        return -1;
+    }
+    return idx;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Mock network callbacks                                                      */
@@ -76,9 +101,10 @@ static int mock_accept(void* ctx, BROKER_SOCKET_T listen_sock,
     BROKER_SOCKET_T* client_sock)
 {
     (void)ctx; (void)listen_sock;
-    if (!g_client_accepted) {
-        g_client_accepted = 1;
-        *client_sock = MOCK_CLIENT_SOCK;
+    if (g_accept_count < g_clients_active) {
+        *client_sock =
+            (BROKER_SOCKET_T)(MOCK_CLIENT_SOCK_BASE + g_accept_count);
+        g_accept_count++;
         return MQTT_CODE_SUCCESS;
     }
     return MQTT_CODE_ERROR_TIMEOUT;
@@ -88,38 +114,50 @@ static int mock_read(void* ctx, BROKER_SOCKET_T sock,
     byte* buf, int buf_len, int timeout_ms)
 {
     int avail;
+    int idx = sock_to_idx(sock);
+    MockClient* mc;
     (void)ctx; (void)timeout_ms;
-    if (sock != MOCK_CLIENT_SOCK || g_client_closed) {
+    if (idx < 0) {
         return MQTT_CODE_ERROR_TIMEOUT;
     }
-    if (g_in_pos >= g_in_len) {
+    mc = &g_clients[idx];
+    if (mc->closed || mc->in_pos >= mc->in_len) {
         return MQTT_CODE_ERROR_TIMEOUT;
     }
-    avail = (int)(g_in_len - g_in_pos);
+    avail = (int)(mc->in_len - mc->in_pos);
     if (buf_len > avail) {
         buf_len = avail;
     }
-    XMEMCPY(buf, g_in_buf + g_in_pos, (size_t)buf_len);
-    g_in_pos += (size_t)buf_len;
+    XMEMCPY(buf, mc->in_buf + mc->in_pos, (size_t)buf_len);
+    mc->in_pos += (size_t)buf_len;
     return buf_len;
 }
 
 static int mock_write(void* ctx, BROKER_SOCKET_T sock,
     const byte* buf, int buf_len, int timeout_ms)
 {
-    (void)ctx; (void)sock; (void)timeout_ms;
-    if (g_out_len + (size_t)buf_len > sizeof(g_out_buf)) {
+    int idx = sock_to_idx(sock);
+    MockClient* mc;
+    (void)ctx; (void)timeout_ms;
+    if (idx < 0) {
         return MQTT_CODE_ERROR_NETWORK;
     }
-    XMEMCPY(g_out_buf + g_out_len, buf, (size_t)buf_len);
-    g_out_len += (size_t)buf_len;
+    mc = &g_clients[idx];
+    if (mc->out_len + (size_t)buf_len > sizeof(mc->out_buf)) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    XMEMCPY(mc->out_buf + mc->out_len, buf, (size_t)buf_len);
+    mc->out_len += (size_t)buf_len;
     return buf_len;
 }
 
 static int mock_close(void* ctx, BROKER_SOCKET_T sock)
 {
-    (void)ctx; (void)sock;
-    g_client_closed = 1;
+    int idx = sock_to_idx(sock);
+    (void)ctx;
+    if (idx >= 0) {
+        g_clients[idx].closed = 1;
+    }
     return MQTT_CODE_SUCCESS;
 }
 
@@ -127,16 +165,32 @@ static int mock_close(void* ctx, BROKER_SOCKET_T sock)
 /* Test fixture                                                                */
 /* -------------------------------------------------------------------------- */
 
+static void reset_mock_clients(int n_clients)
+{
+    int i;
+    for (i = 0; i < MOCK_MAX_CLIENTS; i++) {
+        XMEMSET(&g_clients[i], 0, sizeof(g_clients[i]));
+    }
+    g_clients_active = n_clients;
+    g_accept_count = 0;
+}
+
+/* Append bytes to a client's input queue (i.e., what it appears to send to
+ * the broker). May be called multiple times to feed packets in stages. */
+static void mock_client_input_append(int idx, const byte* buf, size_t len)
+{
+    MockClient* mc = &g_clients[idx];
+    if (mc->in_len + len > sizeof(mc->in_buf)) return;
+    XMEMCPY(mc->in_buf + mc->in_len, buf, len);
+    mc->in_len += len;
+}
+
 static void reset_mock_state(const byte* connect_buf, size_t connect_len)
 {
-    XMEMSET(g_in_buf, 0, sizeof(g_in_buf));
-    XMEMSET(g_out_buf, 0, sizeof(g_out_buf));
-    XMEMCPY(g_in_buf, connect_buf, connect_len);
-    g_in_len = connect_len;
-    g_in_pos = 0;
-    g_out_len = 0;
-    g_client_accepted = 0;
-    g_client_closed = 0;
+    reset_mock_clients(1);
+    if (connect_buf && connect_len > 0) {
+        mock_client_input_append(0, connect_buf, connect_len);
+    }
 }
 
 static void install_mock_net(MqttBrokerNet* net)
@@ -531,6 +585,430 @@ TEST(connect_v5_emptyid_clean0_accepted)
 #endif /* WOLFMQTT_V5 */
 
 /* -------------------------------------------------------------------------- */
+/* QoS 2 inbound duplicate-dedup tests [MQTT-4.3.3]                            */
+/* -------------------------------------------------------------------------- */
+
+/* Walk a captured packet stream and count packets whose type-nibble matches
+ * `target`. Parses each fixed header's variable-length remaining length so a
+ * stream of multiple packets is handled correctly. Stops scanning on any
+ * malformed VBI or arithmetic overflow rather than guessing past it. */
+static int count_packets_of_type(const byte* buf, size_t len, byte target)
+{
+    size_t pos = 0;
+    int count = 0;
+    while (pos < len) {
+        byte type = (byte)((buf[pos] >> 4) & 0x0F);
+        size_t remain = 0;
+        size_t mult = 1;
+        size_t hdr_len = 1;
+        int vbi_complete = 0;
+        while (pos + hdr_len < len && hdr_len <= 5) {
+            byte b = buf[pos + hdr_len];
+            remain += (size_t)(b & 0x7F) * mult;
+            hdr_len++;
+            if ((b & 0x80) == 0) {
+                vbi_complete = 1;
+                break;
+            }
+            mult *= 128;
+        }
+        if (!vbi_complete) {
+            /* malformed VBI or buffer ran out mid-VBI: hard stop */
+            break;
+        }
+        if (type == target) {
+            count++;
+        }
+        /* Overflow-safe truncation check: hdr_len + remain must fit in
+         * (len - pos) without wrapping. */
+        if (remain > len - pos - hdr_len) {
+            break;
+        }
+        pos += hdr_len + remain;
+    }
+    return count;
+}
+
+/* [MQTT-4.3.3] / Method B: when the broker receives a duplicate QoS 2
+ * PUBLISH carrying a packet ID that's still awaiting PUBREL, it MUST send
+ * another PUBREC to the publisher but MUST NOT re-deliver the application
+ * message to subscribers. This test wires up a subscriber and a publisher
+ * through the same broker, has the publisher send the same QoS 2 PUBLISH
+ * twice (the second with DUP=1), then send PUBREL, and verifies:
+ *
+ *   subscriber out: exactly one forwarded PUBLISH
+ *   publisher out:  two PUBRECs (one per inbound PUBLISH) and one PUBCOMP
+ *
+ * Pre-fix the broker fanned out twice and the subscriber would see two
+ * forwarded PUBLISHes, breaking exactly-once delivery. */
+TEST(qos2_duplicate_publish_dedup)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int sub_pubs;
+    int pub_pubrecs;
+    int pub_pubcomps;
+
+    /* CONNECT for subscriber, ClientId "A" (clean=1, level=4). */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,
+        0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* CONNECT for publisher, ClientId "B". */
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,
+        0x00, 0x3C,
+        0x00, 0x01, 'B'
+    };
+    /* SUBSCRIBE packet_id=1, filter "x", QoS 2. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x02
+    };
+    /* PUBLISH QoS 2, packet_id=7, topic "x", payload "first".
+     * remain = topic_len(2) + topic(1) + packet_id(2) + payload(5) = 10 */
+    static const byte publish[] = {
+        0x34, 0x0A,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        'f', 'i', 'r', 's', 't'
+    };
+    /* Duplicate PUBLISH with DUP=1, same packet_id and payload. */
+    static const byte publish_dup[] = {
+        0x3C, 0x0A,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        'f', 'i', 'r', 's', 't'
+    };
+    /* PUBREL packet_id=7. */
+    static const byte pubrel[] = {
+        0x62, 0x02,
+        0x00, 0x07
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    /* Subscriber: CONNECT then SUBSCRIBE. */
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    /* Publisher: CONNECT, PUBLISH, duplicate PUBLISH, PUBREL. */
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish, sizeof(publish));
+    mock_client_input_append(1, publish_dup, sizeof(publish_dup));
+    mock_client_input_append(1, pubrel, sizeof(pubrel));
+
+    /* Run enough Step() calls for the broker to: accept both clients,
+     * process subscriber's CONNECT+SUBSCRIBE (write CONNACK+SUBACK),
+     * process publisher's CONNECT (write CONNACK), process PUBLISH (fan
+     * out, write PUBREC), process duplicate PUBLISH (write PUBREC, no
+     * fan-out), process PUBREL (write PUBCOMP). */
+    for (i = 0; i < 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    pub_pubrecs = count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
+    pub_pubcomps = count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_COMP);
+
+    ASSERT_EQ(1, sub_pubs);     /* dedup: only the first PUBLISH forwarded */
+    ASSERT_EQ(2, pub_pubrecs);  /* one PUBREC per inbound PUBLISH */
+    ASSERT_EQ(1, pub_pubcomps); /* one PUBCOMP per PUBREL */
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* A PUBLISH with DUP=1 whose packet_id is NOT in the dedup set must be
+ * treated as a fresh delivery. The DUP flag is informational; correctness
+ * is determined by the per-client dedup state, not the wire flag. This is
+ * the recovering-client / cross-restart case: after the broker drops state
+ * (no inflight persistence today), a client retransmitting an in-flight
+ * PUBLISH with DUP=1 should still get its message delivered. */
+TEST(qos2_phantom_dup_publish_is_fresh)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int sub_pubs;
+    int pub_pubrecs;
+
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'A'
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x02
+    };
+    /* PUBLISH QoS 2 with DUP=1 set, but packet_id never appeared before.
+     * remain = 3+2+5 = 10 */
+    static const byte publish_dup_only[] = {
+        0x3C, 0x0A, 0x00, 0x01, 'x', 0x00, 0x07,
+        'f', 'i', 'r', 's', 't'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish_dup_only, sizeof(publish_dup_only));
+
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    pub_pubrecs = count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
+
+    /* Subscriber gets one forwarded PUBLISH; publisher gets one PUBREC.
+     * The DUP flag does NOT suppress fan-out — only an actual matching
+     * dedup-set entry does. */
+    ASSERT_EQ(1, sub_pubs);
+    ASSERT_EQ(1, pub_pubrecs);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* After PUBREL clears the awaiting-PUBREL state, a subsequent PUBLISH with
+ * the same packet ID is a fresh delivery, not a duplicate. Pin the state
+ * removal so a regression in BrokerInboundQos2_Remove would surface. */
+TEST(qos2_publish_after_pubrel_is_fresh)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int sub_pubs;
+
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'A'
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x02
+    };
+    static const byte publish[] = {
+        0x34, 0x0A, 0x00, 0x01, 'x', 0x00, 0x07,
+        'f', 'i', 'r', 's', 't'
+    };
+    static const byte pubrel[] = {
+        0x62, 0x02, 0x00, 0x07
+    };
+    /* Second PUBLISH reuses packet_id=7 AFTER PUBREL has cleared it. This
+     * is now a fresh delivery (no DUP flag). remain = 3+2+6 = 11 */
+    static const byte publish_again[] = {
+        0x34, 0x0B, 0x00, 0x01, 'x', 0x00, 0x07,
+        's', 'e', 'c', 'o', 'n', 'd'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish, sizeof(publish));
+    mock_client_input_append(1, pubrel, sizeof(pubrel));
+    mock_client_input_append(1, publish_again, sizeof(publish_again));
+
+    for (i = 0; i < 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+
+    /* Expect TWO forwarded PUBLISHes: the dedup state was cleared by the
+     * PUBREL, so the second PUBLISH with packet_id=7 is treated as fresh. */
+    ASSERT_EQ(2, sub_pubs);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Build a minimal QoS 2 PUBLISH wire packet with topic "x" and payload "p"
+ * for the given packet_id. Used by the cap-reached and clear-state tests
+ * which need many in-flight QoS 2 packets without the boilerplate of
+ * spelling out each one. Returns the encoded length (always 8). */
+static size_t build_qos2_pub(byte* out, word16 packet_id)
+{
+    /* remain = topic_len(2) + topic(1) + packet_id(2) + payload(1) = 6 */
+    out[0] = 0x34;
+    out[1] = 0x06;
+    out[2] = 0x00; out[3] = 0x01; out[4] = 'x';
+    out[5] = (byte)(packet_id >> 8);
+    out[6] = (byte)(packet_id & 0xFF);
+    out[7] = 'p';
+    return 8;
+}
+
+/* The per-client cap on in-flight QoS 2 packet IDs (BROKER_MAX_INBOUND_QOS2,
+ * default 16) MUST disconnect a client that exceeds it. Without the cap, a
+ * misbehaving client could exhaust broker memory by sending many distinct
+ * QoS 2 PUBLISH packets without ever sending the matching PUBRELs. */
+TEST(qos2_inbound_cap_reached_disconnects)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int pub_pubrecs;
+    int closed_after;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    byte pub_buf[8];
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    /* Feed BROKER_MAX_INBOUND_QOS2 + 1 distinct in-flight PUBLISHes. The
+     * first cap accepted; the (cap+1)th must trigger malformed-data close. */
+    for (i = 1; i <= BROKER_MAX_INBOUND_QOS2 + 1; i++) {
+        size_t n = build_qos2_pub(pub_buf, (word16)i);
+        mock_client_input_append(0, pub_buf, n);
+    }
+
+    for (i = 0; i < 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    pub_pubrecs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
+    closed_after = g_clients[0].closed;
+
+    /* The first BROKER_MAX_INBOUND_QOS2 PUBLISHes get a PUBREC each; the
+     * (cap+1)th is rejected before the PUBREC send, so no PUBREC for it. */
+    ASSERT_EQ(BROKER_MAX_INBOUND_QOS2, pub_pubrecs);
+    ASSERT_TRUE(closed_after);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Disconnecting a client with non-empty inbound QoS 2 state must free that
+ * state. We can't directly inspect freed pointers from the test, but ASan/
+ * valgrind in CI catch a regression where BrokerInboundQos2_Clear becomes a
+ * no-op. This test exercises the cleanup path so a sanitizer build fails on
+ * a leak rather than the bug going unnoticed. */
+TEST(qos2_state_freed_on_client_disconnect)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    /* Normal DISCONNECT packet — drives the broker through the
+     * clean-disconnect cleanup path. */
+    static const byte disconnect[] = { 0xE0, 0x00 };
+    byte pub_buf[8];
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    /* Three in-flight QoS 2 PUBLISHes with no matching PUBRELs. */
+    for (i = 1; i <= 3; i++) {
+        size_t n = build_qos2_pub(pub_buf, (word16)i);
+        mock_client_input_append(0, pub_buf, n);
+    }
+    mock_client_input_append(0, disconnect, sizeof(disconnect));
+
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Sanity: client did get processed and is now closed. The actual
+     * leak-check is the responsibility of the sanitizer harness. */
+    ASSERT_TRUE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* PUBREL for an unknown packet ID is idempotent: the broker MUST still
+ * respond with PUBCOMP. The dedup-set's Remove is a no-op for unknown IDs. */
+TEST(qos2_pubrel_unknown_id_still_pubcomps)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int pub_pubcomps;
+
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    /* PUBREL packet_id=99 with no preceding PUBLISH. */
+    static const byte pubrel[] = {
+        0x62, 0x02, 0x00, 0x63
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, pubrel, sizeof(pubrel));
+
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    pub_pubcomps = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH_COMP);
+    ASSERT_EQ(1, pub_pubcomps);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -552,6 +1030,12 @@ int main(int argc, char** argv)
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
     RUN_TEST(connect_v5_emptyid_clean0_accepted);
 #endif
+    RUN_TEST(qos2_duplicate_publish_dedup);
+    RUN_TEST(qos2_phantom_dup_publish_is_fresh);
+    RUN_TEST(qos2_publish_after_pubrel_is_fresh);
+    RUN_TEST(qos2_inbound_cap_reached_disconnects);
+    RUN_TEST(qos2_state_freed_on_client_disconnect);
+    RUN_TEST(qos2_pubrel_unknown_id_still_pubcomps);
     TEST_SUITE_END();
 
     TEST_RUNNER_END();
