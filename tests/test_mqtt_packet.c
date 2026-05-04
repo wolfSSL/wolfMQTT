@@ -2168,6 +2168,34 @@ TEST(decode_connect_rejects_nul_in_client_id)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.1.2-20] Password Flag=0 means no password field is present in the
+ * payload. A peer that sets User Name Flag=1, Password Flag=0 but appends
+ * password-shaped bytes after the user name produces a CONNECT whose
+ * Remaining Length covers more than the flagged fields. The decoder must
+ * reject the trailing bytes as malformed instead of silently treating the
+ * packet as username-only-with-extra-trailer. Hand-built wire mirrors the
+ * issue's reproducer exactly. */
+TEST(decode_connect_password_flag_zero_with_extra_payload_rejected)
+{
+    byte buf[] = {
+        0x10, 0x1D,                     /* CONNECT, remain_len = 29 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T', /* protocol name */
+        0x04,                           /* protocol level = 4 (v3.1.1) */
+        0x82,                           /* flags: clean_session|user_name */
+        0x00, 0x3C,                     /* keep alive = 60 */
+        0x00, 0x03, 'c', 'i', 'd',      /* client_id "cid" */
+        0x00, 0x04, 'u', 's', 'e', 'r', /* username "user" */
+        0x00, 0x06, 's', 'e', 'c', 'r', /* extra password-shaped bytes */
+        'e', 't'                        /* "secret" — must not be accepted */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* [MQTT-1.5.3-2]: an embedded NUL in the username must be rejected.
  * Otherwise BrokerStrCompare() (which uses XSTRLEN) will treat
  * "us\0er" as "us" and accept it against a configured "us" credential. */
@@ -2181,6 +2209,29 @@ TEST(decode_connect_rejects_nul_in_username)
         0x00, 0x3C,
         0x00, 0x02, 'c', '1',               /* client_id "c1" */
         0x00, 0x05, 'u', 's', 0x00, 'e', 'r'  /* username with NUL */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* User Name Flag=0 cannot legally be followed by a username (and any
+ * trailing bytes therefore include none of the flagged fields). The
+ * payload-consumption check rejects the trailer regardless of which flag
+ * the bytes are shaped like. */
+TEST(decode_connect_username_flag_zero_with_extra_payload_rejected)
+{
+    byte buf[] = {
+        0x10, 0x15,                     /* CONNECT, remain_len = 21 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,                           /* flags: clean_session only */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',      /* client_id */
+        0x00, 0x04, 'u', 's', 'e', 'r'  /* username-shaped extra bytes */
     };
     MqttConnect dec;
     int rc;
@@ -2216,12 +2267,57 @@ TEST(decode_connect_rejects_nul_in_will_topic)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* Will Flag=0 with will-topic-shaped trailing bytes is the symmetric case
+ * for the LWT half of the payload. Pins the same consumed-length invariant
+ * for the will fields. */
+TEST(decode_connect_will_flag_zero_with_extra_payload_rejected)
+{
+    byte buf[] = {
+        0x10, 0x17,                     /* CONNECT, remain_len = 23 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,                           /* flags: clean_session only */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',
+        0x00, 0x06, 'w', '/', 't', 'o', 'p', 'i'  /* extra "w/topi" */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Single-byte trailing garbage (no flag fields beyond client_id) catches
+ * an off-by-one form of the consumption check. The non-malformed case
+ * (decode_connect_v311_no_credentials above) is the partner that prevents
+ * a "reject everything" mutation. */
+TEST(decode_connect_trailing_garbage_rejected)
+{
+    byte buf[] = {
+        0x10, 0x10,                     /* CONNECT, remain_len = 16 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',
+        0xFF                            /* one trailing junk byte */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 #ifdef WOLFMQTT_V5
 /* MQTT v5 has a different decode path than v3.1.1 (properties walked
  * before client_id, separate LWT properties), but the NUL rejection
- * lives inside MqttDecode_String / MqttDecode_Password and so applies
- * uniformly. This pins coverage on the v5 branch so a future refactor
- * cannot quietly bypass the check on one protocol level. */
+ * lives inside MqttDecode_String and so applies uniformly. This pins
+ * coverage on the v5 branch so a future refactor cannot quietly bypass
+ * the check on one protocol level. */
 TEST(decode_connect_v5_rejects_nul_in_client_id)
 {
     byte buf[] = {
@@ -3261,6 +3357,10 @@ void run_mqtt_packet_tests(void)
      * Password is Binary Data per [MQTT-3.1.3.5] and decoding is routed
      * around MqttDecode_String, so the U+0000 ban does not apply there. */
     RUN_TEST(decode_connect_rejects_nul_in_will_topic);
+    RUN_TEST(decode_connect_password_flag_zero_with_extra_payload_rejected);
+    RUN_TEST(decode_connect_username_flag_zero_with_extra_payload_rejected);
+    RUN_TEST(decode_connect_will_flag_zero_with_extra_payload_rejected);
+    RUN_TEST(decode_connect_trailing_garbage_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_connect_v5_rejects_nul_in_client_id);
 #endif

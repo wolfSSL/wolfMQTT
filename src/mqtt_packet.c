@@ -1332,7 +1332,16 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
         rx_payload += tmp + plen;
     }
 
-    (void)rx_payload;
+    /* [MQTT-3.1.2-20] / [MQTT-3.1.2-22] and the payload-shape rules in
+     * 3.1.3: only fields whose CONNECT flags are set may appear in the
+     * payload. After decoding every flag-gated field the consumed length
+     * must equal Remaining Length exactly. Trailing bytes mean the wire
+     * carries fields the flags say are absent (e.g. Password Flag=0 with
+     * a password-shaped suffix), which the receiver must reject as
+     * malformed instead of silently dropping. */
+    if ((rx_payload - rx_buf) != header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
 
     /* Return total length of packet */
     return header_len + remain_len;
