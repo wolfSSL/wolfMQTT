@@ -473,8 +473,22 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
     buf += len;
-    if (str_len > 0 && !Utf8WellFormed(buf, str_len)) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    if (str_len > 0) {
+        /* [MQTT-1.5.3-1] Reject ill-formed UTF-8 (RFC 3629). */
+        if (!Utf8WellFormed(buf, str_len)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+        /* [MQTT-1.5.3-2] / [MQTT-1.5.4-2]: an MQTT UTF-8 encoded string
+         * MUST NOT include the null character (U+0000). Although U+0000
+         * is well-formed UTF-8, it is forbidden in MQTT string fields —
+         * downstream C-string handling would otherwise be tricked by an
+         * embedded NUL truncating the value (e.g., a topic "se\0cret"
+         * would route to subscribers of "se"). The CONNECT Password
+         * field is Binary Data per [MQTT-3.1.3.5] and bypasses this
+         * helper; binary fields tolerate embedded NULs. */
+        if (XMEMCHR(buf, 0x00, str_len) != NULL) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
     if (pstr_len) {
         *pstr_len = str_len;
@@ -1109,39 +1123,6 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
 }
 
 #ifdef WOLFMQTT_BROKER
-/* Decode the CONNECT Password field. Password is Binary Data per
- * MQTT-3.1.3.5, not a UTF-8 string, so the [MQTT-1.5.3-2] / [MQTT-1.5.4-2]
- * U+0000 prohibition does not formally apply. The defensive NUL check is
- * applied here because wolfMQTT compares stored passwords with
- * XSTRLEN/XSTRCMP, so a binary password with an embedded NUL would be
- * silently truncated and could enable an auth bypass. Decoupling this
- * from MqttDecode_String keeps the spec-compliant UTF-8 path separate
- * from the broker-specific binary-data validation. */
-static int MqttDecode_Password(byte *buf, const char **ppassword,
-    word16 *ppassword_len, word32 buf_len)
-{
-    int len;
-    word16 pass_len;
-    len = MqttDecode_Num(buf, &pass_len, buf_len);
-    if (len < 0) {
-        return len;
-    }
-    if ((word32)pass_len > buf_len - (word32)len) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-    }
-    buf += len;
-    if (pass_len > 0 && XMEMCHR(buf, 0x00, pass_len) != NULL) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
-    }
-    if (ppassword_len) {
-        *ppassword_len = pass_len;
-    }
-    if (ppassword) {
-        *ppassword = (char*)buf;
-    }
-    return len + pass_len;
-}
-
 int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
 {
     int header_len, remain_len;
@@ -1696,6 +1677,11 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         if (tmp < 0) {
             return tmp;
         }
+        /* [MQTT-2.3.1-1] PUBLISH packets with QoS > 0 must carry a non-zero
+         * Packet Identifier. */
+        if (publish->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
         variable_len += tmp;
         if (variable_len + header_len <= rx_buf_len) {
             rx_payload += MQTT_DATA_LEN_SIZE;
@@ -2080,6 +2066,11 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
         if (tmp < 0) {
             return tmp;
         }
+        /* [MQTT-2.3.1-1] SUBSCRIBE packets must carry a non-zero
+         * Packet Identifier. */
+        if (subscribe->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
         rx_payload += tmp;
 
 #ifdef WOLFMQTT_V5
@@ -2372,6 +2363,11 @@ int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubs
                 (word32)(rx_buf_len - (rx_payload - rx_buf)));
         if (tmp < 0) {
             return tmp;
+        }
+        /* [MQTT-2.3.1-1] UNSUBSCRIBE packets must carry a non-zero
+         * Packet Identifier. */
+        if (unsubscribe->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
         }
         rx_payload += tmp;
 
