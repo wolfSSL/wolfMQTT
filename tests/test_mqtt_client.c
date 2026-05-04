@@ -837,8 +837,7 @@ TEST(next_packet_id_returns_zero_when_saturated)
     rc = test_init_client();
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
 
-    entries = (MqttPendResp*)XMALLOC(sizeof(MqttPendResp) * count, NULL,
-                                     DYNAMIC_TYPE_TMP_BUFFER);
+    entries = (MqttPendResp*)WOLFMQTT_MALLOC(sizeof(MqttPendResp) * count);
     ASSERT_NOT_NULL(entries);
 
     /* Build a chain with packet_id = 1..MAX_PACKET_ID. The allocator only
@@ -858,7 +857,7 @@ TEST(next_packet_id_returns_zero_when_saturated)
      * into stack memory we are about to free. */
     test_client.firstPendResp = NULL;
     test_client.lastPendResp  = NULL;
-    XFREE(entries, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+    WOLFMQTT_FREE(entries);
 }
 #endif /* WOLFMQTT_MULTITHREAD */
 
