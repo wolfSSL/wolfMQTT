@@ -2859,7 +2859,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     MqttConnectAck ack;
     MqttMessage lwt;
     word16 id_len = 0;
+#ifdef WOLFMQTT_V5
     int auto_assigned = 0;
+#endif
 
     XMEMSET(&mc, 0, sizeof(mc));
     XMEMSET(&ack, 0, sizeof(ack));
@@ -3027,7 +3029,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             }
             goto send_connack;
         }
+    #ifdef WOLFMQTT_V5
         auto_assigned = 1;
+    #endif
     }
 
     WBLOG_INFO(broker, "broker: CONNECT proto=%u clean=%d will=%d client_id=%s",
