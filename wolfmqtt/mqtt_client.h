@@ -218,6 +218,7 @@ typedef struct _MqttClient {
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DEBUG_CLIENT)
     int lastRc;
 #endif
+    word16 next_packet_id; /* allocator state for MqttClient_NextPacketId */
 } MqttClient;
 
 #ifdef WOLFMQTT_SN
@@ -580,6 +581,27 @@ WOLFMQTT_API int MqttClient_GetProtocolVersion(MqttClient *client);
  *  \return     String v3.1.1 or v5
  */
 WOLFMQTT_API const char* MqttClient_GetProtocolVersionString(MqttClient *client);
+
+/*! \brief      Allocate the next currently-unused MQTT Packet Identifier for
+ *              this client.
+ *
+ *  Per [MQTT-2.3.1-1] / MQTT 3.1.1 section 2.3.1, a new QoS-related Control
+ *  Packet (PUBLISH with QoS > 0, SUBSCRIBE, UNSUBSCRIBE) must use a Packet
+ *  Identifier that is not currently in use; the value only becomes
+ *  reusable after the corresponding acknowledgement flow completes. This
+ *  function is the central allocator: it advances a per-client counter,
+ *  skips zero, and (under WOLFMQTT_MULTITHREAD) skips any value that is
+ *  currently tracked in the pending response list.
+ *
+ *  \param      client      Pointer to MqttClient structure
+ *  \return     Non-zero Packet Identifier on success,
+ *              0 if the client pointer is NULL,
+ *              the in-use set is full (all 65535 values active), or
+ *              (under WOLFMQTT_MULTITHREAD) the client lock cannot be
+ *              acquired. In all cases the caller must back off rather
+ *              than reuse a value.
+ */
+WOLFMQTT_API word16 MqttClient_NextPacketId(MqttClient *client);
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
 /*! \brief      Performs lookup of the WOLFMQTT_API return values

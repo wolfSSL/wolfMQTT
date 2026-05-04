@@ -673,6 +673,240 @@ TEST(subscribe_in_flight_blocks_publish_with_same_packet_id)
 #endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
 
 /* ============================================================================
+ * MqttClient_NextPacketId Tests
+ * ============================================================================ */
+
+/* Central allocator must reject NULL clients with the documented sentinel
+ * (0) rather than crashing or wrapping a NULL into a counter increment. */
+TEST(next_packet_id_null_returns_zero)
+{
+    ASSERT_EQ(0, MqttClient_NextPacketId(NULL));
+}
+
+/* Sequential calls must return non-zero values that are distinct from the
+ * previous one. The contract intentionally does not pin the starting
+ * value or require strict +1 stepping — a future change could legally
+ * skip values (e.g., to randomize, or because an in-flight id collided)
+ * without breaking callers. */
+TEST(next_packet_id_increments)
+{
+    word16 a, b, c;
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    a = MqttClient_NextPacketId(&test_client);
+    b = MqttClient_NextPacketId(&test_client);
+    c = MqttClient_NextPacketId(&test_client);
+
+    ASSERT_TRUE(a != 0);
+    ASSERT_TRUE(b != 0);
+    ASSERT_TRUE(c != 0);
+    ASSERT_TRUE(a != b);
+    ASSERT_TRUE(b != c);
+    ASSERT_TRUE(a != c);
+}
+
+/* [MQTT-2.3.1-1] / 3.1.1 section 2.3.1: 0 is reserved (means "no Packet
+ * Identifier"), so the allocator must skip it on wrap. Pre-set the counter
+ * just below the wrap point to drive the wrap branch. */
+TEST(next_packet_id_skips_zero_on_wrap)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Next increment will overflow to 0; allocator must skip to 1. */
+    test_client.next_packet_id = 0xFFFF;
+    ASSERT_EQ(1, MqttClient_NextPacketId(&test_client));
+
+    /* Subsequent call advances normally. */
+    ASSERT_EQ(2, MqttClient_NextPacketId(&test_client));
+}
+
+#if defined(WOLFMQTT_MULTITHREAD) && !defined(_WIN32) && !defined(USE_WINDOWS_API)
+#include <pthread.h>
+#include <sched.h>
+
+#define ALLOCATOR_THREAD_COUNT 8
+#define ALLOCATOR_PER_THREAD   4000
+#define ALLOCATOR_TOTAL        (ALLOCATOR_THREAD_COUNT * ALLOCATOR_PER_THREAD)
+
+/* Start gate so all threads enter the allocator loop at roughly the same
+ * time. Without this, pthread_create finishes serially and the test
+ * effectively measures sequential calls — the very thing the original
+ * racy version handled correctly. Spinning on a shared flag forces the
+ * threads to contend on the increment from the start. */
+static volatile int allocator_start;
+
+typedef struct {
+    MqttClient *client;
+    word16      ids[ALLOCATOR_PER_THREAD];
+    int         saw_zero;
+} allocator_thread_arg_t;
+
+static void* allocator_worker(void *arg)
+{
+    allocator_thread_arg_t *ta = (allocator_thread_arg_t*)arg;
+    int i;
+    while (!allocator_start) {
+        /* yield to be friendly on oversubscribed CI runners */
+        sched_yield();
+    }
+    ta->saw_zero = 0;
+    for (i = 0; i < ALLOCATOR_PER_THREAD; i++) {
+        word16 id = MqttClient_NextPacketId(ta->client);
+        if (id == 0) {
+            ta->saw_zero = 1;
+        }
+        ta->ids[i] = id;
+    }
+    return NULL;
+}
+
+/* HIGH-1 regression: prior to holding lockClient across the counter
+ * advance, two threads racing through the prologue could both publish the
+ * same next_packet_id and both return the same value. ALLOCATOR_TOTAL is
+ * well below the 0xFFFF cap, so a correct allocator must hand out
+ * ALLOCATOR_TOTAL distinct non-zero ids — any duplicate signals the race
+ * has reappeared. */
+TEST(next_packet_id_concurrent_no_duplicates)
+{
+    int rc;
+    pthread_t threads[ALLOCATOR_THREAD_COUNT];
+    allocator_thread_arg_t args[ALLOCATOR_THREAD_COUNT];
+    static byte seen[0x10000];
+    int t, i;
+    int spawned = 0;
+    int spawn_failed = 0;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    allocator_start = 0;
+    for (t = 0; t < ALLOCATOR_THREAD_COUNT; t++) {
+        args[t].client = &test_client;
+        args[t].saw_zero = 0;
+        rc = pthread_create(&threads[t], NULL, allocator_worker, &args[t]);
+        if (rc != 0) {
+            spawn_failed = 1;
+            break;
+        }
+        spawned++;
+    }
+
+    /* Release any threads we did spawn so their spin-gate exits and we can
+     * join them — even on the failure path. Skipping the gate would leak a
+     * spinning thread that consumes a core for the remainder of the run. */
+    allocator_start = 1;
+    for (t = 0; t < spawned; t++) {
+        (void)pthread_join(threads[t], NULL);
+    }
+    ASSERT_EQ(0, spawn_failed);
+
+    XMEMSET(seen, 0, sizeof(seen));
+    for (t = 0; t < ALLOCATOR_THREAD_COUNT; t++) {
+        ASSERT_EQ(0, args[t].saw_zero);
+        for (i = 0; i < ALLOCATOR_PER_THREAD; i++) {
+            word16 id = args[t].ids[i];
+            if (seen[id]) {
+                FAIL("duplicate packet_id returned by concurrent allocator");
+            }
+            seen[id] = 1;
+        }
+    }
+    /* seen[0] must remain 0 — confirms no thread observed the 0 sentinel. */
+    ASSERT_EQ(0, (int)seen[0]);
+}
+#endif /* WOLFMQTT_MULTITHREAD && POSIX */
+
+#ifdef WOLFMQTT_MULTITHREAD
+/* When every legal packet_id (1..0xFFFF) is in flight the allocator must
+ * surface the documented "back off" sentinel (0) rather than wrapping
+ * around forever or returning a colliding value. Constructs a synthetic
+ * pendResp chain covering the full range and asserts the return. */
+TEST(next_packet_id_returns_zero_when_saturated)
+{
+    int rc;
+    word32 i;
+    word32 count = (word32)MAX_PACKET_ID;
+    MqttPendResp *entries;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    entries = (MqttPendResp*)XMALLOC(sizeof(MqttPendResp) * count, NULL,
+                                     DYNAMIC_TYPE_TMP_BUFFER);
+    ASSERT_NOT_NULL(entries);
+
+    /* Build a chain with packet_id = 1..MAX_PACKET_ID. The allocator only
+     * reads packet_id and walks `next`, so other fields can stay zeroed. */
+    XMEMSET(entries, 0, sizeof(MqttPendResp) * count);
+    for (i = 0; i < count; i++) {
+        entries[i].packet_id = (word16)(i + 1);
+        entries[i].next = (i + 1 < count) ? &entries[i + 1] : NULL;
+        entries[i].prev = (i > 0) ? &entries[i - 1] : NULL;
+    }
+    test_client.firstPendResp = &entries[0];
+    test_client.lastPendResp  = &entries[count - 1];
+
+    ASSERT_EQ(0, MqttClient_NextPacketId(&test_client));
+
+    /* Detach the synthetic chain before teardown — DeInit must not walk
+     * into stack memory we are about to free. */
+    test_client.firstPendResp = NULL;
+    test_client.lastPendResp  = NULL;
+    XFREE(entries, NULL, DYNAMIC_TYPE_TMP_BUFFER);
+}
+#endif /* WOLFMQTT_MULTITHREAD */
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+/* The allocator must consult the in-flight set (the pending response list)
+ * and skip any value that is currently registered. We register an
+ * in-flight QoS 1 publish at packet_id=5 via the public write-only API,
+ * then rewind the counter so the natural next allocation would be 5; the
+ * allocator must walk past it and return 6. */
+TEST(next_packet_id_skips_in_flight)
+{
+    int rc;
+    word16 allocated;
+    MqttPublish publish;
+    static byte payload[] = "p";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    test_net.write = mock_net_write_accept;
+
+    /* Park a pendResp with packet_id=5 in the resp list. */
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 5;
+    publish.topic_name = "t";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* Rewind so the next ++ yields 5. The allocator must skip 5 (in-flight)
+     * and return 6. */
+    test_client.next_packet_id = 4;
+    allocated = MqttClient_NextPacketId(&test_client);
+    ASSERT_EQ(6, allocated);
+
+    /* Once the in-flight entry is released, 5 becomes reusable again. */
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.next_packet_id = 4;
+    allocated = MqttClient_NextPacketId(&test_client);
+    ASSERT_EQ(5, allocated);
+}
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
+
+/* ============================================================================
  * MqttClient_WaitMessage Tests
  * ============================================================================ */
 
@@ -796,6 +1030,21 @@ void run_mqtt_client_tests(void)
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(publish_writeonly_rejects_duplicate_in_flight_packet_id);
     RUN_TEST(subscribe_in_flight_blocks_publish_with_same_packet_id);
+#endif
+
+    /* MqttClient_NextPacketId tests */
+    RUN_TEST(next_packet_id_null_returns_zero);
+    RUN_TEST(next_packet_id_increments);
+    RUN_TEST(next_packet_id_skips_zero_on_wrap);
+#if defined(WOLFMQTT_MULTITHREAD) && !defined(_WIN32) && \
+    !defined(USE_WINDOWS_API)
+    RUN_TEST(next_packet_id_concurrent_no_duplicates);
+#endif
+#ifdef WOLFMQTT_MULTITHREAD
+    RUN_TEST(next_packet_id_returns_zero_when_saturated);
+#endif
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+    RUN_TEST(next_packet_id_skips_in_flight);
 #endif
 
     /* MqttClient_WaitMessage tests */
