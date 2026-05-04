@@ -2175,6 +2175,13 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             topic->qos = (MqttQoS)(options & 0x03);
             subscribe->topic_count++;
         }
+
+        /* [MQTT-3.8.3-3] The payload of a SUBSCRIBE packet MUST contain at
+         * least one Topic Filter / QoS pair. v5 §3.8.3 carries the same
+         * minimum-cardinality requirement. */
+        if (subscribe->topic_count == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
 
     (void)rx_payload;
@@ -2466,6 +2473,13 @@ int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubs
             }
             rx_payload += tmp;
             unsubscribe->topic_count++;
+        }
+
+        /* [MQTT-3.10.3-2] The Payload of an UNSUBSCRIBE packet MUST
+         * contain at least one Topic Filter. v5 §3.10.3 carries the same
+         * minimum-cardinality requirement. */
+        if (unsubscribe->topic_count == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
     }
 

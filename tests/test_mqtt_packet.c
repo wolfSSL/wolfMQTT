@@ -2573,6 +2573,55 @@ TEST(decode_subscribe_rejects_nul_in_filter)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.8.3-3] The payload of a SUBSCRIBE packet MUST contain at least
+ * one Topic Filter / QoS pair. Wire is exactly the issue's repro: type
+ * byte 0x82, remain_len=2, just the Packet Identifier with no topic
+ * elements. Without the fix the decoder returned 4 (the packet length)
+ * with topic_count=0. */
+TEST(decode_subscribe_empty_payload_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x02,
+        0x00, 0x01                     /* packet_id only — no topics */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* v5 §3.8.3 carries the same minimum-cardinality requirement as
+ * [MQTT-3.8.3-3]. The v5 path is distinct: it consumes a Properties VBI
+ * before reaching the topic loop. Wire is remain_len=3 = packet_id +
+ * props_len=0, so the topic loop runs zero iterations. Without this
+ * test, a future refactor of the v5 properties block could silently stop
+ * the empty-payload guard from firing on v5 while v3.1.1 stays covered. */
+TEST(decode_subscribe_v5_empty_payload_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x03,
+        0x00, 0x01,                    /* packet_id */
+        0x00                           /* properties length = 0 */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* [MQTT-2.3.1-1] SUBSCRIBE must carry a non-zero Packet Identifier on the
  * receive path as well as the transmit path. */
 TEST(decode_subscribe_packet_id_zero_rejected)
@@ -2653,6 +2702,50 @@ TEST(decode_unsubscribe_rejects_nul_in_filter)
     rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* [MQTT-3.10.3-2] The Payload of an UNSUBSCRIBE packet MUST contain at
+ * least one Topic Filter. Wire matches the issue's repro: type byte
+ * 0xA2, remain_len=2, just the Packet Identifier with no topic elements.
+ * Without the fix the decoder returned 4 with topic_count=0. */
+TEST(decode_unsubscribe_empty_payload_rejected)
+{
+    byte rx_buf[] = {
+        0xA2, 0x02,
+        0x00, 0x01                     /* packet_id only — no topics */
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    unsub.topics = topic_arr;
+    rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* v5 §3.10.3 carries the same minimum-cardinality requirement as
+ * [MQTT-3.10.3-2]. Wire is remain_len=3 = packet_id + props_len=0. */
+TEST(decode_unsubscribe_v5_empty_payload_rejected)
+{
+    byte rx_buf[] = {
+        0xA2, 0x03,
+        0x00, 0x01,                    /* packet_id */
+        0x00                           /* properties length = 0 */
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    unsub.topics = topic_arr;
+    unsub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_V5 */
 
 /* [MQTT-2.3.1-1] UNSUBSCRIBE must carry a non-zero Packet Identifier on
  * the receive path as well as the transmit path. */
@@ -3525,6 +3618,10 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_v311_qos3_reserved);
     RUN_TEST(decode_subscribe_rejects_nul_in_filter);
     RUN_TEST(decode_subscribe_packet_id_zero_rejected);
+    RUN_TEST(decode_subscribe_empty_payload_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_subscribe_v5_empty_payload_rejected);
+#endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_options_byte_qos_extracted);
 #endif
@@ -3532,6 +3629,10 @@ void run_mqtt_packet_tests(void)
     /* MqttDecode_Unsubscribe */
     RUN_TEST(decode_unsubscribe_rejects_nul_in_filter);
     RUN_TEST(decode_unsubscribe_packet_id_zero_rejected);
+    RUN_TEST(decode_unsubscribe_empty_payload_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_unsubscribe_v5_empty_payload_rejected);
+#endif
 #endif
 
     /* QoS 2 ack arithmetic */
