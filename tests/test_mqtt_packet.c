@@ -2289,6 +2289,95 @@ TEST(decode_connect_will_flag_zero_with_extra_payload_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.1.2-3] CONNECT flags bit 0 is reserved and MUST be 0. Applies
+ * regardless of protocol level. Flags 0x03 = reserved | clean_session. */
+TEST(decode_connect_reserved_flag_bit_rejected)
+{
+    byte buf[] = {
+        0x10, 0x0F,                     /* CONNECT, remain_len = 15 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,                           /* protocol level = 4 */
+        0x03,                           /* flags: reserved | clean_session */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-3.1.2-13] If Will Flag is 0, Will QoS MUST be 0. Flags 0x0A =
+ * clean_session | will_qos=1 with Will Flag clear. */
+TEST(decode_connect_will_qos_with_will_flag_zero_rejected)
+{
+    byte buf[] = {
+        0x10, 0x0F,                     /* CONNECT, remain_len = 15 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x0A,                           /* will_qos=1 but will_flag=0 */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-3.1.2-15] If Will Flag is 0, Will Retain MUST be 0. Flags 0x22 =
+ * clean_session | will_retain with Will Flag clear. */
+TEST(decode_connect_will_retain_with_will_flag_zero_rejected)
+{
+    byte buf[] = {
+        0x10, 0x0F,                     /* CONNECT, remain_len = 15 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x22,                           /* will_retain but will_flag=0 */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-3.1.2-14] Will QoS = 3 is reserved. Flags 0x1E set the full QoS
+ * mask (bits 4-3 = 0b11) along with Will Flag and Clean Session. The
+ * earlier Will-Flag-0 check would not catch this — only the QoS-value
+ * check fires. Provides full Will fields so a regression that drops the
+ * QoS=3 check returns success rather than tripping a downstream
+ * OUT_OF_BUFFER. */
+TEST(decode_connect_will_qos3_rejected)
+{
+    byte buf[] = {
+        0x10, 0x1C,                     /* CONNECT, remain_len = 28 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x1E,                           /* clean | will_flag | will_qos=3 */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',
+        0x00, 0x06, 'w', '/', 't', 'o', 'p', 'c', /* will topic */
+        0x00, 0x03, 'b', 'y', 'e'                  /* will payload */
+    };
+    MqttConnect dec;
+    MqttMessage lwt;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    dec.lwt_msg = &lwt;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* [MQTT-3.1.2-22] If the User Name Flag is 0, the Password Flag MUST be 0.
  * The encoder already enforces this; the decoder must too. Wire mirrors
  * issue #512's reproducer: flags 0x42 = clean_session | password, with
@@ -3420,6 +3509,10 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_password_flag_zero_with_extra_payload_rejected);
     RUN_TEST(decode_connect_username_flag_zero_with_extra_payload_rejected);
     RUN_TEST(decode_connect_will_flag_zero_with_extra_payload_rejected);
+    RUN_TEST(decode_connect_reserved_flag_bit_rejected);
+    RUN_TEST(decode_connect_will_qos_with_will_flag_zero_rejected);
+    RUN_TEST(decode_connect_will_retain_with_will_flag_zero_rejected);
+    RUN_TEST(decode_connect_will_qos3_rejected);
     RUN_TEST(decode_connect_password_flag_without_username_flag_rejected);
     RUN_TEST(decode_connect_trailing_garbage_rejected);
 #ifdef WOLFMQTT_V5

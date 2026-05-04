@@ -1178,6 +1178,29 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
     mc_connect->username = NULL;
     mc_connect->password = NULL;
 
+    /* [MQTT-3.1.2-3] CONNECT flags bit 0 is reserved and MUST be 0.
+     * Applies to both v3.1.1 and v5. */
+    if (packet.flags & MQTT_CONNECT_FLAG_RESERVED) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    /* [MQTT-3.1.2-13] / [MQTT-3.1.2-15] If the Will Flag is 0, Will QoS
+     * MUST be 0 and Will Retain MUST be 0. Applies to both v3.1.1 and v5
+     * (v5 section 3.1.2.6 / 3.1.2.5 carry the same constraint). */
+    if (!(packet.flags & MQTT_CONNECT_FLAG_WILL_FLAG) &&
+        (packet.flags & (MQTT_CONNECT_FLAG_WILL_QOS_MASK |
+                         MQTT_CONNECT_FLAG_WILL_RETAIN))) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
+    /* [MQTT-3.1.2-14] Will QoS = 3 is reserved and MUST NOT be used.
+     * Only meaningful when Will Flag = 1; the Will-Flag-0 check above
+     * already rejects nonzero QoS bits in that case. */
+    if ((packet.flags & MQTT_CONNECT_FLAG_WILL_FLAG) &&
+        MQTT_CONNECT_FLAG_GET_QOS(packet.flags) == MQTT_QOS_3) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     /* [MQTT-3.1.2-22] (v3.1.1 only) If the User Name Flag is 0, the
      * Password Flag MUST be 0. MQTT v5 section 3.1.2.9 explicitly relaxes
      * this — "This version of the protocol allows the sending of a
