@@ -2289,6 +2289,32 @@ TEST(decode_connect_will_flag_zero_with_extra_payload_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.1.2-22] If the User Name Flag is 0, the Password Flag MUST be 0.
+ * The encoder already enforces this; the decoder must too. Wire mirrors
+ * issue #512's reproducer: flags 0x42 = clean_session | password, with
+ * client_id "cid" followed by a "secret" password field. Catches a
+ * regression that drops the receive-side flag-pair check and silently
+ * accepts a password without a user name. */
+TEST(decode_connect_password_flag_without_username_flag_rejected)
+{
+    byte buf[] = {
+        0x10, 0x17,                     /* CONNECT, remain_len = 23 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,                           /* protocol level = 4 (v3.1.1) */
+        0x42,                           /* flags: clean_session|password */
+        0x00, 0x3C,                     /* keep alive = 60 */
+        0x00, 0x03, 'c', 'i', 'd',      /* client_id "cid" */
+        0x00, 0x06, 's', 'e', 'c', 'r', /* password "secret" */
+        'e', 't'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* Single-byte trailing garbage (no flag fields beyond client_id) catches
  * an off-by-one form of the consumption check. The non-malformed case
  * (decode_connect_v311_no_credentials above) is the partner that prevents
@@ -2336,6 +2362,40 @@ TEST(decode_connect_v5_rejects_nul_in_client_id)
     dec.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    MqttProps_Free(dec.props);
+}
+
+/* MQTT v5 section 3.1.2.9 explicitly allows Password without User Name —
+ * "This version of the protocol allows the sending of a Password with no
+ * User Name, where MQTT v3.1.1 did not." Pins the protocol-level gate on
+ * the [MQTT-3.1.2-22] check: a future change that drops the level guard
+ * would reject this valid v5 wire and trip this test. The companion
+ * negative case is decode_connect_password_flag_without_username_flag_-
+ * rejected above (level=4). */
+TEST(decode_connect_v5_password_without_username_accepted)
+{
+    byte buf[] = {
+        0x10, 0x18,                     /* CONNECT, remain_len = 24 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,                           /* protocol level = 5 */
+        0x42,                           /* flags: clean_session|password */
+        0x00, 0x3C,                     /* keep alive */
+        0x00,                           /* properties length = 0 */
+        0x00, 0x03, 'c', 'i', 'd',      /* client_id "cid" */
+        0x00, 0x06, 's', 'e', 'c', 'r', /* password "secret" */
+        'e', 't'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(MQTT_CONNECT_PROTOCOL_LEVEL_5, dec.protocol_level);
+    ASSERT_NULL(dec.username);
+    ASSERT_NOT_NULL(dec.password);
+    ASSERT_EQ(0, XMEMCMP(dec.password, "secret", 6));
     MqttProps_Free(dec.props);
 }
 #endif /* WOLFMQTT_V5 */
@@ -3360,9 +3420,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_password_flag_zero_with_extra_payload_rejected);
     RUN_TEST(decode_connect_username_flag_zero_with_extra_payload_rejected);
     RUN_TEST(decode_connect_will_flag_zero_with_extra_payload_rejected);
+    RUN_TEST(decode_connect_password_flag_without_username_flag_rejected);
     RUN_TEST(decode_connect_trailing_garbage_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_connect_v5_rejects_nul_in_client_id);
+    RUN_TEST(decode_connect_v5_password_without_username_accepted);
 #endif
 
     /* MqttDecode_Subscribe */

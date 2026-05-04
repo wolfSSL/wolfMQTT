@@ -1178,6 +1178,18 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
     mc_connect->username = NULL;
     mc_connect->password = NULL;
 
+    /* [MQTT-3.1.2-22] (v3.1.1 only) If the User Name Flag is 0, the
+     * Password Flag MUST be 0. MQTT v5 section 3.1.2.9 explicitly relaxes
+     * this — "This version of the protocol allows the sending of a
+     * Password with no User Name, where MQTT v3.1.1 did not." — so the
+     * check is gated on the protocol level. mc_connect->protocol_level was
+     * just populated above. */
+    if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_4 &&
+        (packet.flags & MQTT_CONNECT_FLAG_PASSWORD) &&
+        !(packet.flags & MQTT_CONNECT_FLAG_USERNAME)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     tmp = MqttDecode_Num((byte*)&packet.keep_alive, &mc_connect->keep_alive_sec,
         MQTT_DATA_LEN_SIZE);
     if (tmp < 0) {
