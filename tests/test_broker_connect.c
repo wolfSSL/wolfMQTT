@@ -496,6 +496,97 @@ TEST(connect_unsupported_level_127_refused)
     run_unsupported_level(0x7F);
 }
 
+#ifdef WOLFMQTT_BROKER_AUTH
+/* Regression: [MQTT-3.1.3.5] Password is Binary Data and may legally
+ * contain 0x00. The broker must not use XSTRLEN-based length recovery on
+ * bc->password, which would truncate at the first embedded NUL and turn
+ * the constant-time auth compare into a prefix compare — letting a
+ * client that sends "abc\0<anything>" authenticate against auth_pass
+ * "abc". The fix tracks bc->password_len explicitly. */
+TEST(connect_v311_binary_password_with_embedded_nul_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT v3.1.1, username="user", password = "abc\0xyz" (7 bytes,
+     * embedded NUL at offset 3). Configured auth_pass is "abc"; under
+     * XSTRLEN truncation, the broker would read bc->password as "abc"
+     * and authenticate the client. With password_len tracking, the
+     * length mismatch (3 vs 7) is folded into the compare and auth
+     * fails. */
+    static const byte connect[] = {
+        0x10, 29,                                  /* fixed header */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',            /* protocol name */
+        0x04,                                      /* level 4 (v3.1.1) */
+        0xC2,                                      /* flags: user+pass+clean */
+        0x00, 0x3C,                                /* keep-alive 60 */
+        0x00, 0x02, 'i', 'd',                      /* ClientId "id" */
+        0x00, 0x04, 'u', 's', 'e', 'r',            /* Username "user" */
+        0x00, 0x07, 'a', 'b', 'c', 0x00,           /* Password binary, */
+        'x', 'y', 'z'                              /*   length 7 */
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "user";
+    broker.auth_pass = "abc";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Auth must fail — CONNACK return code 0x05 (Not Authorized) and the
+     * connection is closed. Pre-fix, XSTRLEN truncation would let this
+     * authenticate and emit return code 0x00. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Companion: a binary password that exactly matches the configured
+ * auth_pass bytes still authenticates. Pins that the length-aware
+ * compare doesn't over-correct and break the equal-length case. */
+TEST(connect_v311_binary_password_exact_match_accepted)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* password = "abc" (3 bytes, no embedded NUL); auth_pass = "abc". */
+    static const byte connect[] = {
+        0x10, 25,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0xC2,
+        0x00, 0x3C,
+        0x00, 0x02, 'i', 'd',
+        0x00, 0x04, 'u', 's', 'e', 'r',
+        0x00, 0x03, 'a', 'b', 'c'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "user";
+    broker.auth_pass = "abc";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_out_buf[3]);
+    ASSERT_FALSE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_AUTH */
+
 #ifdef WOLFMQTT_V5
 /* v5 dropped the [MQTT-3.1.3-8] CleanSession=1-only restriction; an empty
  * ClientId is acceptable with any Clean Start value. The broker MUST emit
@@ -901,7 +992,10 @@ TEST(qos2_inbound_cap_reached_disconnects)
     reset_mock_clients(1);
     mock_client_input_append(0, connect_pub, sizeof(connect_pub));
     /* Feed BROKER_MAX_INBOUND_QOS2 + 1 distinct in-flight PUBLISHes. The
-     * first cap accepted; the (cap+1)th must trigger malformed-data close. */
+     * first cap accepted; the (cap+1)th must trigger a fatal close.
+     * v3.1.1 has no DISCONNECT-with-reason path so the broker closes the
+     * socket directly; v5 clients additionally receive a DISCONNECT
+     * with MQTT_REASON_QUOTA_EXCEEDED before the close. */
     for (i = 1; i <= BROKER_MAX_INBOUND_QOS2 + 1; i++) {
         size_t n = build_qos2_pub(pub_buf, (word16)i);
         mock_client_input_append(0, pub_buf, n);
@@ -1151,6 +1245,87 @@ TEST(disconnect_v311_nonzero_remain_len_fires_will)
     MqttBroker_Free(&broker);
 }
 #endif /* !WOLFMQTT_V5 */
+
+/* The broker switch's default branch must close the connection on any
+ * unhandled packet type rather than silently no-op'ing. Wire is an
+ * AUTH packet (type 15) from a v3.1.1 client — AUTH is undefined in
+ * v3.1.1 and this broker doesn't implement enhanced authentication
+ * even on v5, so AUTH is always unhandled. The pre-dispatch
+ * FixedHeaderFlagsValid gate accepts AUTH (it is a defined type 15
+ * with required flag nibble 0x0); rejection has to happen at dispatch. */
+TEST(broker_unhandled_packet_type_closes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* AUTH (type 15) with empty body. v3.1.1 doesn't define AUTH. */
+    static const byte auth[] = { 0xF0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, auth, sizeof(auth));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* [MQTT-2.3.1-1] / [MQTT-4.13]: a SUBSCRIBE packet with Packet
+ * Identifier = 0 is malformed and the broker MUST close the connection.
+ * MqttDecode_Subscribe returns MQTT_CODE_ERROR_PACKET_ID; this test
+ * pins that BrokerRcIsFatal classifies that rc as fatal so the dispatch
+ * takes the close path. Without PACKET_ID in the fatal set, the broker
+ * silently drops the packet and leaves the client connected. */
+TEST(broker_subscribe_packet_id_zero_closes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE with packet_id=0x0000 — violates [MQTT-2.3.1-1].
+     * Body: packet_id (2) + topic_len (2) + "t" (1) + qos (1) = 6. */
+    static const byte sub_pid_zero[] = {
+        0x82, 0x06,
+        0x00, 0x00,                    /* packet_id = 0 (illegal) */
+        0x00, 0x01, 't',
+        0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, sub_pid_zero, sizeof(sub_pid_zero));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 
 /* MQTT 3.1.1 §3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
  * nibble MUST be 0000. The broker dispatch enforces this via the
@@ -1961,6 +2136,10 @@ int main(int argc, char** argv)
     RUN_TEST(connect_unsupported_level_3_refused);
     RUN_TEST(connect_unsupported_level_6_refused);
     RUN_TEST(connect_unsupported_level_127_refused);
+#ifdef WOLFMQTT_BROKER_AUTH
+    RUN_TEST(connect_v311_binary_password_with_embedded_nul_refused);
+    RUN_TEST(connect_v311_binary_password_exact_match_accepted);
+#endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
     RUN_TEST(connect_v5_emptyid_clean0_accepted);
@@ -1977,6 +2156,8 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
+    RUN_TEST(broker_unhandled_packet_type_closes);
+    RUN_TEST(broker_subscribe_packet_id_zero_closes);
     RUN_TEST(connack_session_present_set_on_resumed_session);
     RUN_TEST(connack_session_present_set_on_takeover);
     RUN_TEST(connack_session_present_clear_on_clean_session_reconnect);

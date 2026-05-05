@@ -247,6 +247,12 @@ typedef struct BrokerClient {
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
     byte    connected;       /* set after successful CONNECT handshake */
+#ifdef WOLFMQTT_BROKER_AUTH
+    /* Actual stored length of password bytes. Tracked separately because
+     * [MQTT-3.1.3.5] defines Password as Binary Data, which may legally
+     * contain 0x00 — XSTRLEN would truncate at the first embedded NUL. */
+    word16  password_len;
+#endif
 #ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;

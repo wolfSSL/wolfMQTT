@@ -182,7 +182,7 @@ static int MqttEncode_FixedHeader(byte *tx_buf, int tx_buf_len, int remain_len,
     return header_len;
 }
 
-/* [MQTT-2.2.2-1] Required fixed-header reserved-flag values per packet type.
+/* [MQTT-2.2.2-2] Required fixed-header reserved-flag values per packet type.
  * PUBLISH (type 3) carries DUP/QoS/RETAIN and is validated separately. */
 static int FixedHeaderFlagsExpected(byte type, byte *expected)
 {
@@ -354,9 +354,11 @@ int MqttPacket_FixedHeaderFlagsValid(byte type_flags)
     if (FixedHeaderFlagsExpected(type, &expected)) {
         return (flags == expected) ? 1 : 0;
     }
-    /* Unknown/reserved type: this helper validates the flag nibble only.
-     * Callers are responsible for rejecting unknown packet types. */
-    return 1;
+    /* Reserved (type 0) or otherwise unrecognized packet type — reject so
+     * this helper is safe to use as a protocol-level malformed-packet
+     * gate. The broker uses it pre-dispatch, so anything it accepts has
+     * to be a known type. */
+    return 0;
 }
 
 static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
@@ -1360,7 +1362,16 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
      * unsupported levels (e.g., 6) — the broker's [MQTT-3.1.2-2] rejection
      * runs after this function, so we must let the wire decode under the
      * level the spec actually defines for it (here: nothing, fall through
-     * to the v3.1.1-shape payload). */
+     * to the v3.1.1-shape payload).
+     *
+     * Corner case: a peer claiming level 6 but sending a v5-shape wire
+     * (extra properties-length VBI present) will misparse on the v3.1.1
+     * path and the strict tail-consumption check below returns
+     * MALFORMED_DATA, which the broker translates to a silent socket
+     * close — CONNACK 0x01 is emitted only when the v3.1.1-shape decode
+     * succeeds. This is a best-effort spec compliance trade-off; clients
+     * that misrepresent their protocol level should not expect the broker
+     * to reverse-engineer the wire shape. */
     if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         /* Decode Length of Properties */
         if (rx_buf_len < (rx_payload - rx_buf)) {

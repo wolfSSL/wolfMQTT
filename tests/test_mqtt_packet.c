@@ -3979,6 +3979,49 @@ TEST(fixed_header_flags_valid_canonical_values)
     ASSERT_EQ(1, MqttPacket_FixedHeaderFlagsValid(0xF0)); /* AUTH (v5) */
 }
 
+/* Type 0 (RESERVED) is not a defined MQTT packet type. The helper must
+ * reject it so callers — including the broker pre-dispatch check — can
+ * treat any accepted byte as a known type. */
+TEST(fixed_header_flags_valid_reserved_type_rejected)
+{
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x00));
+    /* Every flag-nibble combination on the reserved type must be
+     * rejected — the type itself is the failure, not the nibble. */
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x01));
+    ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x0F));
+}
+
+#ifdef WOLFMQTT_BROKER
+/* Reserved-type packet on the wire — broker pre-dispatch must reject
+ * via the FixedHeaderFlagsValid gate. Exercises the decoder boundary
+ * separately from the helper unit test above. */
+TEST(decode_fixed_header_reserved_type_rejected)
+{
+    /* SUBSCRIBE wire shape but type byte set to RESERVED (0x00).
+     * MqttDecode_Subscribe runs MqttDecode_FixedHeader with the
+     * expected type SUBSCRIBE, so the type-mismatch path returns
+     * MQTT_CODE_ERROR_PACKET_TYPE first; that is correct on this
+     * decoder path. The broker dispatch path uses
+     * MqttPacket_FixedHeaderFlagsValid directly and is covered by the
+     * helper test above. */
+    byte rx_buf[] = {
+        0x00, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'a',
+        0x01
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_TRUE(rc < 0);
+}
+#endif /* WOLFMQTT_BROKER */
+
 TEST(fixed_header_flags_valid_zero_required_rejects_nonzero)
 {
     /* Types whose reserved nibble MUST be 0000. Each non-zero permutation
@@ -4644,12 +4687,14 @@ void run_mqtt_packet_tests(void)
 
     /* Fixed-header reserved-flag validation [MQTT-2.2.2-2] */
     RUN_TEST(fixed_header_flags_valid_canonical_values);
+    RUN_TEST(fixed_header_flags_valid_reserved_type_rejected);
     RUN_TEST(fixed_header_flags_valid_zero_required_rejects_nonzero);
     RUN_TEST(fixed_header_flags_valid_two_required_rejects_other);
     RUN_TEST(fixed_header_flags_valid_publish_qos_and_dup);
 #ifdef WOLFMQTT_BROKER
     RUN_TEST(decode_subscribe_invalid_fixed_header_flags);
     RUN_TEST(decode_unsubscribe_invalid_fixed_header_flags);
+    RUN_TEST(decode_fixed_header_reserved_type_rejected);
 #endif
     RUN_TEST(decode_pubrel_invalid_fixed_header_flags);
     RUN_TEST(decode_publish_qos3_rejected);

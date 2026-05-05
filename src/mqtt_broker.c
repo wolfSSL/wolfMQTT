@@ -143,18 +143,19 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
 #endif
 
 #ifdef WOLFMQTT_BROKER_AUTH
-/* Constant-time string comparison for authentication.
+/* Constant-time buffer comparison for authentication.
  * Iterates exactly cmp_len times so loop duration is independent of
  * either input's length; cmp_len is a caller-supplied fixed bound
  * (the credential buffer size). Length mismatch is folded in via the
  * final XOR. Inputs with length >= cmp_len force a mismatch to prevent
- * bypass when both strings match in the first cmp_len bytes but differ
- * beyond. Returns 0 if equal, non-zero if different. */
-static int BrokerStrCompare(const char* a, const char* b, int cmp_len)
+ * bypass when both inputs match in the first cmp_len bytes but differ
+ * beyond. Caller supplies explicit lengths so binary inputs containing
+ * embedded NULs (e.g. [MQTT-3.1.3.5] Password) are compared correctly.
+ * Returns 0 if equal, non-zero if different. */
+static int BrokerBufCompare(const byte* a, int len_a,
+    const byte* b, int len_b, int cmp_len)
 {
     int result = 0;
-    int len_a = (int)XSTRLEN(a);
-    int len_b = (int)XSTRLEN(b);
     int i;
     for (i = 0; i < cmp_len; i++) {
         /* Branchless index clamp: when i >= len, reads position 0.
@@ -163,7 +164,7 @@ static int BrokerStrCompare(const char* a, const char* b, int cmp_len)
         unsigned int maskB = 0u - (unsigned int)(i < len_b);
         int ia = (int)((unsigned int)i & maskA);
         int ib = (int)((unsigned int)i & maskB);
-        result |= (a[ia] ^ b[ib]);
+        result |= ((int)a[ia] ^ (int)b[ib]);
     }
     result |= (len_a ^ len_b);
     /* Force mismatch if either input meets or exceeds cmp_len, since the
@@ -172,26 +173,26 @@ static int BrokerStrCompare(const char* a, const char* b, int cmp_len)
     result |= (len_b >= cmp_len);
     return result;
 }
+
+/* Constant-time C-string comparison wrapper. Both inputs are assumed to
+ * be NUL-terminated UTF-8 (e.g. configured username, decoded username
+ * field which is rejected if it contains U+0000). */
+static int BrokerStrCompare(const char* a, const char* b, int cmp_len)
+{
+    return BrokerBufCompare((const byte*)a, (int)XSTRLEN(a),
+                            (const byte*)b, (int)XSTRLEN(b), cmp_len);
+}
 #endif /* WOLFMQTT_BROKER_AUTH */
 
 /* Store a string of known length into a BrokerClient field.
- * Static mode: copies into fixed-size buffer with truncation. The
- *   sensitive-wipe variant zeros the full max_len buffer, so it is
- *   unaffected by string contents.
- * Dynamic mode: frees old value, allocates new buffer, copies. The
- *   sensitive-wipe path uses XSTRLEN(buf)+1, which is correct only when
- *   stored values contain no embedded NUL. The decode-side guards that
- *   feed this function enforce that invariant:
- *     - MqttDecode_String rejects U+0000 per [MQTT-1.5.3-2] /
- *       [MQTT-1.5.4-2] for UTF-8 fields (client_id, username, topics).
- *     - MqttDecode_Password applies the same NUL check to the CONNECT
- *       Password field; that field is Binary Data per MQTT-3.1.3.5 and
- *       the spec does not require it, but wolfMQTT compares passwords
- *       with XSTRLEN/XSTRCMP, so the broker-side defensive check here
- *       is what keeps the "no embedded NUL" assumption intact.
- *   Do not call the dynamic-mode sensitive path with src bytes that
- *   bypass those decoders without first capping src_len at the first
- *   NUL, or the wipe will leave trailing bytes uncleared. */
+ * Static mode: copies into fixed-size buffer with truncation.
+ * Dynamic mode: frees old value, allocates new buffer, copies.
+ *
+ * The "sensitive" flavor in dynamic mode wipes the previous value via
+ * XSTRLEN-derived length. That is correct for NUL-terminated UTF-8
+ * fields (e.g., username, where [MQTT-1.5.3-2] forbids embedded U+0000)
+ * but unsafe for binary data. Use BrokerStore_BinarySensitive for fields
+ * that may contain embedded 0x00 (e.g., [MQTT-3.1.3.5] Password). */
 #ifdef WOLFMQTT_STATIC_MEMORY
 static void BrokerStore_String(char* dst, int max_len,
     const char* src, word16 src_len)
@@ -213,6 +214,20 @@ static void BrokerStore_StringSensitive(char* dst, int max_len,
     XMEMCPY(dst, src, src_len);
     dst[src_len] = '\0';
 }
+/* Binary-data sensitive store. Wipes the destination (full buffer) and
+ * records the actual stored length so callers don't need XSTRLEN-based
+ * length recovery. */
+static void BrokerStore_BinarySensitive(char* dst, int max_len,
+    word16* dst_len_out, const char* src, word16 src_len)
+{
+    BROKER_FORCE_ZERO(dst, max_len);
+    if (src_len >= (word16)max_len) {
+        src_len = (word16)(max_len - 1);
+    }
+    XMEMCPY(dst, src, src_len);
+    dst[src_len] = '\0';
+    *dst_len_out = src_len;
+}
 #else
 static void BrokerStore_String(char** dst_ptr,
     const char* src, word16 src_len, int sensitive)
@@ -230,6 +245,25 @@ static void BrokerStore_String(char** dst_ptr,
         (*dst_ptr)[src_len] = '\0';
     }
 }
+/* Binary-data sensitive store. Wipes the previous value using its
+ * tracked length (binary-safe — [MQTT-3.1.3.5] Password may contain
+ * 0x00) before free, then records the new stored length. */
+static void BrokerStore_BinarySensitive(char** dst_ptr,
+    word16* dst_len_out, const char* src, word16 src_len)
+{
+    if (*dst_ptr != NULL) {
+        BROKER_FORCE_ZERO(*dst_ptr, (size_t)(*dst_len_out) + 1);
+        WOLFMQTT_FREE(*dst_ptr);
+        *dst_ptr = NULL;
+    }
+    *dst_len_out = 0;
+    *dst_ptr = (char*)WOLFMQTT_MALLOC(src_len + 1);
+    if (*dst_ptr != NULL) {
+        XMEMCPY(*dst_ptr, src, src_len);
+        (*dst_ptr)[src_len] = '\0';
+        *dst_len_out = src_len;
+    }
+}
 #endif
 
 /* Wrapper macros to unify static/dynamic calling convention */
@@ -238,11 +272,15 @@ static void BrokerStore_String(char** dst_ptr,
         BrokerStore_String(dst, maxlen, src, len)
     #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
         BrokerStore_StringSensitive(dst, maxlen, src, len)
+    #define BROKER_STORE_BIN_SENSITIVE(dst, dst_len, src, len, maxlen) \
+        BrokerStore_BinarySensitive(dst, maxlen, &(dst_len), src, len)
 #else
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
         BrokerStore_String(&(dst), src, len, 0)
     #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
         BrokerStore_String(&(dst), src, len, 1)
+    #define BROKER_STORE_BIN_SENSITIVE(dst, dst_len, src, len, maxlen) \
+        BrokerStore_BinarySensitive(&(dst), &(dst_len), src, len)
 #endif
 
 #if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
@@ -1406,7 +1444,10 @@ static void BrokerClient_Free(BrokerClient* bc)
         WOLFMQTT_FREE(bc->username);
     }
     if (bc->password) {
-        BROKER_FORCE_ZERO(bc->password, XSTRLEN(bc->password) + 1);
+        /* Wipe the full stored binary length plus the trailing NUL byte
+         * appended by BrokerStore_String. password_len reflects the actual
+         * decoded length, since [MQTT-3.1.3.5] Password may contain 0x00. */
+        BROKER_FORCE_ZERO(bc->password, (size_t)bc->password_len + 1);
         WOLFMQTT_FREE(bc->password);
     }
 #endif
@@ -3213,6 +3254,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     bc->username[0] = '\0';
     bc->password[0] = '\0';
 #endif
+    bc->password_len = 0;
     if (mc.username) {
         word16 ulen = 0;
         if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
@@ -3263,8 +3305,12 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 goto send_connack;
             }
         #endif
-            BROKER_STORE_STR_SENSITIVE(bc->password, mc.password, plen,
-                BROKER_MAX_PASSWORD_LEN);
+            /* [MQTT-3.1.3.5] Password is Binary Data and may legally
+             * contain 0x00. The binary-sensitive store records the
+             * actual length in bc->password_len so wipe and compare
+             * paths don't fall back to XSTRLEN truncation. */
+            BROKER_STORE_BIN_SENSITIVE(bc->password, bc->password_len,
+                mc.password, plen, BROKER_MAX_PASSWORD_LEN);
         }
     }
 #endif /* WOLFMQTT_BROKER_AUTH */
@@ -3297,8 +3343,10 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         #ifndef WOLFMQTT_STATIC_MEMORY
             bc->password == NULL ||
         #endif
-            bc->password[0] == '\0' ||
-            BrokerStrCompare(broker->auth_pass, bc->password,
+            bc->password_len == 0 ||
+            BrokerBufCompare((const byte*)broker->auth_pass,
+                (int)XSTRLEN(broker->auth_pass),
+                (const byte*)bc->password, (int)bc->password_len,
                 BROKER_MAX_PASSWORD_LEN) != 0)) {
             auth_ok = 0;
         }
@@ -3614,14 +3662,25 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         else {
             int add_rc = BrokerInboundQos2_Add(bc, pub.packet_id);
             if (add_rc != MQTT_CODE_SUCCESS) {
-                /* Either per-client cap reached or allocation failure.
-                 * Treat as a protocol-level error so dispatch closes the
-                 * connection. Log the underlying rc so operators can tell
-                 * "client misbehaved" from "broker out of memory". */
+                /* Distinguish per-client cap reached (OUT_OF_BUFFER) from
+                 * allocator failure (MEMORY) so v5 clients get an
+                 * accurate DISCONNECT reason code, and propagate the
+                 * underlying rc rather than masking it as MALFORMED_DATA
+                 * — server-side resource exhaustion is not a wire-level
+                 * protocol violation. The dispatch's BrokerRcIsFatal
+                 * gate recognizes both codes and closes the connection. */
                 WBLOG_ERR(broker,
                     "broker: QoS2 inbound add failed sock=%d packet_id=%u "
                     "rc=%d", (int)bc->sock, pub.packet_id, add_rc);
-                rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+            #ifdef WOLFMQTT_V5
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    byte reason = (add_rc == MQTT_CODE_ERROR_OUT_OF_BUFFER)
+                        ? MQTT_REASON_QUOTA_EXCEEDED
+                        : MQTT_REASON_SERVER_BUSY;
+                    (void)BrokerSend_Disconnect(bc, reason);
+                }
+            #endif
+                rc = add_rc;
                 goto publish_cleanup;
             }
         }
@@ -3720,15 +3779,29 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                         out_pub.props = pub.props;
                     }
 #endif
-                    rc = MqttEncode_Publish(sub->client->tx_buf,
+                    /* Use a per-subscriber rc: a subscriber's encode/write
+                     * failure (e.g., undersized tx_buf) is a peer-side
+                     * issue and must not be propagated up as the
+                     * publisher's return code, or the publisher would be
+                     * wrongly disconnected by the dispatch's fatal-rc
+                     * gate (especially for QoS 0, where the function-
+                     * level rc is otherwise never overwritten before
+                     * return). */
+                    int sub_rc = MqttEncode_Publish(sub->client->tx_buf,
                             BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
-                    if (rc > 0) {
+                    if (sub_rc > 0) {
                         WBLOG_DBG(broker, "broker: PUBLISH fwd sock=%d -> sock=%d "
                             "topic=%s qos=%d len=%u",
                             (int)bc->sock, (int)sub->client->sock,
                             topic, eff_qos, (unsigned)pub.total_len);
                         (void)MqttPacket_Write(&sub->client->client,
-                            sub->client->tx_buf, rc);
+                            sub->client->tx_buf, sub_rc);
+                    }
+                    else {
+                        WBLOG_ERR(broker,
+                            "broker: PUBLISH fwd encode failed sock=%d -> "
+                            "sock=%d rc=%d",
+                            (int)bc->sock, (int)sub->client->sock, sub_rc);
                     }
                 }
 #ifndef WOLFMQTT_STATIC_MEMORY
@@ -3861,11 +3934,23 @@ static void BrokerClient_AbnormalClose(MqttBroker* broker, BrokerClient* bc)
     BrokerClient_Remove(broker, bc);
 }
 
-/* Decode-level errors that indicate a malformed packet on the wire. */
-static int BrokerRcIsMalformed(int rc)
+/* Returns non-zero for return codes that require the broker to close the
+ * client connection. Includes:
+ *   - Wire-level decode errors (malformed packet, wrong packet type).
+ *   - Packet ID violations: [MQTT-2.3.1-1] requires a non-zero Packet
+ *     Identifier on QoS>0 PUBLISH and on every SUBSCRIBE/UNSUBSCRIBE;
+ *     decoders return MQTT_CODE_ERROR_PACKET_ID for packet_id == 0, and
+ *     [MQTT-4.13]/[MQTT-4.8.0-1] mandate connection close on malformed
+ *     packets.
+ *   - Server-side resource exhaustion (allocator failure, per-client cap
+ *     reached) — the connection must be torn down so resources release. */
+static int BrokerRcIsFatal(int rc)
 {
     return (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
-            rc == MQTT_CODE_ERROR_PACKET_TYPE);
+            rc == MQTT_CODE_ERROR_PACKET_TYPE ||
+            rc == MQTT_CODE_ERROR_PACKET_ID ||
+            rc == MQTT_CODE_ERROR_MEMORY ||
+            rc == MQTT_CODE_ERROR_OUT_OF_BUFFER);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -3996,7 +4081,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             case MQTT_PACKET_TYPE_PUBLISH:
             {
                 int p_rc = BrokerHandle_Publish(bc, rc, broker);
-                if (BrokerRcIsMalformed(p_rc)) {
+                if (BrokerRcIsFatal(p_rc)) {
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
@@ -4010,7 +4095,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 /* QoS 2 step 2: subscriber sends PUBREC, broker
                  * responds with PUBREL */
                 int p_rc = BrokerHandle_PublishRec(bc, rc);
-                if (BrokerRcIsMalformed(p_rc)) {
+                if (BrokerRcIsFatal(p_rc)) {
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
@@ -4021,7 +4106,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 /* QoS 2 step 3: publisher sends PUBREL, broker
                  * responds with PUBCOMP */
                 int p_rc = BrokerHandle_PublishRel(bc, rc);
-                if (BrokerRcIsMalformed(p_rc)) {
+                if (BrokerRcIsFatal(p_rc)) {
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
@@ -4034,7 +4119,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             case MQTT_PACKET_TYPE_SUBSCRIBE:
             {
                 int s_rc = BrokerHandle_Subscribe(bc, rc, broker);
-                if (BrokerRcIsMalformed(s_rc)) {
+                if (BrokerRcIsFatal(s_rc)) {
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
@@ -4043,7 +4128,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             case MQTT_PACKET_TYPE_UNSUBSCRIBE:
             {
                 int u_rc = BrokerHandle_Unsubscribe(bc, rc, broker);
-                if (BrokerRcIsMalformed(u_rc)) {
+                if (BrokerRcIsFatal(u_rc)) {
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
@@ -4084,7 +4169,19 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 BrokerClient_Remove(broker, bc);
                 return 0;
             default:
-                break;
+                /* Unhandled packet type for this broker. Catches v3.1.1
+                 * clients sending AUTH (type 15, defined only in v5),
+                 * v5 clients sending AUTH (this broker does not
+                 * implement enhanced authentication), and any other
+                 * type the dispatch above does not recognize. The
+                 * pre-dispatch flag check rejects type 0 (RESERVED)
+                 * already; this default closes the connection rather
+                 * than silently no-op'ing the packet. */
+                WBLOG_ERR(broker,
+                    "broker: unhandled packet type %u sock=%d",
+                    type, (int)bc->sock);
+                BrokerClient_AbnormalClose(broker, bc);
+                return 0;
         }
 #ifdef ENABLE_MQTT_WEBSOCKET
         if (bc->ws_ctx != NULL) {
