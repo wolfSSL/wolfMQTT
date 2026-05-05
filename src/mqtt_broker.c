@@ -129,7 +129,7 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
 
 /* No-op stubs when features are compiled out */
 #ifndef WOLFMQTT_BROKER_RETAINED
-    #define BrokerRetained_Store(b, t, p, l, e)         (0)
+    #define BrokerRetained_Store(b, t, p, l, q, e)      (0)
     #define BrokerRetained_Delete(b, t)                 do {} while(0)
     #define BrokerRetained_FreeAll(b)                   do {} while(0)
     #define BrokerRetained_DeliverToClient(b, c, f, q)  do {} while(0)
@@ -1975,7 +1975,7 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
 /* -------------------------------------------------------------------------- */
 #ifdef WOLFMQTT_BROKER_RETAINED
 static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
-    const byte* payload, word32 payload_len, word32 expiry_sec)
+    const byte* payload, word32 payload_len, MqttQoS qos, word32 expiry_sec)
 {
     BrokerRetainedMsg* msg = NULL;
     int rc = MQTT_CODE_SUCCESS;
@@ -2096,8 +2096,10 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     if (rc == MQTT_CODE_SUCCESS) {
         msg->store_time = WOLFMQTT_BROKER_GET_TIME_S();
         msg->expiry_sec = expiry_sec;
-        WBLOG_DBG(broker, "broker: retained store topic=%s len=%u expiry=%u", topic,
-            (unsigned)payload_len, (unsigned)expiry_sec);
+        msg->qos = qos;
+        WBLOG_DBG(broker, "broker: retained store topic=%s len=%u qos=%d "
+            "expiry=%u",
+            topic, (unsigned)payload_len, (int)qos, (unsigned)expiry_sec);
     }
     return rc;
 }
@@ -2489,7 +2491,6 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     BrokerClient* bc, const char* filter, MqttQoS sub_qos)
 {
     WOLFMQTT_BROKER_TIME_T now;
-    (void)sub_qos; /* retained always delivered at QoS 0 in this broker */
 
     if (broker == NULL || bc == NULL || filter == NULL) {
         return;
@@ -2513,14 +2514,18 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             }
             if (BrokerTopicMatch(filter, rm->topic)) {
                 MqttPublish out_pub;
+                MqttQoS eff_qos = (rm->qos < sub_qos) ? rm->qos : sub_qos;
                 int enc_rc;
                 XMEMSET(&out_pub, 0, sizeof(out_pub));
                 out_pub.topic_name = rm->topic;
-                out_pub.qos = MQTT_QOS_0;
+                out_pub.qos = eff_qos;
                 out_pub.retain = 1;
                 out_pub.duplicate = 0;
                 out_pub.buffer = (rm->payload_len > 0) ? rm->payload : NULL;
                 out_pub.total_len = rm->payload_len;
+                if (eff_qos >= MQTT_QOS_1) {
+                    out_pub.packet_id = BrokerNextPacketId(broker);
+                }
 #ifdef WOLFMQTT_V5
                 out_pub.protocol_level = bc->protocol_level;
 #endif
@@ -2528,8 +2533,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
                 if (enc_rc > 0) {
                     WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                        "len=%u", (int)bc->sock, rm->topic,
-                        (unsigned)rm->payload_len);
+                        "len=%u qos=%d", (int)bc->sock, rm->topic,
+                        (unsigned)rm->payload_len, (int)eff_qos);
                     (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
                 }
             }
@@ -2559,14 +2564,18 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             }
             if (rm->topic != NULL && BrokerTopicMatch(filter, rm->topic)) {
                 MqttPublish out_pub;
+                MqttQoS eff_qos = (rm->qos < sub_qos) ? rm->qos : sub_qos;
                 int enc_rc;
                 XMEMSET(&out_pub, 0, sizeof(out_pub));
                 out_pub.topic_name = rm->topic;
-                out_pub.qos = MQTT_QOS_0;
+                out_pub.qos = eff_qos;
                 out_pub.retain = 1;
                 out_pub.duplicate = 0;
                 out_pub.buffer = (rm->payload_len > 0) ? rm->payload : NULL;
                 out_pub.total_len = rm->payload_len;
+                if (eff_qos >= MQTT_QOS_1) {
+                    out_pub.packet_id = BrokerNextPacketId(broker);
+                }
 #ifdef WOLFMQTT_V5
                 out_pub.protocol_level = bc->protocol_level;
 #endif
@@ -2574,8 +2583,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
                 if (enc_rc > 0) {
                     WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                        "len=%u", (int)bc->sock, rm->topic,
-                        (unsigned)rm->payload_len);
+                        "len=%u qos=%d", (int)bc->sock, rm->topic,
+                        (unsigned)rm->payload_len, (int)eff_qos);
                     (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
                 }
             }
@@ -2631,7 +2640,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
         }
         else {
             int ret_rc = BrokerRetained_Store(broker, topic, payload,
-                payload_len, 0);
+                payload_len, qos, 0);
             if (ret_rc != MQTT_CODE_SUCCESS) {
                 WBLOG_ERR(broker, "Retained store failed: %s",
                     MqttClient_ReturnCodeToString(ret_rc));
@@ -3586,7 +3595,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #endif
             {
                 int ret_rc = BrokerRetained_Store(broker, topic, payload,
-                    pub.total_len, expiry);
+                    pub.total_len, pub.qos, expiry);
                 if (ret_rc != MQTT_CODE_SUCCESS) {
                     WBLOG_ERR(broker, "Retained store failed: %s",
                         MqttClient_ReturnCodeToString(ret_rc));

@@ -1213,6 +1213,234 @@ TEST(disconnect_invalid_fixed_header_flags_fires_will)
     MqttBroker_Free(&broker);
 }
 
+/* Parsed details of a single PUBLISH packet on the wire. found = 0 means
+ * no PUBLISH was present in the buffer; subsequent fields are zero. */
+typedef struct {
+    int    found;
+    byte   first_byte;     /* type | DUP | QoS | RETAIN */
+    size_t remain_len;     /* fixed-header Remaining Length value */
+    word16 packet_id;      /* 0 if QoS 0 (no packet identifier on wire) */
+} PublishInfo;
+
+/* Find the first PUBLISH packet (high nibble = 0x3) in `buf` and return
+ * its first byte plus parsed remaining-length and packet identifier.
+ * Mirrors count_packets_of_type's VBI walk so any malformed input stops
+ * cleanly instead of overrunning. */
+static PublishInfo first_publish_info(const byte* buf, size_t len)
+{
+    PublishInfo info;
+    size_t pos = 0;
+    XMEMSET(&info, 0, sizeof(info));
+    while (pos < len) {
+        byte type = (byte)((buf[pos] >> 4) & 0x0F);
+        size_t remain = 0;
+        size_t mult = 1;
+        size_t hdr_len = 1;
+        int vbi_complete = 0;
+        while (pos + hdr_len < len && hdr_len <= 5) {
+            byte b = buf[pos + hdr_len];
+            remain += (size_t)(b & 0x7F) * mult;
+            hdr_len++;
+            if ((b & 0x80) == 0) {
+                vbi_complete = 1;
+                break;
+            }
+            mult *= 128;
+        }
+        if (!vbi_complete) {
+            break;
+        }
+        if (type == MQTT_PACKET_TYPE_PUBLISH) {
+            byte qos = (byte)((buf[pos] >> 1) & 0x03);
+            info.found = 1;
+            info.first_byte = buf[pos];
+            info.remain_len = remain;
+            if (qos >= MQTT_QOS_1) {
+                /* Skip the 2-byte topic length + topic to reach the
+                 * 2-byte packet identifier that follows for QoS >= 1. */
+                size_t var_off = pos + hdr_len;
+                if (var_off + 2 <= len) {
+                    word16 topic_len =
+                        (word16)((buf[var_off] << 8) | buf[var_off + 1]);
+                    size_t pid_off = var_off + 2 + topic_len;
+                    if (pid_off + 2 <= len) {
+                        info.packet_id = (word16)(
+                            (buf[pid_off] << 8) | buf[pid_off + 1]);
+                    }
+                }
+            }
+            return info;
+        }
+        if (remain > len - pos - hdr_len) {
+            break;
+        }
+        pos += hdr_len + remain;
+    }
+    return info;
+}
+
+#ifdef WOLFMQTT_BROKER_RETAINED
+/* [MQTT-3.3.1-5] The broker MUST store the Application Message and its
+ * QoS, so retained delivery can use min(stored QoS, subscriber QoS).
+ * Issue #520 — pre-fix the retained store had no qos field and
+ * BrokerRetained_DeliverToClient hard-coded outgoing QoS to 0, downgrading
+ * QoS≥1 retained payloads.
+ *
+ * Wire pattern: publisher CONNECT, then retained PUBLISH at the test's
+ * stored QoS; subscriber CONNECT (separate client), SUBSCRIBE at the
+ * test's requested QoS; assert the delivered PUBLISH carries the
+ * expected min(stored, sub) QoS. */
+static void retained_qos_case(byte stored_qos, byte sub_qos,
+                              byte expected_qos)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    PublishInfo info;
+    /* Body shape: topic_len(2) + topic(3) + (packet_id(2) when QoS>=1)
+     * + payload(1). 5 base bytes plus 2 for packet_id when applicable. */
+    size_t expected_remain = (expected_qos >= MQTT_QOS_1) ? 8 : 6;
+    /* Publisher CONNECT (ClientId "P"). */
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* Subscriber CONNECT (ClientId "S"). */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* Retained PUBLISH "r/q" / "x". remain = 2+3+2(packet_id)+1 = 8.
+     * Wire: byte[0] = 0x30 | retain(0x01) | (stored_qos << 1). */
+    byte publish[12];
+    /* SUBSCRIBE filter "r/q", QoS = sub_qos. remain = 2+2+3+1 = 8. */
+    byte subscribe[10];
+    size_t publish_len;
+    size_t subscribe_len;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Build PUBLISH wire. For QoS 0 the spec omits the packet identifier
+     * (remain = 6: topic_len + topic + payload). For QoS≥1 the wire
+     * carries packet_id = 1 (remain = 8). */
+    {
+        byte first = (byte)(0x30 | 0x01 | (byte)(stored_qos << 1));
+        if (stored_qos == 0) {
+            /* QoS 0 PUBLISH: no packet_id. Body = topic_len + topic +
+             * payload = 2 + 3 + 1 = 6 bytes. */
+            const byte tmpl[] = {
+                0x00, 0x03, 'r', '/', 'q',
+                'x'
+            };
+            publish[0] = first;
+            publish[1] = (byte)sizeof(tmpl);
+            XMEMCPY(publish + 2, tmpl, sizeof(tmpl));
+            publish_len = 2 + sizeof(tmpl);
+        }
+        else {
+            const byte tmpl[] = {
+                0x00, 0x03, 'r', '/', 'q',
+                0x00, 0x01,
+                'x'
+            };
+            publish[0] = first;
+            publish[1] = (byte)sizeof(tmpl);
+            XMEMCPY(publish + 2, tmpl, sizeof(tmpl));
+            publish_len = 2 + sizeof(tmpl);
+        }
+    }
+    /* Build SUBSCRIBE wire. */
+    {
+        const byte tmpl[] = {
+            0x82, 0x08,
+            0x00, 0x01,
+            0x00, 0x03, 'r', '/', 'q',
+            0x00                        /* options placeholder */
+        };
+        XMEMCPY(subscribe, tmpl, sizeof(tmpl));
+        subscribe[9] = sub_qos;
+        subscribe_len = sizeof(tmpl);
+    }
+
+    reset_mock_clients(2);
+    /* Publisher first so the retained store is populated before the
+     * subscriber attaches. */
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish, publish_len);
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe, subscribe_len);
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    info = first_publish_info(g_clients[1].out_buf, g_clients[1].out_len);
+    ASSERT_TRUE(info.found);
+    /* Expect PUBLISH | retain | (expected_qos << 1), DUP = 0. */
+    ASSERT_EQ((int)(0x30 | 0x01 | (expected_qos << 1)), (int)info.first_byte);
+    /* Pin the wire size so a regression that emits a stale packet_id on a
+     * downgraded-to-QoS-0 retained delivery (or omits it on a QoS>=1
+     * delivery) trips here, not silently. */
+    ASSERT_EQ((int)expected_remain, (int)info.remain_len);
+    if (expected_qos >= MQTT_QOS_1) {
+        /* [MQTT-2.3.1-1]: QoS>=1 PUBLISH must carry a non-zero packet
+         * identifier. */
+        ASSERT_TRUE(info.packet_id != 0);
+    }
+    else {
+        ASSERT_EQ(0, info.packet_id);
+    }
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+TEST(retained_qos_stored_1_sub_1_delivers_qos1)
+{
+    retained_qos_case(MQTT_QOS_1, MQTT_QOS_1, MQTT_QOS_1);
+}
+
+TEST(retained_qos_stored_2_sub_1_delivers_qos1)
+{
+    retained_qos_case(MQTT_QOS_2, MQTT_QOS_1, MQTT_QOS_1);
+}
+
+TEST(retained_qos_stored_1_sub_0_delivers_qos0)
+{
+    retained_qos_case(MQTT_QOS_1, MQTT_QOS_0, MQTT_QOS_0);
+}
+
+TEST(retained_qos_stored_0_sub_1_delivers_qos0)
+{
+    retained_qos_case(MQTT_QOS_0, MQTT_QOS_1, MQTT_QOS_0);
+}
+
+/* Pins the QoS 2 outbound wire shape (first byte 0x35, packet_id
+ * present). Without this case the QoS 2 outbound branch of
+ * BrokerRetained_DeliverToClient never produces QoS 2 on the wire of any
+ * test — the stored=2/sub=1 case caps to QoS 1. */
+TEST(retained_qos_stored_2_sub_2_delivers_qos2)
+{
+    retained_qos_case(MQTT_QOS_2, MQTT_QOS_2, MQTT_QOS_2);
+}
+
+/* Steepest downgrade: stored QoS 2, subscriber QoS 0 — verifies the
+ * retained delivery omits the packet identifier and emits the QoS-0
+ * wire shape, not a stale identifier from the stored message. */
+TEST(retained_qos_stored_2_sub_0_delivers_qos0)
+{
+    retained_qos_case(MQTT_QOS_2, MQTT_QOS_0, MQTT_QOS_0);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED */
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -1247,6 +1475,14 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
+#ifdef WOLFMQTT_BROKER_RETAINED
+    RUN_TEST(retained_qos_stored_1_sub_1_delivers_qos1);
+    RUN_TEST(retained_qos_stored_2_sub_1_delivers_qos1);
+    RUN_TEST(retained_qos_stored_1_sub_0_delivers_qos0);
+    RUN_TEST(retained_qos_stored_0_sub_1_delivers_qos0);
+    RUN_TEST(retained_qos_stored_2_sub_2_delivers_qos2);
+    RUN_TEST(retained_qos_stored_2_sub_0_delivers_qos0);
+#endif
     TEST_SUITE_END();
 
     TEST_RUNNER_END();

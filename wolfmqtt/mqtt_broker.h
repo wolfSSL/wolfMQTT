@@ -310,6 +310,7 @@ typedef struct BrokerRetainedMsg {
     word32  payload_len;
     WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
+    MqttQoS qos;                        /* [MQTT-3.3.1-5] stored QoS */
 } BrokerRetainedMsg;
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
