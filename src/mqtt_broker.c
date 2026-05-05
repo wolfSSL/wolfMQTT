@@ -2776,7 +2776,14 @@ static int BrokerSend_PingResp(BrokerClient* bc)
     return MqttPacket_Write(&bc->client, bc->tx_buf, 2);
 }
 
-static int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
+/* Not WOLFMQTT_API: kept internal but external linkage so the broker
+ * unit-test harness can call it directly to exercise the
+ * [MQTT-3.9.3-2] reserved-code rejection branch. The prior prototype
+ * silences -Wmissing-prototypes; the symbol is intentionally not in
+ * any public header. */
+int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
+    const byte* return_codes, int return_code_count);
+int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
     const byte* return_codes, int return_code_count)
 {
     int remain_len;
@@ -2785,6 +2792,25 @@ static int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
 
     if (bc == NULL || return_codes == NULL || return_code_count <= 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
+    }
+
+    /* [MQTT-3.9.3-2] Refuse to serialize a reserved SUBACK return code.
+     * The normal broker subscribe path produces only spec-allowed
+     * values, but this helper is the final boundary — a future caller
+     * passing a reserved value should fail loudly here rather than emit
+     * a malformed SUBACK on the wire. */
+    {
+        int i_chk;
+        for (i_chk = 0; i_chk < return_code_count; i_chk++) {
+            if (!MqttPacket_SubAckReturnCodeValid(return_codes[i_chk],
+                                                  bc->protocol_level)) {
+                WBLOG_ERR(bc->broker,
+                    "broker: SUBACK reserved return code 0x%02X sock=%d "
+                    "[MQTT-3.9.3-2]",
+                    return_codes[i_chk], (int)bc->sock);
+                return MQTT_CODE_ERROR_MALFORMED_DATA;
+            }
+        }
     }
 
     WBLOG_INFO(bc->broker, "broker: SUBACK sock=%d packet_id=%u topics=%d",

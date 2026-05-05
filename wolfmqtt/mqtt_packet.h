@@ -662,6 +662,18 @@ WOLFMQTT_API int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf,
  * packet. */
 WOLFMQTT_API int MqttPacket_FixedHeaderFlagsValid(byte type_flags);
 
+/*! \brief [MQTT-3.9.3-2] Validate a SUBACK return code / Reason Code.
+ *  \param code            The byte to validate.
+ *  \param protocol_level  MQTT protocol level (4 = v3.1.1, 5 = v5). v3.1.1
+ *                         restricts SUBACK to {0x00, 0x01, 0x02, 0x80};
+ *                         v5 broadens the set with additional Reason
+ *                         Codes (e.g., 0x83, 0x87, 0x8F, 0x91, 0x97,
+ *                         0x9E, 0xA1, 0xA2).
+ *  \return     1 if the code is allowed, 0 if reserved.
+ */
+WOLFMQTT_API int MqttPacket_SubAckReturnCodeValid(byte code,
+    byte protocol_level);
+
 /* Packet Element Encoders/Decoders */
 WOLFMQTT_API int MqttDecode_Num(byte* buf, word16 *len, word32 buf_len);
 WOLFMQTT_API int MqttEncode_Num(byte *buf, word16 len);

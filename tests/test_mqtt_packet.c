@@ -2379,11 +2379,11 @@ TEST(decode_connect_will_qos3_rejected)
 }
 
 /* [MQTT-3.1.2-22] If the User Name Flag is 0, the Password Flag MUST be 0.
- * The encoder already enforces this; the decoder must too. Wire mirrors
- * issue #512's reproducer: flags 0x42 = clean_session | password, with
- * client_id "cid" followed by a "secret" password field. Catches a
- * regression that drops the receive-side flag-pair check and silently
- * accepts a password without a user name. */
+ * The encoder already enforces this; the decoder must too. Wire is
+ * flags 0x42 = clean_session | password, with client_id "cid" followed
+ * by a "secret" password field. Catches a regression that drops the
+ * receive-side flag-pair check and silently accepts a password without
+ * a user name. */
 TEST(decode_connect_password_flag_without_username_flag_rejected)
 {
     byte buf[] = {
@@ -2524,9 +2524,9 @@ TEST(decode_subscribe_v311_single_topic)
 }
 
 /* MQTT 3.1.1 §3.8.3.1: Requested QoS bits (0-1) = 0b11 is reserved and
- * MUST be rejected (issue #518). Pre-fix the decoder forwarded the raw
- * value and relied on the broker's defensive QoS cap; the broker cap is
- * now dead code on the decoded path but kept for safety. */
+ * MUST be rejected. Pre-fix the decoder forwarded the raw value and
+ * relied on the broker's defensive QoS cap; the broker cap is now dead
+ * code on the decoded path but kept for safety. */
 TEST(decode_subscribe_v311_qos3_rejected)
 {
     byte rx_buf[] = {
@@ -2548,9 +2548,9 @@ TEST(decode_subscribe_v311_qos3_rejected)
 }
 
 /* MQTT 3.1.1 §3.8.3.1: bits 2-7 of the options byte are reserved and
- * MUST be 0. Wire matches issue #518's reproducer: high six bits set
- * (0xFC) with low bits = QoS 0. The unmasked v3.x decoder used to drop
- * the reserved bits and accept QoS 0 silently. */
+ * MUST be 0. Wire has the high six bits set (0xFC) with low bits = QoS
+ * 0. The unmasked v3.x decoder used to drop the reserved bits and
+ * accept QoS 0 silently. */
 TEST(decode_subscribe_v311_options_reserved_bits_qos0_rejected)
 {
     byte rx_buf[] = {
@@ -2972,6 +2972,91 @@ TEST(decode_suback_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.9.3-2] v3.1.1 SUBACK return codes are restricted to
+ * {0x00, 0x01, 0x02, 0x80}. Wire carries a reserved value
+ * (0x03 / 0x7F) in the payload. */
+static void decode_suback_v311_reserved_helper(byte reserved_code)
+{
+    byte buf[5];
+    MqttSubscribeAck ack;
+    int rc;
+
+    buf[0] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_SUBSCRIBE_ACK);
+    buf[1] = 3;
+    buf[2] = 0;
+    buf[3] = 1;
+    buf[4] = reserved_code;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = MqttDecode_SubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_suback_v311_reserved_code_0x03_rejected)
+{
+    decode_suback_v311_reserved_helper(0x03);
+}
+
+TEST(decode_suback_v311_reserved_code_0x7F_rejected)
+{
+    decode_suback_v311_reserved_helper(0x7F);
+}
+
+/* Pins all four spec-allowed v3.1.1 codes via MqttPacket_SubAckReturnCodeValid
+ * so a future change to the helper's table catches every entry. */
+TEST(suback_return_code_v311_allowed_set)
+{
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x00, 0));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x01, 0));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x02, 0));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x80, 0));
+    /* Reserved values out of the v3.1.1 set */
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0x03, 0));
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0x04, 0));
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0x7F, 0));
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0x81, 0));
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0xFF, 0));
+}
+
+#ifdef WOLFMQTT_V5
+/* v5 §3.9.3: SUBACK Reason Code set is broader. The decoder must accept
+ * v5 reason codes that are not in the v3.1.1 set when protocol_level=5. */
+TEST(decode_suback_v5_not_authorized_accepted)
+{
+    /* Wire: SUBACK type 0x90, remain_len = 4 (packet_id + props_len(0)
+     * + 1 reason byte), packet_id=1, props_len=0, reason=0x87. */
+    byte buf[] = { 0x90, 0x04, 0x00, 0x01, 0x00, 0x87 };
+    MqttSubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_SubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(0x87, ack.return_codes[0]);
+}
+
+/* Pin v5's broadened set via the helper. */
+TEST(suback_return_code_v5_allowed_set)
+{
+    byte v5 = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    /* QoS 0/1/2 and the spec-defined v5 reason codes. */
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x00, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x80, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x83, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x87, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x8F, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x91, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x97, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0x9E, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0xA1, v5));
+    ASSERT_TRUE(MqttPacket_SubAckReturnCodeValid(0xA2, v5));
+    /* Codes that aren't in the v5 SUBACK set either. */
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0x03, v5));
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0x81, v5));
+    ASSERT_FALSE(MqttPacket_SubAckReturnCodeValid(0xFF, v5));
+}
+#endif /* WOLFMQTT_V5 */
+
 /* ============================================================================
  * MqttDecode_PublishResp
  * ============================================================================ */
@@ -3024,8 +3109,8 @@ TEST(decode_publish_resp_malformed_remain_len_one)
  * after the Packet Identifier is malformed in v3.x. v5 §3.4-3.7
  * relaxes this with an optional Reason Code and Properties; the
  * `protocol_level` field on the response struct selects between the
- * strict and relaxed decoders. Issues #516 and #517 — the wire reflects
- * the issues' reproducer payloads (extra trailing zero byte). */
+ * strict and relaxed decoders. The wire carries an extra trailing
+ * zero byte after the Packet Identifier. */
 TEST(decode_puback_v311_extra_payload_rejected)
 {
     byte buf[] = { 0x40, 0x03, 0x00, 0x07, 0x00 };
@@ -3301,8 +3386,8 @@ TEST(decode_pingresp_valid)
     ASSERT_EQ(2, rc);
 }
 
-/* Issue #515 reproducer: PINGRESP with one trailing byte. Without the fix
- * the decoder returned 3 (the packet length). */
+/* PINGRESP with one trailing byte — must be rejected as malformed.
+ * Without the fix the decoder returned 3 (the packet length). */
 TEST(decode_pingresp_nonzero_remain_len_rejected)
 {
     byte buf[] = { 0xD0, 0x01, 0x00 };
@@ -3326,9 +3411,10 @@ TEST(decode_disconnect_v311_valid)
     ASSERT_EQ(2, rc);
 }
 
-/* Issue #515 reproducer: v3.1.1 DISCONNECT with one trailing byte. The
- * v3.1.1 spec defines DISCONNECT as fixed-header-only; the WOLFMQTT_V5
- * decoder below legitimately accepts a Reason Code and Properties. */
+/* v3.1.1 DISCONNECT with one trailing byte must be rejected as
+ * malformed. The v3.1.1 spec defines DISCONNECT as fixed-header-only;
+ * the WOLFMQTT_V5 decoder below legitimately accepts a Reason Code and
+ * Properties. */
 TEST(decode_disconnect_v311_nonzero_remain_len_rejected)
 {
     byte buf[] = { 0xE0, 0x01, 0x00 };
@@ -3341,8 +3427,8 @@ TEST(decode_disconnect_v311_nonzero_remain_len_rejected)
 }
 
 /* MQTT 3.1.1 §3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
- * nibble MUST be 0000. Issue #519 — wire 0xE1 is the issue's
- * reproducer. The check fires inside MqttDecode_FixedHeader via
+ * nibble MUST be 0000. Wire 0xE1 sets bit 0 of the reserved nibble.
+ * The check fires inside MqttDecode_FixedHeader via
  * MqttPacket_FixedHeaderFlagsValid; this test pins the per-decoder
  * surface so a future caller that builds its own header path can't
  * silently accept a malformed disconnect. */
@@ -4014,6 +4100,13 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_suback_multiple_return_codes);
     RUN_TEST(decode_suback_malformed_remain_len_zero);
     RUN_TEST(decode_suback_malformed_remain_len_one);
+    RUN_TEST(decode_suback_v311_reserved_code_0x03_rejected);
+    RUN_TEST(decode_suback_v311_reserved_code_0x7F_rejected);
+    RUN_TEST(suback_return_code_v311_allowed_set);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_suback_v5_not_authorized_accepted);
+    RUN_TEST(suback_return_code_v5_allowed_set);
+#endif
 
     /* MqttDecode_PublishResp */
     RUN_TEST(decode_publish_resp_valid);

@@ -210,6 +210,46 @@ static int FixedHeaderFlagsExpected(byte type, byte *expected)
     }
 }
 
+/* [MQTT-3.9.3-2] Validate a SUBACK return code against the spec-allowed
+ * set. v3.1.1 §3.9.3 restricts the payload to exactly four values
+ * {0x00, 0x01, 0x02, 0x80}. v5 §3.9.3 broadens the set to include
+ * additional Reason Codes (Implementation specific error, Not authorized,
+ * Topic Filter invalid, Packet Identifier in use, Quota exceeded,
+ * Shared Subscriptions not supported, Subscription Identifiers not
+ * supported, Wildcard Subscriptions not supported). Anything outside
+ * the level-appropriate set is reserved and MUST be treated as
+ * malformed. protocol_level is taken as a byte (not enum) so callers
+ * that don't compile WOLFMQTT_V5 can still pass 0 unambiguously. */
+int MqttPacket_SubAckReturnCodeValid(byte code, byte protocol_level)
+{
+    if (code == MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS0 ||
+        code == MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS1 ||
+        code == MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS2 ||
+        code == MQTT_SUBSCRIBE_ACK_CODE_FAILURE) {
+        return 1;
+    }
+#ifdef WOLFMQTT_V5
+    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        switch (code) {
+            case MQTT_REASON_IMPL_SPECIFIC_ERR:    /* 0x83 */
+            case MQTT_REASON_NOT_AUTHORIZED:       /* 0x87 */
+            case MQTT_REASON_TOPIC_FILTER_INVALID: /* 0x8F */
+            case MQTT_REASON_PACKET_ID_IN_USE:     /* 0x91 */
+            case MQTT_REASON_QUOTA_EXCEEDED:       /* 0x97 */
+            case MQTT_REASON_SS_NOT_SUPPORTED:     /* 0x9E */
+            case MQTT_REASON_SUB_ID_NOT_SUP:       /* 0xA1 */
+            case MQTT_REASON_WILDCARD_SUB_NOT_SUP: /* 0xA2 */
+                return 1;
+            default:
+                break;
+        }
+    }
+#else
+    (void)protocol_level;
+#endif
+    return 0;
+}
+
 int MqttPacket_FixedHeaderFlagsValid(byte type_flags)
 {
     byte type = (byte)MQTT_PACKET_TYPE_GET(type_flags);
@@ -2309,6 +2349,8 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             int payload_len = remain_len -
                     (int)(rx_payload - &rx_buf[header_len]);
             int buf_remain = rx_buf_len - (int)(rx_payload - rx_buf);
+            byte level = 0;
+            int i;
             if (payload_len < 0 || buf_remain < 0) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
@@ -2317,6 +2359,26 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             }
             if (payload_len > MAX_MQTT_TOPICS)
                 payload_len = MAX_MQTT_TOPICS;
+        #ifdef WOLFMQTT_V5
+            level = subscribe_ack->protocol_level;
+        #endif
+            /* [MQTT-3.9.3-2] Reject reserved SUBACK return codes before
+             * the bytes are copied into the caller's struct so a
+             * malformed broker response never surfaces to upper-layer
+             * subscription handling. Under v5 the property block has
+             * already been allocated above; free it before returning so
+             * a malformed-broker stream doesn't leak per-SUBACK. */
+            for (i = 0; i < payload_len; i++) {
+                if (!MqttPacket_SubAckReturnCodeValid(rx_payload[i], level)) {
+                #ifdef WOLFMQTT_V5
+                    if (subscribe_ack->props != NULL) {
+                        (void)MqttProps_Free(subscribe_ack->props);
+                        subscribe_ack->props = NULL;
+                    }
+                #endif
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+            }
             XMEMSET(subscribe_ack->return_codes, 0, MAX_MQTT_TOPICS);
             XMEMCPY(subscribe_ack->return_codes, rx_payload, payload_len);
         }

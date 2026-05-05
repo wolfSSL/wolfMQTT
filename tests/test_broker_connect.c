@@ -1011,7 +1011,7 @@ TEST(qos2_pubrel_unknown_id_still_pubcomps)
 /* MQTT 3.1.1 §3.12 / v5 §3.12: PINGREQ has no variable header and no
  * payload, so Remaining Length MUST be 0. Broker dispatch must reject a
  * malformed PINGREQ with an abnormal close instead of emitting a
- * PINGRESP. Issue #515.
+ * PINGRESP.
  *
  * The valid case is paired so a regression that reverses the conditional
  * (rejecting valid PINGREQs) trips the positive test. */
@@ -1058,8 +1058,8 @@ TEST(pingreq_nonzero_remain_len_closes_no_pingresp)
         0x04, 0x02, 0x00, 0x3C,
         0x00, 0x01, 'A'
     };
-    /* Issue #515 reproducer wire: C0 01 00 — PINGREQ with one trailing
-     * byte. The fixed-header-only rule makes this malformed. */
+    /* C0 01 00 — PINGREQ with one trailing byte. The fixed-header-only
+     * rule makes this malformed. */
     static const byte pingreq_bad[] = { 0xC0, 0x01, 0x00 };
     int i;
 
@@ -1121,7 +1121,7 @@ TEST(disconnect_v311_nonzero_remain_len_fires_will)
         0x00, 0x03, 'l', 'w', 't',
         0x00, 0x03, 'b', 'y', 'e'
     };
-    /* Issue #515 reproducer wire: E0 01 00 — malformed v3.1.1 DISCONNECT. */
+    /* E0 01 00 — malformed v3.1.1 DISCONNECT (nonzero remain_len). */
     static const byte disconnect_bad[] = { 0xE0, 0x01, 0x00 };
 
     install_mock_net(&net);
@@ -1157,7 +1157,7 @@ TEST(disconnect_v311_nonzero_remain_len_fires_will)
  * MqttPacket_FixedHeaderFlagsValid pre-check that runs before per-type
  * handlers, so a malformed DISCONNECT (e.g. 0xE1) takes the abnormal-
  * close path. Same LWT observable as the nonzero-remain-len test:
- * abnormal close fires the will, normal close clears it. Issue #519. */
+ * abnormal close fires the will, normal close clears it. */
 TEST(disconnect_invalid_fixed_header_flags_fires_will)
 {
     MqttBroker broker;
@@ -1183,8 +1183,7 @@ TEST(disconnect_invalid_fixed_header_flags_fires_will)
         0x00, 0x03, 'l', 'w', 't',
         0x00, 0x03, 'b', 'y', 'e'
     };
-    /* Issue #519 reproducer wire: 0xE1 — DISCONNECT type with reserved
-     * bit 0 set. */
+    /* 0xE1 — DISCONNECT type with reserved bit 0 set. */
     static const byte disconnect_bad[] = { 0xE1, 0x00 };
 
     install_mock_net(&net);
@@ -1279,12 +1278,85 @@ static PublishInfo first_publish_info(const byte* buf, size_t len)
     return info;
 }
 
+/* [MQTT-3.9.3-2] The broker SUBACK helper must reject reserved return
+ * codes before serializing them to the wire. The normal subscribe path
+ * only ever produces values in {0, 1, 2, 0x80}, so this defense is
+ * unreachable from production code today; the test calls the helper
+ * directly with a reserved code to pin the rejection branch.
+ *
+ * BrokerSend_SubAck is forward-declared here because it is internal to
+ * mqtt_broker.c (no public header); the test harness compiles
+ * mqtt_broker.c into the test binary so the symbol resolves at link. */
+extern int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
+    const byte* return_codes, int return_code_count);
+
+TEST(broker_suback_reserved_v311_code_rejected)
+{
+    BrokerClient bc;
+    MqttBroker broker;
+    byte tx_buf[16];
+    /* Reserved values: anything outside {0, 1, 2, 0x80} for v3.1.1. */
+    static const byte reserved_codes[] = { 0x03, 0x7F, 0x81, 0xFF };
+    size_t i;
+
+    XMEMSET(&bc, 0, sizeof(bc));
+    XMEMSET(&broker, 0, sizeof(broker));
+    bc.broker = &broker;
+    bc.tx_buf = tx_buf;
+    bc.tx_buf_len = (int)sizeof(tx_buf);
+    bc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+
+    for (i = 0; i < sizeof(reserved_codes); i++) {
+        int rc;
+        XMEMSET(tx_buf, 0xAA, sizeof(tx_buf));
+        rc = BrokerSend_SubAck(&bc, 1, &reserved_codes[i], 1);
+        ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+        /* No SUBACK bytes should have hit the buffer — first byte still
+         * the 0xAA poison. */
+        ASSERT_EQ(0xAA, (int)tx_buf[0]);
+    }
+}
+
+/* Pair: a valid v3.1.1 code (0x80 = Failure) must succeed and overwrite
+ * the buffer. Without this a "reject everything" mutation of the helper
+ * would not be caught. The harness has no real network, so the call
+ * fails at MqttPacket_Write — we only assert that the helper got past
+ * the validation branch and into encoding (the type byte ends up at
+ * tx_buf[0]). */
+TEST(broker_suback_valid_v311_failure_code_encoded)
+{
+    BrokerClient bc;
+    MqttBroker broker;
+    byte tx_buf[16];
+    byte code = MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
+    int rc;
+
+    XMEMSET(&bc, 0, sizeof(bc));
+    XMEMSET(&broker, 0, sizeof(broker));
+    bc.broker = &broker;
+    bc.tx_buf = tx_buf;
+    bc.tx_buf_len = (int)sizeof(tx_buf);
+    bc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+
+    XMEMSET(tx_buf, 0xAA, sizeof(tx_buf));
+    rc = BrokerSend_SubAck(&bc, 1, &code, 1);
+    /* Validation passed; the actual write fails with no real network,
+     * but the encoded bytes are already in tx_buf. */
+    (void)rc;
+    ASSERT_EQ(MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_SUBSCRIBE_ACK),
+              tx_buf[0]);
+    ASSERT_EQ(0x03, (int)tx_buf[1]);             /* remain_len = 3 */
+    ASSERT_EQ(0x00, (int)tx_buf[2]);             /* packet_id MSB */
+    ASSERT_EQ(0x01, (int)tx_buf[3]);             /* packet_id LSB */
+    ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_FAILURE, tx_buf[4]);
+}
+
 #ifdef WOLFMQTT_BROKER_RETAINED
 /* [MQTT-3.3.1-5] The broker MUST store the Application Message and its
  * QoS, so retained delivery can use min(stored QoS, subscriber QoS).
- * Issue #520 — pre-fix the retained store had no qos field and
- * BrokerRetained_DeliverToClient hard-coded outgoing QoS to 0, downgrading
- * QoS≥1 retained payloads.
+ * Pre-fix the retained store had no qos field and
+ * BrokerRetained_DeliverToClient hard-coded outgoing QoS to 0,
+ * downgrading QoS≥1 retained payloads.
  *
  * Wire pattern: publisher CONNECT, then retained PUBLISH at the test's
  * stored QoS; subscriber CONNECT (separate client), SUBSCRIBE at the
@@ -1475,6 +1547,8 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
+    RUN_TEST(broker_suback_reserved_v311_code_rejected);
+    RUN_TEST(broker_suback_valid_v311_failure_code_encoded);
 #ifdef WOLFMQTT_BROKER_RETAINED
     RUN_TEST(retained_qos_stored_1_sub_1_delivers_qos1);
     RUN_TEST(retained_qos_stored_2_sub_1_delivers_qos1);
