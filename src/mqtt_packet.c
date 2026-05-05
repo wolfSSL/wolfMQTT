@@ -515,12 +515,18 @@ int MqttEncode_Int(byte* buf, word32 len)
     return MQTT_DATA_INT_SIZE;
 }
 
-/* [MQTT-1.5.3-1] Validate that the given byte sequence is well-formed UTF-8
- * per RFC 3629, including the surrogate-code-point ban (U+D800..U+DFFF MUST
- * NOT be encoded). Returns 1 if valid, 0 if malformed.
+/* MQTT 3.1.1 §1.5.3 / v5 §1.5.4: validate that the given byte sequence
+ * is a well-formed MQTT UTF-8 encoded string. This combines:
+ *   [MQTT-1.5.3-1] RFC 3629 well-formedness (no overlongs, no surrogate
+ *                  code points U+D800..U+DFFF, no codepoints above
+ *                  U+10FFFF, no lone continuation, no truncated multi-
+ *                  byte sequences).
+ *   [MQTT-1.5.3-2] U+0000 (the NUL character) MUST NOT be included in
+ *                  any MQTT UTF-8 encoded string.
+ * Returns 1 if valid, 0 if malformed.
  *
  * RFC 3629 byte-pattern table:
- *   1-byte: 00..7F                             -> U+0000..U+007F
+ *   1-byte: 01..7F                             -> U+0001..U+007F
  *   2-byte: C2..DF 80..BF                      -> U+0080..U+07FF
  *   3-byte: E0    A0..BF 80..BF                -> U+0800..U+0FFF
  *           E1..EC 80..BF 80..BF               -> U+1000..U+CFFF
@@ -529,8 +535,8 @@ int MqttEncode_Int(byte* buf, word32 len)
  *   4-byte: F0    90..BF 80..BF 80..BF         -> U+10000..U+3FFFF
  *           F1..F3 80..BF 80..BF 80..BF        -> U+40000..U+FFFFF
  *           F4    80..8F 80..BF 80..BF         -> U+100000..U+10FFFF
- * Anything else (overlong, surrogate, > U+10FFFF, lone continuation,
- * truncated multi-byte) is malformed. */
+ * Note: 0x00 (U+0000) is excluded from the 1-byte range above per
+ * [MQTT-1.5.3-2]. */
 static int Utf8WellFormed(const byte* s, word16 len)
 {
     word16 i = 0;
@@ -538,6 +544,10 @@ static int Utf8WellFormed(const byte* s, word16 len)
         byte b0 = s[i];
         byte b1, b2, b3;
 
+        if (b0 == 0x00) {
+            /* [MQTT-1.5.3-2] U+0000 forbidden in MQTT UTF-8 strings. */
+            return 0;
+        }
         if (b0 < 0x80) {
             i++;
             continue;

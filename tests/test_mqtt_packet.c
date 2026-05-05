@@ -574,6 +574,29 @@ TEST(decode_connect_invalid_utf8_clientid_surrogate)
     rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* [MQTT-1.5.3-2] U+0000 is forbidden in every MQTT UTF-8 string field,
+ * not just Will Topic. Pin client_id as a separate entry point so a
+ * future regression that bypasses Utf8WellFormed on this field (e.g.,
+ * a bespoke client_id decoder) is caught by CI. */
+TEST(decode_connect_clientid_contains_u0000_rejected)
+{
+    /* ClientId "a\\0b" (length 3 with U+0000 at position 1). */
+    byte rx_buf[] = {
+        0x10, 15,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,
+        0x00, 0x3C,
+        0x00, 0x03, 'a', 0x00, 'b'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
 #endif /* WOLFMQTT_BROKER */
 
 TEST(decode_publish_invalid_utf8_topic)
@@ -1155,6 +1178,24 @@ TEST(decode_publish_wildcard_plus_topic_rejected)
     byte buf[] = {
         0x30, 0x0B,
         0x00, 0x08, 's', 'e', 'n', 's', 'o', 'r', '/', '+',
+        'x'
+    };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-1.5.3-2] U+0000 forbidden in PUBLISH Topic Name as well — broaden
+ * coverage of the new check to a non-CONNECT entry point. */
+TEST(decode_publish_topic_contains_u0000_rejected)
+{
+    /* PUBLISH QoS 0, remain=6, topic "a\0b", payload "x". */
+    byte buf[] = {
+        0x30, 0x06,
+        0x00, 0x03, 'a', 0x00, 'b',
         'x'
     };
     MqttPublish pub;
@@ -2455,6 +2496,31 @@ TEST(decode_connect_rejects_nul_in_will_topic)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* [MQTT-3.1.2-11] Will Flag=0 forbids Will Topic and Will Message fields
+ * in the payload. Wire matches the issue's reproducer: ClientId "cid"
+ * followed by a complete Will Topic/Message pair after Will Flag is
+ * cleared. The CONNECT consumed-length check rejects the trailing
+ * bytes regardless of which fields they look like. */
+TEST(decode_connect_will_flag_zero_with_will_topic_and_message_rejected)
+{
+    byte buf[] = {
+        0x10, 0x21,                     /* CONNECT, remain_len = 33 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x02,                           /* flags: clean_session only */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',
+        0x00, 0x0A, 'w', 'i', 'l', 'l', '/', 't', 'o', 'p', 'i', 'c',
+        0x00, 0x04, 'b', 'o', 'o', 'm'
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* Will Flag=0 with will-topic-shaped trailing bytes is the symmetric case
  * for the LWT half of the payload. Pins the same consumed-length invariant
  * for the will fields. */
@@ -2554,6 +2620,62 @@ TEST(decode_connect_will_qos3_rejected)
         0x00, 0x03, 'c', 'i', 'd',
         0x00, 0x06, 'w', '/', 't', 'o', 'p', 'c', /* will topic */
         0x00, 0x03, 'b', 'y', 'e'                  /* will payload */
+    };
+    MqttConnect dec;
+    MqttMessage lwt;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    dec.lwt_msg = &lwt;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-1.5.3-1] / [MQTT-3.1.3-10] CONNECT Will Topic must be a
+ * well-formed UTF-8 string. Wire flag 0x06 = clean | will_flag, Will
+ * QoS = 0, ClientId "cid", Will Topic = C0 AF (overlong representation
+ * of '/'). MqttDecode_String routes the field through Utf8WellFormed
+ * which catches the malformed encoding before the decoder accepts. */
+TEST(decode_connect_will_topic_invalid_utf8_rejected)
+{
+    /* remain = 6 + 1 + 1 + 2 + 5 + 4 + 3 = 22 bytes */
+    byte buf[] = {
+        0x10, 0x16,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x06,                                  /* clean | will_flag */
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',
+        0x00, 0x02, 0xC0, 0xAF,                /* overlong UTF-8 */
+        0x00, 0x01, 'm'
+    };
+    MqttConnect dec;
+    MqttMessage lwt;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    dec.lwt_msg = &lwt;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-1.5.3-2] U+0000 MUST NOT appear in any MQTT UTF-8 encoded
+ * string. Wire is the issue's reproducer: Will Topic "a\\0b" has a
+ * length-valid 3-byte string with U+0000 embedded. */
+TEST(decode_connect_will_topic_contains_u0000_rejected)
+{
+    /* remain = 6 + 1 + 1 + 2 + 5 + 5 + 3 = 23 bytes */
+    byte buf[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x06,
+        0x00, 0x3C,
+        0x00, 0x03, 'c', 'i', 'd',
+        0x00, 0x03, 'a', 0x00, 'b',            /* embedded U+0000 */
+        0x00, 0x01, 'm'
     };
     MqttConnect dec;
     MqttMessage lwt;
@@ -4299,6 +4421,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_string_utf8_invalid_truncated_4byte);
     RUN_TEST(decode_string_utf8_invalid_FE_FF);
     RUN_TEST(decode_connect_invalid_utf8_clientid_overlong);
+    RUN_TEST(decode_connect_clientid_contains_u0000_rejected);
     RUN_TEST(decode_connect_invalid_utf8_clientid_surrogate);
     RUN_TEST(decode_connect_v311_binary_password);
     RUN_TEST(decode_connect_invalid_utf8_username);
@@ -4335,6 +4458,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_empty_topic_rejected);
     RUN_TEST(decode_publish_wildcard_hash_topic_rejected);
     RUN_TEST(decode_publish_wildcard_plus_topic_rejected);
+    RUN_TEST(decode_publish_topic_contains_u0000_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_publish_v5_empty_topic_accepted);
 #endif
@@ -4411,11 +4535,14 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_rejects_nul_in_will_topic);
     RUN_TEST(decode_connect_password_flag_zero_with_extra_payload_rejected);
     RUN_TEST(decode_connect_username_flag_zero_with_extra_payload_rejected);
+    RUN_TEST(decode_connect_will_flag_zero_with_will_topic_and_message_rejected);
     RUN_TEST(decode_connect_will_flag_zero_with_extra_payload_rejected);
     RUN_TEST(decode_connect_reserved_flag_bit_rejected);
     RUN_TEST(decode_connect_will_qos_with_will_flag_zero_rejected);
     RUN_TEST(decode_connect_will_retain_with_will_flag_zero_rejected);
     RUN_TEST(decode_connect_will_qos3_rejected);
+    RUN_TEST(decode_connect_will_topic_invalid_utf8_rejected);
+    RUN_TEST(decode_connect_will_topic_contains_u0000_rejected);
     RUN_TEST(decode_connect_password_flag_without_username_flag_rejected);
     RUN_TEST(decode_connect_trailing_garbage_rejected);
 #ifdef WOLFMQTT_V5
