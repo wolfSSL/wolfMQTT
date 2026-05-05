@@ -1152,6 +1152,67 @@ TEST(disconnect_v311_nonzero_remain_len_fires_will)
 }
 #endif /* !WOLFMQTT_V5 */
 
+/* MQTT 3.1.1 §3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
+ * nibble MUST be 0000. The broker dispatch enforces this via the
+ * MqttPacket_FixedHeaderFlagsValid pre-check that runs before per-type
+ * handlers, so a malformed DISCONNECT (e.g. 0xE1) takes the abnormal-
+ * close path. Same LWT observable as the nonzero-remain-len test:
+ * abnormal close fires the will, normal close clears it. Issue #519. */
+TEST(disconnect_invalid_fixed_header_flags_fires_will)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    static const byte pub_connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* Issue #519 reproducer wire: 0xE1 — DISCONNECT type with reserved
+     * bit 0 set. */
+    static const byte disconnect_bad[] = { 0xE1, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    mock_client_input_append(1, disconnect_bad, sizeof(disconnect_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Subscriber receives the will because the broker took the abnormal-
+     * close path. The malformed-bug case would have routed through the
+     * normal DISCONNECT branch, clearing the will and producing 0
+     * PUBLISH packets to the subscriber. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -1185,6 +1246,7 @@ int main(int argc, char** argv)
 #ifndef WOLFMQTT_V5
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
+    RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
     TEST_SUITE_END();
 
     TEST_RUNNER_END();

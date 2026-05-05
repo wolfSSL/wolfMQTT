@@ -3339,9 +3339,39 @@ TEST(decode_disconnect_v311_nonzero_remain_len_rejected)
     rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* MQTT 3.1.1 §3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
+ * nibble MUST be 0000. Issue #519 — wire 0xE1 is the issue's
+ * reproducer. The check fires inside MqttDecode_FixedHeader via
+ * MqttPacket_FixedHeaderFlagsValid; this test pins the per-decoder
+ * surface so a future caller that builds its own header path can't
+ * silently accept a malformed disconnect. */
+TEST(decode_disconnect_v311_invalid_fixed_header_flags_rejected)
+{
+    byte buf[] = { 0xE1, 0x00 };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
 #endif /* WOLFMQTT_BROKER && !WOLFMQTT_V5 */
 
 #ifdef WOLFMQTT_V5
+/* v5 §3.14 keeps the same fixed-header reserved-flag rule. Pins the v5
+ * decoder against the same regression on its independent code path. */
+TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected)
+{
+    byte buf[] = { 0xE1, 0x00 };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* v5 §3.14: DISCONNECT may carry an optional Reason Code (1 byte) and a
  * Properties block. Pins the v5 decoder against a regression that would
  * tighten the v3.1.1 remain_len rule onto v5 by mistake. Wire is
@@ -4020,8 +4050,10 @@ void run_mqtt_packet_tests(void)
 #if defined(WOLFMQTT_BROKER) && !defined(WOLFMQTT_V5)
     RUN_TEST(decode_disconnect_v311_valid);
     RUN_TEST(decode_disconnect_v311_nonzero_remain_len_rejected);
+    RUN_TEST(decode_disconnect_v311_invalid_fixed_header_flags_rejected);
 #endif
 #ifdef WOLFMQTT_V5
+    RUN_TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected);
     RUN_TEST(decode_disconnect_v5_with_reason_code_accepted);
 #endif
 
