@@ -661,6 +661,32 @@ TEST(decode_connect_invalid_utf8_username)
     rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* [MQTT-1.5.3-1] / [MQTT-3.1.3-11]: ill-formed UTF-8 in CONNECT User
+ * Name MUST cause the receiver to close the connection. The companion
+ * test above covers a surrogate; this one covers the overlong-encoding
+ * bucket (C0 AF — the overlong representation of '/'). MqttDecode_String
+ * routes the field through Utf8WellFormed, which rejects both. */
+TEST(decode_connect_invalid_utf8_username_overlong)
+{
+    /* User name = C0 AF (2-byte overlong representation of U+002F).
+     * remain = 10 + 3 + 4 = 17 */
+    byte rx_buf[] = {
+        0x10, 17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x82,
+        0x00, 0x3C,
+        0x00, 0x01, 'c',
+        0x00, 0x02, 0xC0, 0xAF
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(rx_buf, (int)sizeof(rx_buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
 #endif /* WOLFMQTT_BROKER */
 
 /* ============================================================================
@@ -4276,6 +4302,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_invalid_utf8_clientid_surrogate);
     RUN_TEST(decode_connect_v311_binary_password);
     RUN_TEST(decode_connect_invalid_utf8_username);
+    RUN_TEST(decode_connect_invalid_utf8_username_overlong);
 #endif
     RUN_TEST(decode_publish_invalid_utf8_topic);
 
