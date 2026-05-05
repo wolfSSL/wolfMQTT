@@ -3029,6 +3029,89 @@ TEST(decode_unsuback_malformed_remain_len_one)
 }
 
 /* ============================================================================
+ * MqttDecode_Ping (PINGRESP) and MqttDecode_Disconnect length validation
+ *
+ * MQTT 3.1.1 §3.13 / §3.14 and v5 §3.13: PINGRESP has no variable header
+ * and no payload. v3.1.1 §3.14: DISCONNECT also has none. The decoders
+ * must reject Remaining Length != 0; otherwise a peer can smuggle in
+ * trailing bytes that downstream code silently drops.
+ * ============================================================================ */
+
+TEST(decode_pingresp_valid)
+{
+    byte buf[] = { 0xD0, 0x00 };
+    MqttPing ping;
+    int rc;
+
+    XMEMSET(&ping, 0, sizeof(ping));
+    rc = MqttDecode_Ping(buf, (int)sizeof(buf), &ping);
+    ASSERT_EQ(2, rc);
+}
+
+/* Issue #515 reproducer: PINGRESP with one trailing byte. Without the fix
+ * the decoder returned 3 (the packet length). */
+TEST(decode_pingresp_nonzero_remain_len_rejected)
+{
+    byte buf[] = { 0xD0, 0x01, 0x00 };
+    MqttPing ping;
+    int rc;
+
+    XMEMSET(&ping, 0, sizeof(ping));
+    rc = MqttDecode_Ping(buf, (int)sizeof(buf), &ping);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+#if defined(WOLFMQTT_BROKER) && !defined(WOLFMQTT_V5)
+TEST(decode_disconnect_v311_valid)
+{
+    byte buf[] = { 0xE0, 0x00 };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(2, rc);
+}
+
+/* Issue #515 reproducer: v3.1.1 DISCONNECT with one trailing byte. The
+ * v3.1.1 spec defines DISCONNECT as fixed-header-only; the WOLFMQTT_V5
+ * decoder below legitimately accepts a Reason Code and Properties. */
+TEST(decode_disconnect_v311_nonzero_remain_len_rejected)
+{
+    byte buf[] = { 0xE0, 0x01, 0x00 };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_BROKER && !WOLFMQTT_V5 */
+
+#ifdef WOLFMQTT_V5
+/* v5 §3.14: DISCONNECT may carry an optional Reason Code (1 byte) and a
+ * Properties block. Pins the v5 decoder against a regression that would
+ * tighten the v3.1.1 remain_len rule onto v5 by mistake. Wire is
+ * remain_len = 2 = reason_code + props_len=0. */
+TEST(decode_disconnect_v5_with_reason_code_accepted)
+{
+    byte buf[] = {
+        0xE0, 0x02,
+        0x00,                           /* reason code = Normal Disc */
+        0x00                            /* properties length = 0 */
+    };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(0, disc.reason_code);
+    MqttProps_Free(disc.props);
+}
+#endif /* WOLFMQTT_V5 */
+
+/* ============================================================================
  * Fixed-header reserved-flag validation [MQTT-2.2.2-2]
  *
  * The first byte of every MQTT packet packs the type (high nibble) and a
@@ -3659,6 +3742,19 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_valid);
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
+
+    /* MqttDecode_Ping (PINGRESP) length validation */
+    RUN_TEST(decode_pingresp_valid);
+    RUN_TEST(decode_pingresp_nonzero_remain_len_rejected);
+
+    /* MqttDecode_Disconnect length validation */
+#if defined(WOLFMQTT_BROKER) && !defined(WOLFMQTT_V5)
+    RUN_TEST(decode_disconnect_v311_valid);
+    RUN_TEST(decode_disconnect_v311_nonzero_remain_len_rejected);
+#endif
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_disconnect_v5_with_reason_code_accepted);
+#endif
 
     /* Fixed-header reserved-flag validation [MQTT-2.2.2-2] */
     RUN_TEST(fixed_header_flags_valid_canonical_values);

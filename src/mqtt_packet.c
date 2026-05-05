@@ -2700,6 +2700,12 @@ int MqttDecode_Ping(byte *rx_buf, int rx_buf_len, MqttPing* ping)
         return header_len;
     }
 
+    /* MQTT 3.1.1 §3.13 / v5 §3.13: PINGRESP has no variable header and no
+     * payload, so Remaining Length MUST be 0. */
+    if (remain_len != 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     if (ping) {
         /* nothing to decode */
     }
@@ -2812,6 +2818,14 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect* disc)
         MQTT_PACKET_TYPE_DISCONNECT, NULL, NULL, NULL);
     if (header_len < 0) {
         return header_len;
+    }
+
+    /* MQTT 3.1.1 §3.14: DISCONNECT has no variable header and no payload,
+     * so Remaining Length MUST be 0. The WOLFMQTT_V5 decoder below
+     * legitimately accepts remain_len > 0 for the Reason Code and
+     * Properties. */
+    if (remain_len != 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
     if (disc) {

@@ -1008,6 +1008,150 @@ TEST(qos2_pubrel_unknown_id_still_pubcomps)
     MqttBroker_Free(&broker);
 }
 
+/* MQTT 3.1.1 §3.12 / v5 §3.12: PINGREQ has no variable header and no
+ * payload, so Remaining Length MUST be 0. Broker dispatch must reject a
+ * malformed PINGREQ with an abnormal close instead of emitting a
+ * PINGRESP. Issue #515.
+ *
+ * The valid case is paired so a regression that reverses the conditional
+ * (rejecting valid PINGREQs) trips the positive test. */
+TEST(pingreq_valid_emits_pingresp)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    static const byte connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    static const byte pingreq_valid[] = { 0xC0, 0x00 };
+    int i;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, pingreq_valid, sizeof(pingreq_valid));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_out_buf, g_out_len,
+        MQTT_PACKET_TYPE_PING_RESP));
+    ASSERT_FALSE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+TEST(pingreq_nonzero_remain_len_closes_no_pingresp)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    static const byte connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* Issue #515 reproducer wire: C0 01 00 — PINGREQ with one trailing
+     * byte. The fixed-header-only rule makes this malformed. */
+    static const byte pingreq_bad[] = { 0xC0, 0x01, 0x00 };
+    int i;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, pingreq_bad, sizeof(pingreq_bad));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(0, count_packets_of_type(g_out_buf, g_out_len,
+        MQTT_PACKET_TYPE_PING_RESP));
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* MQTT 3.1.1 §3.14: DISCONNECT has no variable header and no payload, so
+ * Remaining Length MUST be 0. The strong observable for "malformed
+ * DISCONNECT was rejected" is the Last Will: a normal DISCONNECT clears
+ * the will, but AbnormalClose fires it. Two clients — subscriber on the
+ * will topic, publisher with an LWT — let us assert the broker dispatched
+ * the malformed packet through AbnormalClose by observing the will
+ * delivery. v5 has its own decoder that legitimately accepts Reason Code
+ * + Properties, so the broker's remain_len check (and this test) is
+ * v3.1.1-only. */
+#ifndef WOLFMQTT_V5
+TEST(disconnect_v311_nonzero_remain_len_fires_will)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* Subscriber CONNECT (clean=1, ClientId "S") then SUBSCRIBE to "lwt". */
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    /* Publisher CONNECT with LWT: flags = 0x06 = will_flag | clean_session;
+     * will_qos=0, will_retain=0; will_topic "lwt"; will_payload "bye". */
+    static const byte pub_connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* Issue #515 reproducer wire: E0 01 00 — malformed v3.1.1 DISCONNECT. */
+    static const byte disconnect_bad[] = { 0xE0, 0x01, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    mock_client_input_append(1, disconnect_bad, sizeof(disconnect_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Subscriber must receive a PUBLISH (the will message). The bug case
+     * dispatches the malformed DISCONNECT through the normal-close path
+     * which clears the will, so no PUBLISH would reach the subscriber. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    /* Publisher's connection was closed regardless of which path the
+     * broker took, so g_client_closed alone wouldn't catch the bug. */
+    ASSERT_TRUE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_V5 */
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -1036,6 +1180,11 @@ int main(int argc, char** argv)
     RUN_TEST(qos2_inbound_cap_reached_disconnects);
     RUN_TEST(qos2_state_freed_on_client_disconnect);
     RUN_TEST(qos2_pubrel_unknown_id_still_pubcomps);
+    RUN_TEST(pingreq_valid_emits_pingresp);
+    RUN_TEST(pingreq_nonzero_remain_len_closes_no_pingresp);
+#ifndef WOLFMQTT_V5
+    RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
+#endif
     TEST_SUITE_END();
 
     TEST_RUNNER_END();

@@ -3966,9 +3966,29 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 break;
             }
             case MQTT_PACKET_TYPE_PING_REQ:
+                /* MQTT 3.1.1 §3.12 / v5 §3.12: PINGREQ is fixed-header-
+                 * only — Remaining Length MUST be 0. Reject malformed
+                 * PINGREQ before sending PINGRESP. */
+                if (bc->client.packet.remain_len != 0) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 (void)BrokerSend_PingResp(bc);
                 break;
             case MQTT_PACKET_TYPE_DISCONNECT:
+                /* MQTT 3.1.1 §3.14: DISCONNECT has no variable header and
+                 * no payload — Remaining Length MUST be 0. v5 §3.14
+                 * relaxes this to allow an optional Reason Code and
+                 * Properties, so the check is gated on protocol level. */
+            #ifdef WOLFMQTT_V5
+                if (bc->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                    bc->client.packet.remain_len != 0) {
+            #else
+                if (bc->client.packet.remain_len != 0) {
+            #endif
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
                 BrokerClient_ClearWill(bc); /* normal disconnect */
                 /* Session persistence: keep subs if clean_session=0 */
                 if (bc->clean_session) {
