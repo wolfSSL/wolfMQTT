@@ -2523,13 +2523,11 @@ TEST(decode_subscribe_v311_single_topic)
     ASSERT_EQ(0, XMEMCMP(topic_arr[0].topic_filter, "a", 1));
 }
 
-/* Options byte QoS bits (0-1) = 0b11 is reserved. The decoder forwards the
- * raw value verbatim (options & 0x03 == 3), so the broker's
- * BrokerHandle_Subscribe cap at MQTT_QOS_2 is the only thing preventing
- * QoS=3 from propagating into BrokerSubs_Add / the SUBACK return code.
- * This test pins the precondition: if the decoder ever starts rejecting
- * QoS=3, the broker cap becomes dead code and this test will flag it. */
-TEST(decode_subscribe_v311_qos3_reserved)
+/* MQTT 3.1.1 §3.8.3.1: Requested QoS bits (0-1) = 0b11 is reserved and
+ * MUST be rejected (issue #518). Pre-fix the decoder forwarded the raw
+ * value and relied on the broker's defensive QoS cap; the broker cap is
+ * now dead code on the decoded path but kept for safety. */
+TEST(decode_subscribe_v311_qos3_rejected)
 {
     byte rx_buf[] = {
         0x82, 0x06,
@@ -2546,9 +2544,53 @@ TEST(decode_subscribe_v311_qos3_reserved)
     XMEMSET(topic_arr, 0, sizeof(topic_arr));
     sub.topics = topic_arr;
     rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
-    ASSERT_TRUE(rc > 0);
-    ASSERT_EQ(1, sub.topic_count);
-    ASSERT_EQ(MQTT_QOS_3, topic_arr[0].qos);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* MQTT 3.1.1 §3.8.3.1: bits 2-7 of the options byte are reserved and
+ * MUST be 0. Wire matches issue #518's reproducer: high six bits set
+ * (0xFC) with low bits = QoS 0. The unmasked v3.x decoder used to drop
+ * the reserved bits and accept QoS 0 silently. */
+TEST(decode_subscribe_v311_options_reserved_bits_qos0_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01,
+        0x61,
+        0xFC
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Same as above, but with low bits = QoS 1. Pairs with the QoS-0 case to
+ * pin the reserved-bit check independently of the QoS check. */
+TEST(decode_subscribe_v311_options_reserved_bits_qos1_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01,
+        0x61,
+        0xFD
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
 /* [MQTT-1.5.3-2] / [MQTT-4.7.3-2]: a topic filter containing U+0000 must
@@ -2675,6 +2717,82 @@ TEST(decode_subscribe_v5_options_byte_qos_extracted)
     ASSERT_EQ(1, sub.packet_id);
     ASSERT_EQ(1, sub.topic_count);
     ASSERT_EQ(MQTT_QOS_1, topic_arr[0].qos);
+}
+
+/* MQTT v5 §3.8.3.1: Requested QoS = 3 is reserved. The v3.1.1 test
+ * above takes a different branch (protocol_level = 0), so without this
+ * test the v5 `(options & 0x03) > MQTT_QOS_2` clause is only covered
+ * transitively through the broader options-byte check. A refactor that
+ * dropped the v5 QoS check on the assumption that the reserved-bits or
+ * Retain-Handling checks subsume it would slip past CI silently. */
+TEST(decode_subscribe_v5_qos3_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01,
+        0x61,
+        0x03                            /* QoS = 3, other bits clear */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* MQTT v5 §3.8.3.1: Retain Handling = 3 is reserved and MUST be
+ * rejected. Bits 4-5 = 0b11 sets that condition. */
+TEST(decode_subscribe_v5_retain_handling_3_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01,
+        0x61,
+        0x30                            /* Retain Handling = 0b11 */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* MQTT v5 §3.8.3.1: bits 6-7 of the options byte are reserved and MUST
+ * be 0. Bits 0-5 are otherwise valid (QoS 0, RH=0, RAP=0, NL=0). */
+TEST(decode_subscribe_v5_options_reserved_bits_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01,
+        0x61,
+        0xC0                            /* reserved bits 6-7 set */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -3833,7 +3951,9 @@ void run_mqtt_packet_tests(void)
 
     /* MqttDecode_Subscribe */
     RUN_TEST(decode_subscribe_v311_single_topic);
-    RUN_TEST(decode_subscribe_v311_qos3_reserved);
+    RUN_TEST(decode_subscribe_v311_qos3_rejected);
+    RUN_TEST(decode_subscribe_v311_options_reserved_bits_qos0_rejected);
+    RUN_TEST(decode_subscribe_v311_options_reserved_bits_qos1_rejected);
     RUN_TEST(decode_subscribe_rejects_nul_in_filter);
     RUN_TEST(decode_subscribe_packet_id_zero_rejected);
     RUN_TEST(decode_subscribe_empty_payload_rejected);
@@ -3842,6 +3962,9 @@ void run_mqtt_packet_tests(void)
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_options_byte_qos_extracted);
+    RUN_TEST(decode_subscribe_v5_qos3_rejected);
+    RUN_TEST(decode_subscribe_v5_retain_handling_3_rejected);
+    RUN_TEST(decode_subscribe_v5_options_reserved_bits_rejected);
 #endif
 
     /* MqttDecode_Unsubscribe */

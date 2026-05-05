@@ -2190,6 +2190,31 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             options = *rx_payload++;
+            /* MQTT 3.1.1 §3.8.3.1: bits 2-7 of the SUBSCRIBE options byte
+             * are reserved and MUST be 0; Requested QoS (bits 0-1) MUST
+             * be 0, 1, or 2. v5 §3.8.3.1 redefines bits 2-5 as No Local,
+             * Retain As Published, and Retain Handling — bits 6-7 stay
+             * reserved, Retain Handling = 3 is also reserved, and QoS = 3
+             * remains invalid. The fixed-header [MQTT-3.8.1-1] reserved-
+             * flag check has already run by this point; this check covers
+             * the per-topic options byte the broker would otherwise be
+             * forced to silently normalize. */
+        #ifdef WOLFMQTT_V5
+            if (subscribe->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                if ((options & 0xC0) != 0 ||
+                    (options & 0x03) > MQTT_QOS_2 ||
+                    ((options >> 4) & 0x03) == 0x03) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+            }
+            else
+        #endif
+            {
+                if ((options & 0xFC) != 0 ||
+                    (options & 0x03) > MQTT_QOS_2) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+            }
             topic->qos = (MqttQoS)(options & 0x03);
             subscribe->topic_count++;
         }
