@@ -1903,9 +1903,27 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         return header_len;
     }
 
-    /* Validate remain_len (need at least packet_id) */
-    if (remain_len < MQTT_DATA_LEN_SIZE) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    /* MQTT 3.1.1 §3.4-3.7: PUBACK/PUBREC/PUBREL/PUBCOMP variable header is
+     * exactly the two-byte Packet Identifier and there is no payload —
+     * Remaining Length is fixed at 2. v5 §3.4-3.7 relaxes this to allow
+     * an optional Reason Code and Properties block, so the longer form is
+     * only valid when the caller has identified the connection as v5.
+     * (publish_resp == NULL takes the strict path: with no struct to
+     * carry reason_code/props, anything beyond the Packet Identifier
+     * cannot be consumed and is therefore extra payload.) */
+#ifdef WOLFMQTT_V5
+    if (publish_resp != NULL &&
+        publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        if (remain_len < MQTT_DATA_LEN_SIZE) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    }
+    else
+#endif
+    {
+        if (remain_len != MQTT_DATA_LEN_SIZE) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
 
     rx_payload = &rx_buf[header_len];

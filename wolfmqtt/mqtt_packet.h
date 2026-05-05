@@ -690,6 +690,18 @@ WOLFMQTT_API int MqttDecode_Publish(byte *rx_buf, int rx_buf_len,
     MqttPublish *publish);
 WOLFMQTT_API int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len,
     byte type, MqttPublishResp *publish_resp);
+/*! \brief Decode a PUBACK / PUBREC / PUBREL / PUBCOMP packet.
+ *
+ *  \note Per MQTT 3.1.1 §3.4-§3.7 the variable header is exactly the
+ *  two-byte Packet Identifier with no payload; Remaining Length must be
+ *  2. The decoder rejects any extra trailing bytes with
+ *  MQTT_CODE_ERROR_MALFORMED_DATA. MQTT v5 §3.4-§3.7 allows an optional
+ *  Reason Code and Properties block — the longer form is accepted only
+ *  when publish_resp is non-NULL and publish_resp->protocol_level is
+ *  MQTT_CONNECT_PROTOCOL_LEVEL_5 or higher. Callers integrating against
+ *  non-spec brokers that emit extra bytes for v3.x acks must either fix
+ *  the peer or set protocol_level to 5 before calling.
+ */
 WOLFMQTT_API int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len,
     byte type, MqttPublishResp *publish_resp);
 WOLFMQTT_API int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,

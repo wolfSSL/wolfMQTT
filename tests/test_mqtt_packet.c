@@ -2901,6 +2901,141 @@ TEST(decode_publish_resp_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* MQTT 3.1.1 §3.4-3.7: PUBACK/PUBREC/PUBREL/PUBCOMP have a fixed
+ * Remaining Length of 2 (the Packet Identifier only). Any extra byte
+ * after the Packet Identifier is malformed in v3.x. v5 §3.4-3.7
+ * relaxes this with an optional Reason Code and Properties; the
+ * `protocol_level` field on the response struct selects between the
+ * strict and relaxed decoders. Issues #516 and #517 — the wire reflects
+ * the issues' reproducer payloads (extra trailing zero byte). */
+TEST(decode_puback_v311_extra_payload_rejected)
+{
+    byte buf[] = { 0x40, 0x03, 0x00, 0x07, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_pubrec_v311_extra_payload_rejected)
+{
+    byte buf[] = { 0x50, 0x03, 0x00, 0x07, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_REC, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_pubrel_v311_extra_payload_rejected)
+{
+    byte buf[] = { 0x62, 0x03, 0x00, 0x07, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_REL, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_pubcomp_v311_extra_payload_rejected)
+{
+    byte buf[] = { 0x70, 0x03, 0x00, 0x07, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_COMP, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Positive cases for PUBREC/PUBREL/PUBCOMP — decode_publish_resp_valid
+ * already covers PUBACK. Without these, a regression that flips the
+ * length check into "always reject" would still leave 3/4 packet types
+ * silently broken with only PUBACK signalling failure. */
+TEST(decode_pubrec_v311_valid)
+{
+    byte buf[] = { 0x50, 0x02, 0x00, 0x07 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_REC, &resp);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(7, resp.packet_id);
+}
+
+TEST(decode_pubrel_v311_valid)
+{
+    byte buf[] = { 0x62, 0x02, 0x00, 0x07 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_REL, &resp);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(7, resp.packet_id);
+}
+
+TEST(decode_pubcomp_v311_valid)
+{
+    byte buf[] = { 0x70, 0x02, 0x00, 0x07 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_COMP, &resp);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(7, resp.packet_id);
+}
+
+/* publish_resp == NULL takes the strict-length path even under
+ * WOLFMQTT_V5: with no struct to consume reason_code/props, anything
+ * beyond the Packet Identifier is unreachable extra payload. Pins the
+ * `publish_resp == NULL` arm of the gate so a refactor that narrows the
+ * predicate to `protocol_level < 5` cannot regress NULL callers. */
+TEST(decode_puback_null_resp_extra_payload_rejected)
+{
+    byte buf[] = { 0x40, 0x03, 0x00, 0x07, 0x00 };
+    int rc;
+
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* v5 §3.4-3.7 explicitly allow longer PUBACK/PUBREC/PUBREL/PUBCOMP with
+ * a Reason Code (1 byte) and a Properties block. Pins the v5 gate so the
+ * v3.x exact-length check doesn't regress onto v5 — the wire is
+ * remain_len = 4 = packet_id + reason_code + props_len(0). */
+TEST(decode_puback_v5_with_reason_code_accepted)
+{
+    byte buf[] = { 0x40, 0x04, 0x00, 0x07, 0x00, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(7, resp.packet_id);
+    ASSERT_EQ(0, resp.reason_code);
+    MqttProps_Free(resp.props);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* ============================================================================
  * MqttEncode_PublishResp fixed-header QoS bits
  *
@@ -3731,6 +3866,17 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_resp_valid);
     RUN_TEST(decode_publish_resp_malformed_remain_len_zero);
     RUN_TEST(decode_publish_resp_malformed_remain_len_one);
+    RUN_TEST(decode_puback_v311_extra_payload_rejected);
+    RUN_TEST(decode_pubrec_v311_extra_payload_rejected);
+    RUN_TEST(decode_pubrel_v311_extra_payload_rejected);
+    RUN_TEST(decode_pubcomp_v311_extra_payload_rejected);
+    RUN_TEST(decode_pubrec_v311_valid);
+    RUN_TEST(decode_pubrel_v311_valid);
+    RUN_TEST(decode_pubcomp_v311_valid);
+    RUN_TEST(decode_puback_null_resp_extra_payload_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_puback_v5_with_reason_code_accepted);
+#endif
 
     /* MqttEncode_PublishResp fixed-header QoS bits */
     RUN_TEST(encode_publish_rel_has_qos1_flag);
