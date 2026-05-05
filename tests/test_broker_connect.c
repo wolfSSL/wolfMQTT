@@ -1278,6 +1278,284 @@ static PublishInfo first_publish_info(const byte* buf, size_t len)
     return info;
 }
 
+/* [MQTT-3.2.2-2] When a CleanSession=0 connection is accepted and the
+ * broker has stored session state for the supplied Client Identifier,
+ * Session Present in the CONNACK MUST be 1.
+ *
+ * Two-phase mock harness: client 0 connects clean=0, subscribes, and
+ * disconnects (orphaning the sub); client 1 then connects clean=0 with
+ * the same client_id and must receive CONNACK 20 02 01 00. The accept
+ * count is gated to 1 across the first phase so client 1's accept
+ * happens after client 0 has been removed (avoids the takeover branch
+ * which is the same code path but reaches it differently). */
+TEST(connack_session_present_set_on_resumed_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect0[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,         /* clean_session = 0 */
+        0x00, 0x01, 'K'
+    };
+    static const byte subscribe0[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+    static const byte connect1[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'K'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Phase 1: only client 0 is acceptable. Pre-stage client 1's input
+     * in slot 1 so the read callback sees it once accept hands out the
+     * second sock. */
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, subscribe0, sizeof(subscribe0));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    mock_client_input_append(1, connect1, sizeof(connect1));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    /* Phase 2: open the second slot and let the broker accept client 1. */
+    g_clients_active = 2;
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Client 1's CONNACK must carry Session Present = 1. */
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);   /* CONNACK type | flags */
+    ASSERT_EQ(0x02, g_clients[1].out_buf[1]);   /* remain_len = 2 */
+    ASSERT_EQ(0x01, g_clients[1].out_buf[2]);   /* Session Present */
+    ASSERT_EQ(0x00, g_clients[1].out_buf[3]);   /* return_code = Accepted */
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* [MQTT-3.2.2-2] Session Present must also be set on the takeover
+ * branch: a CleanSession=0 connect with the same Client Identifier
+ * while the previous client is still connected reassociates the
+ * existing subs to the new client, which counts as "stored session
+ * state" for the new connection. Distinct from the orphan-resume test
+ * above because BrokerHandle_Connect reaches the helper through the
+ * `if (old != NULL)` branch with `s->client != NULL`, not the
+ * `else if` branch with orphaned subs. */
+TEST(connack_session_present_set_on_takeover)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect0[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'K'
+    };
+    static const byte subscribe0[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    static const byte connect1[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'K'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Phase 1: only client 0 connects and subscribes (no DISCONNECT). */
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, subscribe0, sizeof(subscribe0));
+    mock_client_input_append(1, connect1, sizeof(connect1));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    /* Client 0 is still connected — sub registered, no DISCONNECT yet. */
+    ASSERT_FALSE(g_clients[0].closed);
+
+    /* Phase 2: client 1 connects with the same client_id. The takeover
+     * branch reassociates client 0's still-active sub to client 1. */
+    g_clients_active = 2;
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);
+    ASSERT_EQ(0x02, g_clients[1].out_buf[1]);
+    ASSERT_EQ(0x01, g_clients[1].out_buf[2]);   /* Session Present = 1 */
+    ASSERT_EQ(0x00, g_clients[1].out_buf[3]);
+    /* Client 0 was kicked off by the takeover. */
+    ASSERT_TRUE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Negative case: a clean_session=1 reconnect with the same Client
+ * Identifier MUST get Session Present = 0 even if there were prior
+ * subscriptions, because clean_session=1 discards stored state. */
+TEST(connack_session_present_clear_on_clean_session_reconnect)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect0[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,         /* clean_session = 0 */
+        0x00, 0x01, 'K'
+    };
+    static const byte subscribe0[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+    static const byte connect1[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,         /* clean_session = 1 */
+        0x00, 0x01, 'K'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, subscribe0, sizeof(subscribe0));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    mock_client_input_append(1, connect1, sizeof(connect1));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    g_clients_active = 2;
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);
+    ASSERT_EQ(0x02, g_clients[1].out_buf[1]);
+    ASSERT_EQ(0x00, g_clients[1].out_buf[2]);   /* Session Present = 0 */
+    ASSERT_EQ(0x00, g_clients[1].out_buf[3]);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifdef WOLFMQTT_V5
+/* v5 covers the same orphan-resume scenario but the CONNACK wire format
+ * differs (Properties Length VBI between return code and payload). The
+ * test decodes the CONNACK via MqttDecode_ConnectAck rather than
+ * pinning fixed byte offsets, so a future change to v5 CONNACK encoding
+ * doesn't silently regress the Session Present semantic. */
+TEST(connack_session_present_v5_set_on_resumed_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttConnectAck ack;
+    int rc;
+    int i;
+    /* v5 CONNECT clean=0, level=5, props_len=0, client_id="K". remain
+     * = 6 + 1 + 1 + 2 + 1 + 3 = 14. */
+    static const byte connect0[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x00,                              /* clean_start = 0 */
+        0x00, 0x3C,
+        0x00,                              /* properties length = 0 */
+        0x00, 0x01, 'K'
+    };
+    static const byte subscribe0[] = {
+        /* v5 SUBSCRIBE: type|flags=0x82, remain = 7
+         * (packet_id 2 + props_len 1 + topic 3 + options 1). */
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    /* v5 DISCONNECT with Reason Code 0 (Normal disconnection) and no
+     * properties. remain = 1 + 1 = 2. */
+    static const byte disconnect0[] = { 0xE0, 0x02, 0x00, 0x00 };
+    static const byte connect1[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x00,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'K'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, subscribe0, sizeof(subscribe0));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    mock_client_input_append(1, connect1, sizeof(connect1));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    g_clients_active = 2;
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_ConnectAck(g_clients[1].out_buf,
+        (int)g_clients[1].out_len, &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT,
+              (int)(ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT));
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, ack.return_code);
+    if (ack.props != NULL) {
+        (void)MqttProps_Free(ack.props);
+    }
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* [MQTT-3.9.3-2] The broker SUBACK helper must reject reserved return
  * codes before serializing them to the wire. The normal subscribe path
  * only ever produces values in {0, 1, 2, 0x80}, so this defense is
@@ -1547,6 +1825,12 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
+    RUN_TEST(connack_session_present_set_on_resumed_session);
+    RUN_TEST(connack_session_present_set_on_takeover);
+    RUN_TEST(connack_session_present_clear_on_clean_session_reconnect);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(connack_session_present_v5_set_on_resumed_session);
+#endif
     RUN_TEST(broker_suback_reserved_v311_code_rejected);
     RUN_TEST(broker_suback_valid_v311_failure_code_encoded);
 #ifdef WOLFMQTT_BROKER_RETAINED

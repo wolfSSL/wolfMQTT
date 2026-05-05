@@ -1916,13 +1916,17 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
 #endif
 }
 
-static void BrokerSubs_ReassociateClient(MqttBroker* broker,
+/* Reattach orphaned (or active-takeover) subscriptions for `client_id` to
+ * `new_bc`. Returns the number of reassociated subscriptions; the caller
+ * uses a non-zero return as the [MQTT-3.2.2-2] "stored session state was
+ * resumed" signal for CONNACK Session Present. */
+static int BrokerSubs_ReassociateClient(MqttBroker* broker,
     const char* client_id, BrokerClient* new_bc)
 {
     int count = 0;
     if (broker == NULL || client_id == NULL || client_id[0] == '\0' ||
         new_bc == NULL) {
-        return;
+        return 0;
     }
 #ifdef WOLFMQTT_STATIC_MEMORY
     {
@@ -1968,6 +1972,7 @@ static void BrokerSubs_ReassociateClient(MqttBroker* broker,
         WBLOG_INFO(broker, "broker: reassociated %d subs for client_id=%s",
             count, client_id);
     }
+    return count;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2894,6 +2899,18 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     MqttConnectAck ack;
     MqttMessage lwt;
     word16 id_len = 0;
+    /* [MQTT-3.2.2-2] Session Present is set when an accepted
+     * CleanSession=0 connection finds stored session state for the
+     * client_id. The MQTT spec defines Session state as more than
+     * subscriptions (in-flight QoS 1/2 PUBLISH, unacknowledged PUBREL,
+     * outstanding packet identifiers); this broker only persists
+     * subscriptions across disconnects today (BrokerSubs_OrphanClient
+     * keeps them, but per-message QoS 2 state in bc->qos2_in_flight is
+     * dropped). If broker session persistence ever widens to cover QoS
+     * state, the source of session_present needs to widen too — a
+     * BrokerSession_HasStoredState() helper is the natural extension
+     * point. */
+    int session_present = 0;
 #ifdef WOLFMQTT_V5
     int auto_assigned = 0;
 #endif
@@ -3100,7 +3117,10 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
             if (!mc.clean_session) {
                 /* Reassociate old client's subs to new client */
-                BrokerSubs_ReassociateClient(broker, bc->client_id, bc);
+                if (BrokerSubs_ReassociateClient(broker, bc->client_id, bc)
+                    > 0) {
+                    session_present = 1;
+                }
             }
             BrokerSubs_RemoveClient(broker, old);
             BrokerClient_Remove(broker, old);
@@ -3108,7 +3128,10 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         else if (!mc.clean_session) {
             /* No existing client, but check for orphaned subs from
              * a previous session (clean_session=0 reconnect) */
-            BrokerSubs_ReassociateClient(broker, bc->client_id, bc);
+            if (BrokerSubs_ReassociateClient(broker, bc->client_id, bc)
+                > 0) {
+                session_present = 1;
+            }
         }
         if (mc.clean_session) {
             /* Remove any remaining subs for this client_id */
@@ -3246,8 +3269,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif /* WOLFMQTT_BROKER_AUTH */
 
-    /* Check auth before sending CONNACK */
-    ack.flags = 0;
+    /* Check auth before sending CONNACK. [MQTT-3.2.2-2]: when the
+     * accepted CleanSession=0 connection finds stored session state,
+     * Session Present MUST be 1; otherwise it MUST be 0. The flag is
+     * cleared again below for any path that overrides return_code to a
+     * non-zero refusal — [MQTT-3.2.2-4] requires Session Present=0 on a
+     * refused CONNACK. */
+    ack.flags = session_present ? MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT : 0;
     ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
 #ifdef WOLFMQTT_V5
     ack.props = NULL;
@@ -3341,6 +3369,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
 
 send_connack:
+    /* [MQTT-3.2.2-4] A refused CONNACK MUST have Session Present = 0. The
+     * accepted path above already set Session Present from session_present;
+     * this clear covers any goto-send_connack jump that overrode
+     * return_code to a refusal after that point. */
+    if (ack.return_code != MQTT_CONNECT_ACK_CODE_ACCEPTED) {
+        ack.flags = 0;
+    }
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
     if (rc > 0) {
         WBLOG_INFO(broker, "broker: CONNACK send sock=%d code=%d", (int)bc->sock,
