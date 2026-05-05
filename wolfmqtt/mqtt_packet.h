@@ -684,6 +684,22 @@ WOLFMQTT_API int MqttPacket_TopicFilterValid(const char* filter, word16 len);
 WOLFMQTT_API int MqttPacket_TopicFilterIsWildcard(const char* filter,
     word16 len);
 
+/*! \brief      [MQTT-4.7.3-1] / [MQTT-3.3.2-2] Validate a PUBLISH Topic
+ *              Name. Always rejects topics containing the wildcard
+ *              characters '#' or '+'. Empty Topic Names are rejected
+ *              under v3.1.1 (protocol_level < 5) per [MQTT-4.7.3-1] but
+ *              allowed under v5 (§3.3.2.3.4) because v5 permits a
+ *              zero-length Topic Name when paired with a Topic Alias
+ *              property; the caller is responsible for the alias-empty
+ *              pairing check.
+ *  \param      topic_name      Pointer to the topic name bytes.
+ *  \param      len             Length of the topic name in bytes.
+ *  \param      protocol_level  MQTT protocol level (4 = v3.1.1, 5 = v5).
+ *  \return     1 if well-formed, 0 if malformed.
+ */
+WOLFMQTT_API int MqttPacket_TopicNameValid(const char* topic_name,
+    word16 len, byte protocol_level);
+
 /*! \brief [MQTT-3.9.3-2] Validate a SUBACK return code / Reason Code.
  *  \param code            The byte to validate.
  *  \param protocol_level  MQTT protocol level (4 = v3.1.1, 5 = v5). v3.1.1

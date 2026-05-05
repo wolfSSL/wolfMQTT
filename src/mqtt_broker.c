@@ -3593,23 +3593,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         return rc;
     }
 
-    /* [MQTT-3.3.2-2] PUBLISH topic must not contain wildcard characters.
-     * Run before any state-mutating logic so a malformed PUBLISH cannot
-     * briefly populate the QoS 2 dedup set. Set rc and jump to cleanup so
-     * dispatch closes the connection AND any v5 props/topic allocations
-     * are freed. */
-    if (pub.topic_name && pub.topic_name_len > 0) {
-        word16 i;
-        for (i = 0; i < pub.topic_name_len; i++) {
-            if (pub.topic_name[i] == '+' || pub.topic_name[i] == '#') {
-                WBLOG_ERR(broker,
-                    "broker: PUBLISH topic contains wildcard sock=%d",
-                    (int)bc->sock);
-                rc = MQTT_CODE_ERROR_MALFORMED_DATA;
-                goto publish_cleanup;
-            }
-        }
-    }
+    /* [MQTT-3.3.2-2] PUBLISH topic name wildcard / [MQTT-4.7.3-1]
+     * empty-topic checks now live in MqttDecode_Publish via
+     * MqttPacket_TopicNameValid, which has already returned
+     * MALFORMED_DATA before reaching this handler. The broker no longer
+     * needs a per-handler scan. */
 
     /* [MQTT-4.3.3] QoS 2 duplicate detection. If we already PUBREC'd this
      * packet_id and are still waiting for PUBREL, treat the inbound PUBLISH

@@ -892,6 +892,105 @@ TEST(encode_publish_topic_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
+/* Pin the helper truth table for both v3.1.1 (level=0/4) and v5
+ * (level=5). Wildcards are forbidden in either version
+ * ([MQTT-3.3.2-2]); empty is rejected in v3.1.1 ([MQTT-4.7.3-1]) but
+ * permitted in v5 (§3.3.2.3.4 — empty Topic Name with Topic Alias). */
+TEST(topic_name_valid_helper_table)
+{
+    byte v311 = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    byte v5   = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    /* Empty: rejected in v3.1.1, accepted in v5. */
+    ASSERT_EQ(0, MqttPacket_TopicNameValid(NULL, 0, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("", 0, v311));
+    ASSERT_EQ(1, MqttPacket_TopicNameValid(NULL, 0, v5));
+    ASSERT_EQ(1, MqttPacket_TopicNameValid("", 0, v5));
+    /* NULL with non-zero len is malformed in any version. */
+    ASSERT_EQ(0, MqttPacket_TopicNameValid(NULL, 1, v5));
+    /* Plain topics. */
+    ASSERT_EQ(1, MqttPacket_TopicNameValid("a", 1, v311));
+    ASSERT_EQ(1, MqttPacket_TopicNameValid("sensor/value", 12, v311));
+    ASSERT_EQ(1, MqttPacket_TopicNameValid("/", 1, v311));
+    /* Wildcards are forbidden in both versions regardless of position. */
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("#", 1, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("+", 1, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("sensor/#", 8, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("sensor/+", 8, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("sen+sor", 7, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("sen#sor", 7, v311));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("sensor/#", 8, v5));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid("sensor/+", 8, v5));
+}
+
+/* MqttEncode_Publish must reject a malformed Topic Name before
+ * serializing the packet; the broker rejects on inbound, so silent
+ * encoder acceptance produces a packet that strict peers will refuse. */
+TEST(encode_publish_empty_topic_rejected)
+{
+    byte tx_buf[64];
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "";
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_publish_wildcard_topic_rejected)
+{
+    byte tx_buf[64];
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "sensor/#";
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+
+    pub.topic_name = "sensor/+";
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* NULL topic_name is API misuse (separate from a malformed wire
+ * packet) — surface it as BAD_ARG to match the surrounding NULL-check
+ * convention in this function. */
+TEST(encode_publish_null_topic_returns_bad_arg)
+{
+    byte tx_buf[64];
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = NULL;
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT v5 §3.3.2.3.4: a zero-length Topic Name is permitted when paired
+ * with a Topic Alias property. The encoder must not reject the empty
+ * topic on the v5 path; the alias-empty pairing is the application's
+ * responsibility. */
+TEST(encode_publish_v5_empty_topic_accepted)
+{
+    byte tx_buf[64];
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    pub.topic_name = "";
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* ============================================================================
  * MqttDecode_Publish
  * ============================================================================ */
@@ -994,6 +1093,69 @@ TEST(decode_publish_rejects_nul_in_topic)
     rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* [MQTT-4.7.3-1] PUBLISH Topic Name length 0x0000 is malformed. Wire
+ * shape: PUBLISH | QoS 0, remain=3, topic_len=0, single payload byte. */
+TEST(decode_publish_empty_topic_rejected)
+{
+    byte buf[] = { 0x30, 0x03, 0x00, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-3.3.2-2] / [MQTT-4.7.1-1] PUBLISH Topic Names MUST NOT contain
+ * wildcards. Wire encodes "sensor/#" / "sensor/+" as the Topic Name. */
+TEST(decode_publish_wildcard_hash_topic_rejected)
+{
+    byte buf[] = {
+        0x30, 0x0B,
+        0x00, 0x08, 's', 'e', 'n', 's', 'o', 'r', '/', '#',
+        'x'
+    };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_publish_wildcard_plus_topic_rejected)
+{
+    byte buf[] = {
+        0x30, 0x0B,
+        0x00, 0x08, 's', 'e', 'n', 's', 'o', 'r', '/', '+',
+        'x'
+    };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT v5 §3.3.2.3.4: a zero-length Topic Name is permitted (paired
+ * with a Topic Alias property at the application layer). Wire shape:
+ * PUBLISH | QoS 0, remain=4, topic_len=0, props_len=0, payload "x". */
+TEST(decode_publish_v5_empty_topic_accepted)
+{
+    byte buf[] = { 0x30, 0x04, 0x00, 0x00, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(0, pub.topic_name_len);
+}
+#endif /* WOLFMQTT_V5 */
 
 /* [MQTT-2.3.1-1] PUBLISH with QoS > 0 must carry a non-zero Packet
  * Identifier. The encoder rejects packet_id=0 already; this guards the
@@ -4129,6 +4291,13 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_qos1_with_dup_accepted);
     RUN_TEST(encode_publish_qos2_with_dup_accepted);
     RUN_TEST(encode_publish_topic_oversized_rejected);
+    RUN_TEST(topic_name_valid_helper_table);
+    RUN_TEST(encode_publish_empty_topic_rejected);
+    RUN_TEST(encode_publish_wildcard_topic_rejected);
+    RUN_TEST(encode_publish_null_topic_returns_bad_arg);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(encode_publish_v5_empty_topic_accepted);
+#endif
 
     /* MqttDecode_Publish */
     RUN_TEST(decode_publish_qos0_valid);
@@ -4136,6 +4305,12 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_qos0_zero_payload);
     RUN_TEST(decode_publish_malformed_variable_exceeds_remain);
     RUN_TEST(decode_publish_rejects_nul_in_topic);
+    RUN_TEST(decode_publish_empty_topic_rejected);
+    RUN_TEST(decode_publish_wildcard_hash_topic_rejected);
+    RUN_TEST(decode_publish_wildcard_plus_topic_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_publish_v5_empty_topic_accepted);
+#endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_one_valid);

@@ -287,6 +287,33 @@ int MqttPacket_TopicFilterValid(const char* filter, word16 len)
     return 1;
 }
 
+/* Validate an MQTT PUBLISH Topic Name against [MQTT-3.3.2-2] /
+ * [MQTT-4.7.1-1] (Topic Names MUST NOT contain wildcard characters '#'
+ * or '+'; applies to both v3.1.1 and v5) and [MQTT-4.7.3-1] (minimum
+ * length one character) — but the latter is gated to v3.1.1 because
+ * v5 §3.3.2.3.4 explicitly permits a zero-length Topic Name when
+ * paired with a Topic Alias property. The pairing check (alias must
+ * be present when the topic is empty) is left to the caller because
+ * the property block hasn't been decoded yet at the wildcard-scan
+ * point. NULL topic_name with non-zero len is malformed regardless. */
+int MqttPacket_TopicNameValid(const char* topic_name, word16 len,
+    byte protocol_level)
+{
+    word16 i;
+    if (topic_name == NULL && len > 0) {
+        return 0;
+    }
+    for (i = 0; i < len; i++) {
+        if (topic_name[i] == '#' || topic_name[i] == '+') {
+            return 0;
+        }
+    }
+    if (len == 0 && protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        return 0;
+    }
+    return 1;
+}
+
 /* Return 1 if the Topic Filter contains a multi-level ('#') or
  * single-level ('+') wildcard, 0 otherwise. The decoder has already
  * validated wildcard *placement* via MqttPacket_TopicFilterValid, so a
@@ -1653,11 +1680,28 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     }
     /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3]. Check here
      * before writing the fixed header so a later MqttEncode_String failure
-     * cannot corrupt tx_payload via `tx_payload += -1`. */
+     * cannot corrupt tx_payload via `tx_payload += -1`. NULL topic_name
+     * is API misuse (BAD_ARG); callers using v5 Topic Alias must pass
+     * an empty string "" rather than NULL. */
     {
-        size_t str_len = XSTRLEN(publish->topic_name);
+        size_t str_len;
+        byte level = 0;
+        if (publish->topic_name == NULL) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
+        str_len = XSTRLEN(publish->topic_name);
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
+    #ifdef WOLFMQTT_V5
+        level = publish->protocol_level;
+    #endif
+        /* [MQTT-3.3.2-2] / [MQTT-4.7.1-1] wildcards always forbidden in
+         * Topic Names. [MQTT-4.7.3-1] empty Topic Names rejected for
+         * v3.1.1; allowed for v5 with caller-managed Topic Alias. */
+        if (!MqttPacket_TopicNameValid(publish->topic_name,
+                                       (word16)str_len, level)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
 
         /* Determine packet length */
@@ -1804,6 +1848,22 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     }
     if (variable_len + header_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+    /* [MQTT-3.3.2-2] / [MQTT-4.7.1-1] Reject Topic Names containing
+     * wildcards (both versions). [MQTT-4.7.3-1] Reject empty Topic
+     * Names for v3.1.1; v5 §3.3.2.3.4 permits a zero-length Topic Name
+     * paired with a Topic Alias property — the alias-empty pairing is
+     * left to the caller because the property block is decoded later
+     * in this function. */
+    {
+        byte level = 0;
+    #ifdef WOLFMQTT_V5
+        level = publish->protocol_level;
+    #endif
+        if (!MqttPacket_TopicNameValid(publish->topic_name,
+                                       publish->topic_name_len, level)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
     rx_payload += variable_len;
 
