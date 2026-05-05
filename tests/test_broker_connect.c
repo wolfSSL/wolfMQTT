@@ -1556,6 +1556,158 @@ TEST(connack_session_present_v5_set_on_resumed_session)
 }
 #endif /* WOLFMQTT_V5 */
 
+#ifndef WOLFMQTT_BROKER_WILDCARDS
+/* [MQTT-3.8.3-2] (v3.1.1 §3.8.3): when the server does not support
+ * wildcard subscriptions it MUST reject any Subscription request whose
+ * filter contains '#' or '+'. v5 §3.9.3 reserves reason code 0xA2
+ * (Wildcard Subscriptions not supported) for this case, paired with
+ * the v5 §3.2.2.3.20 Wildcard Subscription Available CONNACK property.
+ * The decoder still accepts the syntactically-valid wildcard filter;
+ * rejection lives in the broker's per-topic SUBACK entry. The plain-
+ * topic case is paired so a "reject everything" mutation also trips. */
+TEST(broker_no_wildcards_suback_failure_for_wildcard_filter)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* SUBSCRIBE filter "+/r" (valid syntax; wildcard). */
+    static const byte subscribe_wild[] = {
+        0x82, 0x08,
+        0x00, 0x07,
+        0x00, 0x03, '+', '/', 'r',
+        0x00
+    };
+    int last_byte;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, subscribe_wild, sizeof(subscribe_wild));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Output buffer carries CONNACK then SUBACK. SUBACK wire is
+     * 0x90 0x03 packet_id_hi packet_id_lo return_code. The last byte is
+     * the per-topic return code: must be Failure (0x80). */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    last_byte = g_clients[0].out_buf[g_clients[0].out_len - 1];
+    ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_FAILURE, last_byte);
+    ASSERT_FALSE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Pair: a plain (non-wildcard) filter must still be granted under the
+ * no-wildcards build. Catches a regression that rejects everything. */
+TEST(broker_no_wildcards_suback_grants_plain_filter)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* SUBSCRIBE filter "x" (no wildcard). */
+    static const byte subscribe_plain[] = {
+        0x82, 0x06,
+        0x00, 0x07,
+        0x00, 0x01, 'x',
+        0x00
+    };
+    int last_byte;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, subscribe_plain, sizeof(subscribe_plain));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    last_byte = g_clients[0].out_buf[g_clients[0].out_len - 1];
+    ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_SUCCESS_MAX_QOS0, last_byte);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifdef WOLFMQTT_V5
+/* v5 §3.9.3: Wildcard Subscriptions not supported uses Reason Code
+ * 0xA2 rather than the generic 0x80 Failure that v3.1.1 returns. The
+ * broker must surface that distinction so v5 clients receive an
+ * actionable diagnostic. */
+TEST(broker_no_wildcards_suback_v5_reason_code)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v5 CONNECT, clean=1, level=5, props_len=0, client_id="A".
+     * remain = 6 + 1 + 1 + 2 + 1 + 3 = 14. */
+    static const byte connect[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+    /* v5 SUBSCRIBE filter "+/r": type|flags=0x82, remain = 9
+     * (packet_id 2 + props_len 1 + topic 5 + options 1). */
+    static const byte subscribe_wild[] = {
+        0x82, 0x09,
+        0x00, 0x07,
+        0x00,
+        0x00, 0x03, '+', '/', 'r',
+        0x00
+    };
+    int last_byte;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, subscribe_wild, sizeof(subscribe_wild));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    last_byte = g_clients[0].out_buf[g_clients[0].out_len - 1];
+    ASSERT_EQ(MQTT_REASON_WILDCARD_SUB_NOT_SUP, last_byte);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+#endif /* !WOLFMQTT_BROKER_WILDCARDS */
+
 /* [MQTT-3.9.3-2] The broker SUBACK helper must reject reserved return
  * codes before serializing them to the wire. The normal subscribe path
  * only ever produces values in {0, 1, 2, 0x80}, so this defense is
@@ -1833,6 +1985,13 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(broker_suback_reserved_v311_code_rejected);
     RUN_TEST(broker_suback_valid_v311_failure_code_encoded);
+#ifndef WOLFMQTT_BROKER_WILDCARDS
+    RUN_TEST(broker_no_wildcards_suback_failure_for_wildcard_filter);
+    RUN_TEST(broker_no_wildcards_suback_grants_plain_filter);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(broker_no_wildcards_suback_v5_reason_code);
+#endif
+#endif
 #ifdef WOLFMQTT_BROKER_RETAINED
     RUN_TEST(retained_qos_stored_1_sub_1_delivers_qos1);
     RUN_TEST(retained_qos_stored_2_sub_1_delivers_qos1);

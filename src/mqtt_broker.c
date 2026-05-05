@@ -3440,9 +3440,35 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
 
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            int sub_rc = BrokerSubs_Add(broker, bc, f, flen, topic_qos);
+            int sub_rc = MQTT_CODE_SUCCESS;
+            byte fail_code = MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
+        #ifndef WOLFMQTT_BROKER_WILDCARDS
+            /* [MQTT-3.8.3-2] (v3.1.1 §3.8.3): when the server does not
+             * support wildcard subscriptions it MUST reject any
+             * Subscription request whose filter contains a wildcard.
+             * v5 §3.2.2.3.20 advertises this via the Wildcard
+             * Subscription Available property and §3.9.3 reserves
+             * reason code 0xA2 (Wildcard Subscriptions not supported)
+             * specifically for this case — use it on v5 connections so
+             * the client gets the actionable diagnostic the spec
+             * defines. The decoder already validated Topic Filter
+             * syntax via MqttPacket_TopicFilterValid, so any '#' or
+             * '+' byte here is necessarily a real wildcard. */
+            if (MqttPacket_TopicFilterIsWildcard(f, flen)) {
+                sub_rc = MQTT_CODE_ERROR_BAD_ARG;
+            #ifdef WOLFMQTT_V5
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    fail_code = MQTT_REASON_WILDCARD_SUB_NOT_SUP;
+                }
+            #endif
+            }
+            if (sub_rc == MQTT_CODE_SUCCESS)
+        #endif
+            {
+                sub_rc = BrokerSubs_Add(broker, bc, f, flen, topic_qos);
+            }
             if (sub_rc != MQTT_CODE_SUCCESS) {
-                granted_qos = (MqttQoS)MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
+                granted_qos = (MqttQoS)fail_code;
             }
 #ifdef WOLFMQTT_BROKER_RETAINED
             else {

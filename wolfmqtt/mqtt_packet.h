@@ -662,6 +662,28 @@ WOLFMQTT_API int MqttPacket_Read(struct _MqttClient *client, byte* rx_buf,
  * packet. */
 WOLFMQTT_API int MqttPacket_FixedHeaderFlagsValid(byte type_flags);
 
+/*! \brief      [MQTT-4.7.1-2] / [MQTT-4.7.1-3] / [MQTT-4.7.3-1] Validate
+ *              an MQTT Topic Filter. Rejects empty filters, '#' that is
+ *              not solo or a final character after '/', and '+' that
+ *              does not occupy an entire topic level. The filter need
+ *              not be NUL-terminated.
+ *  \param      filter      Pointer to the topic filter bytes.
+ *  \param      len         Length of the filter in bytes.
+ *  \return     1 if the filter is well-formed, 0 if it is malformed.
+ */
+WOLFMQTT_API int MqttPacket_TopicFilterValid(const char* filter, word16 len);
+
+/*! \brief      Return non-zero if the Topic Filter contains a wildcard
+ *              ('#' or '+'). Use only on a filter that has already
+ *              passed MqttPacket_TopicFilterValid — wildcard placement
+ *              is not re-validated here.
+ *  \param      filter      Pointer to the topic filter bytes.
+ *  \param      len         Length of the filter in bytes.
+ *  \return     1 if a wildcard byte is present, 0 otherwise.
+ */
+WOLFMQTT_API int MqttPacket_TopicFilterIsWildcard(const char* filter,
+    word16 len);
+
 /*! \brief [MQTT-3.9.3-2] Validate a SUBACK return code / Reason Code.
  *  \param code            The byte to validate.
  *  \param protocol_level  MQTT protocol level (4 = v3.1.1, 5 = v5). v3.1.1

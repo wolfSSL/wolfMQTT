@@ -2664,6 +2664,121 @@ TEST(decode_subscribe_v5_empty_payload_rejected)
 }
 #endif /* WOLFMQTT_V5 */
 
+/* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3] Topic Filter syntax
+ * pinned at the helper level so the rules stay table-checked across
+ * future refactors. Every entry maps directly to a spec-cited example. */
+TEST(topic_filter_valid_helper_table)
+{
+    /* Empty filter is invalid [MQTT-4.7.3-1]. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid(NULL, 0));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("", 0));
+
+    /* '#' alone is the canonical multi-level wildcard. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("#", 1));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/#", 7));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/tennis/#", 14));
+    /* Spec non-normative invalid examples. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("sport/tennis#", 13));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("sport/#/ranking", 15));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("a#", 2));
+
+    /* '+' single-level wildcard placement. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("+", 1));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("+/tennis/#", 10));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/+", 7));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/+/player1", 15));
+    /* Spec non-normative invalid examples. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("sport+", 6));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("sport+/player1", 14));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("a+b", 3));
+
+    /* Plain non-wildcard topics. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("a", 1));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/tennis", 12));
+}
+
+/* [MQTT-4.7.3-1] zero-length Topic Filter rejected by SUBSCRIBE decoder. */
+TEST(decode_subscribe_empty_topic_filter_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x05,
+        0x00, 0x01,                    /* packet_id */
+        0x00, 0x00,                    /* topic_len = 0 */
+        0x00                           /* options */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-4.7.1-2] '#' must be solo or follow '/' and be the last char. */
+TEST(decode_subscribe_bad_hash_placement_rejected)
+{
+    /* "a#" — '#' embedded in a level. */
+    byte rx_buf[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00, 0x02, 'a', '#',
+        0x00
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_subscribe_hash_not_last_rejected)
+{
+    /* "sp/#/r" — '#' is not the final character. */
+    byte rx_buf[] = {
+        0x82, 0x0B,
+        0x00, 0x01,
+        0x00, 0x06, 's', 'p', '/', '#', '/', 'r',
+        0x00
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-4.7.1-3] '+' must occupy an entire topic level. */
+TEST(decode_subscribe_bad_plus_placement_rejected)
+{
+    /* "a+b" — '+' embedded in a level. */
+    byte rx_buf[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'a', '+', 'b',
+        0x00
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* [MQTT-2.3.1-1] SUBSCRIBE must carry a non-zero Packet Identifier on the
  * receive path as well as the transmit path. */
 TEST(decode_subscribe_packet_id_zero_rejected)
@@ -2864,6 +2979,47 @@ TEST(decode_unsubscribe_v5_empty_payload_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 #endif /* WOLFMQTT_V5 */
+
+/* UNSUBSCRIBE shares the same Topic Filter syntax rules as SUBSCRIBE
+ * ([MQTT-4.7.3-1], [MQTT-4.7.1-2], [MQTT-4.7.1-3]). The decoder uses
+ * the same MqttPacket_TopicFilterValid helper so a single sample per
+ * rule is enough — exhaustive coverage lives in the helper table test. */
+TEST(decode_unsubscribe_empty_topic_filter_rejected)
+{
+    byte rx_buf[] = {
+        0xA2, 0x04,
+        0x00, 0x01,                    /* packet_id */
+        0x00, 0x00                     /* topic_len = 0 */
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    unsub.topics = topic_arr;
+    rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(decode_unsubscribe_bad_plus_placement_rejected)
+{
+    /* "a+b" — '+' embedded in a level. */
+    byte rx_buf[] = {
+        0xA2, 0x07,
+        0x00, 0x01,
+        0x00, 0x03, 'a', '+', 'b'
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    unsub.topics = topic_arr;
+    rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
 
 /* [MQTT-2.3.1-1] UNSUBSCRIBE must carry a non-zero Packet Identifier on
  * the receive path as well as the transmit path. */
@@ -4072,6 +4228,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_v311_options_reserved_bits_qos1_rejected);
     RUN_TEST(decode_subscribe_rejects_nul_in_filter);
     RUN_TEST(decode_subscribe_packet_id_zero_rejected);
+    RUN_TEST(topic_filter_valid_helper_table);
+    RUN_TEST(decode_subscribe_empty_topic_filter_rejected);
+    RUN_TEST(decode_subscribe_bad_hash_placement_rejected);
+    RUN_TEST(decode_subscribe_hash_not_last_rejected);
+    RUN_TEST(decode_subscribe_bad_plus_placement_rejected);
     RUN_TEST(decode_subscribe_empty_payload_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_empty_payload_rejected);
@@ -4087,6 +4248,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsubscribe_rejects_nul_in_filter);
     RUN_TEST(decode_unsubscribe_packet_id_zero_rejected);
     RUN_TEST(decode_unsubscribe_empty_payload_rejected);
+    RUN_TEST(decode_unsubscribe_empty_topic_filter_rejected);
+    RUN_TEST(decode_unsubscribe_bad_plus_placement_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_unsubscribe_v5_empty_payload_rejected);
 #endif

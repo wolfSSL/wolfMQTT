@@ -250,6 +250,63 @@ int MqttPacket_SubAckReturnCodeValid(byte code, byte protocol_level)
     return 0;
 }
 
+/* Validate an MQTT Topic Filter against the syntax rules from
+ * [MQTT-4.7.3-1] (minimum length one character), [MQTT-4.7.1-2]
+ * (multi-level wildcard '#' must be either the whole filter or directly
+ * follow '/', and must be the final character), and [MQTT-4.7.1-3]
+ * (single-level wildcard '+' must occupy an entire level). v5 §4.7
+ * carries the same rules. Returns 1 if the filter is well-formed, 0 if
+ * it must be treated as malformed. The length is decoded by the caller
+ * via MqttDecode_String so this helper takes (filter, len) rather than
+ * a NUL-terminated string. */
+int MqttPacket_TopicFilterValid(const char* filter, word16 len)
+{
+    word16 i;
+    if (filter == NULL || len == 0) {
+        return 0;
+    }
+    for (i = 0; i < len; i++) {
+        char c = filter[i];
+        if (c == '#') {
+            if (i != 0 && filter[i - 1] != '/') {
+                return 0;
+            }
+            if (i != (word16)(len - 1)) {
+                return 0;
+            }
+        }
+        else if (c == '+') {
+            if (i != 0 && filter[i - 1] != '/') {
+                return 0;
+            }
+            if (i != (word16)(len - 1) && filter[i + 1] != '/') {
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
+/* Return 1 if the Topic Filter contains a multi-level ('#') or
+ * single-level ('+') wildcard, 0 otherwise. The decoder has already
+ * validated wildcard *placement* via MqttPacket_TopicFilterValid, so a
+ * matching byte here is necessarily a real wildcard rather than a
+ * misplaced one. Centralizes wildcard detection so the broker's
+ * wildcard-disabled policy doesn't have to duplicate the scan. */
+int MqttPacket_TopicFilterIsWildcard(const char* filter, word16 len)
+{
+    word16 i;
+    if (filter == NULL) {
+        return 0;
+    }
+    for (i = 0; i < len; i++) {
+        if (filter[i] == '#' || filter[i] == '+') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int MqttPacket_FixedHeaderFlagsValid(byte type_flags)
 {
     byte type = (byte)MQTT_PACKET_TYPE_GET(type_flags);
@@ -2213,17 +2270,24 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
         while (rx_payload < rx_end) {
             MqttTopic *topic;
             byte options;
+            word16 filter_len = 0;
             if (subscribe->topic_count >= MAX_MQTT_TOPICS) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             topic = &subscribe->topics[subscribe->topic_count];
-            tmp = MqttDecode_String(rx_payload, &topic->topic_filter, NULL,
-                    (word32)(rx_end - rx_payload));
+            tmp = MqttDecode_String(rx_payload, &topic->topic_filter,
+                    &filter_len, (word32)(rx_end - rx_payload));
             if (tmp < 0) {
                 return tmp;
             }
             if (rx_payload + tmp > rx_end) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
+            /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3] Reject
+             * empty filters and malformed wildcard placement. */
+            if (!MqttPacket_TopicFilterValid(topic->topic_filter,
+                                             filter_len)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
             rx_payload += tmp;
             if (rx_payload >= rx_end) {
@@ -2564,17 +2628,25 @@ int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubs
 
         while (rx_payload < rx_end) {
             MqttTopic *topic;
+            word16 filter_len = 0;
             if (unsubscribe->topic_count >= MAX_MQTT_TOPICS) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             topic = &unsubscribe->topics[unsubscribe->topic_count];
-            tmp = MqttDecode_String(rx_payload, &topic->topic_filter, NULL,
-                    (word32)(rx_end - rx_payload));
+            tmp = MqttDecode_String(rx_payload, &topic->topic_filter,
+                    &filter_len, (word32)(rx_end - rx_payload));
             if (tmp < 0) {
                 return tmp;
             }
             if (rx_payload + tmp > rx_end) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
+            /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3]: an
+             * UNSUBSCRIBE Topic Filter must obey the same syntax rules
+             * as a SUBSCRIBE Topic Filter. */
+            if (!MqttPacket_TopicFilterValid(topic->topic_filter,
+                                             filter_len)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
             rx_payload += tmp;
             unsubscribe->topic_count++;
