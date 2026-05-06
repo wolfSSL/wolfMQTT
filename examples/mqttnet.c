@@ -1940,6 +1940,8 @@ int MqttClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
     #endif
 
     #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+        sockCtx->pfd[0] = SOCKET_INVALID;
+        sockCtx->pfd[1] = SOCKET_INVALID;
         /* setup the pipe for waking select() */
         if (pipe(sockCtx->pfd) != 0) {
             PRINTF("Failed to set up pipe for stdin");
@@ -1985,6 +1987,8 @@ int SN_ClientNet_Init(MqttNet* net, MQTTCtx* mqttCtx)
     #endif
 
     #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+        sockCtx->pfd[0] = SOCKET_INVALID;
+        sockCtx->pfd[1] = SOCKET_INVALID;
         /* setup the pipe for waking select() */
         if (pipe(sockCtx->pfd) != 0) {
             PRINTF("Failed to set up pipe for stdin");
@@ -2001,6 +2005,17 @@ int MqttClientNet_DeInit(MqttNet* net)
 {
     if (net) {
         if (net->context) {
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_ENABLE_STDIN_CAP)
+            SocketContext* sockCtx = (SocketContext*)net->context;
+            if (sockCtx->pfd[0] != SOCKET_INVALID) {
+                SOCK_CLOSE(sockCtx->pfd[0]);
+                sockCtx->pfd[0] = SOCKET_INVALID;
+            }
+            if (sockCtx->pfd[1] != SOCKET_INVALID) {
+                SOCK_CLOSE(sockCtx->pfd[1]);
+                sockCtx->pfd[1] = SOCKET_INVALID;
+            }
+#endif
             WOLFMQTT_FREE(net->context);
         }
         XMEMSET(net, 0, sizeof(MqttNet));
