@@ -203,6 +203,7 @@ static void BrokerStore_String(char* dst, int max_len,
     XMEMCPY(dst, src, src_len);
     dst[src_len] = '\0';
 }
+#ifdef WOLFMQTT_BROKER_AUTH
 static void BrokerStore_StringSensitive(char* dst, int max_len,
     const char* src, word16 src_len)
 {
@@ -228,6 +229,7 @@ static void BrokerStore_BinarySensitive(char* dst, int max_len,
     dst[src_len] = '\0';
     *dst_len_out = src_len;
 }
+#endif /* WOLFMQTT_BROKER_AUTH */
 #else
 static void BrokerStore_String(char** dst_ptr,
     const char* src, word16 src_len, int sensitive)
@@ -245,6 +247,7 @@ static void BrokerStore_String(char** dst_ptr,
         (*dst_ptr)[src_len] = '\0';
     }
 }
+#ifdef WOLFMQTT_BROKER_AUTH
 /* Binary-data sensitive store. Wipes the previous value using its
  * tracked length (binary-safe — [MQTT-3.1.3.5] Password may contain
  * 0x00) before free, then records the new stored length. */
@@ -264,23 +267,28 @@ static void BrokerStore_BinarySensitive(char** dst_ptr,
         *dst_len_out = src_len;
     }
 }
+#endif /* WOLFMQTT_BROKER_AUTH */
 #endif
 
 /* Wrapper macros to unify static/dynamic calling convention */
 #ifdef WOLFMQTT_STATIC_MEMORY
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
         BrokerStore_String(dst, maxlen, src, len)
+#ifdef WOLFMQTT_BROKER_AUTH
     #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
         BrokerStore_StringSensitive(dst, maxlen, src, len)
     #define BROKER_STORE_BIN_SENSITIVE(dst, dst_len, src, len, maxlen) \
         BrokerStore_BinarySensitive(dst, maxlen, &(dst_len), src, len)
+#endif
 #else
     #define BROKER_STORE_STR(dst, src, len, maxlen) \
         BrokerStore_String(&(dst), src, len, 0)
+#ifdef WOLFMQTT_BROKER_AUTH
     #define BROKER_STORE_STR_SENSITIVE(dst, src, len, maxlen) \
         BrokerStore_String(&(dst), src, len, 1)
     #define BROKER_STORE_BIN_SENSITIVE(dst, dst_len, src, len, maxlen) \
         BrokerStore_BinarySensitive(&(dst), &(dst_len), src, len)
+#endif
 #endif
 
 #if defined(ENABLE_MQTT_TLS) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
