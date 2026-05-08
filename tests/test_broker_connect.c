@@ -1889,12 +1889,17 @@ TEST(broker_no_wildcards_suback_v5_reason_code)
  * unreachable from production code today; the test calls the helper
  * directly with a reserved code to pin the rejection branch.
  *
- * BrokerSend_SubAck is forward-declared here because it is internal to
- * mqtt_broker.c (no public header); the test harness compiles
- * mqtt_broker.c into the test binary so the symbol resolves at link. */
-extern int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
-    const byte* return_codes, int return_code_count);
-
+ * BrokerSend_SubAck is declared as WOLFMQTT_LOCAL in mqtt_broker.h, which
+ * the test harness has already included above. The test binary compiles
+ * mqtt_broker.c in directly so the symbol resolves at link.
+ *
+ * Gated on dynamic-memory builds: the test substitutes a small external
+ * tx_buf into BrokerClient, which only works when tx_buf is a pointer
+ * field. Under WOLFMQTT_STATIC_MEMORY tx_buf is an embedded byte array
+ * and cannot be reassigned. The validation logic is layout-agnostic, so
+ * skipping the test in static-memory builds doesn't lose coverage of
+ * the rejection branch. */
+#ifndef WOLFMQTT_STATIC_MEMORY
 TEST(broker_suback_reserved_v311_code_rejected)
 {
     BrokerClient bc;
@@ -1955,6 +1960,7 @@ TEST(broker_suback_valid_v311_failure_code_encoded)
     ASSERT_EQ(0x01, (int)tx_buf[3]);             /* packet_id LSB */
     ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_FAILURE, tx_buf[4]);
 }
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #ifdef WOLFMQTT_BROKER_RETAINED
 /* [MQTT-3.3.1-5] The broker MUST store the Application Message and its
@@ -2164,8 +2170,10 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(connack_session_present_v5_set_on_resumed_session);
 #endif
+#ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_suback_reserved_v311_code_rejected);
     RUN_TEST(broker_suback_valid_v311_failure_code_encoded);
+#endif
 #ifndef WOLFMQTT_BROKER_WILDCARDS
     RUN_TEST(broker_no_wildcards_suback_failure_for_wildcard_filter);
     RUN_TEST(broker_no_wildcards_suback_grants_plain_filter);
