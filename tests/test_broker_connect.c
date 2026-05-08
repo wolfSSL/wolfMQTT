@@ -417,7 +417,7 @@ TEST(connect_v311_explicit_auto_prefix_refused)
 /* [MQTT-3.1.2-2] Unsupported Protocol Level must be refused with CONNACK
  * 0x01 (REFUSED_PROTO) followed by disconnect. The CONNACK MUST come back
  * in v3.1.1 wire shape (4 bytes: type, remain=2, flags, code) regardless
- * of the level the client claimed — we don't know what their wire format
+ * of the level the client claimed - we don't know what their wire format
  * actually is, and the spec text specifies "CONNACK return code 0x01"
  * verbatim.
  *
@@ -480,7 +480,7 @@ TEST(connect_unsupported_level_6_refused)
      * (0x00 0x01) as the ClientId length prefix and 'A' as the start of a
      * 1-byte ClientId. With WOLFMQTT_V5 the decoder still returned success
      * for this particular wire, but it produced a misaligned MqttConnect with
-     * ClientId="" — so the test below also fails on the post-decode path
+     * ClientId="" - so the test below also fails on the post-decode path
      * unless the broker's [MQTT-3.1.2-2] check rejects the level. (For wires
      * without enough trailing bytes, the pre-fix decoder instead returned
      * OUT_OF_BUFFER and never emitted a CONNACK at all, which would also
@@ -491,7 +491,7 @@ TEST(connect_unsupported_level_6_refused)
 
 TEST(connect_unsupported_level_127_refused)
 {
-    /* Top of the byte range — guards against a future "treat high values
+    /* Top of the byte range - guards against a future "treat high values
      * as latest known" mutation. */
     run_unsupported_level(0x7F);
 }
@@ -500,7 +500,7 @@ TEST(connect_unsupported_level_127_refused)
 /* Regression: [MQTT-3.1.3.5] Password is Binary Data and may legally
  * contain 0x00. The broker must not use XSTRLEN-based length recovery on
  * bc->password, which would truncate at the first embedded NUL and turn
- * the constant-time auth compare into a prefix compare — letting a
+ * the constant-time auth compare into a prefix compare - letting a
  * client that sends "abc\0<anything>" authenticate against auth_pass
  * "abc". The fix tracks bc->password_len explicitly. */
 TEST(connect_v311_binary_password_with_embedded_nul_refused)
@@ -535,7 +535,7 @@ TEST(connect_v311_binary_password_with_embedded_nul_refused)
     reset_mock_state(connect, sizeof(connect));
     run_broker_one_connect(&broker);
 
-    /* Auth must fail — CONNACK return code 0x05 (Not Authorized) and the
+    /* Auth must fail - CONNACK return code 0x05 (Not Authorized) and the
      * connection is closed. Pre-fix, XSTRLEN truncation would let this
      * authenticate and emit return code 0x00. */
     ASSERT_TRUE(g_out_len >= 4);
@@ -615,7 +615,7 @@ TEST(connect_v5_emptyid_assigned_id_emitted)
      *   [2] session_present
      *   [3] reason_code (0x00 = Success)
      *   [4] properties_len (VBI; expect 1 byte)
-     *   [5] first property tag — MUST be 0x12 (ASSIGNED_CLIENT_ID)
+     *   [5] first property tag - MUST be 0x12 (ASSIGNED_CLIENT_ID)
      *   [6..7] string length (big-endian word16)
      *   [8..]  UTF-8 string ("auto-XXXXXXXX")
      * MqttProps_Add appends to the end of the prop list (mqtt_packet.c
@@ -879,7 +879,7 @@ TEST(qos2_phantom_dup_publish_is_fresh)
         g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
 
     /* Subscriber gets one forwarded PUBLISH; publisher gets one PUBREC.
-     * The DUP flag does NOT suppress fan-out — only an actual matching
+     * The DUP flag does NOT suppress fan-out - only an actual matching
      * dedup-set entry does. */
     ASSERT_EQ(1, sub_pubs);
     ASSERT_EQ(1, pub_pubrecs);
@@ -1032,7 +1032,7 @@ TEST(qos2_state_freed_on_client_disconnect)
         0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
         0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
     };
-    /* Normal DISCONNECT packet — drives the broker through the
+    /* Normal DISCONNECT packet - drives the broker through the
      * clean-disconnect cleanup path. */
     static const byte disconnect[] = { 0xE0, 0x00 };
     byte pub_buf[8];
@@ -1102,7 +1102,7 @@ TEST(qos2_pubrel_unknown_id_still_pubcomps)
     MqttBroker_Free(&broker);
 }
 
-/* MQTT 3.1.1 §3.12 / v5 §3.12: PINGREQ has no variable header and no
+/* MQTT 3.1.1 section 3.12 / v5 section 3.12: PINGREQ has no variable header and no
  * payload, so Remaining Length MUST be 0. Broker dispatch must reject a
  * malformed PINGREQ with an abnormal close instead of emitting a
  * PINGRESP.
@@ -1152,7 +1152,7 @@ TEST(pingreq_nonzero_remain_len_closes_no_pingresp)
         0x04, 0x02, 0x00, 0x3C,
         0x00, 0x01, 'A'
     };
-    /* C0 01 00 — PINGREQ with one trailing byte. The fixed-header-only
+    /* C0 01 00 - PINGREQ with one trailing byte. The fixed-header-only
      * rule makes this malformed. */
     static const byte pingreq_bad[] = { 0xC0, 0x01, 0x00 };
     int i;
@@ -1177,11 +1177,11 @@ TEST(pingreq_nonzero_remain_len_closes_no_pingresp)
     MqttBroker_Free(&broker);
 }
 
-/* MQTT 3.1.1 §3.14: DISCONNECT has no variable header and no payload, so
+/* MQTT 3.1.1 section 3.14: DISCONNECT has no variable header and no payload, so
  * Remaining Length MUST be 0. The strong observable for "malformed
  * DISCONNECT was rejected" is the Last Will: a normal DISCONNECT clears
- * the will, but AbnormalClose fires it. Two clients — subscriber on the
- * will topic, publisher with an LWT — let us assert the broker dispatched
+ * the will, but AbnormalClose fires it. Two clients - subscriber on the
+ * will topic, publisher with an LWT - let us assert the broker dispatched
  * the malformed packet through AbnormalClose by observing the will
  * delivery. v5 has its own decoder that legitimately accepts Reason Code
  * + Properties, so the broker's remain_len check (and this test) is
@@ -1215,7 +1215,7 @@ TEST(disconnect_v311_nonzero_remain_len_fires_will)
         0x00, 0x03, 'l', 'w', 't',
         0x00, 0x03, 'b', 'y', 'e'
     };
-    /* E0 01 00 — malformed v3.1.1 DISCONNECT (nonzero remain_len). */
+    /* E0 01 00 - malformed v3.1.1 DISCONNECT (nonzero remain_len). */
     static const byte disconnect_bad[] = { 0xE0, 0x01, 0x00 };
 
     install_mock_net(&net);
@@ -1248,7 +1248,7 @@ TEST(disconnect_v311_nonzero_remain_len_fires_will)
 
 /* The broker switch's default branch must close the connection on any
  * unhandled packet type rather than silently no-op'ing. Wire is an
- * AUTH packet (type 15) from a v3.1.1 client — AUTH is undefined in
+ * AUTH packet (type 15) from a v3.1.1 client - AUTH is undefined in
  * v3.1.1 and this broker doesn't implement enhanced authentication
  * even on v5, so AUTH is always unhandled. The pre-dispatch
  * FixedHeaderFlagsValid gate accepts AUTH (it is a defined type 15
@@ -1301,7 +1301,7 @@ TEST(broker_subscribe_packet_id_zero_closes)
         0x04, 0x02, 0x00, 0x3C,
         0x00, 0x01, 'S'
     };
-    /* SUBSCRIBE with packet_id=0x0000 — violates [MQTT-2.3.1-1].
+    /* SUBSCRIBE with packet_id=0x0000 - violates [MQTT-2.3.1-1].
      * Body: packet_id (2) + topic_len (2) + "t" (1) + qos (1) = 6. */
     static const byte sub_pid_zero[] = {
         0x82, 0x06,
@@ -1327,7 +1327,7 @@ TEST(broker_subscribe_packet_id_zero_closes)
     MqttBroker_Free(&broker);
 }
 
-/* MQTT 3.1.1 §3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
+/* MQTT 3.1.1 section 3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
  * nibble MUST be 0000. The broker dispatch enforces this via the
  * MqttPacket_FixedHeaderFlagsValid pre-check that runs before per-type
  * handlers, so a malformed DISCONNECT (e.g. 0xE1) takes the abnormal-
@@ -1358,7 +1358,7 @@ TEST(disconnect_invalid_fixed_header_flags_fires_will)
         0x00, 0x03, 'l', 'w', 't',
         0x00, 0x03, 'b', 'y', 'e'
     };
-    /* 0xE1 — DISCONNECT type with reserved bit 0 set. */
+    /* 0xE1 - DISCONNECT type with reserved bit 0 set. */
     static const byte disconnect_bad[] = { 0xE1, 0x00 };
 
     install_mock_net(&net);
@@ -1568,7 +1568,7 @@ TEST(connack_session_present_set_on_takeover)
     for (i = 0; i < 16; i++) {
         MqttBroker_Step(&broker);
     }
-    /* Client 0 is still connected — sub registered, no DISCONNECT yet. */
+    /* Client 0 is still connected - sub registered, no DISCONNECT yet. */
     ASSERT_FALSE(g_clients[0].closed);
 
     /* Phase 2: client 1 connects with the same client_id. The takeover
@@ -1732,11 +1732,11 @@ TEST(connack_session_present_v5_set_on_resumed_session)
 #endif /* WOLFMQTT_V5 */
 
 #ifndef WOLFMQTT_BROKER_WILDCARDS
-/* [MQTT-3.8.3-2] (v3.1.1 §3.8.3): when the server does not support
+/* [MQTT-3.8.3-2] (v3.1.1 section 3.8.3): when the server does not support
  * wildcard subscriptions it MUST reject any Subscription request whose
- * filter contains '#' or '+'. v5 §3.9.3 reserves reason code 0xA2
+ * filter contains '#' or '+'. v5 section 3.9.3 reserves reason code 0xA2
  * (Wildcard Subscriptions not supported) for this case, paired with
- * the v5 §3.2.2.3.20 Wildcard Subscription Available CONNACK property.
+ * the v5 section 3.2.2.3.20 Wildcard Subscription Available CONNACK property.
  * The decoder still accepts the syntactically-valid wildcard filter;
  * rejection lives in the broker's per-topic SUBACK entry. The plain-
  * topic case is paired so a "reject everything" mutation also trips. */
@@ -1829,7 +1829,7 @@ TEST(broker_no_wildcards_suback_grants_plain_filter)
 }
 
 #ifdef WOLFMQTT_V5
-/* v5 §3.9.3: Wildcard Subscriptions not supported uses Reason Code
+/* v5 section 3.9.3: Wildcard Subscriptions not supported uses Reason Code
  * 0xA2 rather than the generic 0x80 Failure that v3.1.1 returns. The
  * broker must surface that distinction so v5 clients receive an
  * actionable diagnostic. */
@@ -1916,7 +1916,7 @@ TEST(broker_suback_reserved_v311_code_rejected)
         XMEMSET(tx_buf, 0xAA, sizeof(tx_buf));
         rc = BrokerSend_SubAck(&bc, 1, &reserved_codes[i], 1);
         ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
-        /* No SUBACK bytes should have hit the buffer — first byte still
+        /* No SUBACK bytes should have hit the buffer - first byte still
          * the 0xAA poison. */
         ASSERT_EQ(0xAA, (int)tx_buf[0]);
     }
@@ -1925,7 +1925,7 @@ TEST(broker_suback_reserved_v311_code_rejected)
 /* Pair: a valid v3.1.1 code (0x80 = Failure) must succeed and overwrite
  * the buffer. Without this a "reject everything" mutation of the helper
  * would not be caught. The harness has no real network, so the call
- * fails at MqttPacket_Write — we only assert that the helper got past
+ * fails at MqttPacket_Write - we only assert that the helper got past
  * the validation branch and into encoding (the type byte ends up at
  * tx_buf[0]). */
 TEST(broker_suback_valid_v311_failure_code_encoded)
@@ -2103,13 +2103,13 @@ TEST(retained_qos_stored_0_sub_1_delivers_qos0)
 /* Pins the QoS 2 outbound wire shape (first byte 0x35, packet_id
  * present). Without this case the QoS 2 outbound branch of
  * BrokerRetained_DeliverToClient never produces QoS 2 on the wire of any
- * test — the stored=2/sub=1 case caps to QoS 1. */
+ * test - the stored=2/sub=1 case caps to QoS 1. */
 TEST(retained_qos_stored_2_sub_2_delivers_qos2)
 {
     retained_qos_case(MQTT_QOS_2, MQTT_QOS_2, MQTT_QOS_2);
 }
 
-/* Steepest downgrade: stored QoS 2, subscriber QoS 0 — verifies the
+/* Steepest downgrade: stored QoS 2, subscriber QoS 0 - verifies the
  * retained delivery omits the packet identifier and emits the QoS-0
  * wire shape, not a stale identifier from the stored message. */
 TEST(retained_qos_stored_2_sub_0_delivers_qos0)

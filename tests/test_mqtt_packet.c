@@ -471,7 +471,7 @@ TEST(decode_string_utf8_invalid_overlong_4byte)
 
 TEST(decode_string_utf8_invalid_surrogate_low)
 {
-    /* U+D800 = ED A0 80 — first surrogate, [MQTT-1.5.3-1] forbids. */
+    /* U+D800 = ED A0 80 - first surrogate, [MQTT-1.5.3-1] forbids. */
     byte t[] = { 0xED, 0xA0, 0x80 };
     int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
@@ -479,7 +479,7 @@ TEST(decode_string_utf8_invalid_surrogate_low)
 
 TEST(decode_string_utf8_invalid_surrogate_high)
 {
-    /* U+DFFF = ED BF BF — last surrogate */
+    /* U+DFFF = ED BF BF - last surrogate */
     byte t[] = { 0xED, 0xBF, 0xBF };
     int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
@@ -503,7 +503,7 @@ TEST(decode_string_utf8_invalid_f5_leading)
 
 TEST(decode_string_utf8_invalid_lone_continuation)
 {
-    /* 0x80 alone — continuation byte without a leading byte. */
+    /* 0x80 alone - continuation byte without a leading byte. */
     byte t[] = { 0x80 };
     int rc = decode_subscribe_with_topic(t, (word16)sizeof(t));
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
@@ -536,7 +536,7 @@ TEST(decode_string_utf8_invalid_FE_FF)
 TEST(decode_connect_invalid_utf8_clientid_overlong)
 {
     /* CONNECT v3.1.1 with ClientId bytes 0xC0 0xAF (overlong). Reporter's
-     * dynamic test case `connect_clientid_overlong` — should now refuse.
+     * dynamic test case `connect_clientid_overlong` - should now refuse.
      * Wire: 0x10 + remain=14, "MQTT", level=4, flags=0x02, keepalive=60,
      *       client_id_len=0x0002, [C0 AF]. */
     byte rx_buf[] = {
@@ -618,7 +618,7 @@ TEST(decode_publish_invalid_utf8_topic)
 
 #ifdef WOLFMQTT_BROKER
 /* CONNECT with a binary (non-UTF-8) password must decode successfully,
- * because MQTT defines the Password field as Binary Data — not a UTF-8
+ * because MQTT defines the Password field as Binary Data - not a UTF-8
  * string. The diff routes the password decode around MqttDecode_String to
  * avoid spuriously rejecting valid binary passwords containing bytes like
  * 0xC0 (which are not legal UTF-8 leading bytes). */
@@ -688,7 +688,7 @@ TEST(decode_connect_invalid_utf8_username)
 /* [MQTT-1.5.3-1] / [MQTT-3.1.3-11]: ill-formed UTF-8 in CONNECT User
  * Name MUST cause the receiver to close the connection. The companion
  * test above covers a surrogate; this one covers the overlong-encoding
- * bucket (C0 AF — the overlong representation of '/'). MqttDecode_String
+ * bucket (C0 AF - the overlong representation of '/'). MqttDecode_String
  * routes the field through Utf8WellFormed, which rejects both. */
 TEST(decode_connect_invalid_utf8_username_overlong)
 {
@@ -944,17 +944,19 @@ TEST(encode_publish_topic_oversized_rejected)
 /* Pin the helper truth table for both v3.1.1 (level=0/4) and v5
  * (level=5). Wildcards are forbidden in either version
  * ([MQTT-3.3.2-2]); empty is rejected in v3.1.1 ([MQTT-4.7.3-1]) but
- * permitted in v5 (§3.3.2.3.4 — empty Topic Name with Topic Alias). */
+ * permitted in v5 (section 3.3.2.3.4 - empty Topic Name with Topic Alias). */
 TEST(topic_name_valid_helper_table)
 {
     byte v311 = MQTT_CONNECT_PROTOCOL_LEVEL_4;
     byte v5   = MQTT_CONNECT_PROTOCOL_LEVEL_5;
-    /* Empty: rejected in v3.1.1, accepted in v5. */
+    /* Empty: rejected in v3.1.1, accepted in v5 - but only via empty
+     * string, not NULL. NULL is API misuse regardless of len; v5 Topic
+     * Alias placeholders must use "". */
     ASSERT_EQ(0, MqttPacket_TopicNameValid(NULL, 0, v311));
     ASSERT_EQ(0, MqttPacket_TopicNameValid("", 0, v311));
-    ASSERT_EQ(1, MqttPacket_TopicNameValid(NULL, 0, v5));
+    ASSERT_EQ(0, MqttPacket_TopicNameValid(NULL, 0, v5));
     ASSERT_EQ(1, MqttPacket_TopicNameValid("", 0, v5));
-    /* NULL with non-zero len is malformed in any version. */
+    /* NULL with non-zero len is also malformed. */
     ASSERT_EQ(0, MqttPacket_TopicNameValid(NULL, 1, v5));
     /* Plain topics. */
     ASSERT_EQ(1, MqttPacket_TopicNameValid("a", 1, v311));
@@ -1005,7 +1007,7 @@ TEST(encode_publish_wildcard_topic_rejected)
 }
 
 /* NULL topic_name is API misuse (separate from a malformed wire
- * packet) — surface it as BAD_ARG to match the surrounding NULL-check
+ * packet) - surface it as BAD_ARG to match the surrounding NULL-check
  * convention in this function. */
 TEST(encode_publish_null_topic_returns_bad_arg)
 {
@@ -1021,7 +1023,7 @@ TEST(encode_publish_null_topic_returns_bad_arg)
 }
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 §3.3.2.3.4: a zero-length Topic Name is permitted when paired
+/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted when paired
  * with a Topic Alias property. The encoder must not reject the empty
  * topic on the v5 path; the alias-empty pairing is the application's
  * responsibility. */
@@ -1188,7 +1190,7 @@ TEST(decode_publish_wildcard_plus_topic_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* [MQTT-1.5.3-2] U+0000 forbidden in PUBLISH Topic Name as well — broaden
+/* [MQTT-1.5.3-2] U+0000 forbidden in PUBLISH Topic Name as well - broaden
  * coverage of the new check to a non-CONNECT entry point. */
 TEST(decode_publish_topic_contains_u0000_rejected)
 {
@@ -1207,7 +1209,7 @@ TEST(decode_publish_topic_contains_u0000_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 §3.3.2.3.4: a zero-length Topic Name is permitted (paired
+/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted (paired
  * with a Topic Alias property at the application layer). Wire shape:
  * PUBLISH | QoS 0, remain=4, topic_len=0, props_len=0, payload "x". */
 TEST(decode_publish_v5_empty_topic_accepted)
@@ -1347,7 +1349,7 @@ TEST(decode_publish_v5_rejects_nul_in_string_property)
     MqttProps_Free(pub.props);
 }
 
-/* STRING_PAIR (USER_PROPERTY) NUL rejection — first string of pair. The
+/* STRING_PAIR (USER_PROPERTY) NUL rejection - first string of pair. The
  * MqttDecode_Props path runs MqttDecode_String twice for STRING_PAIR;
  * this pins coverage on the first sub-decode propagating MALFORMED_DATA. */
 TEST(decode_publish_v5_rejects_nul_in_user_prop_key)
@@ -1371,7 +1373,7 @@ TEST(decode_publish_v5_rejects_nul_in_user_prop_key)
     MqttProps_Free(pub.props);
 }
 
-/* STRING_PAIR (USER_PROPERTY) NUL rejection — second string of pair.
+/* STRING_PAIR (USER_PROPERTY) NUL rejection - second string of pair.
  * Pins coverage on the second sub-decode propagating MALFORMED_DATA. */
 TEST(decode_publish_v5_rejects_nul_in_user_prop_value)
 {
@@ -1679,7 +1681,7 @@ TEST(encode_subscribe_topic_filter_oversized_rejected)
 }
 
 /* when multiple topics are supplied and a later one is oversized,
- * the encoder must still reject — the length-validation loop covers every
+ * the encoder must still reject - the length-validation loop covers every
  * entry, not just the first. */
 TEST(encode_subscribe_topic_filter_oversized_second_rejected)
 {
@@ -1829,7 +1831,7 @@ TEST(encode_unsubscribe_topic_filter_oversized_rejected)
 }
 
 /* when multiple topics are supplied and a later one is oversized,
- * the encoder must still reject — the length-validation loop covers every
+ * the encoder must still reject - the length-validation loop covers every
  * entry, not just the first. */
 TEST(encode_unsubscribe_topic_filter_oversized_second_rejected)
 {
@@ -2415,7 +2417,7 @@ TEST(decode_connect_password_flag_zero_with_extra_payload_rejected)
         0x00, 0x03, 'c', 'i', 'd',      /* client_id "cid" */
         0x00, 0x04, 'u', 's', 'e', 'r', /* username "user" */
         0x00, 0x06, 's', 'e', 'c', 'r', /* extra password-shaped bytes */
-        'e', 't'                        /* "secret" — must not be accepted */
+        'e', 't'                        /* "secret" - must not be accepted */
     };
     MqttConnect dec;
     int rc;
@@ -2605,7 +2607,7 @@ TEST(decode_connect_will_retain_with_will_flag_zero_rejected)
 
 /* [MQTT-3.1.2-14] Will QoS = 3 is reserved. Flags 0x1E set the full QoS
  * mask (bits 4-3 = 0b11) along with Will Flag and Clean Session. The
- * earlier Will-Flag-0 check would not catch this — only the QoS-value
+ * earlier Will-Flag-0 check would not catch this - only the QoS-value
  * check fires. Provides full Will fields so a regression that drops the
  * QoS=3 check returns success rather than tripping a downstream
  * OUT_OF_BUFFER. */
@@ -2764,7 +2766,7 @@ TEST(decode_connect_v5_rejects_nul_in_client_id)
     MqttProps_Free(dec.props);
 }
 
-/* MQTT v5 section 3.1.2.9 explicitly allows Password without User Name —
+/* MQTT v5 section 3.1.2.9 explicitly allows Password without User Name -
  * "This version of the protocol allows the sending of a Password with no
  * User Name, where MQTT v3.1.1 did not." Pins the protocol-level gate on
  * the [MQTT-3.1.2-22] check: a future change that drops the level guard
@@ -2796,6 +2798,39 @@ TEST(decode_connect_v5_password_without_username_accepted)
     ASSERT_NOT_NULL(dec.password);
     ASSERT_EQ(0, XMEMCMP(dec.password, "secret", 6));
     MqttProps_Free(dec.props);
+}
+
+/* Pins the goto-cleanup path: when a v5 CONNECT decode succeeds through
+ * the Properties block but fails on a later field (here the client_id
+ * trips the embedded-NUL check inside MqttDecode_String), the decoder
+ * must free the already-allocated property list and null the pointer
+ * before returning. A regression that drops the cleanup label and goes
+ * back to bare returns would leak the User Property allocation - this
+ * test alone won't see the leak (no valgrind in CI), but it does catch
+ * the structural invariant: dec.props == NULL on error. */
+TEST(decode_connect_v5_props_freed_on_client_id_error)
+{
+    byte buf[] = {
+        0x10, 0x1A,                         /* CONNECT, remain_len = 26 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,                               /* protocol level v5 */
+        0x02,                               /* flags: clean_session */
+        0x00, 0x3C,                         /* keep alive */
+        0x07,                               /* props_len VBI = 7 */
+        0x26,                               /* User Property */
+        0x00, 0x01, 'k',                    /* key "k" */
+        0x00, 0x01, 'v',                    /* value "v" */
+        0x00, 0x06, 'a', 'd', 0x00, 'm', 'i', 'n'  /* client_id with NUL */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    /* Cleanup must have freed the props list and nulled the pointer. */
+    ASSERT_NULL(dec.props);
 }
 #endif /* WOLFMQTT_V5 */
 #endif /* WOLFMQTT_BROKER */
@@ -2833,7 +2868,7 @@ TEST(decode_subscribe_v311_single_topic)
     ASSERT_EQ(0, XMEMCMP(topic_arr[0].topic_filter, "a", 1));
 }
 
-/* MQTT 3.1.1 §3.8.3.1: Requested QoS bits (0-1) = 0b11 is reserved and
+/* MQTT 3.1.1 section 3.8.3.1: Requested QoS bits (0-1) = 0b11 is reserved and
  * MUST be rejected. Pre-fix the decoder forwarded the raw value and
  * relied on the broker's defensive QoS cap; the broker cap is now dead
  * code on the decoded path but kept for safety. */
@@ -2857,7 +2892,7 @@ TEST(decode_subscribe_v311_qos3_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* MQTT 3.1.1 §3.8.3.1: bits 2-7 of the options byte are reserved and
+/* MQTT 3.1.1 section 3.8.3.1: bits 2-7 of the options byte are reserved and
  * MUST be 0. Wire has the high six bits set (0xFC) with low bits = QoS
  * 0. The unmasked v3.x decoder used to drop the reserved bits and
  * accept QoS 0 silently. */
@@ -2934,7 +2969,7 @@ TEST(decode_subscribe_empty_payload_rejected)
 {
     byte rx_buf[] = {
         0x82, 0x02,
-        0x00, 0x01                     /* packet_id only — no topics */
+        0x00, 0x01                     /* packet_id only - no topics */
     };
     MqttSubscribe sub;
     MqttTopic topic_arr[1];
@@ -2948,7 +2983,7 @@ TEST(decode_subscribe_empty_payload_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* v5 §3.8.3 carries the same minimum-cardinality requirement as
+/* v5 section 3.8.3 carries the same minimum-cardinality requirement as
  * [MQTT-3.8.3-3]. The v5 path is distinct: it consumes a Properties VBI
  * before reaching the topic loop. Wire is remain_len=3 = packet_id +
  * props_len=0, so the topic loop runs zero iterations. Without this
@@ -3030,7 +3065,7 @@ TEST(decode_subscribe_empty_topic_filter_rejected)
 /* [MQTT-4.7.1-2] '#' must be solo or follow '/' and be the last char. */
 TEST(decode_subscribe_bad_hash_placement_rejected)
 {
-    /* "a#" — '#' embedded in a level. */
+    /* "a#" - '#' embedded in a level. */
     byte rx_buf[] = {
         0x82, 0x07,
         0x00, 0x01,
@@ -3050,7 +3085,7 @@ TEST(decode_subscribe_bad_hash_placement_rejected)
 
 TEST(decode_subscribe_hash_not_last_rejected)
 {
-    /* "sp/#/r" — '#' is not the final character. */
+    /* "sp/#/r" - '#' is not the final character. */
     byte rx_buf[] = {
         0x82, 0x0B,
         0x00, 0x01,
@@ -3071,7 +3106,7 @@ TEST(decode_subscribe_hash_not_last_rejected)
 /* [MQTT-4.7.1-3] '+' must occupy an entire topic level. */
 TEST(decode_subscribe_bad_plus_placement_rejected)
 {
-    /* "a+b" — '+' embedded in a level. */
+    /* "a+b" - '+' embedded in a level. */
     byte rx_buf[] = {
         0x82, 0x08,
         0x00, 0x01,
@@ -3144,7 +3179,7 @@ TEST(decode_subscribe_v5_options_byte_qos_extracted)
     ASSERT_EQ(MQTT_QOS_1, topic_arr[0].qos);
 }
 
-/* MQTT v5 §3.8.3.1: Requested QoS = 3 is reserved. The v3.1.1 test
+/* MQTT v5 section 3.8.3.1: Requested QoS = 3 is reserved. The v3.1.1 test
  * above takes a different branch (protocol_level = 0), so without this
  * test the v5 `(options & 0x03) > MQTT_QOS_2` clause is only covered
  * transitively through the broader options-byte check. A refactor that
@@ -3172,7 +3207,7 @@ TEST(decode_subscribe_v5_qos3_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* MQTT v5 §3.8.3.1: Retain Handling = 3 is reserved and MUST be
+/* MQTT v5 section 3.8.3.1: Retain Handling = 3 is reserved and MUST be
  * rejected. Bits 4-5 = 0b11 sets that condition. */
 TEST(decode_subscribe_v5_retain_handling_3_rejected)
 {
@@ -3196,7 +3231,7 @@ TEST(decode_subscribe_v5_retain_handling_3_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* MQTT v5 §3.8.3.1: bits 6-7 of the options byte are reserved and MUST
+/* MQTT v5 section 3.8.3.1: bits 6-7 of the options byte are reserved and MUST
  * be 0. Bits 0-5 are otherwise valid (QoS 0, RH=0, RAP=0, NL=0). */
 TEST(decode_subscribe_v5_options_reserved_bits_rejected)
 {
@@ -3226,7 +3261,7 @@ TEST(decode_subscribe_v5_options_reserved_bits_rejected)
  * ============================================================================ */
 
 /* [MQTT-1.5.3-2] / [MQTT-4.7.3-2]: a topic filter containing U+0000 in an
- * UNSUBSCRIBE must be rejected — MqttDecode_Unsubscribe shares the same
+ * UNSUBSCRIBE must be rejected - MqttDecode_Unsubscribe shares the same
  * MqttDecode_String chokepoint that SUBSCRIBE uses. */
 TEST(decode_unsubscribe_rejects_nul_in_filter)
 {
@@ -3254,7 +3289,7 @@ TEST(decode_unsubscribe_empty_payload_rejected)
 {
     byte rx_buf[] = {
         0xA2, 0x02,
-        0x00, 0x01                     /* packet_id only — no topics */
+        0x00, 0x01                     /* packet_id only - no topics */
     };
     MqttUnsubscribe unsub;
     MqttTopic topic_arr[1];
@@ -3268,7 +3303,7 @@ TEST(decode_unsubscribe_empty_payload_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* v5 §3.10.3 carries the same minimum-cardinality requirement as
+/* v5 section 3.10.3 carries the same minimum-cardinality requirement as
  * [MQTT-3.10.3-2]. Wire is remain_len=3 = packet_id + props_len=0. */
 TEST(decode_unsubscribe_v5_empty_payload_rejected)
 {
@@ -3293,7 +3328,7 @@ TEST(decode_unsubscribe_v5_empty_payload_rejected)
 /* UNSUBSCRIBE shares the same Topic Filter syntax rules as SUBSCRIBE
  * ([MQTT-4.7.3-1], [MQTT-4.7.1-2], [MQTT-4.7.1-3]). The decoder uses
  * the same MqttPacket_TopicFilterValid helper so a single sample per
- * rule is enough — exhaustive coverage lives in the helper table test. */
+ * rule is enough - exhaustive coverage lives in the helper table test. */
 TEST(decode_unsubscribe_empty_topic_filter_rejected)
 {
     byte rx_buf[] = {
@@ -3314,7 +3349,7 @@ TEST(decode_unsubscribe_empty_topic_filter_rejected)
 
 TEST(decode_unsubscribe_bad_plus_placement_rejected)
 {
-    /* "a+b" — '+' embedded in a level. */
+    /* "a+b" - '+' embedded in a level. */
     byte rx_buf[] = {
         0xA2, 0x07,
         0x00, 0x01,
@@ -3484,7 +3519,7 @@ TEST(suback_return_code_v311_allowed_set)
 }
 
 #ifdef WOLFMQTT_V5
-/* v5 §3.9.3: SUBACK Reason Code set is broader. The decoder must accept
+/* v5 section 3.9.3: SUBACK Reason Code set is broader. The decoder must accept
  * v5 reason codes that are not in the v3.1.1 set when protocol_level=5. */
 TEST(decode_suback_v5_not_authorized_accepted)
 {
@@ -3570,9 +3605,9 @@ TEST(decode_publish_resp_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* MQTT 3.1.1 §3.4-3.7: PUBACK/PUBREC/PUBREL/PUBCOMP have a fixed
+/* MQTT 3.1.1 sections 3.4-3.7: PUBACK/PUBREC/PUBREL/PUBCOMP have a fixed
  * Remaining Length of 2 (the Packet Identifier only). Any extra byte
- * after the Packet Identifier is malformed in v3.x. v5 §3.4-3.7
+ * after the Packet Identifier is malformed in v3.x. v5 sections 3.4-3.7
  * relaxes this with an optional Reason Code and Properties; the
  * `protocol_level` field on the response struct selects between the
  * strict and relaxed decoders. The wire carries an extra trailing
@@ -3625,7 +3660,7 @@ TEST(decode_pubcomp_v311_extra_payload_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* Positive cases for PUBREC/PUBREL/PUBCOMP — decode_publish_resp_valid
+/* Positive cases for PUBREC/PUBREL/PUBCOMP - decode_publish_resp_valid
  * already covers PUBACK. Without these, a regression that flips the
  * length check into "always reject" would still leave 3/4 packet types
  * silently broken with only PUBACK signalling failure. */
@@ -3684,9 +3719,9 @@ TEST(decode_puback_null_resp_extra_payload_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* v5 §3.4-3.7 explicitly allow longer PUBACK/PUBREC/PUBREL/PUBCOMP with
+/* v5 sections 3.4-3.7 explicitly allow longer PUBACK/PUBREC/PUBREL/PUBCOMP with
  * a Reason Code (1 byte) and a Properties block. Pins the v5 gate so the
- * v3.x exact-length check doesn't regress onto v5 — the wire is
+ * v3.x exact-length check doesn't regress onto v5 - the wire is
  * remain_len = 4 = packet_id + reason_code + props_len(0). */
 TEST(decode_puback_v5_with_reason_code_accepted)
 {
@@ -3835,8 +3870,8 @@ TEST(decode_unsuback_malformed_remain_len_one)
 /* ============================================================================
  * MqttDecode_Ping (PINGRESP) and MqttDecode_Disconnect length validation
  *
- * MQTT 3.1.1 §3.13 / §3.14 and v5 §3.13: PINGRESP has no variable header
- * and no payload. v3.1.1 §3.14: DISCONNECT also has none. The decoders
+ * MQTT 3.1.1 section 3.13 / section 3.14 and v5 section 3.13: PINGRESP has no variable header
+ * and no payload. v3.1.1 section 3.14: DISCONNECT also has none. The decoders
  * must reject Remaining Length != 0; otherwise a peer can smuggle in
  * trailing bytes that downstream code silently drops.
  * ============================================================================ */
@@ -3852,7 +3887,7 @@ TEST(decode_pingresp_valid)
     ASSERT_EQ(2, rc);
 }
 
-/* PINGRESP with one trailing byte — must be rejected as malformed.
+/* PINGRESP with one trailing byte - must be rejected as malformed.
  * Without the fix the decoder returned 3 (the packet length). */
 TEST(decode_pingresp_nonzero_remain_len_rejected)
 {
@@ -3892,7 +3927,7 @@ TEST(decode_disconnect_v311_nonzero_remain_len_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* MQTT 3.1.1 §3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
+/* MQTT 3.1.1 section 3.14.1 / [MQTT-2.2.2-2]: DISCONNECT fixed-header low
  * nibble MUST be 0000. Wire 0xE1 sets bit 0 of the reserved nibble.
  * The check fires inside MqttDecode_FixedHeader via
  * MqttPacket_FixedHeaderFlagsValid; this test pins the per-decoder
@@ -3911,7 +3946,7 @@ TEST(decode_disconnect_v311_invalid_fixed_header_flags_rejected)
 #endif /* WOLFMQTT_BROKER && !WOLFMQTT_V5 */
 
 #ifdef WOLFMQTT_V5
-/* v5 §3.14 keeps the same fixed-header reserved-flag rule. Pins the v5
+/* v5 section 3.14 keeps the same fixed-header reserved-flag rule. Pins the v5
  * decoder against the same regression on its independent code path. */
 TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected)
 {
@@ -3924,7 +3959,7 @@ TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* v5 §3.14: DISCONNECT may carry an optional Reason Code (1 byte) and a
+/* v5 section 3.14: DISCONNECT may carry an optional Reason Code (1 byte) and a
  * Properties block. Pins the v5 decoder against a regression that would
  * tighten the v3.1.1 remain_len rule onto v5 by mistake. Wire is
  * remain_len = 2 = reason_code + props_len=0. */
@@ -3980,19 +4015,19 @@ TEST(fixed_header_flags_valid_canonical_values)
 }
 
 /* Type 0 (RESERVED) is not a defined MQTT packet type. The helper must
- * reject it so callers — including the broker pre-dispatch check — can
+ * reject it so callers - including the broker pre-dispatch check - can
  * treat any accepted byte as a known type. */
 TEST(fixed_header_flags_valid_reserved_type_rejected)
 {
     ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x00));
     /* Every flag-nibble combination on the reserved type must be
-     * rejected — the type itself is the failure, not the nibble. */
+     * rejected - the type itself is the failure, not the nibble. */
     ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x01));
     ASSERT_EQ(0, MqttPacket_FixedHeaderFlagsValid(0x0F));
 }
 
 #ifdef WOLFMQTT_BROKER
-/* Reserved-type packet on the wire — broker pre-dispatch must reject
+/* Reserved-type packet on the wire - broker pre-dispatch must reject
  * via the FixedHeaderFlagsValid gate. Exercises the decoder boundary
  * separately from the helper unit test above. */
 TEST(decode_fixed_header_reserved_type_rejected)
@@ -4572,7 +4607,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_v311_with_lwt);
     RUN_TEST(decode_connect_rejects_nul_in_client_id);
     RUN_TEST(decode_connect_rejects_nul_in_username);
-    /* Note: decode_connect_v311_binary_password covers the password path —
+    /* Note: decode_connect_v311_binary_password covers the password path -
      * Password is Binary Data per [MQTT-3.1.3.5] and decoding is routed
      * around MqttDecode_String, so the U+0000 ban does not apply there. */
     RUN_TEST(decode_connect_rejects_nul_in_will_topic);
@@ -4591,6 +4626,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_connect_v5_rejects_nul_in_client_id);
     RUN_TEST(decode_connect_v5_password_without_username_accepted);
+    RUN_TEST(decode_connect_v5_props_freed_on_client_id_error);
 #endif
 
     /* MqttDecode_Subscribe */

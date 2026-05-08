@@ -48,6 +48,17 @@
 #define MAX_MQTT_TOPICS      12
 #endif
 
+/* WOLFMQTT_NO_UTF8_VALIDATION
+ *   Define to disable RFC 3629 UTF-8 well-formedness validation in
+ *   MqttDecode_String. Spec requirement [MQTT-1.5.3-1] (v3.1.1 1.5.3 /
+ *   v5 1.5.4) makes ill-formed UTF-8 a "MUST close the network
+ *   connection" condition; disabling the check trades that compliance
+ *   for ~300 bytes of .text on x86-64 (~200 bytes on ARM Thumb-2) and
+ *   should only be considered for severely flash-constrained targets
+ *   where the peer is known-trusted. The independent embedded-NUL
+ *   check ([MQTT-1.5.3-2]) remains active either way because it also
+ *   guards downstream C-string handling. */
+
 #ifdef WOLFMQTT_V5
 
 #define MQTT_PACKET_SZ_MAX  0xA0000005
@@ -675,7 +686,7 @@ WOLFMQTT_API int MqttPacket_TopicFilterValid(const char* filter, word16 len);
 
 /*! \brief      Return non-zero if the Topic Filter contains a wildcard
  *              ('#' or '+'). Use only on a filter that has already
- *              passed MqttPacket_TopicFilterValid — wildcard placement
+ *              passed MqttPacket_TopicFilterValid - wildcard placement
  *              is not re-validated here.
  *  \param      filter      Pointer to the topic filter bytes.
  *  \param      len         Length of the filter in bytes.
@@ -688,14 +699,19 @@ WOLFMQTT_API int MqttPacket_TopicFilterIsWildcard(const char* filter,
  *              Name. Always rejects topics containing the wildcard
  *              characters '#' or '+'. Empty Topic Names are rejected
  *              under v3.1.1 (protocol_level < 5) per [MQTT-4.7.3-1] but
- *              allowed under v5 (§3.3.2.3.4) because v5 permits a
+ *              allowed under v5 (section 3.3.2.3.4) because v5 permits a
  *              zero-length Topic Name when paired with a Topic Alias
  *              property; the caller is responsible for the alias-empty
- *              pairing check.
- *  \param      topic_name      Pointer to the topic name bytes.
+ *              pairing check. NULL topic_name is rejected regardless of
+ *              len or protocol_level - callers representing the v5
+ *              Topic Alias placeholder must pass an empty string ("")
+ *              with len==0, not NULL, so the contract matches
+ *              MqttEncode_Publish (which treats NULL as BAD_ARG).
+ *  \param      topic_name      Pointer to the topic name bytes (must be
+ *                              non-NULL; "" is permitted for v5 alias).
  *  \param      len             Length of the topic name in bytes.
  *  \param      protocol_level  MQTT protocol level (4 = v3.1.1, 5 = v5).
- *  \return     1 if well-formed, 0 if malformed.
+ *  \return     1 if well-formed, 0 if malformed (including NULL input).
  */
 WOLFMQTT_API int MqttPacket_TopicNameValid(const char* topic_name,
     word16 len, byte protocol_level);
@@ -742,11 +758,11 @@ WOLFMQTT_API int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len,
     byte type, MqttPublishResp *publish_resp);
 /*! \brief Decode a PUBACK / PUBREC / PUBREL / PUBCOMP packet.
  *
- *  \note Per MQTT 3.1.1 §3.4-§3.7 the variable header is exactly the
+ *  \note Per MQTT 3.1.1 sections 3.4-3.7 the variable header is exactly the
  *  two-byte Packet Identifier with no payload; Remaining Length must be
  *  2. The decoder rejects any extra trailing bytes with
- *  MQTT_CODE_ERROR_MALFORMED_DATA. MQTT v5 §3.4-§3.7 allows an optional
- *  Reason Code and Properties block — the longer form is accepted only
+ *  MQTT_CODE_ERROR_MALFORMED_DATA. MQTT v5 sections 3.4-3.7 allows an optional
+ *  Reason Code and Properties block - the longer form is accepted only
  *  when publish_resp is non-NULL and publish_resp->protocol_level is
  *  MQTT_CONNECT_PROTOCOL_LEVEL_5 or higher. Callers integrating against
  *  non-spec brokers that emit extra bytes for v3.x acks must either fix

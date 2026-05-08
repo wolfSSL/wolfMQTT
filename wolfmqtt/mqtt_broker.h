@@ -247,12 +247,6 @@ typedef struct BrokerClient {
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
     byte    connected;       /* set after successful CONNECT handshake */
-#ifdef WOLFMQTT_BROKER_AUTH
-    /* Actual stored length of password bytes. Tracked separately because
-     * [MQTT-3.1.3.5] defines Password as Binary Data, which may legally
-     * contain 0x00 — XSTRLEN would truncate at the first embedded NUL. */
-    word16  password_len;
-#endif
 #ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;
@@ -263,6 +257,18 @@ typedef struct BrokerClient {
     MqttNet net;
     MqttClient client;
     struct MqttBroker* broker;  /* back-pointer to parent broker context */
+#ifdef ENABLE_MQTT_TLS
+    byte    tls_handshake_done;
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+    void   *ws_ctx;             /* BrokerWsCtx* (NULL for TCP clients) */
+#endif
+#ifdef WOLFMQTT_BROKER_AUTH
+    /* Actual stored length of password bytes. Tracked separately because
+     * [MQTT-3.1.3.5] defines Password as Binary Data, which may legally
+     * contain 0x00 - XSTRLEN would truncate at the first embedded NUL. */
+    word16  password_len;
+#endif
     /* [MQTT-4.3.3] Inbound QoS 2 packet IDs that have been PUBREC'd but
      * not yet PUBREL'd. A duplicate PUBLISH carrying one of these IDs is
      * acked again (PUBREC) but NOT re-fanned-out to subscribers. The
@@ -273,12 +279,6 @@ typedef struct BrokerClient {
 #else
     BrokerInboundQos2* qos2_pending;
     int                qos2_pending_count;
-#endif
-#ifdef ENABLE_MQTT_TLS
-    byte    tls_handshake_done;
-#endif
-#ifdef ENABLE_MQTT_WEBSOCKET
-    void   *ws_ctx;             /* BrokerWsCtx* (NULL for TCP clients) */
 #endif
 } BrokerClient;
 
@@ -437,6 +437,13 @@ WOLFMQTT_API int MqttBrokerNet_Init(MqttBrokerNet* net);
 
 /* CLI wrapper interface */
 WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);
+
+/* -------------------------------------------------------------------------- */
+/* Local declarations */
+/* -------------------------------------------------------------------------- */
+WOLFMQTT_LOCAL int BrokerSend_SubAck(BrokerClient* bc, word16 packet_id,
+    const byte* return_codes, int return_code_count);
+
 
 #endif /* WOLFMQTT_BROKER */
 
