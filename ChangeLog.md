@@ -3,36 +3,32 @@
 ### v2.0.1 (Pending)
 
 * Security Hardening
-    - Reject MQTT UTF-8 encoded strings containing U+0000 in `MqttDecode_String`
-      per [MQTT-1.5.3-2] / [MQTT-1.5.4-2]. Closes an embedded-NUL truncation
-      attack that allowed broker-side auth bypass, ClientId collision, and
-      topic-routing confusion when the broker compared decoded strings with
-      C-string semantics.
-    - The CONNECT Password field is decoded by a new internal helper
-      (`MqttDecode_Password`) that applies the same NUL rejection. Per
-      MQTT-3.1.3.5 the field is Binary Data so the spec does not require
-      this check, but wolfMQTT compares passwords with `XSTRLEN`/`XSTRCMP`,
-      so a binary password with an embedded NUL would be silently truncated
-      and could enable an auth bypass. Spec-compliant clients sending binary
-      passwords containing 0x00 will be rejected by the broker as a result.
+    - Reject ill-formed UTF-8 in MQTT UTF-8 string fields per [MQTT-1.5.3-1].
+      `MqttDecode_String` now validates each decoded string against RFC 3629
+      and rejects encodings of surrogate code points (U+D800..U+DFFF) with
+      `MQTT_CODE_ERROR_MALFORMED_DATA`. Receivers MUST close the network
+      connection on malformed packets, which the broker's existing decode-
+      error path enforces. The check covers ClientId, Will Topic, Topic Name,
+      Topic Filter, Username, and v5 STRING/STRING_PAIR property values.
 
 * API / Behavior Changes
     - `MqttDecode_String` may now return `MQTT_CODE_ERROR_MALFORMED_DATA`
-      when the decoded string contains an embedded NUL byte. Previously
-      `MQTT_CODE_ERROR_OUT_OF_BUFFER` was the only possible negative return.
+      on ill-formed UTF-8. This applies to client builds as well as broker
+      builds — [MQTT-1.5.3-1] is normative for both. wolfMQTT clients that
+      previously accepted PUBLISH messages with non-UTF-8 topics from
+      misbehaving brokers will now error on those messages. There is no
+      opt-out: the spec is a MUST.
     - `MqttDecode_Publish` now propagates the underlying error from
-      `MqttDecode_String` (e.g. `MALFORMED_DATA`) instead of always returning
-      `MQTT_CODE_ERROR_OUT_OF_BUFFER` on topic decode failure.
-    - `MqttDecode_Props` propagates `MQTT_CODE_ERROR_MALFORMED_DATA` from
+      `MqttDecode_String` (e.g. `MALFORMED_DATA`) instead of always
+      returning `MQTT_CODE_ERROR_OUT_OF_BUFFER` on topic decode failure.
+    - `MqttDecode_Props` similarly now propagates the underlying error from
       `MqttDecode_String` for v5 STRING and STRING_PAIR property types
-      (Reason String, Content Type, User Property, etc.). Other negative
-      returns continue to be mapped to `MQTT_CODE_ERROR_PROPERTY` so client
-      code that branches on that error code is unaffected.
-    - New `XMEMCHR(s, c, n)` portability macro added to `mqtt_types.h`
-      (defaults to `memchr` for standard builds). Builds using
-      `WOLFMQTT_CUSTOM_STRING` must define `XMEMCHR` themselves, matching
-      the pattern used for `XSTRLEN`, `XMEMCMP`, etc.; the header emits
-      an explicit `#error` if it is missing.
+      (Reason String, Content Type, User Property, etc.) instead of masking
+      it as `MQTT_CODE_ERROR_PROPERTY`.
+    - The CONNECT Password decode no longer goes through `MqttDecode_String`
+      because [MQTT-3.1.3.5] defines Password as Binary Data, not a UTF-8
+      string. A binary password containing bytes that are not valid UTF-8
+      (e.g., `0xC0`, `0xFF`) would otherwise be incorrectly rejected.
 
 ### v2.0.0 (03/20/2026)
 Release 2.0.0 has been developed according to wolfSSL's development and QA

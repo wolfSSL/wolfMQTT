@@ -88,7 +88,7 @@ static void setup(void)
 
 static void teardown(void)
 {
-    /* Only DeInit if Init succeeded — DeInit calls MqttProps_ShutDown
+    /* Only DeInit if Init succeeded - DeInit calls MqttProps_ShutDown
      * which decrements a ref counter that must be balanced with Init. */
     if (test_client_inited) {
         MqttClient_DeInit(&test_client);
@@ -526,6 +526,153 @@ TEST(publish_null_publish)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+/* Regression test for MQTT Packet Identifier in-use collision check. The
+ * MQTT spec (3.1.1 section 2.3.1, 5.0 section 2.2.1) requires that a new QoS-related
+ * Control Packet use a Packet Identifier that is not currently in use;
+ * the identifier only becomes reusable after the matching acknowledgement
+ * flow completes. Before the fix, MqttClient_RespList_Add only checked
+ * that the same MqttPendResp object pointer was not already in the list -
+ * it did not reject a different pending entry that reused an in-flight
+ * Packet Identifier. The repro requires both MULTITHREAD (so the pending
+ * response list is in use) and NONBLOCK (so the write-only publish leaves
+ * the pendResp in the list across the call boundary). */
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+TEST(publish_writeonly_rejects_duplicate_in_flight_packet_id)
+{
+    int rc;
+    MqttPublish publish1, publish2;
+    static byte payload1[] = "hello1";
+    static byte payload2[] = "hello2";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Mock writes accept everything so the publish state machine reaches
+     * MQTT_MSG_WAIT and returns MQTT_CODE_CONTINUE while the pendResp is
+     * still registered. */
+    connect_mock_xfer = 0;
+    XMEMSET(connect_mock_sent, 0, sizeof(connect_mock_sent));
+    test_net.write = mock_net_write_accept;
+
+    /* First publish: QoS 1, packet_id=7. After this returns, the
+     * pendResp for PUBLISH_ACK with packet_id=7 remains in the list. */
+    XMEMSET(&publish1, 0, sizeof(publish1));
+    publish1.qos = MQTT_QOS_1;
+    publish1.packet_id = 7;
+    publish1.topic_name = "test/topic1";
+    publish1.buffer = payload1;
+    publish1.total_len = (word32)(sizeof(payload1) - 1);
+    publish1.buffer_len = publish1.total_len;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish1, NULL);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* Second publish reusing the same packet_id must be rejected. Without
+     * the fix this returned MQTT_CODE_CONTINUE and silently registered a
+     * second pendResp with the same Packet Identifier. */
+    XMEMSET(&publish2, 0, sizeof(publish2));
+    publish2.qos = MQTT_QOS_1;
+    publish2.packet_id = 7;
+    publish2.topic_name = "test/topic2";
+    publish2.buffer = payload2;
+    publish2.total_len = (word32)(sizeof(payload2) - 1);
+    publish2.buffer_len = publish2.total_len;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish2, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+
+    /* A different packet_id is allowed even while packet_id=7 is in use. */
+    publish2.packet_id = 8;
+    publish2.stat.write = MQTT_MSG_BEGIN;
+    publish2.buffer_pos = 0;
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish2, NULL);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* After the in-flight entry is released, the same Packet Identifier
+     * becomes reusable. */
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish1);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    XMEMSET(&publish1, 0, sizeof(publish1));
+    publish1.qos = MQTT_QOS_1;
+    publish1.packet_id = 7;
+    publish1.topic_name = "test/topic1";
+    publish1.buffer = payload1;
+    publish1.total_len = (word32)(sizeof(payload1) - 1);
+    publish1.buffer_len = publish1.total_len;
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish1, NULL);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* Cleanup remaining pending responses. */
+    (void)MqttClient_CancelMessage(&test_client, (MqttObject*)&publish1);
+    (void)MqttClient_CancelMessage(&test_client, (MqttObject*)&publish2);
+}
+
+/* Cross-packet-type collision: an in-flight SUBSCRIBE_ACK and a new QoS 1
+ * publish must not share a Packet Identifier. The MQTT spec treats the
+ * in-use set as global across all packet types that carry a Packet
+ * Identifier, so the check in MqttClient_RespList_Add must reject the
+ * collision regardless of whether the existing entry is a PUBLISH_ACK,
+ * SUBSCRIBE_ACK, UNSUBSCRIBE_ACK, etc. This test guards against a future
+ * narrowing of the check to a single packet_type family. */
+static int mock_net_read_continue(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
+    /* Return 0 bytes - under WOLFMQTT_NONBLOCK the socket layer translates
+     * this into MQTT_CODE_CONTINUE so MqttClient_Subscribe returns with
+     * its pendResp still registered. */
+    return 0;
+}
+
+TEST(subscribe_in_flight_blocks_publish_with_same_packet_id)
+{
+    int rc;
+    MqttSubscribe subscribe;
+    MqttTopic topics[1];
+    MqttPublish publish;
+    static byte payload[] = "payload";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_continue;
+
+    /* Issue a SUBSCRIBE that writes successfully but cannot complete the
+     * SUBACK read; the pendResp for SUBSCRIBE_ACK + packet_id=42 is left
+     * in the list. */
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(topics, 0, sizeof(topics));
+    topics[0].topic_filter = "test/topic";
+    topics[0].qos = MQTT_QOS_0;
+    subscribe.packet_id = 42;
+    subscribe.topic_count = 1;
+    subscribe.topics = topics;
+
+    rc = MqttClient_Subscribe(&test_client, &subscribe);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* A QoS 1 publish reusing packet_id=42 must be rejected even though
+     * the in-flight entry is for SUBSCRIBE_ACK, not PUBLISH_ACK. */
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 42;
+    publish.topic_name = "test/publish";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+
+    /* Cleanup. */
+    (void)MqttClient_CancelMessage(&test_client, (MqttObject*)&subscribe);
+    (void)MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+}
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
+
+
 /* ============================================================================
  * MqttClient_WaitMessage Tests
  * ============================================================================ */
@@ -647,6 +794,10 @@ void run_mqtt_client_tests(void)
     /* MqttClient_Publish tests */
     RUN_TEST(publish_null_client);
     RUN_TEST(publish_null_publish);
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+    RUN_TEST(publish_writeonly_rejects_duplicate_in_flight_packet_id);
+    RUN_TEST(subscribe_in_flight_blocks_publish_with_same_packet_id);
+#endif
 
     /* MqttClient_WaitMessage tests */
     RUN_TEST(wait_message_null_client);

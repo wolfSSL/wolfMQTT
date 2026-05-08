@@ -415,7 +415,14 @@ int MqttClient_RespList_Add(MqttClient *client,
         newResp, MqttPacket_TypeDesc(packet_type), packet_type, packet_id);
 #endif
 
-    /* verify newResp is not already in the list */
+    /* Verify newResp is not already in the list, and enforce MQTT Packet
+     * Identifier in-use uniqueness: the spec (3.1.1 section 2.3.1, 5.0 section 2.2.1)
+     * requires a new QoS-related Control Packet to use a Packet Identifier
+     * that is not currently in use. The identifier becomes reusable only
+     * after the corresponding acknowledgement flow completes and the entry
+     * is removed from this list. A packet_id of 0 is used for packet types
+     * that do not carry a Packet Identifier (CONNECT_ACK, PING_RESP, AUTH)
+     * and is excluded from the collision check. */
     for (tmpResp = client->firstPendResp;
          tmpResp != NULL;
          tmpResp = tmpResp->next)
@@ -425,6 +432,17 @@ int MqttClient_RespList_Add(MqttClient *client,
             PRINTF("Pending Response already in list!");
         #endif
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
+        if (packet_id != 0 && tmpResp->packet_id == packet_id) {
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("Pending Response packet_id %d already in use "
+                   "(existing type %s (%d), new type %s (%d))",
+                packet_id,
+                MqttPacket_TypeDesc(tmpResp->packet_type),
+                tmpResp->packet_type,
+                MqttPacket_TypeDesc(packet_type), packet_type);
+        #endif
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
         }
     }
 

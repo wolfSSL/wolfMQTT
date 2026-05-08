@@ -63,7 +63,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
 #define FUZZ_FAKE_LISTEN_SOCK  100
 #define FUZZ_FAKE_SOCK         101
 
-/* Maximum Step() calls per input — enough for CONNECT + several packets */
+/* Maximum Step() calls per input - enough for CONNECT + several packets */
 #define FUZZ_MAX_STEPS         6
 
 /* Input size limits */
