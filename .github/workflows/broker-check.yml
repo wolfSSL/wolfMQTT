@@ -78,6 +78,12 @@ jobs:
           - name: "Broker with persist + TLS"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --enable-tls"
+          - name: "Broker with persist + AES-GCM encryption"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --enable-broker-persist-encrypt"
+          - name: "Broker with persist + static memory"
+            cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist"
 
     steps:
     - name: Install dependencies

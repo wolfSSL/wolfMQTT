@@ -5787,6 +5787,29 @@ static void broker_signal_handler(int signo)
 }
 #endif
 
+#if defined(WOLFMQTT_BROKER_PERSIST) && \
+    defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
+/* Development-only derive_key hook. Returns a fixed 32-byte key so the
+ * CLI can exercise the AES-GCM persistence round-trip without external
+ * key management. Real deployments override this via
+ * MqttBroker_SetPersistHooks before MqttBroker_Start. */
+static int wolfmqtt_broker_dev_derive_key(void* ctx, byte* out_key,
+    word32 key_len)
+{
+    word32 i;
+    (void)ctx;
+    if (out_key == NULL || key_len < 32) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    /* Fixed pattern. Operators must replace this with a real key
+     * derivation before relying on confidentiality. */
+    for (i = 0; i < key_len; i++) {
+        out_key[i] = (byte)(0xA0 + (i & 0x0F));
+    }
+    return 0;
+}
+#endif
+
 int wolfmqtt_broker(int argc, char** argv)
 {
     int rc;
@@ -5894,8 +5917,24 @@ int wolfmqtt_broker(int argc, char** argv)
             return rc;
         }
         persist_initialized = 1;
+    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+        /* Install a development-only derive_key hook. Production
+         * deployments override MqttBrokerPersistHooks.derive_key with
+         * their own KMS / secure-element / file-based key source. The
+         * fixed 0xAA...0xAA key here lets the CLI exercise the
+         * encrypt path end-to-end for smoke tests; a deployment that
+         * still uses this in real life would be detectable by any
+         * adversary with read access. */
+        persist_hooks.derive_key = wolfmqtt_broker_dev_derive_key;
+    #endif
         (void)MqttBroker_SetPersistHooks(&broker, &persist_hooks);
-        PRINTF("broker: persist enabled dir=%s", persist_dir);
+        PRINTF("broker: persist enabled dir=%s%s", persist_dir,
+        #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+            " (encrypted, DEV-KEY)"
+        #else
+            ""
+        #endif
+            );
     }
 #endif
 
