@@ -389,6 +389,28 @@ typedef struct BrokerOutPub {
     byte    protocol_level; /* echoed back to subscriber on send */
     struct BrokerOutPub* next;
 } BrokerOutPub;
+
+/* -------------------------------------------------------------------------- */
+/* Orphan session (dynamic memory only).                                       */
+/*                                                                            */
+/* Holds the persistent-session state of a disconnected client (Clean         */
+/* Start=0): its outbound message queue, in-flight QoS 1/2 receipts, and      */
+/* enough identity to be reclaimed on reconnect. Smaller than a full          */
+/* BrokerClient because no socket / tx_buf / rx_buf / TLS state is needed     */
+/* while disconnected. Subs that belonged to the original BrokerClient        */
+/* keep sub->client=NULL while orphaned; reconnect rebinds them.              */
+/* -------------------------------------------------------------------------- */
+typedef struct BrokerOrphanSession {
+    char*       client_id;       /* heap-owned, NUL-terminated */
+    byte        protocol_level;
+    word32      session_expiry_sec;  /* v5 Session Expiry; 0xFFFFFFFF=never */
+    WOLFMQTT_BROKER_TIME_T orphan_since;
+    BrokerOutPub* out_q_head;
+    BrokerOutPub* out_q_tail;
+    int           out_q_count;
+    int           out_q_inflight;
+    struct BrokerOrphanSession* next;
+} BrokerOrphanSession;
 #endif
 
 /* -------------------------------------------------------------------------- */
@@ -479,6 +501,11 @@ typedef struct BrokerClient {
      * property. For v3.1.1 clients this is left at 65535 - the cap
      * comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
     word16        client_receive_max;
+    /* v5 Session Expiry Interval (seconds). Captured from CONNECT
+     * properties for clean_session=0 sessions so the disconnect path
+     * can stamp it into the orphan slot. 0xFFFFFFFF means "never
+     * expire"; the v3.1.1 persistent-session default. */
+    word32        session_expiry_sec;
 #endif
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 } BrokerClient;
@@ -603,6 +630,16 @@ typedef struct MqttBroker {
      * application installs hooks. NULL means "in-memory only", which is
      * the same behavior as a build without WOLFMQTT_BROKER_PERSIST. */
     const MqttBrokerPersistHooks* persist;
+#endif
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Linked list of disconnected persistent sessions. Each entry holds
+     * its own outbound queue + identity so messages published while the
+     * owning client is offline are retained until reconnect (or
+     * BROKER_MAX_PERSIST_SESSIONS forces drop-oldest eviction). Subs
+     * pointing at orphaned sessions keep sub->client=NULL; fan-out
+     * branches on that to look up the orphan by client_id. */
+    BrokerOrphanSession* orphan_sessions;
+    int                  orphan_session_count;
 #endif
 } MqttBroker;
 

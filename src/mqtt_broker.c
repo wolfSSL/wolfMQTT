@@ -1219,6 +1219,12 @@ static void BrokerWs_Free(MqttBroker* broker)
 
 #endif /* ENABLE_MQTT_WEBSOCKET */
 
+/* BrokerNextPacketId forward declaration. The body lives in the broker
+ * core section below. Used by both the WebSocket branch and the orphan
+ * enqueue helpers earlier in the file, so the forward decl is hoisted
+ * out of the ENABLE_MQTT_WEBSOCKET guard. */
+static word16 BrokerNextPacketId(MqttBroker* broker);
+
 /* -------------------------------------------------------------------------- */
 /* Per-client MqttNet callbacks (route through MqttBrokerNet)                  */
 /* -------------------------------------------------------------------------- */
@@ -1988,6 +1994,353 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
 
 /* Orphan subscriptions for session persistence (clean_session=0).
  * Sets client pointer to NULL but keeps the subscription for reconnect. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* -------------------------------------------------------------------------- */
+/* Orphan session pool (dynamic memory only).                                  */
+/* -------------------------------------------------------------------------- */
+
+/* Find the orphan slot whose client_id matches. NULL if none. */
+static BrokerOrphanSession* BrokerOrphan_Find(MqttBroker* broker,
+    const char* client_id)
+{
+    BrokerOrphanSession* cur;
+    if (broker == NULL || client_id == NULL) {
+        return NULL;
+    }
+    for (cur = broker->orphan_sessions; cur != NULL; cur = cur->next) {
+        if (cur->client_id != NULL &&
+                XSTRCMP(cur->client_id, client_id) == 0) {
+            return cur;
+        }
+    }
+    return NULL;
+}
+
+/* Free everything an orphan owns (queue entries + client_id) but do
+ * NOT unlink from broker->orphan_sessions; the caller does that. */
+static void BrokerOrphan_FreeContents(BrokerOrphanSession* o)
+{
+    BrokerOutPub* cur;
+    if (o == NULL) {
+        return;
+    }
+    cur = o->out_q_head;
+    while (cur != NULL) {
+        BrokerOutPub* next = cur->next;
+        if (cur->topic != NULL) {
+            WOLFMQTT_FREE(cur->topic);
+        }
+        if (cur->payload != NULL) {
+            WOLFMQTT_FREE(cur->payload);
+        }
+        WOLFMQTT_FREE(cur);
+        cur = next;
+    }
+    o->out_q_head = NULL;
+    o->out_q_tail = NULL;
+    o->out_q_count = 0;
+    o->out_q_inflight = 0;
+    if (o->client_id != NULL) {
+        WOLFMQTT_FREE(o->client_id);
+        o->client_id = NULL;
+    }
+}
+
+/* Unlink + free a single orphan from broker->orphan_sessions. */
+static void BrokerOrphan_Remove(MqttBroker* broker, BrokerOrphanSession* o)
+{
+    BrokerOrphanSession** pp;
+    if (broker == NULL || o == NULL) {
+        return;
+    }
+    pp = &broker->orphan_sessions;
+    while (*pp != NULL && *pp != o) {
+        pp = &(*pp)->next;
+    }
+    if (*pp == o) {
+        *pp = o->next;
+        if (broker->orphan_session_count > 0) {
+            broker->orphan_session_count--;
+        }
+    }
+    BrokerOrphan_FreeContents(o);
+    WOLFMQTT_FREE(o);
+}
+
+/* Drop the oldest orphan (smallest orphan_since) and its subs+persist.
+ * Returns 1 if one was dropped, 0 if pool was empty. */
+static int BrokerOrphan_EvictOldest(MqttBroker* broker)
+{
+    BrokerOrphanSession* cur;
+    BrokerOrphanSession* oldest = NULL;
+    if (broker == NULL) {
+        return 0;
+    }
+    for (cur = broker->orphan_sessions; cur != NULL; cur = cur->next) {
+        if (oldest == NULL || cur->orphan_since < oldest->orphan_since) {
+            oldest = cur;
+        }
+    }
+    if (oldest == NULL) {
+        return 0;
+    }
+    WBLOG_INFO(broker,
+        "broker: evicting oldest orphan client_id=%s (cap reached)",
+        BROKER_STR_VALID(oldest->client_id) ? oldest->client_id
+            : "(null)");
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (oldest->client_id != NULL) {
+        (void)BrokerPersist_DelSubs(broker, oldest->client_id);
+        (void)BrokerPersist_DelSession(broker, oldest->client_id);
+        (void)BrokerPersist_DelOutQueue(broker, oldest->client_id);
+    }
+#endif
+    /* Drop the orphan's subs entirely (their session is gone). */
+    {
+        BrokerSub* sp = broker->subs;
+        BrokerSub* prev = NULL;
+        while (sp != NULL) {
+            BrokerSub* next = sp->next;
+            if (sp->client == NULL && sp->client_id != NULL &&
+                oldest->client_id != NULL &&
+                XSTRCMP(sp->client_id, oldest->client_id) == 0) {
+                if (prev != NULL) {
+                    prev->next = next;
+                }
+                else {
+                    broker->subs = next;
+                }
+                if (sp->filter) {
+                    WOLFMQTT_FREE(sp->filter);
+                }
+                if (sp->client_id) {
+                    WOLFMQTT_FREE(sp->client_id);
+                }
+                WOLFMQTT_FREE(sp);
+            }
+            else {
+                prev = sp;
+            }
+            sp = next;
+        }
+    }
+    BrokerOrphan_Remove(broker, oldest);
+    return 1;
+}
+
+/* Allocate or recycle an orphan slot, then transfer the persistent
+ * state of bc into it. Subs already point at NULL (caller handled);
+ * the out_q on bc is unlinked from bc before this returns so
+ * BrokerClient_Free does not free it. */
+static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
+    BrokerClient* bc)
+{
+    BrokerOrphanSession* o;
+    BrokerOrphanSession* existing;
+    size_t cid_len;
+
+    if (broker == NULL || bc == NULL || !BROKER_STR_VALID(bc->client_id)) {
+        return NULL;
+    }
+
+    /* If an orphan already exists for this client_id (e.g., the same
+     * client took over its own session via duplicate CONNECT), drop it
+     * before staging the new orphan. */
+    existing = BrokerOrphan_Find(broker, bc->client_id);
+    if (existing != NULL) {
+        BrokerOrphan_Remove(broker, existing);
+    }
+
+    /* Cap check; evict oldest if at limit. */
+    while (broker->orphan_session_count >= BROKER_MAX_PERSIST_SESSIONS) {
+        if (!BrokerOrphan_EvictOldest(broker)) {
+            break;
+        }
+    }
+
+    o = (BrokerOrphanSession*)WOLFMQTT_MALLOC(sizeof(*o));
+    if (o == NULL) {
+        return NULL;
+    }
+    XMEMSET(o, 0, sizeof(*o));
+    cid_len = XSTRLEN(bc->client_id);
+    o->client_id = (char*)WOLFMQTT_MALLOC(cid_len + 1);
+    if (o->client_id == NULL) {
+        WOLFMQTT_FREE(o);
+        return NULL;
+    }
+    XMEMCPY(o->client_id, bc->client_id, cid_len);
+    o->client_id[cid_len] = '\0';
+
+    o->protocol_level = bc->protocol_level;
+    o->session_expiry_sec = bc->session_expiry_sec;
+    o->orphan_since = WOLFMQTT_BROKER_GET_TIME_S();
+
+    /* Move out_q ownership. bc->out_q_* must be cleared so
+     * BrokerClient_FreeOutQueue (called from BrokerClient_Free)
+     * doesn't double-free. */
+    o->out_q_head     = bc->out_q_head;
+    o->out_q_tail     = bc->out_q_tail;
+    o->out_q_count    = bc->out_q_count;
+    o->out_q_inflight = bc->out_q_inflight;
+    bc->out_q_head    = NULL;
+    bc->out_q_tail    = NULL;
+    bc->out_q_count   = 0;
+    bc->out_q_inflight = 0;
+
+    /* Link at head; orphan_session_count tracks size. */
+    o->next = broker->orphan_sessions;
+    broker->orphan_sessions = o;
+    broker->orphan_session_count++;
+    WBLOG_INFO(broker,
+        "broker: orphan session created client_id=%s queued=%d",
+        o->client_id, o->out_q_count);
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Shadow-write every transferred QoS 1/2 entry so the queue
+     * survives a broker restart. QoS 0 entries (if any leaked into
+     * the queue) are skipped by PutOutPub. */
+    {
+        BrokerOutPub* cur;
+        for (cur = o->out_q_head; cur != NULL; cur = cur->next) {
+            if (cur->qos > MQTT_QOS_0) {
+                (void)BrokerPersist_PutOutPub(broker, o->client_id, cur);
+            }
+        }
+    }
+#endif
+    return o;
+}
+
+/* On reconnect with same client_id: transfer the orphan's queue back
+ * to the new live BrokerClient and remove the orphan. Returns 1 if an
+ * orphan was consumed, 0 otherwise. */
+static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
+{
+    BrokerOrphanSession* o;
+    if (broker == NULL || new_bc == NULL ||
+            !BROKER_STR_VALID(new_bc->client_id)) {
+        return 0;
+    }
+    o = BrokerOrphan_Find(broker, new_bc->client_id);
+    if (o == NULL) {
+        return 0;
+    }
+    /* Move queue ownership back. The new bc's own out_q is expected
+     * to be empty at this point (fresh BrokerClient post-CONNECT). */
+    new_bc->out_q_head     = o->out_q_head;
+    new_bc->out_q_tail     = o->out_q_tail;
+    new_bc->out_q_count    = o->out_q_count;
+    new_bc->out_q_inflight = o->out_q_inflight;
+    o->out_q_head = NULL;
+    o->out_q_tail = NULL;
+    o->out_q_count = 0;
+    o->out_q_inflight = 0;
+    if (new_bc->session_expiry_sec == 0xFFFFFFFFu) {
+        new_bc->session_expiry_sec = o->session_expiry_sec;
+    }
+    WBLOG_INFO(broker,
+        "broker: orphan reclaimed client_id=%s queued=%d",
+        new_bc->client_id, new_bc->out_q_count);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* The reclaimed queue is now in a LIVE BrokerClient. Persisted
+     * records for this client_id are no longer authoritative - the
+     * subscriber will receive these via the upcoming drain and ack
+     * them. Wipe the on-disk copies so a subsequent crash doesn't
+     * re-deliver them. */
+    (void)BrokerPersist_DelOutQueue(broker, new_bc->client_id);
+#endif
+    BrokerOrphan_Remove(broker, o);
+    return 1;
+}
+
+/* Enqueue a fan-out target onto an orphan session's queue. Called from
+ * BrokerHandle_Publish when sub->client is NULL but an orphan with the
+ * matching client_id exists. QoS 0 is dropped per spec; only persistent
+ * messages live in the offline queue. */
+static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
+    const char* topic, const byte* payload, word32 payload_len,
+    MqttQoS qos, byte retain)
+{
+    BrokerOutPub* e;
+    if (broker == NULL || o == NULL || topic == NULL ||
+            qos == MQTT_QOS_0) {
+        return;
+    }
+    /* Drop-oldest eviction when the per-session offline queue is full. */
+    while (o->out_q_count >= BROKER_MAX_OFFLINE_MSGS_PER_SUB) {
+        BrokerOutPub* head = o->out_q_head;
+        if (head == NULL) {
+            break;
+        }
+        o->out_q_head = head->next;
+        if (o->out_q_tail == head) {
+            o->out_q_tail = NULL;
+        }
+        if (o->out_q_count > 0) {
+            o->out_q_count--;
+        }
+    #ifdef WOLFMQTT_BROKER_PERSIST
+        if (o->client_id != NULL && head->packet_id != 0) {
+            (void)BrokerPersist_DelOutPub(broker, o->client_id,
+                head->packet_id);
+        }
+    #endif
+        if (head->topic) WOLFMQTT_FREE(head->topic);
+        if (head->payload) WOLFMQTT_FREE(head->payload);
+        WOLFMQTT_FREE(head);
+    }
+
+    e = BrokerOutPub_Alloc(topic, payload, payload_len);
+    if (e == NULL) {
+        WBLOG_ERR(broker,
+            "broker: orphan enqueue alloc failed client_id=%s",
+            BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)");
+        return;
+    }
+    e->qos = qos;
+    e->packet_id = BrokerNextPacketId(broker);
+    e->retain = retain;
+    e->state = BROKER_OUTQ_QUEUED;
+    e->enq_time = WOLFMQTT_BROKER_GET_TIME_S();
+    e->protocol_level = o->protocol_level;
+    e->next = NULL;
+    if (o->out_q_tail != NULL) {
+        o->out_q_tail->next = e;
+    }
+    else {
+        o->out_q_head = e;
+    }
+    o->out_q_tail = e;
+    o->out_q_count++;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    (void)BrokerPersist_PutOutPub(broker, o->client_id, e);
+#endif
+    WBLOG_DBG(broker,
+        "broker: orphan enqueue client_id=%s topic=%s qos=%d count=%d",
+        BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)",
+        topic, (int)qos, o->out_q_count);
+}
+
+/* Free every orphan (used by MqttBroker_Free and by wipe paths). */
+static void BrokerOrphan_FreeAll(MqttBroker* broker)
+{
+    BrokerOrphanSession* cur;
+    if (broker == NULL) {
+        return;
+    }
+    cur = broker->orphan_sessions;
+    while (cur != NULL) {
+        BrokerOrphanSession* next = cur->next;
+        BrokerOrphan_FreeContents(cur);
+        WOLFMQTT_FREE(cur);
+        cur = next;
+    }
+    broker->orphan_sessions = NULL;
+    broker->orphan_session_count = 0;
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -2017,6 +2370,13 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
     if (count > 0) {
         WBLOG_INFO(broker, "broker: orphaned %d subs for client_id=%s (session persist)",
             count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+#ifndef WOLFMQTT_STATIC_MEMORY
+        /* Stage a persistent-session record in broker->orphan_sessions.
+         * Carries the out_q ownership across the upcoming
+         * BrokerClient_Free so messages published while disconnected
+         * can still be queued for the eventual reconnect. */
+        (void)BrokerOrphan_Take(broker, bc);
+#endif
     }
 }
 
@@ -3508,6 +3868,21 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 "broker: client Receive Maximum sock=%d value=%u",
                 (int)bc->sock, (unsigned)bc->client_receive_max);
         }
+        /* [MQTT-3.1.2.11.2] v5 Session Expiry Interval. If present,
+         * carry it onto bc->session_expiry_sec so the disconnect
+         * path stamps it into the orphan record. Absent property
+         * means 0 (expire on disconnect) per the spec; the default
+         * we set below already matches that. */
+        {
+            MqttProp* se_prop = BrokerProps_Find(mc.props,
+                    MQTT_PROP_SESSION_EXPIRY_INTERVAL);
+            if (se_prop != NULL) {
+                bc->session_expiry_sec = se_prop->data_int;
+                WBLOG_DBG(broker,
+                    "broker: client Session Expiry sock=%d value=%u",
+                    (int)bc->sock, (unsigned)bc->session_expiry_sec);
+            }
+        }
     }
 #endif
 
@@ -3568,6 +3943,20 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 
     /* Client ID uniqueness and clean session handling */
     bc->clean_session = mc.clean_session;
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Default Session Expiry to "never" for clean_session=0 clients.
+     * v5 clients overwrite this from the Session Expiry Interval
+     * property a few lines below (C3 work). v3.1.1 persistent sessions
+     * use 0xFFFFFFFF per MQTT 3.1.1 sec 3.1.2.4 (no explicit value;
+     * server is free to evict on its own policy). */
+    if (!mc.clean_session) {
+        bc->session_expiry_sec = 0xFFFFFFFFu;
+    }
+    else {
+        bc->session_expiry_sec = 0;
+    }
+#endif
     if (BROKER_STR_VALID(bc->client_id)) {
         BrokerClient* old;
 
@@ -3612,7 +4001,27 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         if (mc.clean_session) {
             /* Remove any remaining subs for this client_id */
             BrokerSubs_RemoveByClientId(broker, bc->client_id);
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            {
+                BrokerOrphanSession* o =
+                    BrokerOrphan_Find(broker, bc->client_id);
+                if (o != NULL) {
+                    BrokerOrphan_Remove(broker, o);
+                }
+            }
+        #endif
         }
+    #ifndef WOLFMQTT_STATIC_MEMORY
+        else {
+            /* Persistent session reconnect: pick up any queued messages
+             * left by the prior incarnation. Inherits session_expiry
+             * from the orphan when this CONNECT did not specify one.
+             * Drain is invoked further down, after CONNACK is sent. */
+            if (BrokerOrphan_Reclaim(broker, bc)) {
+                session_present = 1;
+            }
+        }
+    #endif
     }
 
     /* Store Last Will and Testament */
@@ -3921,6 +4330,17 @@ send_connack:
      * persist layer no-ops when no hooks are installed. */
     if (!bc->clean_session && BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_PutSession(broker, bc);
+    }
+#endif
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* If the reconnect inherited a non-empty queue from an orphan
+     * session, drain it now so the subscriber sees the queued
+     * messages on the heels of CONNACK. (BrokerOrphan_Reclaim already
+     * moved entries into bc->out_q above; drain dispatches up to the
+     * inflight cap as usual.) */
+    if (bc->out_q_count > 0) {
+        BrokerClient_DrainOutQueue(bc);
     }
 #endif
 
@@ -4364,6 +4784,23 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #endif
             }
 #ifndef WOLFMQTT_STATIC_MEMORY
+            else if (sub->client == NULL && sub->client_id != NULL &&
+                     BROKER_STR_VALID(sub->filter) &&
+                     BrokerTopicMatch(sub->filter, topic)) {
+                /* Orphaned persistent session: subscriber is currently
+                 * disconnected. Queue QoS 1/2 messages on the orphan
+                 * slot for delivery on reconnect. */
+                MqttQoS eff_qos =
+                    (pub.qos < sub->qos) ? pub.qos : sub->qos;
+                if (eff_qos > MQTT_QOS_0) {
+                    BrokerOrphanSession* o =
+                        BrokerOrphan_Find(broker, sub->client_id);
+                    if (o != NULL) {
+                        BrokerOrphan_Enqueue(broker, o, topic, payload,
+                            pub.total_len, eff_qos, 0);
+                    }
+                }
+            }
             sub = sub->next;
 #endif
         }
@@ -5234,6 +5671,9 @@ int MqttBroker_Free(MqttBroker* broker)
     /* Clean up pending wills and retained messages */
     BrokerPendingWill_FreeAll(broker);
     BrokerRetained_FreeAll(broker);
+#ifndef WOLFMQTT_STATIC_MEMORY
+    BrokerOrphan_FreeAll(broker);
+#endif
 
 #ifdef ENABLE_MQTT_TLS
     if (broker->tls_ctx != NULL) {
