@@ -128,6 +128,36 @@
     #define BROKER_MAX_INBOUND_QOS2 16
 #endif
 
+/* Per-subscriber outbound delivery shaping.
+ *
+ * BROKER_MAX_INFLIGHT_PER_SUB bounds the number of outbound QoS 1/2 PUBLISHes
+ * the broker may have in flight to a single subscriber at once. This gives
+ * users a Mosquitto "max_inflight_messages" equivalent that works on both
+ * v3.1.1 and v5; for v5 clients it is further clamped by the client's
+ * Receive Maximum property (MQTT v5 sec 3.1.2.11.3).
+ *
+ * The default is derived from BROKER_TX_BUF_SZ so that the per-subscriber
+ * outbound queue is "roughly the size that the tx buffer could plausibly
+ * pipeline" without picking an arbitrary number. Override with
+ *   -DBROKER_MAX_INFLIGHT_PER_SUB=N   to set a hard cap (1 = strict serial),
+ *   -DBROKER_DEFAULT_AVG_MSG_SZ=N     to retune the derivation.
+ *
+ * Only used in dynamic-memory mode; STATIC_MEMORY mode keeps the legacy
+ * synchronous fan-out path. */
+#ifndef BROKER_DEFAULT_AVG_MSG_SZ
+    #define BROKER_DEFAULT_AVG_MSG_SZ 256
+#endif
+#ifndef BROKER_MIN_INFLIGHT_PER_SUB
+    #define BROKER_MIN_INFLIGHT_PER_SUB 8
+#endif
+#ifndef BROKER_MAX_INFLIGHT_PER_SUB
+    #define BROKER_MAX_INFLIGHT_PER_SUB \
+        (((BROKER_TX_BUF_SZ / BROKER_DEFAULT_AVG_MSG_SZ) < \
+            BROKER_MIN_INFLIGHT_PER_SUB) ? \
+         BROKER_MIN_INFLIGHT_PER_SUB : \
+         (BROKER_TX_BUF_SZ / BROKER_DEFAULT_AVG_MSG_SZ))
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* Feature toggles (opt-out: define WOLFMQTT_BROKER_NO_xxx to disable)        */
 /* -------------------------------------------------------------------------- */
@@ -219,6 +249,42 @@ typedef struct BrokerInboundQos2 {
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* -------------------------------------------------------------------------- */
+/* Per-subscriber outbound publish queue (dynamic memory mode only).
+ *
+ * Each entry owns the topic and payload bytes via heap copy so the queue is
+ * independent of the publisher's rx_buf lifetime. The state field tracks
+ * the QoS handshake position for that one delivery to that one subscriber:
+ *
+ *   BROKER_OUTQ_QUEUED        Not yet sent on the wire.
+ *   BROKER_OUTQ_PUBLISH_SENT  QoS 1: awaiting PUBACK. QoS 2: awaiting PUBREC.
+ *   BROKER_OUTQ_PUBREL_SENT   QoS 2 only: PUBREC received, PUBREL sent,
+ *                             awaiting PUBCOMP.
+ *
+ * QoS 0 entries are deleted as soon as the PUBLISH is written; they never
+ * leave the QUEUED state and never increment the inflight counter. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+enum BrokerOutPubState {
+    BROKER_OUTQ_QUEUED       = 0,
+    BROKER_OUTQ_PUBLISH_SENT = 1,
+    BROKER_OUTQ_PUBREL_SENT  = 2
+};
+
+typedef struct BrokerOutPub {
+    char*   topic;          /* heap-owned, NUL-terminated */
+    byte*   payload;        /* heap-owned, may be NULL when payload_len == 0 */
+    word32  payload_len;
+    MqttQoS qos;
+    word16  packet_id;      /* 0 for QoS 0 */
+    byte    retain;
+    byte    state;          /* BROKER_OUTQ_* */
+    WOLFMQTT_BROKER_TIME_T enq_time;
+    word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
+    byte    protocol_level; /* echoed back to subscriber on send */
+    struct BrokerOutPub* next;
+} BrokerOutPub;
+#endif
+
+/* -------------------------------------------------------------------------- */
 /* Broker client tracking                                                      */
 /* -------------------------------------------------------------------------- */
 typedef struct BrokerClient {
@@ -291,6 +357,21 @@ typedef struct BrokerClient {
 #else
     BrokerInboundQos2* qos2_pending;
     int                qos2_pending_count;
+    /* Per-subscriber outbound publish queue. FIFO from head to tail;
+     * drain pulls from head. inflight_count is the number of entries in
+     * state PUBLISH_SENT or PUBREL_SENT (QoS 1/2 awaiting an ack);
+     * BROKER_MAX_INFLIGHT_PER_SUB and client_receive_max together bound
+     * how many of those may exist at once. queue_count is total entries
+     * including not-yet-sent QUEUED ones. */
+    BrokerOutPub* out_q_head;
+    BrokerOutPub* out_q_tail;
+    int           out_q_count;
+    int           out_q_inflight;
+    /* v5 Receive Maximum advertised by this client in CONNECT, or 65535
+     * (per MQTT v5 sec 3.1.2.11.3) when the client did not include the
+     * property. For v3.1.1 clients this is left at 65535 - the cap
+     * comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
+    word16        client_receive_max;
 #endif
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 } BrokerClient;

@@ -1432,6 +1432,348 @@ static void BrokerInboundQos2_Clear(BrokerClient* bc)
 }
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* -------------------------------------------------------------------------- */
+/* Per-subscriber outbound publish queue (dynamic memory only).
+ *
+ * Adds the message-shaping layer asked for in customer report #7 (ordered
+ * delivery) and consumed later by report-#5 follow-up work and PR2's
+ * offline queue. Fan-out enqueues; drain dispatches up to the inflight
+ * cap. Drain is also called from PUBACK / PUBREC / PUBCOMP handlers and
+ * once per select() tick so a slow subscriber that just opened a window
+ * gets unblocked promptly.                                                  */
+/* -------------------------------------------------------------------------- */
+
+/* Free a single queue entry (topic, payload, the entry itself). */
+static void BrokerOutPub_Free(BrokerOutPub* e)
+{
+    if (e == NULL) {
+        return;
+    }
+    if (e->topic != NULL) {
+        WOLFMQTT_FREE(e->topic);
+        e->topic = NULL;
+    }
+    if (e->payload != NULL) {
+        WOLFMQTT_FREE(e->payload);
+        e->payload = NULL;
+    }
+    WOLFMQTT_FREE(e);
+}
+
+/* Allocate a new entry holding a deep copy of topic + payload. Returns
+ * NULL on allocation failure (caller decides whether that means drop or
+ * close). All fields are zero-initialized; caller fills qos / packet_id /
+ * etc. and links into out_q via BrokerClient_EnqueueOutPub. */
+static BrokerOutPub* BrokerOutPub_Alloc(const char* topic,
+    const byte* payload, word32 payload_len)
+{
+    BrokerOutPub* e;
+    size_t topic_len;
+
+    if (topic == NULL) {
+        return NULL;
+    }
+    topic_len = XSTRLEN(topic);
+
+    e = (BrokerOutPub*)WOLFMQTT_MALLOC(sizeof(BrokerOutPub));
+    if (e == NULL) {
+        return NULL;
+    }
+    XMEMSET(e, 0, sizeof(*e));
+
+    e->topic = (char*)WOLFMQTT_MALLOC(topic_len + 1);
+    if (e->topic == NULL) {
+        BrokerOutPub_Free(e);
+        return NULL;
+    }
+    XMEMCPY(e->topic, topic, topic_len);
+    e->topic[topic_len] = '\0';
+
+    if (payload_len > 0 && payload != NULL) {
+        e->payload = (byte*)WOLFMQTT_MALLOC(payload_len);
+        if (e->payload == NULL) {
+            BrokerOutPub_Free(e);
+            return NULL;
+        }
+        XMEMCPY(e->payload, payload, payload_len);
+        e->payload_len = payload_len;
+    }
+    return e;
+}
+
+/* Append e to the subscriber's out_q tail. Caller is responsible for
+ * counting against any caps before allocation. */
+static void BrokerClient_EnqueueOutPub(BrokerClient* bc, BrokerOutPub* e)
+{
+    if (bc == NULL || e == NULL) {
+        return;
+    }
+    e->next = NULL;
+    if (bc->out_q_tail == NULL) {
+        bc->out_q_head = e;
+        bc->out_q_tail = e;
+    }
+    else {
+        bc->out_q_tail->next = e;
+        bc->out_q_tail = e;
+    }
+    bc->out_q_count++;
+}
+
+/* Walk out_q and free every entry. Called from BrokerClient_Free. */
+static void BrokerClient_FreeOutQueue(BrokerClient* bc)
+{
+    BrokerOutPub* cur;
+
+    if (bc == NULL) {
+        return;
+    }
+    cur = bc->out_q_head;
+    while (cur != NULL) {
+        BrokerOutPub* next = cur->next;
+        BrokerOutPub_Free(cur);
+        cur = next;
+    }
+    bc->out_q_head = NULL;
+    bc->out_q_tail = NULL;
+    bc->out_q_count = 0;
+    bc->out_q_inflight = 0;
+}
+
+/* Send as many QUEUED entries from out_q as the inflight cap allows.
+ *
+ * Ordering: walks from out_q_head, never reorders. Already-sent entries
+ * (state != QUEUED) are stepped over - their PUBLISH already hit the
+ * wire in publish order. The cap stops the drain at the first QUEUED
+ * QoS>0 entry that would exceed BROKER_MAX_INFLIGHT_PER_SUB (or the v5
+ * client's Receive Maximum, whichever is smaller). [MQTT-4.6.0-3] is
+ * preserved: even a QUEUED QoS 0 behind a capped QoS>0 stays put. */
+static void BrokerClient_DrainOutQueue(BrokerClient* bc)
+{
+    BrokerOutPub* cur;
+    BrokerOutPub* prev;
+    int effective_cap;
+
+    if (bc == NULL || bc->out_q_head == NULL) {
+        return;
+    }
+
+    effective_cap = BROKER_MAX_INFLIGHT_PER_SUB;
+    if (bc->client_receive_max != 0 &&
+        (int)bc->client_receive_max < effective_cap) {
+        effective_cap = (int)bc->client_receive_max;
+    }
+
+    prev = NULL;
+    cur = bc->out_q_head;
+    while (cur != NULL) {
+        MqttPublish out_pub;
+        int enc_rc;
+
+        if (cur->state != BROKER_OUTQ_QUEUED) {
+            prev = cur;
+            cur = cur->next;
+            continue;
+        }
+        if (cur->qos > MQTT_QOS_0 && bc->out_q_inflight >= effective_cap) {
+            /* Cap reached. Stop here - cannot send anything behind it
+             * either, because [MQTT-4.6.0-3] requires ordered delivery. */
+            break;
+        }
+
+        XMEMSET(&out_pub, 0, sizeof(out_pub));
+        out_pub.topic_name = cur->topic;
+        out_pub.qos        = cur->qos;
+        out_pub.packet_id  = cur->packet_id;
+        out_pub.retain     = cur->retain;
+        out_pub.duplicate  = 0;
+        out_pub.buffer     = cur->payload;
+        out_pub.total_len  = cur->payload_len;
+    #ifdef WOLFMQTT_V5
+        out_pub.protocol_level = cur->protocol_level;
+    #endif
+
+        enc_rc = MqttEncode_Publish(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
+                    &out_pub, 0);
+        if (enc_rc <= 0) {
+            WBLOG_ERR(bc->broker,
+                "broker: drain encode failed sock=%d topic=%s rc=%d",
+                (int)bc->sock, cur->topic, enc_rc);
+            /* Drop just this entry and continue. Encoding failure for
+             * a single message is not fatal to the connection. */
+            if (prev == NULL) {
+                bc->out_q_head = cur->next;
+            }
+            else {
+                prev->next = cur->next;
+            }
+            if (bc->out_q_tail == cur) {
+                bc->out_q_tail = prev;
+            }
+            bc->out_q_count--;
+            {
+                BrokerOutPub* free_me = cur;
+                cur = cur->next;
+                BrokerOutPub_Free(free_me);
+            }
+            continue;
+        }
+        (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+        WBLOG_DBG(bc->broker,
+            "broker: drain send sock=%d topic=%s qos=%d packet_id=%u",
+            (int)bc->sock, cur->topic, (int)cur->qos,
+            (unsigned)cur->packet_id);
+
+        if (cur->qos == MQTT_QOS_0) {
+            BrokerOutPub* free_me = cur;
+            if (prev == NULL) {
+                bc->out_q_head = cur->next;
+            }
+            else {
+                prev->next = cur->next;
+            }
+            if (bc->out_q_tail == cur) {
+                bc->out_q_tail = prev;
+            }
+            bc->out_q_count--;
+            cur = cur->next;
+            BrokerOutPub_Free(free_me);
+            /* prev unchanged */
+        }
+        else {
+            cur->state = BROKER_OUTQ_PUBLISH_SENT;
+            bc->out_q_inflight++;
+            prev = cur;
+            cur = cur->next;
+        }
+    }
+}
+
+/* Locate the queue entry that matches packet_id and is awaiting an ack
+ * in the given expected_state. Returns NULL if no match (e.g., spurious
+ * ack, or our state has already moved on). On match returns the entry
+ * (still linked) and sets *out_prev to the predecessor (or NULL when
+ * the match is at head) so the caller can unlink in O(1). */
+static BrokerOutPub* BrokerClient_FindOutPub(BrokerClient* bc,
+    word16 packet_id, byte expected_state, BrokerOutPub** out_prev)
+{
+    BrokerOutPub* prev = NULL;
+    BrokerOutPub* cur;
+
+    if (bc == NULL || packet_id == 0) {
+        return NULL;
+    }
+    cur = bc->out_q_head;
+    while (cur != NULL) {
+        if (cur->packet_id == packet_id && cur->state == expected_state) {
+            if (out_prev != NULL) {
+                *out_prev = prev;
+            }
+            return cur;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    return NULL;
+}
+
+/* Unlink and free the entry; decrement inflight if it was counted. */
+static void BrokerClient_UnlinkOutPub(BrokerClient* bc, BrokerOutPub* prev,
+    BrokerOutPub* e)
+{
+    if (bc == NULL || e == NULL) {
+        return;
+    }
+    if (prev == NULL) {
+        bc->out_q_head = e->next;
+    }
+    else {
+        prev->next = e->next;
+    }
+    if (bc->out_q_tail == e) {
+        bc->out_q_tail = prev;
+    }
+    bc->out_q_count--;
+    if (e->state == BROKER_OUTQ_PUBLISH_SENT ||
+        e->state == BROKER_OUTQ_PUBREL_SENT) {
+        if (bc->out_q_inflight > 0) {
+            bc->out_q_inflight--;
+        }
+    }
+    BrokerOutPub_Free(e);
+}
+
+/* PUBACK from subscriber - completes a QoS 1 delivery. */
+static void BrokerClient_OnPubAck(BrokerClient* bc, word16 packet_id)
+{
+    BrokerOutPub* prev = NULL;
+    BrokerOutPub* e;
+
+    if (bc == NULL) {
+        return;
+    }
+    e = BrokerClient_FindOutPub(bc, packet_id, BROKER_OUTQ_PUBLISH_SENT,
+            &prev);
+    if (e == NULL) {
+        WBLOG_DBG(bc->broker,
+            "broker: spurious PUBACK sock=%d packet_id=%u",
+            (int)bc->sock, (unsigned)packet_id);
+        return;
+    }
+    BrokerClient_UnlinkOutPub(bc, prev, e);
+    BrokerClient_DrainOutQueue(bc);
+}
+
+/* PUBREC from subscriber - advance the QoS 2 entry to PUBREL_SENT.
+ * Returns 1 if a matching entry was found (so the caller knows whether
+ * the PUBREL we send is correlated to a real outbound message), 0
+ * otherwise. The wire response is still sent in both cases to remain
+ * idempotent for buggy peers. */
+static int BrokerClient_OnPubRec(BrokerClient* bc, word16 packet_id)
+{
+    BrokerOutPub* prev = NULL;
+    BrokerOutPub* e;
+
+    if (bc == NULL) {
+        return 0;
+    }
+    e = BrokerClient_FindOutPub(bc, packet_id, BROKER_OUTQ_PUBLISH_SENT,
+            &prev);
+    if (e == NULL) {
+        WBLOG_DBG(bc->broker,
+            "broker: spurious PUBREC sock=%d packet_id=%u",
+            (int)bc->sock, (unsigned)packet_id);
+        return 0;
+    }
+    e->state = BROKER_OUTQ_PUBREL_SENT;
+    /* Inflight stays counted - the delivery is still outstanding until
+     * PUBCOMP returns. */
+    return 1;
+}
+
+/* PUBCOMP from subscriber - completes a QoS 2 delivery. */
+static void BrokerClient_OnPubComp(BrokerClient* bc, word16 packet_id)
+{
+    BrokerOutPub* prev = NULL;
+    BrokerOutPub* e;
+
+    if (bc == NULL) {
+        return;
+    }
+    e = BrokerClient_FindOutPub(bc, packet_id, BROKER_OUTQ_PUBREL_SENT,
+            &prev);
+    if (e == NULL) {
+        WBLOG_DBG(bc->broker,
+            "broker: spurious PUBCOMP sock=%d packet_id=%u",
+            (int)bc->sock, (unsigned)packet_id);
+        return;
+    }
+    BrokerClient_UnlinkOutPub(bc, prev, e);
+    BrokerClient_DrainOutQueue(bc);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 static void BrokerClient_Free(BrokerClient* bc)
 {
     if (bc == NULL) {
@@ -1439,6 +1781,9 @@ static void BrokerClient_Free(BrokerClient* bc)
     }
 #if WOLFMQTT_MAX_QOS >= 2
     BrokerInboundQos2_Clear(bc);
+#endif
+#ifndef WOLFMQTT_STATIC_MEMORY
+    BrokerClient_FreeOutQueue(bc);
 #endif
 
 #ifdef ENABLE_MQTT_WEBSOCKET
@@ -3121,6 +3466,27 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     bc->keep_alive_sec = mc.keep_alive_sec;
     bc->last_rx = WOLFMQTT_BROKER_GET_TIME_S();
 
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    /* [MQTT-3.1.2.11.3] v5 Receive Maximum. If present and non-zero, the
+     * client is telling us not to exceed this many outbound QoS 1/2
+     * PUBLISHes in flight to it. Absent property means 65535 (no
+     * client-imposed cap). 0 is a protocol error, but tolerate it as
+     * "unset" rather than disconnecting, to stay friendly to mildly
+     * non-conforming clients - the actual cap then comes from
+     * BROKER_MAX_INFLIGHT_PER_SUB alone. */
+    if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            mc.props != NULL) {
+        MqttProp* rm_prop = BrokerProps_Find(mc.props,
+                MQTT_PROP_RECEIVE_MAX);
+        if (rm_prop != NULL && rm_prop->data_short > 0) {
+            bc->client_receive_max = rm_prop->data_short;
+            WBLOG_DBG(broker,
+                "broker: client Receive Maximum sock=%d value=%u",
+                (int)bc->sock, (unsigned)bc->client_receive_max);
+        }
+    }
+#endif
+
     /* [MQTT-3.1.3-6] If we accepted a zero-length ClientId, assign a unique
      * server-generated one before the duplicate-check / session-resume block
      * below so the assigned ID flows through normal handling. v5 also echoes
@@ -3460,9 +3826,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         }
         /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
          * of the property signals server supports Maximum QoS 2. Emitting
-         * Maximum QoS = 2 is a Protocol Error and strict v5 clients will
-         * disconnect on receipt. Emit the property only when this build
-         * caps below QoS 2 via WOLFMQTT_MAX_QOS. */
+         * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
+         * mosquitto) will disconnect on receipt. Emit the property only
+         * when this build caps below QoS 2 via WOLFMQTT_MAX_QOS. */
     #if WOLFMQTT_MAX_QOS < 2
         prop = MqttProps_Add(&ack.props);
         if (prop != NULL) {
@@ -3470,6 +3836,25 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             prop->data_byte = (byte)WOLFMQTT_MAX_QOS;
         }
     #endif
+
+        /* [MQTT-3.2.2.3.3] Receive Maximum. Advertise the broker's
+         * per-client inbound QoS 1/2 cap so well-behaved publishers can
+         * pace themselves. We accept up to BROKER_MAX_INBOUND_QOS2
+         * concurrent QoS 2 PUBLISHes awaiting PUBREL ([MQTT-4.3.3]); use
+         * the same number as the wire value. The property MUST NOT be
+         * 0 - we skip the emission entirely in that (unreachable) case
+         * so a future tunable down to 0 cannot send an illegal value.
+         * The cap applies in both dynamic and static memory modes. */
+        if (BROKER_MAX_INBOUND_QOS2 > 0) {
+            prop = MqttProps_Add(&ack.props);
+            if (prop != NULL) {
+                prop->type = MQTT_PROP_RECEIVE_MAX;
+                prop->data_short =
+                    (BROKER_MAX_INBOUND_QOS2 > 0xFFFF) ?
+                    (word16)0xFFFF :
+                    (word16)BROKER_MAX_INBOUND_QOS2;
+            }
+        }
     }
 #endif
 
@@ -3848,52 +4233,84 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 sub->client->protocol_level != 0 &&
                 BROKER_STR_VALID(sub->filter) &&
                 BrokerTopicMatch(sub->filter, topic)) {
-                int sub_rc;
-                MqttPublish out_pub;
                 MqttQoS eff_qos;
-                XMEMSET(&out_pub, 0, sizeof(out_pub));
-                out_pub.topic_name = topic;
                 eff_qos = (pub.qos < sub->qos) ? pub.qos : sub->qos;
-                out_pub.qos = eff_qos;
-                if (eff_qos >= MQTT_QOS_1) {
-                    out_pub.packet_id = BrokerNextPacketId(broker);
+#ifdef WOLFMQTT_STATIC_MEMORY
+                /* Static-memory mode keeps the legacy synchronous
+                 * fan-out: no per-subscriber queue, no inflight cap.
+                 * Sub-encoder failure is logged but not propagated. */
+                {
+                    int sub_rc;
+                    MqttPublish out_pub;
+                    XMEMSET(&out_pub, 0, sizeof(out_pub));
+                    out_pub.topic_name = topic;
+                    out_pub.qos = eff_qos;
+                    if (eff_qos >= MQTT_QOS_1) {
+                        out_pub.packet_id = BrokerNextPacketId(broker);
+                    }
+                    out_pub.retain = 0;
+                    out_pub.duplicate = 0;
+                    out_pub.buffer = payload;
+                    out_pub.total_len = pub.total_len;
+                #ifdef WOLFMQTT_V5
+                    out_pub.protocol_level = sub->client->protocol_level;
+                    if (sub->client->protocol_level >=
+                        MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                        out_pub.props = pub.props;
+                    }
+                #endif
+                    sub_rc = MqttEncode_Publish(sub->client->tx_buf,
+                            BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
+                    if (sub_rc > 0) {
+                        WBLOG_DBG(broker,
+                            "broker: PUBLISH fwd sock=%d -> sock=%d "
+                            "topic=%s qos=%d len=%u",
+                            (int)bc->sock, (int)sub->client->sock,
+                            topic, eff_qos, (unsigned)pub.total_len);
+                        (void)MqttPacket_Write(&sub->client->client,
+                            sub->client->tx_buf, sub_rc);
+                    }
+                    else {
+                        WBLOG_ERR(broker,
+                            "broker: PUBLISH fwd encode failed "
+                            "sock=%d -> sock=%d rc=%d",
+                            (int)bc->sock, (int)sub->client->sock, sub_rc);
+                    }
                 }
-                out_pub.retain = 0;
-                out_pub.duplicate = 0;
-                out_pub.buffer = payload;
-                out_pub.total_len = pub.total_len;
-#ifdef WOLFMQTT_V5
-                out_pub.protocol_level = sub->client->protocol_level;
-                if (sub->client->protocol_level >=
-                    MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                    out_pub.props = pub.props;
+#else
+                /* Dynamic mode: enqueue a heap-owned copy on the
+                 * subscriber's out_q, then drain. The queue gives us
+                 * the inflight cap (#7 ordered delivery) and is the
+                 * substrate for the offline queue in PR2. */
+                {
+                    BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,
+                                          pub.total_len);
+                    if (e == NULL) {
+                        WBLOG_ERR(broker,
+                            "broker: PUBLISH fwd alloc failed sock=%d "
+                            "-> sock=%d", (int)bc->sock,
+                            (int)sub->client->sock);
+                    }
+                    else {
+                        e->qos = eff_qos;
+                        if (eff_qos >= MQTT_QOS_1) {
+                            e->packet_id = BrokerNextPacketId(broker);
+                        }
+                        e->retain = 0;
+                        e->state = BROKER_OUTQ_QUEUED;
+                    #ifdef WOLFMQTT_V5
+                        e->protocol_level = sub->client->protocol_level;
+                    #endif
+                        BrokerClient_EnqueueOutPub(sub->client, e);
+                        WBLOG_DBG(broker,
+                            "broker: PUBLISH enq sock=%d -> sock=%d "
+                            "topic=%s qos=%d len=%u",
+                            (int)bc->sock, (int)sub->client->sock,
+                            topic, eff_qos, (unsigned)pub.total_len);
+                        BrokerClient_DrainOutQueue(sub->client);
+                    }
                 }
 #endif
-                /* Use a per-subscriber rc: a subscriber's encode/write
-                 * failure (e.g., undersized tx_buf) is a peer-side
-                 * issue and must not be propagated up as the
-                 * publisher's return code, or the publisher would be
-                 * wrongly disconnected by the dispatch's fatal-rc
-                 * gate (especially for QoS 0, where the function-
-                 * level rc is otherwise never overwritten before
-                 * return). */
-                sub_rc = MqttEncode_Publish(sub->client->tx_buf,
-                        BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
-                if (sub_rc > 0) {
-                    WBLOG_DBG(broker,
-                        "broker: PUBLISH fwd sock=%d -> sock=%d "
-                        "topic=%s qos=%d len=%u",
-                        (int)bc->sock, (int)sub->client->sock,
-                        topic, eff_qos, (unsigned)pub.total_len);
-                    (void)MqttPacket_Write(&sub->client->client,
-                        sub->client->tx_buf, sub_rc);
-                }
-                else {
-                    WBLOG_ERR(broker,
-                        "broker: PUBLISH fwd encode failed sock=%d -> "
-                        "sock=%d rc=%d",
-                        (int)bc->sock, (int)sub->client->sock, sub_rc);
-                }
             }
 #ifndef WOLFMQTT_STATIC_MEMORY
             sub = sub->next;
@@ -3992,6 +4409,15 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
         WBLOG_ERR(bc->broker, "broker: PUBLISH_REC decode failed rc=%d", rc);
         return rc;
     }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Advance the out_q entry from PUBLISH_SENT to PUBREL_SENT. The
+     * PUBREL we send below is correlated to this entry; PUBCOMP from the
+     * subscriber will then close it out. A spurious PUBREC (no matching
+     * entry) still gets a PUBREL response for idempotency, just no
+     * queue state change. */
+    (void)BrokerClient_OnPubRec(bc, resp.packet_id);
+#endif
 
 #ifdef WOLFMQTT_V5
     if (resp.props) {
@@ -4180,7 +4606,27 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 break;
             }
             case MQTT_PACKET_TYPE_PUBLISH_ACK:
-                /* QoS 1 ack from subscriber - delivery complete */
+                /* QoS 1 ack from subscriber - delivery complete. In
+                 * dynamic-memory mode, locate the matching out_q entry,
+                 * unlink/free it, decrement inflight, and drain. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+            {
+                MqttPublishResp ack_resp;
+                XMEMSET(&ack_resp, 0, sizeof(ack_resp));
+            #ifdef WOLFMQTT_V5
+                ack_resp.protocol_level = bc->protocol_level;
+            #endif
+                if (MqttDecode_PublishResp(bc->rx_buf, rc,
+                        MQTT_PACKET_TYPE_PUBLISH_ACK, &ack_resp) >= 0) {
+                    BrokerClient_OnPubAck(bc, ack_resp.packet_id);
+                }
+            #ifdef WOLFMQTT_V5
+                if (ack_resp.props) {
+                    (void)MqttProps_Free(ack_resp.props);
+                }
+            #endif
+            }
+#endif
                 break;
         #if WOLFMQTT_MAX_QOS >= 2
             case MQTT_PACKET_TYPE_PUBLISH_REC:
@@ -4207,7 +4653,26 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             }
             case MQTT_PACKET_TYPE_PUBLISH_COMP:
                 /* QoS 2 step 4: subscriber sends PUBCOMP - delivery
-                 * complete */
+                 * complete. Remove the matching out_q entry (state
+                 * PUBREL_SENT), decrement inflight, drain. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+            {
+                MqttPublishResp comp_resp;
+                XMEMSET(&comp_resp, 0, sizeof(comp_resp));
+            #ifdef WOLFMQTT_V5
+                comp_resp.protocol_level = bc->protocol_level;
+            #endif
+                if (MqttDecode_PublishResp(bc->rx_buf, rc,
+                        MQTT_PACKET_TYPE_PUBLISH_COMP, &comp_resp) >= 0) {
+                    BrokerClient_OnPubComp(bc, comp_resp.packet_id);
+                }
+            #ifdef WOLFMQTT_V5
+                if (comp_resp.props) {
+                    (void)MqttProps_Free(comp_resp.props);
+                }
+            #endif
+            }
+#endif
                 break;
         #endif /* WOLFMQTT_MAX_QOS >= 2 */
             case MQTT_PACKET_TYPE_SUBSCRIBE:

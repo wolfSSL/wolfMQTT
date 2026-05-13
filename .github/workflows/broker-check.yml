@@ -63,6 +63,15 @@ jobs:
             cflags: ""
             wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=0"
             skip_broker_test: "yes"
+          - name: "Broker v5 (ordering / Receive Maximum)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-v5"
+          - name: "Broker v5 strict-serial (inflight=1)"
+            cflags: "-DBROKER_MAX_INFLIGHT_PER_SUB=1"
+            wolfmqtt_opts: "--enable-broker --enable-v5"
+          - name: "Broker v5 static memory"
+            cflags: "-DWOLFMQTT_STATIC_MEMORY"
+            wolfmqtt_opts: "--enable-broker --enable-v5"
 
     steps:
     - name: Install dependencies

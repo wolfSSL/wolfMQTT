@@ -604,12 +604,19 @@ if [ "$has_v5" = "yes" ]; then
     T12_RC=$?
 
     # 12b: Verify CONNACK server properties were received.
-    # Type 37 = Retain Available, Type 40 = Wildcard Subscription Available.
-    # Maximum QoS (Type 36) is intentionally omitted per [MQTT-3.2.2.3.4]
-    # (absence signals QoS 2 support; emitting Max QoS=2 is a Protocol Error).
+    # Type 37 = Retain Available, Type 40 = Wildcard Subscription Available,
+    # Type 33 = Receive Maximum. Type 36 (Maximum QoS) is intentionally NOT
+    # emitted on default builds - [MQTT-3.2.2.3.4] forbids values other
+    # than 0 or 1 there, and absence implies the broker supports QoS 2
+    # (which it does). A regression that re-adds it on a full-QoS build
+    # would break strict v5 clients like mosquitto.
     T12_PROPS=yes
     grep -q "Property CB: Type 37" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
     grep -q "Property CB: Type 40" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
+    grep -q "Property CB: Type 33" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
+    if grep -q "Property CB: Type 36" "${TMP_DIR}/t12.log" 2>/dev/null; then
+        T12_PROPS=no
+    fi
 
     # 12c: v5 pub/sub with separate clients (property forwarding)
     start_broker
@@ -1082,6 +1089,58 @@ else
     FAIL=1
 fi
 fi
+
+# --- Test 26: QoS 1 burst delivery preserves order [MQTT-4.6.0-3] ---
+# Validates the per-subscriber outbound queue (BrokerHandle_Publish enqueue +
+# BrokerClient_DrainOutQueue) introduced for #7 ordered delivery. A burst
+# of 20 sequential QoS 1 publishes from one publisher to one subscriber
+# must all arrive, and in publish order, regardless of the inflight cap.
+echo ""
+echo "--- Test 26: QoS 1 burst delivery (ordered) [MQTT-4.6.0-3] ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Burst delivery (plain listener disabled)"
+else
+start_broker
+T26_N=20
+rm -f "${TMP_DIR}/t26_sub.ready"
+timeout 15 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
+    -i "t26_sub" -C $T26_N -R "${TMP_DIR}/t26_sub.ready" \
+    >"${TMP_DIR}/t26_sub.log" 2>&1 &
+T26_SUB_PID=$!
+TEST_PIDS+=($T26_SUB_PID)
+wait_for_file "${TMP_DIR}/t26_sub.ready" 5
+# Publish T26_N sequentially numbered QoS 1 messages
+for t26_i in $(seq 1 $T26_N); do
+    ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
+        -m "burst_${t26_i}" -i "t26_pub_${t26_i}" \
+        >>"${TMP_DIR}/t26_pub.log" 2>&1
+done
+# Give the subscriber a moment to drain.
+sleep 1
+kill $T26_SUB_PID 2>/dev/null
+wait $T26_SUB_PID 2>/dev/null || true
+TEST_PIDS=()
+# Count how many of the burst_N tokens reached the subscriber and check
+# that they arrived in publish order (1, 2, ..., N).
+T26_RECEIVED=$(grep -oE 'burst_[0-9]+' "${TMP_DIR}/t26_sub.log" 2>/dev/null \
+               | wc -l)
+T26_ORDER_OK=yes
+T26_LAST=0
+while read -r tok; do
+    n=${tok#burst_}
+    if [ "$n" -le "$T26_LAST" ]; then
+        T26_ORDER_OK=no
+    fi
+    T26_LAST=$n
+done < <(grep -oE 'burst_[0-9]+' "${TMP_DIR}/t26_sub.log" 2>/dev/null)
+if [ "$T26_RECEIVED" = "$T26_N" ] && [ "$T26_ORDER_OK" = "yes" ]; then
+    echo "PASS: QoS 1 burst delivery (received=$T26_RECEIVED order=ok)"
+else
+    echo "FAIL: Burst delivery (received=$T26_RECEIVED expected=$T26_N " \
+         "order=$T26_ORDER_OK)"
+    FAIL=1
+fi
+fi # skip_plain
 
 # --- WebSocket Tests ---
 ws_client_bin="examples/websocket/websocket_client"
