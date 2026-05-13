@@ -3445,11 +3445,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             prop->data_byte = 0;
     #endif
         }
-        prop = MqttProps_Add(&ack.props);
-        if (prop != NULL) {
-            prop->type = MQTT_PROP_MAX_QOS;
-            prop->data_byte = MQTT_QOS_2;
-        }
+        /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence of
+         * the property means the server supports Maximum QoS 2, which is
+         * what this broker supports, so the property is omitted entirely.
+         * Emitting Maximum QoS = 2 is a Protocol Error and strict v5
+         * clients (e.g. mosquitto) will disconnect on receipt. */
     }
 #endif
 
