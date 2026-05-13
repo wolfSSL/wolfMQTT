@@ -575,10 +575,15 @@ static void Handle_ConnectAck_Props(MqttClient* client, MqttProp* props)
     for (prop = props; prop != NULL; prop = prop->next) {
         if (prop->type == MQTT_PROP_MAX_QOS) {
             /* MQTT v5 [3.1.2.11.6]: only 0 or 1 are legal. Clamp a
-             * non-conforming broker value so client-side publish guards
+             * non-conforming broker value, then narrow against this
+             * build's WOLFMQTT_MAX_QOS so client-side publish guards
              * remain meaningful. */
-            client->max_qos = (prop->data_byte <= MQTT_QOS_1) ?
+            byte adv = (prop->data_byte <= MQTT_QOS_1) ?
                     prop->data_byte : MQTT_QOS_1;
+            if (adv > WOLFMQTT_MAX_QOS) {
+                adv = (byte)WOLFMQTT_MAX_QOS;
+            }
+            client->max_qos = adv;
         }
         else if (prop->type == MQTT_PROP_RETAIN_AVAIL) {
             /* MQTT v5 [3.1.2.11.5]: only 0 or 1 are legal. */
@@ -1647,7 +1652,9 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     client->rx_buf_len = rx_buf_len;
     client->cmd_timeout_ms = cmd_timeout_ms;
 #ifdef WOLFMQTT_V5
-    client->max_qos = MQTT_QOS_2;
+    /* Initialize to this build's Maximum QoS. Handle_Props will narrow
+     * this if the server advertises a lower MQTT_PROP_MAX_QOS. */
+    client->max_qos = (MqttQoS)WOLFMQTT_MAX_QOS;
     client->retain_avail = 1;
     client->protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL;
     rc = MqttProps_Init();
@@ -1757,8 +1764,10 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 
         /* Reset server-supplied session limits so stale values from a
          * prior broker do not leak across reconnects. An accepted CONNACK
-         * will repopulate these in Handle_ConnectAck_Props. */
-        client->max_qos = MQTT_QOS_2;
+         * will repopulate these in Handle_ConnectAck_Props. Initialize to
+         * this build's Maximum QoS so the runtime guard in MqttPublishMsg
+         * caps publishes even before CONNACK is processed. */
+        client->max_qos = (MqttQoS)WOLFMQTT_MAX_QOS;
         client->retain_avail = 1;
         client->packet_sz_max = 0;
     #endif

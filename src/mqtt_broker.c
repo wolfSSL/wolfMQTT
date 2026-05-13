@@ -1278,8 +1278,13 @@ static int BrokerNetDisconnect(void* context)
 /* must NOT be re-delivered to subscribers. The state is per-client and is    */
 /* cleared on disconnect; surviving across reconnect would require the         */
 /* broader session-state work (see #485/#489/#494).                            */
+/*                                                                             */
+/* The entire QoS 2 inbound state and PUBREL/PUBREC/PUBCOMP handling is        */
+/* compiled out when WOLFMQTT_MAX_QOS < 2. Subscribe-grant capping and         */
+/* inbound-publish QoS rejection cover the corresponding wire paths.           */
 /* -------------------------------------------------------------------------- */
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* Returns 1 if packet_id is currently awaiting PUBREL, 0 otherwise. */
 static int BrokerInboundQos2_Contains(BrokerClient* bc, word16 packet_id)
 {
@@ -1425,13 +1430,16 @@ static void BrokerInboundQos2_Clear(BrokerClient* bc)
     bc->qos2_pending_count = 0;
 #endif
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 static void BrokerClient_Free(BrokerClient* bc)
 {
     if (bc == NULL) {
         return;
     }
+#if WOLFMQTT_MAX_QOS >= 2
     BrokerInboundQos2_Clear(bc);
+#endif
 
 #ifdef ENABLE_MQTT_WEBSOCKET
     if (bc->ws_ctx != NULL) {
@@ -3264,7 +3272,12 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
             bc->will_payload_len = wp_len;
         }
-        bc->will_qos = mc.lwt_msg->qos;
+        /* Clamp will QoS to this build's Maximum QoS. A v5 client that
+         * sent Will QoS > advertised Max QoS would already be in
+         * Protocol Error territory, but for v3.1.1 (no advertisement)
+         * we silently downgrade rather than rejecting CONNECT. */
+        bc->will_qos = (mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) ?
+            (MqttQoS)WOLFMQTT_MAX_QOS : mc.lwt_msg->qos;
         bc->will_retain = mc.lwt_msg->retain;
         bc->will_delay_sec = 0;
 #ifdef WOLFMQTT_V5
@@ -3524,9 +3537,10 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
         MqttQoS topic_qos = sub.topics[i].qos;
         MqttQoS granted_qos;
 
-        /* Cap at QoS 2 */
-        if (topic_qos > MQTT_QOS_2) {
-            topic_qos = MQTT_QOS_2;
+        /* [MQTT-3.8.4-7] / [MQTT-3.9.3]: subscribe grant capped at the
+         * build's Maximum QoS. Default is QoS 2. */
+        if (topic_qos > WOLFMQTT_MAX_QOS) {
+            topic_qos = (MqttQoS)WOLFMQTT_MAX_QOS;
         }
         granted_qos = topic_qos;
 
@@ -3669,7 +3683,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     MqttPublishResp resp;
     byte* payload = NULL;
     char* topic = NULL;
+#if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
+#endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     char topic_buf[BROKER_MAX_TOPIC_LEN];
 #endif
@@ -3691,6 +3707,26 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
      * MALFORMED_DATA before reaching this handler. The broker no longer
      * needs a per-handler scan. */
 
+#if WOLFMQTT_MAX_QOS < 2
+    /* [MQTT-3.2.2.3.4] / [MQTT-3.3.4]: this build advertised Maximum QoS
+     * below 2. A client publishing at QoS > our cap is a Protocol Error;
+     * v5 spec wants reason 0x9B QoS Not Supported. v3 has no reason code
+     * field, so we just abnormally close. */
+    if (pub.qos > WOLFMQTT_MAX_QOS) {
+        WBLOG_ERR(broker,
+            "broker: PUBLISH QoS %d exceeds WOLFMQTT_MAX_QOS=%d sock=%d",
+            pub.qos, WOLFMQTT_MAX_QOS, (int)bc->sock);
+    #ifdef WOLFMQTT_V5
+        if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            (void)BrokerSend_Disconnect(bc, MQTT_REASON_QOS_NOT_SUPPORTED);
+        }
+    #endif
+        rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+        goto publish_cleanup;
+    }
+#endif /* WOLFMQTT_MAX_QOS < 2 */
+
+#if WOLFMQTT_MAX_QOS >= 2
     /* [MQTT-4.3.3] QoS 2 duplicate detection. If we already PUBREC'd this
      * packet_id and are still waiting for PUBREL, treat the inbound PUBLISH
      * as a retransmission: send another PUBREC but DO NOT re-deliver the
@@ -3729,6 +3765,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             }
         }
     }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
     /* Create null-terminated topic copy for matching/logging */
     if (pub.topic_name && pub.topic_name_len > 0) {
@@ -3756,7 +3793,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_BROKER_RETAINED
     /* Handle retained messages - skipped for QoS 2 duplicates: the original
      * PUBLISH already updated the retained store. */
-    if (!qos2_duplicate && topic != NULL && pub.retain) {
+    if (
+    #if WOLFMQTT_MAX_QOS >= 2
+        !qos2_duplicate &&
+    #endif
+        topic != NULL && pub.retain) {
         if (pub.total_len == 0) {
             BrokerRetained_Delete(broker, topic);
         }
@@ -3785,7 +3826,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 
     /* Fan-out is skipped for QoS 2 duplicates: subscribers already received
      * the application message from the original PUBLISH ([MQTT-4.3.3]). */
-    if (!qos2_duplicate &&
+    if (
+    #if WOLFMQTT_MAX_QOS >= 2
+        !qos2_duplicate &&
+    #endif
         topic != NULL && (payload != NULL || pub.total_len == 0)) {
 #ifdef WOLFMQTT_STATIC_MEMORY
         int i;
@@ -3890,6 +3934,7 @@ publish_cleanup:
     return rc;
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 static int BrokerHandle_PublishRel(BrokerClient* bc, int rx_len)
 {
     int rc;
@@ -3964,6 +4009,7 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
     }
     return rc;
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* [MQTT-2.2.2-2] / [MQTT-3.8.1-1] etc.: a malformed packet MUST cause the
  * server to close the network connection. Mirrors the read-failure close
@@ -4136,6 +4182,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             case MQTT_PACKET_TYPE_PUBLISH_ACK:
                 /* QoS 1 ack from subscriber - delivery complete */
                 break;
+        #if WOLFMQTT_MAX_QOS >= 2
             case MQTT_PACKET_TYPE_PUBLISH_REC:
             {
                 /* QoS 2 step 2: subscriber sends PUBREC, broker
@@ -4162,6 +4209,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 /* QoS 2 step 4: subscriber sends PUBCOMP - delivery
                  * complete */
                 break;
+        #endif /* WOLFMQTT_MAX_QOS >= 2 */
             case MQTT_PACKET_TYPE_SUBSCRIBE:
             {
                 int s_rc = BrokerHandle_Subscribe(bc, rc, broker);
