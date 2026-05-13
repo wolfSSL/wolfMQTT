@@ -158,6 +158,50 @@
          (BROKER_TX_BUF_SZ / BROKER_DEFAULT_AVG_MSG_SZ))
 #endif
 
+/* Persistent storage caps (only meaningful with WOLFMQTT_BROKER_PERSIST).
+ *
+ * BROKER_MAX_PERSIST_SESSIONS bounds the number of disconnected
+ * persistent sessions kept across broker restart.
+ * BROKER_MAX_OFFLINE_MSGS_PER_SUB bounds the per-session offline queue
+ * depth; overflow drops the oldest message (FIFO eviction). */
+#ifndef BROKER_MAX_PERSIST_SESSIONS
+    #define BROKER_MAX_PERSIST_SESSIONS  64
+#endif
+#ifndef BROKER_MAX_OFFLINE_MSGS_PER_SUB
+    #define BROKER_MAX_OFFLINE_MSGS_PER_SUB 32
+#endif
+
+/* Schema version stamped on every persisted record. Bump when the
+ * encoding of any namespace changes incompatibly; a startup with stored
+ * records carrying a different version logs a warning, wipes all
+ * persisted state, and starts clean (per plan: wipe-and-restart). */
+#ifndef WOLFMQTT_BROKER_PERSIST_SCHEMA_VER
+    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 1
+#endif
+
+/* Magic bytes prefixing every persisted record so a stray file in the
+ * backend directory cannot be misinterpreted as broker state. */
+#define WOLFMQTT_BROKER_PERSIST_MAGIC0  'W'
+#define WOLFMQTT_BROKER_PERSIST_MAGIC1  'M'
+#define WOLFMQTT_BROKER_PERSIST_MAGIC2  'Q'
+#define WOLFMQTT_BROKER_PERSIST_MAGIC3  'B'
+
+/* Default storage directory for the POSIX backend. Application can pass
+ * a different path at MqttBrokerNet_PersistPosix_Init time. */
+#ifndef BROKER_PERSIST_DIR_DEFAULT
+    #define BROKER_PERSIST_DIR_DEFAULT  "/var/lib/wolfmqtt"
+#endif
+
+/* Persistence namespaces. One per logical record type. The backend
+ * is free to map each namespace to a separate directory, table,
+ * keyspace, or sub-region; the broker just passes the namespace byte
+ * verbatim. Values are stable across schema versions. */
+#define BROKER_PERSIST_NS_META      1   /* schema version, broker meta */
+#define BROKER_PERSIST_NS_SESSION   2   /* per-client_id session record */
+#define BROKER_PERSIST_NS_SUBS      3   /* per-client_id subscription list */
+#define BROKER_PERSIST_NS_RETAINED  4   /* per-topic retained message */
+#define BROKER_PERSIST_NS_OUTQ      5   /* per-client_id outbound queue + inflight */
+
 /* -------------------------------------------------------------------------- */
 /* Feature toggles (opt-out: define WOLFMQTT_BROKER_NO_xxx to disable)        */
 /* -------------------------------------------------------------------------- */
@@ -206,6 +250,69 @@ typedef struct MqttBrokerNet {
     MqttBrokerNet_CloseCb   close;
     void*                   ctx;
 } MqttBrokerNet;
+
+/* -------------------------------------------------------------------------- */
+/* Persistent storage hooks                                                    */
+/* -------------------------------------------------------------------------- */
+#ifdef WOLFMQTT_BROKER_PERSIST
+/* The persistence layer is intentionally hook-based so the broker can run
+ * on top of POSIX files, embedded flash, an external KV store, or an
+ * in-RAM stub used by tests. Each hook returns 0 on success or a negative
+ * error code (broker logs and skips persist for that record - the
+ * in-memory state is still authoritative).
+ *
+ * Both a key/value API and a streaming API are provided. The broker will
+ * use whichever family the registered hook implements; any individual
+ * hook pointer may be NULL when not supported. At minimum kv_put / kv_get
+ * / kv_iter must be installed for sessions / subs / retained / outq to
+ * round-trip; the streaming API is offered for backends that prefer an
+ * append-only log (e.g., raw NOR flash). */
+
+/* Iterator callback supplied by the broker to kv_iter. Return 0 to
+ * continue, non-zero to stop iteration early. */
+typedef int (*MqttBrokerPersist_IterCb)(const byte* key, word16 key_len,
+    const byte* blob, word32 blob_len, void* cb_ctx);
+
+/* Stream open mode. */
+#define BROKER_PERSIST_STREAM_READ    1
+#define BROKER_PERSIST_STREAM_WRITE   2
+#define BROKER_PERSIST_STREAM_APPEND  3
+
+typedef struct MqttBrokerPersistHooks {
+    /* Key/value blob API. key bytes are opaque to the backend; len is
+     * always <= 256 in current use (a client_id or topic). */
+    int (*kv_put)(void* ctx, byte ns, const byte* key, word16 key_len,
+                  const byte* blob, word32 blob_len);
+    int (*kv_get)(void* ctx, byte ns, const byte* key, word16 key_len,
+                  byte* out, word32* inout_len);
+    int (*kv_del)(void* ctx, byte ns, const byte* key, word16 key_len);
+    int (*kv_iter)(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
+                   void* cb_ctx);
+
+    /* Streaming API. handle is opaque; broker passes through. */
+    int (*stream_open)(void* ctx, byte ns, const byte* key, word16 key_len,
+                       int mode, void** handle);
+    int (*stream_read)(void* ctx, void* handle, byte* buf, word32 len,
+                       word32* out_len);
+    int (*stream_write)(void* ctx, void* handle, const byte* buf,
+                        word32 len);
+    int (*stream_close)(void* ctx, void* handle);
+
+    /* Force all pending writes to durable storage. Called after every
+     * shadow-write commit per plan's "fsync after each commit" choice. */
+    int (*sync)(void* ctx);
+
+    /* Encryption-at-rest key derivation. Called once at broker init when
+     * WOLFMQTT_BROKER_PERSIST_ENCRYPT is enabled. Must fill 32 bytes
+     * (AES-256) into out_key. */
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    int (*derive_key)(void* ctx, byte* out_key, word32 key_len);
+#endif
+
+    /* Backend context pointer passed back into every callback. */
+    void* ctx;
+} MqttBrokerPersistHooks;
+#endif /* WOLFMQTT_BROKER_PERSIST */
 
 /* -------------------------------------------------------------------------- */
 /* WebSocket per-client context                                                */
@@ -491,6 +598,12 @@ typedef struct MqttBroker {
     const char *ws_tls_key;
     const char *ws_tls_ca;
 #endif
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Pointer (not embedded struct) so the broker stays small when no
+     * application installs hooks. NULL means "in-memory only", which is
+     * the same behavior as a build without WOLFMQTT_BROKER_PERSIST. */
+    const MqttBrokerPersistHooks* persist;
+#endif
 } MqttBroker;
 
 /* -------------------------------------------------------------------------- */
@@ -528,6 +641,69 @@ WOLFMQTT_API int MqttBrokerNet_wolfIP_Init(MqttBrokerNet* net,
 #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
 WOLFMQTT_API int MqttBrokerNet_Init(MqttBrokerNet* net);
 #endif
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+/* Install persistence hooks on the broker. Must be called before
+ * MqttBroker_Start. Passing NULL clears any previously installed hooks
+ * (reverts to in-memory-only behavior). The MqttBrokerPersistHooks
+ * struct must outlive the broker. */
+WOLFMQTT_API int MqttBroker_SetPersistHooks(MqttBroker* broker,
+    const MqttBrokerPersistHooks* hooks);
+
+/* Initialize the default POSIX file-based persistence backend. Stores
+ * each record as a file under dir (defaults to BROKER_PERSIST_DIR_DEFAULT
+ * when dir is NULL). fsync's every commit. Caller is responsible for
+ * keeping the hooks struct alive while the broker runs. */
+WOLFMQTT_API int MqttBrokerNet_PersistPosix_Init(
+    MqttBrokerPersistHooks* hooks, const char* dir);
+
+/* Tear down the POSIX backend - releases the directory descriptor and
+ * any per-handle state. Does not delete persisted files. */
+WOLFMQTT_API void MqttBrokerNet_PersistPosix_Free(
+    MqttBrokerPersistHooks* hooks);
+
+/* -------------------------------------------------------------------------- */
+/* Internal shadow-write helpers (linked from mqtt_broker.c into the
+ * mqtt_broker binary). All are no-ops when broker->persist is NULL so
+ * call sites do not need to guard. WOLFMQTT_LOCAL keeps them out of
+ * the public shared-library ABI. The encoders use a heap-allocated
+ * scratch buffer sized to the record - too large to live on the
+ * select-loop stack and bursty enough that a per-call alloc is the
+ * least surprising approach. Backends can themselves choose how to
+ * persist or fsync. Forward-compat is via WOLFMQTT_BROKER_PERSIST_SCHEMA_VER. */
+struct BrokerClient;
+struct BrokerSub;
+struct BrokerRetainedMsg;
+struct BrokerOutPub;
+
+WOLFMQTT_LOCAL int BrokerPersist_PutSession(MqttBroker* broker,
+    const struct BrokerClient* bc);
+WOLFMQTT_LOCAL int BrokerPersist_DelSession(MqttBroker* broker,
+    const char* client_id);
+
+WOLFMQTT_LOCAL int BrokerPersist_PutSubs(MqttBroker* broker,
+    const char* client_id);
+WOLFMQTT_LOCAL int BrokerPersist_DelSubs(MqttBroker* broker,
+    const char* client_id);
+
+WOLFMQTT_LOCAL int BrokerPersist_PutRetained(MqttBroker* broker,
+    const struct BrokerRetainedMsg* rm);
+WOLFMQTT_LOCAL int BrokerPersist_DelRetained(MqttBroker* broker,
+    const char* topic);
+
+WOLFMQTT_LOCAL int BrokerPersist_PutOutPub(MqttBroker* broker,
+    const char* client_id, const struct BrokerOutPub* e);
+WOLFMQTT_LOCAL int BrokerPersist_DelOutPub(MqttBroker* broker,
+    const char* client_id, word16 packet_id);
+WOLFMQTT_LOCAL int BrokerPersist_DelOutQueue(MqttBroker* broker,
+    const char* client_id);
+
+/* Startup-time restore: iterate persisted records and rebuild the
+ * in-memory tables. Called from MqttBroker_Init when hooks are
+ * installed. Wipes everything and re-stamps the META namespace if
+ * the persisted schema version doesn't match. */
+WOLFMQTT_LOCAL int BrokerPersist_Restore(MqttBroker* broker);
+#endif /* WOLFMQTT_BROKER_PERSIST */
 
 /* CLI wrapper interface */
 WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);

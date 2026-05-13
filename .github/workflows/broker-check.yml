@@ -72,6 +72,12 @@ jobs:
           - name: "Broker v5 static memory"
             cflags: "-DWOLFMQTT_STATIC_MEMORY"
             wolfmqtt_opts: "--enable-broker --enable-v5"
+          - name: "Broker with persist"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist"
+          - name: "Broker with persist + TLS"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --enable-tls"
 
     steps:
     - name: Install dependencies

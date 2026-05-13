@@ -2059,6 +2059,16 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
         cur = next;
     }
 #endif
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Clean-session disconnect drops the persistent record. For
+     * non-clean disconnects the broker uses BrokerSubs_OrphanClient
+     * instead (subs stay in memory, persist record stays intact). */
+    if (bc != NULL && BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_DelSubs(broker, bc->client_id);
+        (void)BrokerPersist_DelSession(broker, bc->client_id);
+    }
+#endif
 }
 
 static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
@@ -2536,6 +2546,9 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         WBLOG_DBG(broker, "broker: retained store topic=%s len=%u qos=%d "
             "expiry=%u",
             topic, (unsigned)payload_len, (int)qos, (unsigned)expiry_sec);
+#ifdef WOLFMQTT_BROKER_PERSIST
+        (void)BrokerPersist_PutRetained(broker, msg);
+#endif
     }
     return rc;
 }
@@ -2548,6 +2561,7 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
     BrokerRetainedMsg* cur;
     BrokerRetainedMsg* prev = NULL;
 #endif
+    int found = 0;
 
     if (broker == NULL || topic == NULL) {
         return;
@@ -2558,7 +2572,8 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
             XSTRCMP(broker->retained[i].topic, topic) == 0) {
             WBLOG_DBG(broker, "broker: retained delete topic=%s", topic);
             XMEMSET(&broker->retained[i], 0, sizeof(BrokerRetainedMsg));
-            return;
+            found = 1;
+            break;
         }
     }
 #else
@@ -2578,11 +2593,20 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
                 WOLFMQTT_FREE(cur->payload);
             }
             WOLFMQTT_FREE(cur);
-            return;
+            found = 1;
+            break;
         }
         prev = cur;
         cur = next;
     }
+#endif
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (found) {
+        (void)BrokerPersist_DelRetained(broker, topic);
+    }
+#else
+    (void)found;
 #endif
 }
 
@@ -3889,6 +3913,17 @@ send_connack:
     if (ack.return_code != MQTT_CONNECT_ACK_CODE_ACCEPTED) {
         return 0;
     }
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Successful CONNECT with clean_session=0 -> shadow-write the
+     * session record. Already-persisted sessions get overwritten with
+     * their current protocol_level / client_id, which is harmless. The
+     * persist layer no-ops when no hooks are installed. */
+    if (!bc->clean_session && BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_PutSession(broker, bc);
+    }
+#endif
+
     return rc;
 }
 
@@ -3983,6 +4018,15 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
      * avoid reading past the end of the return_codes array */
     rc = BrokerSend_SubAck(bc, sub.packet_id, return_codes, i);
 
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Shadow-write the full subscription list for this client. Only
+     * meaningful for clean_session=0 sessions; the persist layer no-ops
+     * when no hooks are installed. */
+    if (rc > 0 && !bc->clean_session && BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_PutSubs(broker, bc->client_id);
+    }
+#endif
+
 #ifdef WOLFMQTT_V5
     if (sub.props) {
         (void)MqttProps_Free(sub.props);
@@ -4051,6 +4095,13 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
             (int)bc->sock, ack.packet_id);
         rc = MqttPacket_Write(&bc->client, bc->tx_buf, rc);
     }
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Re-snapshot subs (PutSubs converts count=0 into a DelSubs). */
+    if (rc > 0 && !bc->clean_session && BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_PutSubs(broker, bc->client_id);
+    }
+#endif
 
 #ifdef WOLFMQTT_V5
     if (unsub.props) {
@@ -4985,6 +5036,13 @@ int MqttBroker_Start(MqttBroker* broker)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Restore persisted state (orphan subs, retained messages) before
+     * opening the listen sockets so reconnecting clients see the
+     * resumed session immediately. No-op when no hooks are installed. */
+    (void)BrokerPersist_Restore(broker);
+#endif
+
 #ifdef ENABLE_MQTT_TLS
     /* Initialize TLS context if TLS is enabled */
     if (broker->use_tls) {
@@ -5244,6 +5302,9 @@ static void BrokerUsage(const char* prog)
 #ifdef ENABLE_MQTT_WEBSOCKET
     PRINTF("  -w <port>   WebSocket listen port (enables WebSocket)");
 #endif
+#ifdef WOLFMQTT_BROKER_PERSIST
+    PRINTF("  -D <dir>    Persistent storage directory (enables persistence)");
+#endif
     PRINTF("Features:"
 #ifdef WOLFMQTT_BROKER_RETAINED
            " retained"
@@ -5266,6 +5327,12 @@ static void BrokerUsage(const char* prog)
 #ifdef ENABLE_MQTT_WEBSOCKET
            " websocket"
 #endif
+#ifdef WOLFMQTT_BROKER_PERSIST
+           " persist"
+#endif
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+           " persist-encrypt"
+#endif
            );
 }
 
@@ -5286,6 +5353,11 @@ int wolfmqtt_broker(int argc, char** argv)
     MqttBroker broker;
     MqttBrokerNet net;
     int i;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    MqttBrokerPersistHooks persist_hooks;
+    const char* persist_dir = NULL;
+    int persist_initialized = 0;
+#endif
 
     /* Set stdout to unbuffered for immediate output */
 #ifndef WOLFMQTT_NO_STDIO
@@ -5354,6 +5426,11 @@ int wolfmqtt_broker(int argc, char** argv)
             broker.use_websocket = 1;
         }
 #endif
+#ifdef WOLFMQTT_BROKER_PERSIST
+        else if (XSTRCMP(argv[i], "-D") == 0 && i + 1 < argc) {
+            persist_dir = argv[++i];
+        }
+#endif
         else if (XSTRCMP(argv[i], "-h") == 0) {
             BrokerUsage(argv[0]);
             return 0;
@@ -5363,6 +5440,24 @@ int wolfmqtt_broker(int argc, char** argv)
             return MQTT_CODE_ERROR_BAD_ARG;
         }
     }
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* If -D was passed, enable the default POSIX persistence backend
+     * rooted at that directory. Absent the flag, persist hooks remain
+     * uninstalled and the broker behaves like a build without
+     * WOLFMQTT_BROKER_PERSIST. */
+    if (persist_dir != NULL) {
+        rc = MqttBrokerNet_PersistPosix_Init(&persist_hooks, persist_dir);
+        if (rc != 0) {
+            PRINTF("broker: persist init failed dir=%s rc=%d",
+                persist_dir, rc);
+            return rc;
+        }
+        persist_initialized = 1;
+        (void)MqttBroker_SetPersistHooks(&broker, &persist_hooks);
+        PRINTF("broker: persist enabled dir=%s", persist_dir);
+    }
+#endif
 
 #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET) && \
     !defined(NO_MAIN_DRIVER)
@@ -5394,6 +5489,13 @@ int wolfmqtt_broker(int argc, char** argv)
 #endif
 
     MqttBroker_Free(&broker);
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist_initialized) {
+        MqttBrokerNet_PersistPosix_Free(&persist_hooks);
+    }
+#endif
+
     return rc;
 }
 

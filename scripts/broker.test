@@ -141,12 +141,14 @@ has_will=no
 has_wildcards=no
 has_insecure=no
 has_tls=no
+has_persist=no
 echo "$broker_features" | grep -q "auth" && has_auth=yes
 echo "$broker_features" | grep -q "retained" && has_retained=yes
 echo "$broker_features" | grep -q " will" && has_will=yes
 echo "$broker_features" | grep -q "wildcards" && has_wildcards=yes
 echo "$broker_features" | grep -q "insecure" && has_insecure=yes
 echo "$broker_features" | grep -q "tls" && has_tls=yes
+echo "$broker_features" | grep -q " persist" && has_persist=yes
 
 # Determine if plain (non-TLS) tests can run
 skip_plain=no
@@ -1141,6 +1143,111 @@ else
     FAIL=1
 fi
 fi # skip_plain
+
+# --- Test 27: Persist round-trip across broker restart ---
+# Validates the --enable-broker-persist hooks: starting the broker with
+# -D <dir>, retaining a message, then restarting against the same
+# directory must deliver the retained message to a new subscriber.
+echo ""
+echo "--- Test 27: Persist round-trip across restart ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Persist round-trip (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Persist round-trip (built without --enable-broker-persist)"
+elif [ "$has_retained" = "no" ]; then
+    echo "SKIP: Persist round-trip (retained support not built)"
+else
+T27_DIR="${TMP_DIR}/persist_t27"
+mkdir -p "$T27_DIR"
+# Stop any existing broker started by previous tests.
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t27_broker1.log"
+./$broker_bin -p $port -D "$T27_DIR" >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+# Retain a message
+./$pub_bin -T -h 127.0.0.1 -p $port -n "test/persist_t27" \
+    -m "t27_payload" -r >"${TMP_DIR}/t27_pub.log" 2>&1
+sleep 0.2
+# Stop broker (graceful)
+kill $broker_pid 2>/dev/null
+wait $broker_pid 2>/dev/null || true
+broker_pid=$no_pid
+# Restart against same dir
+broker_log="${TMP_DIR}/t27_broker2.log"
+./$broker_bin -p $port -D "$T27_DIR" >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+# Confirm restore line printed (defense in depth: subscriber confirms anyway)
+T27_RESTORED=no
+grep -q "persist restore retained loaded=1" "$broker_log" 2>/dev/null \
+    && T27_RESTORED=yes
+# New subscriber should receive the retained payload
+rm -f "${TMP_DIR}/t27_sub.ready"
+timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/persist_t27" \
+    -i "t27_sub" -R "${TMP_DIR}/t27_sub.ready" \
+    >"${TMP_DIR}/t27_sub.log" 2>&1 &
+T27_SUB_PID=$!
+TEST_PIDS+=($T27_SUB_PID)
+wait_for_file "${TMP_DIR}/t27_sub.ready" 3
+sleep 0.3
+kill $T27_SUB_PID 2>/dev/null
+wait $T27_SUB_PID 2>/dev/null || true
+TEST_PIDS=()
+T27_GOT=no
+grep -q "t27_payload" "${TMP_DIR}/t27_sub.log" 2>/dev/null && T27_GOT=yes
+if [ "$T27_GOT" = "yes" ] && [ "$T27_RESTORED" = "yes" ]; then
+    echo "PASS: Persist round-trip (restored=$T27_RESTORED delivered=$T27_GOT)"
+else
+    echo "FAIL: Persist round-trip (restored=$T27_RESTORED delivered=$T27_GOT)"
+    FAIL=1
+fi
+fi # has_persist + has_retained
+
+# --- Test 28: Persist schema-mismatch wipe-and-restart ---
+# Corrupt a persisted record by stomping its schema_ver bytes. The
+# broker must log "schema mismatch", overwrite META, and start cleanly.
+echo ""
+echo "--- Test 28: Persist schema mismatch ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Persist schema mismatch (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Persist schema mismatch (built without --enable-broker-persist)"
+else
+T28_DIR="${TMP_DIR}/persist_t28"
+mkdir -p "$T28_DIR/1"
+# Write a fake META file with a bogus schema version. Magic "WMQB",
+# then schema_ver = 0xFFFF (big endian), rec_kind = 1, body_len = 4,
+# body = some bytes.
+printf 'WMQB\xff\xff\x00\x01\x00\x00\x00\x04zzzz' > "$T28_DIR/1/00.bin"
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t28_broker.log"
+./$broker_bin -p $port -D "$T28_DIR" >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+T28_WIPED=no
+grep -q "schema mismatch" "$broker_log" 2>/dev/null && T28_WIPED=yes
+# Broker should still be functional - run a basic pub/sub against it.
+./$client_bin -T -h 127.0.0.1 -p $port -n "test/persist_t28" -C 3000 \
+    >"${TMP_DIR}/t28_client.log" 2>&1
+T28_CLIENT_RC=$?
+if [ "$T28_WIPED" = "yes" ] && [ $T28_CLIENT_RC -eq 0 ]; then
+    echo "PASS: Persist schema mismatch (wiped=$T28_WIPED rc=$T28_CLIENT_RC)"
+else
+    echo "FAIL: Persist schema mismatch (wiped=$T28_WIPED rc=$T28_CLIENT_RC)"
+    FAIL=1
+fi
+fi # has_persist
 
 # --- WebSocket Tests ---
 ws_client_bin="examples/websocket/websocket_client"

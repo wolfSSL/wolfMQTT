@@ -498,6 +498,35 @@ then
 AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_NO_INSECURE"
 fi
 
+# Broker persistent storage (sessions, subs, retained, offline queue).
+# Opt-in; off by default. Adds the hook-based persistence layer plus a
+# default POSIX backend.
+AC_ARG_ENABLE([broker-persist],
+[AS_HELP_STRING([--enable-broker-persist],[Enable broker persistent storage via callback hooks (default: disabled)])],
+[ ENABLED_BROKER_PERSIST=$enableval ],
+[ ENABLED_BROKER_PERSIST=no ]
+)
+if test "x$ENABLED_BROKER_PERSIST" = "xyes"
+then
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_PERSIST"
+fi
+
+# Optional encryption-at-rest for persisted records using wolfCrypt AES-GCM.
+# Requires --enable-broker-persist; off by default.
+AC_ARG_ENABLE([broker-persist-encrypt],
+[AS_HELP_STRING([--enable-broker-persist-encrypt],[Encrypt persisted records with AES-GCM (default: disabled, requires --enable-broker-persist)])],
+[ ENABLED_BROKER_PERSIST_ENCRYPT=$enableval ],
+[ ENABLED_BROKER_PERSIST_ENCRYPT=no ]
+)
+if test "x$ENABLED_BROKER_PERSIST_ENCRYPT" = "xyes"
+then
+    if test "x$ENABLED_BROKER_PERSIST" != "xyes"
+    then
+        AC_MSG_ERROR([--enable-broker-persist-encrypt requires --enable-broker-persist])
+    fi
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_PERSIST_ENCRYPT"
+fi
+
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])

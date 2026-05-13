@@ -22,7 +22,9 @@ EXTRA_DIST +=
 
 if BUILD_BROKER
 bin_PROGRAMS += src/mqtt_broker
-src_mqtt_broker_SOURCES      = src/mqtt_broker.c
+src_mqtt_broker_SOURCES      = src/mqtt_broker.c \
+                               src/mqtt_broker_persist.c \
+                               src/mqtt_broker_persist_posix.c
 src_mqtt_broker_CFLAGS       = $(AM_CFLAGS)
 src_mqtt_broker_CPPFLAGS     = $(AM_CPPFLAGS)
 src_mqtt_broker_LDFLAGS      = -Lsrc
