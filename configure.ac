@@ -323,6 +323,26 @@ then
     AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_DISCONNECT_CB"
 fi
 
+# Maximum QoS supported (compile-time cap for both client and broker).
+# Values: 0, 1, 2. Default 2 (full QoS support). Capping at 1 (or 0)
+# compiles out the broker's QoS 2 state machine and the client's initial
+# max_qos clamp, saves ~2.5 KB of broker .text, and makes the broker
+# advertise the v5 MQTT_PROP_MAX_QOS property in CONNACK.
+AC_ARG_ENABLE([max-qos],
+    [AS_HELP_STRING([--enable-max-qos@<:@=0|1|2@:>@],
+        [Maximum QoS supported by client and broker (default: 2)])],
+    [ ENABLED_MAX_QOS=$enableval ],
+    [ ENABLED_MAX_QOS=2 ]
+    )
+case "x$ENABLED_MAX_QOS" in
+    "x0"|"x1"|"x2")
+        AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_MAX_QOS=$ENABLED_MAX_QOS"
+        ;;
+    *)
+        AC_MSG_ERROR([--enable-max-qos must be 0, 1, or 2 (got: $ENABLED_MAX_QOS)])
+        ;;
+esac
+
 # Multithread support
 AC_ARG_ENABLE([mt],
     [AS_HELP_STRING([--enable-mt],[Enable multiple thread support (default: disabled)])],
@@ -611,6 +631,7 @@ echo "   * Linker Flags:              $LDFLAGS"
 echo "   * LIB Flags:                 $LIB"
 
 echo "   * Disconnect Callback:       $ENABLED_DISCB"
+echo "   * Maximum QoS:               $ENABLED_MAX_QOS"
 echo "   * Error Strings:             $ENABLED_ERROR_STRINGS"
 echo "   * Enable MQTT-SN:            $ENABLED_SN"
 echo "   * Enable MQTT v5.0:          $ENABLED_MQTTV50"

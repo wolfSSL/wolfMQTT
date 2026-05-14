@@ -136,6 +136,19 @@ endif()
 add_option(WOLFMQTT_DISCB
            "Enable disconnect callback"
            "yes" "yes;no")
+
+# Maximum QoS supported (compile-time cap for both client and broker).
+# Default 2 = full QoS support. 1 or 0 compiles out the broker's QoS 2
+# state machine and the client's initial max_qos clamp, and causes the
+# broker to advertise v5 MQTT_PROP_MAX_QOS in CONNACK.
+set(WOLFMQTT_MAX_QOS "2" CACHE STRING
+    "Maximum QoS supported by client and broker (0, 1, or 2)")
+set_property(CACHE WOLFMQTT_MAX_QOS PROPERTY STRINGS "0;1;2")
+if (NOT WOLFMQTT_MAX_QOS MATCHES "^[012]$")
+    message(SEND_ERROR
+        "WOLFMQTT_MAX_QOS must be 0, 1, or 2 (got: ${WOLFMQTT_MAX_QOS})")
+endif()
+list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_MAX_QOS=${WOLFMQTT_MAX_QOS}")
 if (WOLFMQTT_DISCB)
     list(APPEND WOLFMQTT_DEFINITIONS "-DWOLFMQTT_DISCONNECT_CB")
 endif()
