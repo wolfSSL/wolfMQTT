@@ -47,6 +47,22 @@ jobs:
             wolfmqtt_opts: "--enable-broker --enable-tls --enable-websocket"
             extra_deps: "libwebsockets-dev"
             wolfssl_opts: "--enable-opensslcoexist --enable-enckeys"
+          # Maximum-QoS matrix. WOLFMQTT_MAX_QOS=2 is the default and runs
+          # the full broker.test. =1 and =0 caps compile out the QoS 2
+          # state machine; broker.test exercises QoS 2 pub/sub (tests 3
+          # and 11) which is intentionally rejected on capped builds, so
+          # those entries are build-only.
+          - name: "Broker MAX_QOS=2 (default, full QoS)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=2"
+          - name: "Broker MAX_QOS=1 (build only)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=1"
+            skip_broker_test: "yes"
+          - name: "Broker MAX_QOS=0 (build only)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=0"
+            skip_broker_test: "yes"
 
     steps:
     - name: Install dependencies
@@ -82,6 +98,7 @@ jobs:
       run: make
 
     - name: "Run broker tests (${{ matrix.name }})"
+      if: matrix.skip_broker_test != 'yes'
       run: ./scripts/broker.test
 
     - name: Show logs on failure

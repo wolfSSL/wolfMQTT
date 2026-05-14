@@ -11,6 +11,22 @@ jobs:
 
     runs-on: ubuntu-22.04
 
+    strategy:
+      fail-fast: false
+      matrix:
+        # Smoke-build the CMake project under each WOLFMQTT_MAX_QOS value
+        # to keep the build-option plumbing exercised. "" means leave the
+        # cache value at its 2 default.
+        include:
+          - name: "CMake default (MAX_QOS unset)"
+            cmake_opts: ""
+          - name: "CMake MAX_QOS=2"
+            cmake_opts: "-DWOLFMQTT_V5=yes -DWOLFMQTT_BROKER=yes -DWOLFMQTT_MAX_QOS=2"
+          - name: "CMake MAX_QOS=1"
+            cmake_opts: "-DWOLFMQTT_V5=yes -DWOLFMQTT_BROKER=yes -DWOLFMQTT_MAX_QOS=1"
+          - name: "CMake MAX_QOS=0"
+            cmake_opts: "-DWOLFMQTT_V5=yes -DWOLFMQTT_BROKER=yes -DWOLFMQTT_MAX_QOS=0"
+
     steps:
 # Install cmake
     - name: Install cmake
@@ -36,9 +52,9 @@ jobs:
     - uses: actions/checkout@master
 
 #build wolfMQTT
-    - name: Build wolfMQTT
+    - name: "Build wolfMQTT (${{ matrix.name }})"
       run: |
         mkdir build
         cd build
-        cmake ..
+        cmake ${{ matrix.cmake_opts }} ..
         cmake --build .
