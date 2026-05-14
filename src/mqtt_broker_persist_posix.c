@@ -202,25 +202,39 @@ static int wmqb_posix_put(void* ctx, byte ns, const byte* key,
     if (rc != 0) {
         return rc;
     }
-    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", final_path) <= 0) {
-        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+    {
+        /* snprintf returns negative on encoding error, or a non-negative
+         * value that may be >= size on truncation. Treat both as
+         * failure - a truncated tmp_path would rename(2) to a
+         * different file than we intended. Pattern matches
+         * wmqb_rec_path. */
+        int n = snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", final_path);
+        if (n < 0 || (size_t)n >= sizeof(tmp_path)) {
+            return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        }
     }
 
     fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (fd < 0) {
         return MQTT_CODE_ERROR_SYSTEM;
     }
-    while (written < blob_len) {
-        w = write(fd, blob + written, blob_len - written);
-        if (w < 0) {
-            if (errno == EINTR) {
-                continue;
+    {
+        /* Bounded EINTR retry. A signal storm should not cause an
+         * unbounded spin; bail with SYSTEM after 16 EINTRs so the
+         * caller can decide what to do. */
+        int eintr_count = 0;
+        while (written < blob_len) {
+            w = write(fd, blob + written, blob_len - written);
+            if (w < 0) {
+                if (errno == EINTR && eintr_count++ < 16) {
+                    continue;
+                }
+                (void)close(fd);
+                (void)unlink(tmp_path);
+                return MQTT_CODE_ERROR_SYSTEM;
             }
-            (void)close(fd);
-            (void)unlink(tmp_path);
-            return MQTT_CODE_ERROR_SYSTEM;
+            written += (word32)w;
         }
-        written += (word32)w;
     }
     if (fsync(fd) < 0) {
         (void)close(fd);
@@ -266,19 +280,22 @@ static int wmqb_posix_get(void* ctx, byte ns, const byte* key,
         }
         return MQTT_CODE_ERROR_SYSTEM;
     }
-    while (read_total < cap) {
-        r = read(fd, out + read_total, cap - read_total);
-        if (r == 0) {
-            break;
-        }
-        if (r < 0) {
-            if (errno == EINTR) {
-                continue;
+    {
+        int eintr_count = 0;
+        while (read_total < cap) {
+            r = read(fd, out + read_total, cap - read_total);
+            if (r == 0) {
+                break;
             }
-            (void)close(fd);
-            return MQTT_CODE_ERROR_SYSTEM;
+            if (r < 0) {
+                if (errno == EINTR && eintr_count++ < 16) {
+                    continue;
+                }
+                (void)close(fd);
+                return MQTT_CODE_ERROR_SYSTEM;
+            }
+            read_total += (word32)r;
         }
-        read_total += (word32)r;
     }
     (void)close(fd);
     *inout_len = read_total;
@@ -370,9 +387,12 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         if (kn < 0) {
             continue;
         }
-        if (snprintf(rec_path, sizeof(rec_path), "%s/%s", ns_path,
-                ent->d_name) <= 0) {
-            continue;
+        {
+            int n = snprintf(rec_path, sizeof(rec_path), "%s/%s", ns_path,
+                    ent->d_name);
+            if (n < 0 || (size_t)n >= sizeof(rec_path)) {
+                continue;
+            }
         }
         if (stat(rec_path, &st) < 0) {
             continue;
@@ -393,18 +413,21 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
             continue;
         }
         read_total = 0;
-        while (read_total < blob_cap) {
-            r = read(fd, blob + read_total, blob_cap - read_total);
-            if (r == 0) {
-                break;
-            }
-            if (r < 0) {
-                if (errno == EINTR) {
-                    continue;
+        {
+            int eintr_count = 0;
+            while (read_total < blob_cap) {
+                r = read(fd, blob + read_total, blob_cap - read_total);
+                if (r == 0) {
+                    break;
                 }
-                break;
+                if (r < 0) {
+                    if (errno == EINTR && eintr_count++ < 16) {
+                        continue;
+                    }
+                    break;
+                }
+                read_total += (word32)r;
             }
-            read_total += (word32)r;
         }
         (void)close(fd);
         if (read_total != blob_cap) {

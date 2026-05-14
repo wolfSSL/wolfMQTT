@@ -508,6 +508,10 @@ AC_ARG_ENABLE([broker-persist],
 )
 if test "x$ENABLED_BROKER_PERSIST" = "xyes"
 then
+    if test "x$ENABLED_BROKER" != "xyes"
+    then
+        AC_MSG_ERROR([--enable-broker-persist requires --enable-broker])
+    fi
 AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_PERSIST"
 fi
 

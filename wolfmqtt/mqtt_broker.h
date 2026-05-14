@@ -176,8 +176,16 @@
  * records carrying a different version logs a warning, wipes all
  * persisted state, and starts clean (per plan: wipe-and-restart). */
 #ifndef WOLFMQTT_BROKER_PERSIST_SCHEMA_VER
-    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 1
+    /* Bumped from 1 -> 2 when the header layout split a dedicated
+     * wrap_mode byte out of the schema-version field. Any existing
+     * dev directory written by an older build mismatches and is
+     * wiped via the schema-mismatch path on first restart. */
+    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 2
 #endif
+
+/* Header wrap_mode byte values (record body framing on disk). */
+#define WOLFMQTT_BROKER_PERSIST_WRAP_PLAIN    0
+#define WOLFMQTT_BROKER_PERSIST_WRAP_AES_GCM  1
 
 /* Magic bytes prefixing every persisted record so a stray file in the
  * backend directory cannot be misinterpreted as broker state. */
@@ -384,6 +392,12 @@ typedef struct BrokerOutPub {
     word16  packet_id;      /* 0 for QoS 0 */
     byte    retain;
     byte    state;          /* BROKER_OUTQ_* */
+    /* On session resumption, BrokerOrphan_Reclaim resets any entry
+     * that was previously PUBLISH_SENT back to QUEUED and sets
+     * retransmit_dup=1. The drain encodes the PUBLISH with
+     * MqttPublish.duplicate=1 on first re-send, as required by
+     * MQTT-4.4.0-1, then clears the flag. */
+    byte    retransmit_dup; /* 0 or 1 */
     WOLFMQTT_BROKER_TIME_T enq_time;
     word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
     byte    protocol_level; /* echoed back to subscriber on send */
@@ -630,6 +644,14 @@ typedef struct MqttBroker {
      * application installs hooks. NULL means "in-memory only", which is
      * the same behavior as a build without WOLFMQTT_BROKER_PERSIST. */
     const MqttBrokerPersistHooks* persist;
+    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    /* AES-256 key cache for at-rest encryption. Populated by the first
+     * encrypt/decrypt call via derive_key(); zeroed (ForceZero) on
+     * MqttBroker_Free. Per-broker so multiple broker instances in one
+     * process don't share key material. */
+    byte persist_key_cache[32];
+    byte persist_key_loaded; /* 0 or 1 */
+    #endif
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     /* Linked list of disconnected persistent sessions. Each entry holds
@@ -741,6 +763,16 @@ WOLFMQTT_LOCAL int BrokerPersist_DelOutQueue(MqttBroker* broker,
  * the persisted schema version doesn't match. */
 WOLFMQTT_LOCAL int BrokerPersist_Restore(MqttBroker* broker);
 #endif /* WOLFMQTT_BROKER_PERSIST */
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Full orphan teardown: delete persisted records (no-op without
+ * WOLFMQTT_BROKER_PERSIST), drop any orphan-bound subs
+ * (sub->client == NULL with matching client_id) from broker->subs,
+ * unlink and free the orphan slot. Used by both eviction (cap reached)
+ * and restore-time expiry sweep so the two paths can't drift. */
+WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
+    BrokerOrphanSession* o);
+#endif
 
 /* CLI wrapper interface */
 WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);
