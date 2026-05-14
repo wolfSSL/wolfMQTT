@@ -24,8 +24,8 @@
     #include <config.h>
 #endif
 
-#include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_broker.h"
+#include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_packet.h"
 #include "wolfmqtt/mqtt_socket.h"

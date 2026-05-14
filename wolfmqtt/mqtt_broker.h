@@ -22,6 +22,13 @@
 #ifndef WOLFMQTT_BROKER_H
 #define WOLFMQTT_BROKER_H
 
+/* Windows uses the vs_settings.h file included via mqtt_types.h */
+#if !defined(WOLFMQTT_USER_SETTINGS) && \
+    !defined(_WIN32) && !defined(USE_WINDOWS_API)
+    /* If options.h is missing use the "./configure" script. Otherwise, copy
+     * the template "wolfmqtt/options.h.in" into "wolfmqtt/options.h" */
+    #include <wolfmqtt/options.h>
+#endif
 #include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_socket.h"
 #include "wolfmqtt/mqtt_client.h"
