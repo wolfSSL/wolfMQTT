@@ -108,7 +108,10 @@ start_broker() {
             tls_args="-s $port"
         fi
         broker_log="${TMP_DIR}/broker_p${port}.log"
-        ./$broker_bin "$@" -p $port $tls_args >"$broker_log" 2>&1 &
+        # -v 3 = DEBUG; emits PUBLISH/PUBACK/drain events so the
+        # preserved broker_p<port>.log makes broker-side failures
+        # actually diagnosable in CI.
+        ./$broker_bin "$@" -v 3 -p $port $tls_args >"$broker_log" 2>&1 &
         broker_pid=$!
         if check_broker; then
             return 0
@@ -136,7 +139,7 @@ start_broker_dual() {
     port_tls=$port
     port=$plain_port
     broker_log="${TMP_DIR}/broker_dual_p${port}_t${port_tls}.log"
-    ./$broker_bin "$@" -p $port -s $port_tls >"$broker_log" 2>&1 &
+    ./$broker_bin "$@" -v 3 -p $port -s $port_tls >"$broker_log" 2>&1 &
     broker_pid=$!
     check_broker $port
     check_broker $port_tls
@@ -1135,27 +1138,45 @@ else
 start_broker
 T26_N=20
 rm -f "${TMP_DIR}/t26_sub.ready"
-timeout 15 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
-    -i "t26_sub" -C $T26_N -R "${TMP_DIR}/t26_sub.ready" \
+# Notes on subscriber flags:
+#   -C 5000   command timeout per wait, in milliseconds. NOT a message
+#             count - mqtt-sub uses -C as cmd_timeout_ms (mqttexample.c
+#             case 'C'). Earlier revisions of this test mistakenly
+#             passed -C $T26_N (=20), giving a 20 ms timeout that on
+#             nonblock builds (--enable-all enables WOLFMQTT_NONBLOCK)
+#             tripped MqttClient_Unsubscribe / Ping_ex before any
+#             output flushed, especially on macOS arm64.
+#   -k 300    keep-alive seconds; bumped above worst-case test duration
+#             so the client-side keep-alive does not fire mid-burst on
+#             slow CI runners. Inbound PUBLISH traffic does not reset
+#             the client keep-alive timer.
+# Subscriber stays alive until the test kills it after the publishers
+# finish; that pattern is below.
+timeout 30 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
+    -i "t26_sub" -C 5000 -k 300 -R "${TMP_DIR}/t26_sub.ready" \
     >"${TMP_DIR}/t26_sub.log" 2>&1 &
 T26_SUB_PID=$!
 TEST_PIDS+=($T26_SUB_PID)
-wait_for_file "${TMP_DIR}/t26_sub.ready" 5
+wait_for_file "${TMP_DIR}/t26_sub.ready" 10
 # Publish T26_N sequentially numbered QoS 1 messages
 for t26_i in $(seq 1 $T26_N); do
     ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
         -m "burst_${t26_i}" -i "t26_pub_${t26_i}" \
         >>"${TMP_DIR}/t26_pub.log" 2>&1
 done
-# Give the subscriber a moment to drain.
-sleep 1
+# mqtt-sub has no "exit after N messages" mode, so it never exits on
+# its own. Give the broker a grace window to fan out all 20 messages
+# (each publisher is a separate connect/pub/disconnect; the broker's
+# outbound drain may lag the last publish a bit on slow CI), then kill
+# the subscriber so its log is flushed and we can count what arrived.
+sleep 2
 kill $T26_SUB_PID 2>/dev/null
 wait $T26_SUB_PID 2>/dev/null || true
 TEST_PIDS=()
 # Count how many of the burst_N tokens reached the subscriber and check
 # that they arrived in publish order (1, 2, ..., N).
 T26_RECEIVED=$(grep -oE 'burst_[0-9]+' "${TMP_DIR}/t26_sub.log" 2>/dev/null \
-               | wc -l)
+               | wc -l | tr -d ' ')
 T26_ORDER_OK=yes
 T26_LAST=0
 while read -r tok; do
@@ -1165,11 +1186,18 @@ while read -r tok; do
     fi
     T26_LAST=$n
 done < <(grep -oE 'burst_[0-9]+' "${TMP_DIR}/t26_sub.log" 2>/dev/null)
-if [ "$T26_RECEIVED" = "$T26_N" ] && [ "$T26_ORDER_OK" = "yes" ]; then
+if [ "$T26_RECEIVED" -eq "$T26_N" ] && [ "$T26_ORDER_OK" = "yes" ]; then
     echo "PASS: QoS 1 burst delivery (received=$T26_RECEIVED order=ok)"
 else
     echo "FAIL: Burst delivery (received=$T26_RECEIVED expected=$T26_N " \
          "order=$T26_ORDER_OK)"
+    echo "--- t26 broker_log tail ---"
+    tail -80 "$broker_log" 2>/dev/null || true
+    echo "--- t26_sub.log tail ---"
+    tail -40 "${TMP_DIR}/t26_sub.log" 2>/dev/null || true
+    echo "--- t26_pub.log tail ---"
+    tail -40 "${TMP_DIR}/t26_pub.log" 2>/dev/null || true
+    echo "--- t26 end ---"
     FAIL=1
 fi
 fi # skip_plain
