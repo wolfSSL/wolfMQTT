@@ -603,10 +603,13 @@ if [ "$has_v5" = "yes" ]; then
         >"${TMP_DIR}/t12.log" 2>&1
     T12_RC=$?
 
-    # 12b: Verify CONNACK server properties were received
+    # 12b: Verify CONNACK server properties were received.
+    # Type 37 = Retain Available, Type 40 = Wildcard Subscription Available.
+    # Maximum QoS (Type 36) is intentionally omitted per [MQTT-3.2.2.3.4]
+    # (absence signals QoS 2 support; emitting Max QoS=2 is a Protocol Error).
     T12_PROPS=yes
     grep -q "Property CB: Type 37" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
-    grep -q "Property CB: Type 36" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
+    grep -q "Property CB: Type 40" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
 
     # 12c: v5 pub/sub with separate clients (property forwarding)
     start_broker

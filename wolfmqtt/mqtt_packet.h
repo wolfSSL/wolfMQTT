@@ -196,6 +196,17 @@ typedef enum _MqttQoS {
                        MQTT-SN - QoS -1 allows publish without connection */
 } MqttQoS;
 
+/* Maximum QoS supported by this build. Legal values: 0, 1, 2. Default 2.
+ * Define in user_settings.h to compile a QoS-capped client/broker. Wired
+ * into broker CONNACK Maximum QoS property emission today; broader code
+ * gating lives on the mqtt_qos_max branch. */
+#ifndef WOLFMQTT_MAX_QOS
+    #define WOLFMQTT_MAX_QOS 2
+#endif
+#if (WOLFMQTT_MAX_QOS < 0) || (WOLFMQTT_MAX_QOS > 2)
+    #error "WOLFMQTT_MAX_QOS must be 0, 1, or 2"
+#endif
+
 
 /* Topic */
 typedef struct _MqttTopic {

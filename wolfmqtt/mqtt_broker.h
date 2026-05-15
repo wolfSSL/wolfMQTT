@@ -22,6 +22,13 @@
 #ifndef WOLFMQTT_BROKER_H
 #define WOLFMQTT_BROKER_H
 
+/* Windows uses the vs_settings.h file included via mqtt_types.h */
+#if !defined(WOLFMQTT_USER_SETTINGS) && \
+    !defined(_WIN32) && !defined(USE_WINDOWS_API)
+    /* If options.h is missing use the "./configure" script. Otherwise, copy
+     * the template "wolfmqtt/options.h.in" into "wolfmqtt/options.h" */
+    #include <wolfmqtt/options.h>
+#endif
 #include "wolfmqtt/mqtt_types.h"
 #include "wolfmqtt/mqtt_socket.h"
 #include "wolfmqtt/mqtt_client.h"
@@ -200,13 +207,16 @@ typedef struct BrokerWsCtx {
 /* -------------------------------------------------------------------------- */
 /* Per-client set of QoS 2 packet IDs that have been received and PUBREC'd
  * but not yet PUBREL'd. Used to skip the fan-out for duplicate PUBLISHes
- * per [MQTT-4.3.3] / Method B. */
+ * per [MQTT-4.3.3] / Method B. Gated by WOLFMQTT_MAX_QOS so capped-QoS
+ * broker builds drop the dedup state and PUBREC/PUBREL/PUBCOMP handlers. */
+#if WOLFMQTT_MAX_QOS >= 2
 #ifndef WOLFMQTT_STATIC_MEMORY
 typedef struct BrokerInboundQos2 {
     word16  packet_id;
     struct BrokerInboundQos2* next;
 } BrokerInboundQos2;
 #endif
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* -------------------------------------------------------------------------- */
 /* Broker client tracking                                                      */
@@ -273,13 +283,16 @@ typedef struct BrokerClient {
      * not yet PUBREL'd. A duplicate PUBLISH carrying one of these IDs is
      * acked again (PUBREC) but NOT re-fanned-out to subscribers. The
      * BROKER_MAX_INBOUND_QOS2 cap is enforced in both memory modes; a
-     * client that exceeds it is disconnected with malformed-packet error. */
+     * client that exceeds it is disconnected with malformed-packet error.
+     * Compiled out for capped-QoS builds (WOLFMQTT_MAX_QOS < 2). */
+#if WOLFMQTT_MAX_QOS >= 2
 #ifdef WOLFMQTT_STATIC_MEMORY
     word16  qos2_pending[BROKER_MAX_INBOUND_QOS2]; /* 0 = empty slot */
 #else
     BrokerInboundQos2* qos2_pending;
     int                qos2_pending_count;
 #endif
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
