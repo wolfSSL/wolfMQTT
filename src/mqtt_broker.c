@@ -1625,6 +1625,18 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
             {
                 BrokerOutPub* free_me = cur;
                 cur = cur->next;
+            #ifdef WOLFMQTT_BROKER_PERSIST
+                /* If this entry was previously shadow-written (orphan
+                 * path), drop the disk record now so a future restart
+                 * cannot replay an undeliverable message. Idempotent
+                 * for entries that were never persisted (QoS 0, or
+                 * not-yet-orphaned). */
+                if (free_me->qos > MQTT_QOS_0 &&
+                        BROKER_STR_VALID(bc->client_id)) {
+                    (void)BrokerPersist_DelOutPub(bc->broker,
+                        bc->client_id, free_me->packet_id);
+                }
+            #endif
                 BrokerOutPub_Free(free_me);
             }
             continue;
@@ -1750,9 +1762,20 @@ static void BrokerClient_OnPubAck(BrokerClient* bc, word16 packet_id)
         return;
     }
     BrokerClient_UnlinkOutPub(bc, prev, e);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* Defense in depth: in normal flow the orphan-reclaim path already
+     * wiped this client's disk records, but if the entry was ever
+     * shadow-written (e.g., a previous orphan cycle) make sure the
+     * on-disk record is gone so a crash before the next reclaim cannot
+     * cause duplicate redelivery. Idempotent on a missing key. */
+    if (BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_DelOutPub(bc->broker, bc->client_id, packet_id);
+    }
+#endif
     BrokerClient_DrainOutQueue(bc);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* PUBREC from subscriber - advance the QoS 2 entry to PUBREL_SENT.
  * Returns 1 if a matching entry was found (so the caller knows whether
  * the PUBREL we send is correlated to a real outbound message), 0
@@ -1798,8 +1821,15 @@ static void BrokerClient_OnPubComp(BrokerClient* bc, word16 packet_id)
         return;
     }
     BrokerClient_UnlinkOutPub(bc, prev, e);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* See BrokerClient_OnPubAck: defense-in-depth disk record purge. */
+    if (BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_DelOutPub(bc->broker, bc->client_id, packet_id);
+    }
+#endif
     BrokerClient_DrainOutQueue(bc);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 static void BrokerClient_Free(BrokerClient* bc)
@@ -2299,6 +2329,13 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
                 e->retransmit_dup = 1;
                 retx++;
             }
+            else if (e->state == BROKER_OUTQ_PUBREL_SENT) {
+                /* Still in flight by definition - the prior session
+                 * was awaiting PUBCOMP. Restore the inflight count
+                 * (zeroed above) so the Receive Maximum /
+                 * BROKER_MAX_INFLIGHT_PER_SUB cap stays accurate. */
+                new_bc->out_q_inflight++;
+            }
             e = e->next;
         }
         if (retx > 0) {
@@ -2409,6 +2446,13 @@ static void BrokerOrphan_FreeAll(MqttBroker* broker)
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
+/* Forward declaration; orphan-take-failure rollback in
+ * BrokerSubs_OrphanClient falls back to the clean removal path.
+ * Already declared above when ENABLE_MQTT_WEBSOCKET is set. */
+#ifndef ENABLE_MQTT_WEBSOCKET
+static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc);
+#endif
+
 static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -2418,10 +2462,14 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
 #endif
     int count = 0;
 
+    /* First pass: count matching subs without yet detaching them. We
+     * must not flip cur->client to NULL until we know the orphan
+     * carrier was successfully created - otherwise an allocation
+     * failure inside BrokerOrphan_Take would leave dangling subs in
+     * broker->subs with no carrier and no way to be reclaimed. */
 #ifdef WOLFMQTT_STATIC_MEMORY
     for (i = 0; i < BROKER_MAX_SUBS; i++) {
         if (broker->subs[i].in_use && broker->subs[i].client == bc) {
-            broker->subs[i].client = NULL;
             count++;
         }
     }
@@ -2429,23 +2477,53 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
     cur = broker->subs;
     while (cur) {
         if (cur->client == bc) {
-            cur->client = NULL;
             count++;
         }
         cur = cur->next;
     }
 #endif
-    if (count > 0) {
-        WBLOG_INFO(broker, "broker: orphaned %d subs for client_id=%s (session persist)",
-            count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
-#ifndef WOLFMQTT_STATIC_MEMORY
-        /* Stage a persistent-session record in broker->orphan_sessions.
-         * Carries the out_q ownership across the upcoming
-         * BrokerClient_Free so messages published while disconnected
-         * can still be queued for the eventual reconnect. */
-        (void)BrokerOrphan_Take(broker, bc);
-#endif
+    if (count == 0) {
+        return;
     }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Stage a persistent-session record in broker->orphan_sessions.
+     * Carries the out_q ownership across the upcoming
+     * BrokerClient_Free so messages published while disconnected
+     * can still be queued for the eventual reconnect. If Take fails
+     * (OOM), fall through to clean removal so subs are not left
+     * dangling without a carrier. */
+    if (BrokerOrphan_Take(broker, bc) == NULL) {
+        WBLOG_ERR(broker,
+            "broker: orphan take failed client_id=%s - removing %d subs",
+            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)",
+            count);
+        BrokerSubs_RemoveClient(broker, bc);
+        return;
+    }
+#endif
+
+    /* Second pass: detach. Safe to mutate now - the carrier exists
+     * (dynamic mode) or the broker decided not to persist (static
+     * mode); either way, count > 0 reached this point. */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    for (i = 0; i < BROKER_MAX_SUBS; i++) {
+        if (broker->subs[i].in_use && broker->subs[i].client == bc) {
+            broker->subs[i].client = NULL;
+        }
+    }
+#else
+    cur = broker->subs;
+    while (cur) {
+        if (cur->client == bc) {
+            cur->client = NULL;
+        }
+        cur = cur->next;
+    }
+#endif
+    WBLOG_INFO(broker,
+        "broker: orphaned %d subs for client_id=%s (session persist)",
+        count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
 }
 
 static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
@@ -2491,8 +2569,13 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Clean-session disconnect drops the persistent record. For
      * non-clean disconnects the broker uses BrokerSubs_OrphanClient
-     * instead (subs stay in memory, persist record stays intact). */
-    if (bc != NULL && BROKER_STR_VALID(bc->client_id)) {
+     * instead (subs stay in memory, persist record stays intact).
+     * Guard on bc->clean_session so paths that reach this function
+     * for a clean_session=0 client (takeover, socket-error teardown,
+     * shutdown sweep) do not silently wipe a persistent record that
+     * the orphan path is meant to preserve. */
+    if (bc != NULL && bc->clean_session &&
+            BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_DelSubs(broker, bc->client_id);
         (void)BrokerPersist_DelSession(broker, bc->client_id);
     }
@@ -3918,6 +4001,22 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     bc->keep_alive_sec = mc.keep_alive_sec;
     bc->last_rx = WOLFMQTT_BROKER_GET_TIME_S();
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Default Session Expiry. Set BEFORE the v5 property parse below
+     * so that a v5 client carrying MQTT_PROP_SESSION_EXPIRY_INTERVAL
+     * overrides this default rather than being silently clobbered:
+     *  - v3.1.1 persistent (clean_session=0): 0xFFFFFFFF (server
+     *    policy decides eviction; MQTT 3.1.1 sec 3.1.2.4).
+     *  - clean_session=1 or v5 client without the property: 0
+     *    (expire on disconnect, per MQTT v5 sec 3.1.2.11.2). */
+    if (!mc.clean_session) {
+        bc->session_expiry_sec = 0xFFFFFFFFu;
+    }
+    else {
+        bc->session_expiry_sec = 0;
+    }
+#endif
+
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
     /* [MQTT-3.1.2.11.3] v5 Receive Maximum. If present and non-zero, the
      * client is telling us not to exceed this many outbound QoS 1/2
@@ -3939,8 +4038,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         /* [MQTT-3.1.2.11.2] v5 Session Expiry Interval. If present,
          * carry it onto bc->session_expiry_sec so the disconnect
          * path stamps it into the orphan record. Absent property
-         * means 0 (expire on disconnect) per the spec; the default
-         * we set below already matches that. */
+         * means the default set above stands (0 for clean_session=1,
+         * 0xFFFFFFFF for clean_session=0 to honor v3.1.1 persistence
+         * semantics when a v5 client opts in without the property). */
         {
             MqttProp* se_prop = BrokerProps_Find(mc.props,
                     MQTT_PROP_SESSION_EXPIRY_INTERVAL);
@@ -4012,19 +4112,6 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     /* Client ID uniqueness and clean session handling */
     bc->clean_session = mc.clean_session;
 
-#ifndef WOLFMQTT_STATIC_MEMORY
-    /* Default Session Expiry to "never" for clean_session=0 clients.
-     * v5 clients overwrite this from the Session Expiry Interval
-     * property a few lines below (C3 work). v3.1.1 persistent sessions
-     * use 0xFFFFFFFF per MQTT 3.1.1 sec 3.1.2.4 (no explicit value;
-     * server is free to evict on its own policy). */
-    if (!mc.clean_session) {
-        bc->session_expiry_sec = 0xFFFFFFFFu;
-    }
-    else {
-        bc->session_expiry_sec = 0;
-    }
-#endif
     if (BROKER_STR_VALID(bc->client_id)) {
         BrokerClient* old;
 
@@ -4820,7 +4907,12 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 /* Dynamic mode: enqueue a heap-owned copy on the
                  * subscriber's out_q, then drain. The queue gives us
                  * the inflight cap (#7 ordered delivery) and is the
-                 * substrate for the offline queue in PR2. */
+                 * substrate for the offline queue in PR2. Invariant:
+                 * MqttDecode_Publish above has populated pub.buffer
+                 * with at least pub.total_len contiguous bytes (full
+                 * PUBLISH is fully received and decoded before we
+                 * reach the fan-out); BrokerOutPub_Alloc deep-copies
+                 * pub.total_len from that buffer. */
                 {
                     BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,
                                           pub.total_len);
@@ -5859,6 +5951,10 @@ static void BrokerUsage(const char* prog)
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
            " persist-encrypt"
 #endif
+#if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
+    defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)
+           " persist-encrypt-dev-key"
+#endif
 #ifdef WOLFMQTT_STATIC_MEMORY
            " static-memory"
 #endif
@@ -5877,11 +5973,15 @@ static void broker_signal_handler(int signo)
 #endif
 
 #if defined(WOLFMQTT_BROKER_PERSIST) && \
-    defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
+    defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
+    defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)
 /* Development-only derive_key hook. Returns a fixed 32-byte key so the
  * CLI can exercise the AES-GCM persistence round-trip without external
  * key management. Real deployments override this via
- * MqttBroker_SetPersistHooks before MqttBroker_Start. */
+ * MqttBroker_SetPersistHooks before MqttBroker_Start. Compile-time
+ * gated so the fixed-pattern key generator is not linked into a
+ * production binary (where flipping a runtime flag would otherwise
+ * substitute trivially-recoverable keys for real ones). */
 static int wolfmqtt_broker_dev_derive_key(void* ctx, byte* out_key,
     word32 key_len)
 {
@@ -5909,10 +6009,13 @@ int wolfmqtt_broker(int argc, char** argv)
     MqttBrokerPersistHooks persist_hooks;
     const char* persist_dir = NULL;
     int persist_initialized = 0;
-    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    #if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
+        defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)
     /* Encrypt-key source. NULL = unset (broker refuses to start when
      * encrypt is enabled and persist_dir is given). "dev" = use the
-     * hard-coded dev key for CI/smoke tests. */
+     * hard-coded dev key for CI/smoke tests. Only declared when the
+     * dev-key generator is compiled in - the -E option has no other
+     * recognized value. */
     const char* encrypt_key_source = NULL;
     #endif
 #endif
@@ -5988,13 +6091,16 @@ int wolfmqtt_broker(int argc, char** argv)
         else if (XSTRCMP(argv[i], "-D") == 0 && i + 1 < argc) {
             persist_dir = argv[++i];
         }
-    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    #if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
+        defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)
         else if (XSTRCMP(argv[i], "-E") == 0 && i + 1 < argc) {
             /* Encrypt key source. Only "dev" is recognized: install the
              * hard-coded development key (NOT for production - the key
              * is a fixed pattern in the binary, trivially recoverable).
              * Production embedders should install their own derive_key
-             * hook via MqttBroker_SetPersistHooks and skip this CLI. */
+             * hook via MqttBroker_SetPersistHooks and skip this CLI.
+             * The -E flag and the dev key generator are both compile-
+             * gated by WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY. */
             encrypt_key_source = argv[++i];
         }
     #endif
@@ -6016,6 +6122,7 @@ int wolfmqtt_broker(int argc, char** argv)
      * WOLFMQTT_BROKER_PERSIST. */
     if (persist_dir != NULL) {
     #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+        #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY
         /* This build enables AES-GCM at rest. Refuse to start unless
          * the operator explicitly opted in to a key source. The only
          * built-in option from this CLI is "-E dev" (development key).
@@ -6032,6 +6139,15 @@ int wolfmqtt_broker(int argc, char** argv)
                 "(only \"dev\" is recognized)", encrypt_key_source);
             return MQTT_CODE_ERROR_BAD_ARG;
         }
+        #else
+        /* Encrypt is built in but the development key generator is not.
+         * The CLI cannot install a real derive_key on the operator's
+         * behalf - refuse explicitly so the failure mode is obvious. */
+        PRINTF("broker: ERROR persist+encrypt build has no built-in key "
+            "source (rebuild with --enable-broker-persist-encrypt-dev-key "
+            "for testing, or install MqttBrokerPersistHooks.derive_key)");
+        return MQTT_CODE_ERROR_BAD_ARG;
+        #endif
     #endif
         rc = MqttBrokerNet_PersistPosix_Init(&persist_hooks, persist_dir);
         if (rc != 0) {
@@ -6040,7 +6156,8 @@ int wolfmqtt_broker(int argc, char** argv)
             return rc;
         }
         persist_initialized = 1;
-    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    #if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
+        defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)
         /* Install the development-only derive_key hook. NOT for
          * production - the key is a fixed pattern in the binary and is
          * trivially recoverable by any adversary with read access. The
@@ -6049,8 +6166,11 @@ int wolfmqtt_broker(int argc, char** argv)
     #endif
         (void)MqttBroker_SetPersistHooks(&broker, &persist_hooks);
         PRINTF("broker: persist enabled dir=%s%s", persist_dir,
-        #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+        #if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
+            defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)
             " (encrypted, DEV-KEY: NOT FOR PRODUCTION)"
+        #elif defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
+            " (encrypted)"
         #else
             ""
         #endif

@@ -234,7 +234,14 @@ static int wmqb_get_key(MqttBroker* broker)
  *   header(12) || nonce(12) || ct(body_len) || tag(16)
  * Header is passed unencrypted but is bound as AAD so any tamper of
  * the namespace / body_len fields fails the tag check. Caller must
- * free the returned buffer. */
+ * free the returned buffer.
+ *
+ * TODO(perf): each call here pays a fresh wc_AesInit + wc_AesGcmSetKey
+ * + wc_AesFree cycle. For bursty workloads (every PUBLISH on the orphan
+ * path triggers an encrypt), caching an Aes context on the broker and
+ * rekeying only when persist_key_cache changes would amortize the AES
+ * key schedule. Requires deciding the threading model first - today
+ * the broker is single-threaded so a single shared context is safe. */
 static int wmqb_encrypt_blob(MqttBroker* broker,
     const byte* plain, word32 plain_len, byte** ct_out, word32* ct_out_len)
 {
@@ -298,7 +305,8 @@ static int wmqb_encrypt_blob(MqttBroker* broker,
     return 0;
 }
 
-/* Reverse of wmqb_encrypt_blob. Caller must free the returned plain. */
+/* Reverse of wmqb_encrypt_blob. Caller must free the returned plain.
+ * TODO(perf): see wmqb_encrypt_blob - same per-call key-schedule cost. */
 static int wmqb_decrypt_blob(MqttBroker* broker,
     const byte* ct, word32 ct_len, byte** plain_out, word32* plain_out_len)
 {
@@ -460,12 +468,13 @@ static int wmqb_iter_decrypt(MqttBroker* broker, byte ns,
     return h->kv_iter(h->ctx, ns, wmqb_iter_decrypt_cb, &wrap);
 }
 
-/* Decrypt-on-get for META. The plaintext "header || body" is copied
- * into *out. Currently only META uses this (~44 bytes encrypted) so a
- * 256-byte stack buffer is plenty; any future caller with a larger
- * record must extend this assumption (assert is a runtime version of
- * a static check). */
-static int wmqb_kv_get_decrypt(MqttBroker* broker, byte ns,
+/* Decrypt-on-get for the META record specifically. The 256-byte stack
+ * buffer is sized for META's encrypted layout (12 hdr + 12 nonce + 4
+ * body + 16 tag = 44 bytes). Do NOT promote this to a generic helper -
+ * any namespace with a larger record will quietly fail OUT_OF_BUFFER
+ * (or trip the kv_get backend's own truncation behavior). New callers
+ * should add a sized variant rather than widen this one. */
+static int wmqb_kv_get_decrypt_meta(MqttBroker* broker, byte ns,
     const byte* key, word16 key_len, byte* out, word32* inout_len)
 {
     /* Read encrypted into a temp, decrypt, then copy plaintext into
@@ -1074,18 +1083,30 @@ static int wmqb_meta_check(MqttBroker* broker, int* out_present)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
-    rc = wmqb_kv_get_decrypt(broker, BROKER_PERSIST_NS_META, &meta_key, 1,
-            buf, &cap);
+    rc = wmqb_kv_get_decrypt_meta(broker, BROKER_PERSIST_NS_META,
+            &meta_key, 1, buf, &cap);
 #else
     rc = h->kv_get(h->ctx, BROKER_PERSIST_NS_META, &meta_key, 1, buf, &cap);
 #endif
-    if (rc != 0) {
-        /* Treat any backend error as "no META yet". First run.
-         * Schema-bit mismatch also lands here: an encrypted META read
-         * by a plaintext build (or vice versa) fails decryption /
-         * size check, schema_check returns 0 not-present, and the
-         * caller does wipe-and-restart. */
+    if (rc == MQTT_CODE_ERROR_NOT_FOUND) {
+        /* Genuine "first run" - the META record simply does not exist.
+         * meta_present stays 0; caller stamps a fresh META. */
         return 0;
+    }
+    if (rc == MQTT_CODE_ERROR_OUT_OF_BUFFER) {
+        /* Schema mismatch on the encrypted path: an encrypted META read
+         * by a plaintext build (or vice versa) trips the size / decrypt
+         * check. Surface as MALFORMED_DATA so the caller's wipe-and-
+         * restart branch fires. */
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    if (rc != 0) {
+        /* Real backend failure (I/O error, permission denied, etc.).
+         * Surface to the caller so the broker refuses to start rather
+         * than silently masking the failure as "first run" and
+         * restamping META over state that may still be present once
+         * the backend recovers. */
+        return rc;
     }
     if (cap < WMQB_HDR_LEN + 4) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -1217,7 +1238,9 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     {
         int i;
         BrokerRetainedMsg* slot = NULL;
-        if (topic_len + 1 > BROKER_MAX_TOPIC_LEN) {
+        /* Use >= (not + 1 >) so a malformed topic_len == 0xFFFF on
+         * a word16 cannot wrap to 0 and bypass this check. */
+        if (topic_len >= BROKER_MAX_TOPIC_LEN) {
             return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
         for (i = 0; i < BROKER_MAX_RETAINED; i++) {
@@ -1373,8 +1396,10 @@ static int wmqb_decode_and_insert_subs(MqttBroker* broker,
         {
             BrokerSub* slot = NULL;
             int k;
-            if (flen + 1 > BROKER_MAX_FILTER_LEN ||
-                    key_len + 1 > BROKER_MAX_CLIENT_ID_LEN) {
+            /* >= (not + 1 >) so a malformed flen / key_len == 0xFFFF
+             * on a word16 cannot wrap to 0 and bypass this check. */
+            if (flen >= BROKER_MAX_FILTER_LEN ||
+                    key_len >= BROKER_MAX_CLIENT_ID_LEN) {
                 rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
                 goto rollback;
             }
@@ -1830,6 +1855,11 @@ static int wmqb_wipe_all(MqttBroker* broker)
 #endif
 }
 
+/* Restore is intended to be called exactly once per process (from
+ * MqttBroker_Start). Calling it more than once will re-insert
+ * already-restored subs / retained / OUTQ entries because the splice
+ * paths below do not check for duplicates against current in-memory
+ * state. */
 int BrokerPersist_Restore(MqttBroker* broker)
 {
     const MqttBrokerPersistHooks* h;
@@ -1843,15 +1873,27 @@ int BrokerPersist_Restore(MqttBroker* broker)
     h = broker->persist;
 
     rc = wmqb_meta_check(broker, &meta_present);
-    if (rc != 0) {
+    if (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
+            rc == MQTT_CODE_ERROR_BAD_ARG) {
         /* Schema or magic mismatch. Wipe-and-restart per the chosen
          * policy: iterate every namespace, delete every record,
          * restamp META. New records get written fresh as activity
-         * resumes. */
+         * resumes. (BAD_ARG = header magic / schema version mismatch
+         * from wmqb_read_header; MALFORMED_DATA = decrypt or size
+         * failure from wmqb_kv_get_decrypt_meta.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
         (void)wmqb_wipe_all(broker);
         return wmqb_meta_write(broker);
+    }
+    if (rc != 0) {
+        /* Real backend error (I/O failure, permission denied, etc.).
+         * Refuse to start so the operator sees the failure rather than
+         * proceeding as if persistence were healthy. */
+        WMQB_LOG_ERR(broker,
+            "broker: persist META read failed rc=%d - aborting restore",
+            rc);
+        return rc;
     }
     if (!meta_present) {
         /* First run - no state to restore. Just stamp META. */

@@ -170,16 +170,22 @@ echo "$broker_features" | grep -q " persist" && has_persist=yes
 has_persist_encrypt=no
 echo "$broker_features" | grep -q " persist-encrypt" && \
     has_persist_encrypt=yes
+has_persist_encrypt_dev_key=no
+echo "$broker_features" | grep -q " persist-encrypt-dev-key" && \
+    has_persist_encrypt_dev_key=yes
 has_static_memory=no
 echo "$broker_features" | grep -q " static-memory" && \
     has_static_memory=yes
 
 # Persist-encrypt builds refuse to start without an explicit key source.
 # CLI tests opt into the development key with -E dev (NOT for production
-# - the key is a fixed pattern in the binary). For non-encrypt builds
-# this stays empty so the unknown -E option doesn't trigger usage.
+# - the key is a fixed pattern in the binary, only linked into the
+# binary when --enable-broker-persist-encrypt-dev-key was passed at
+# configure time). For non-encrypt builds and encrypt builds without
+# the dev-key hook this stays empty; the encrypt-CLI tests check the
+# capability flag explicitly and SKIP when missing.
 broker_dir_flags=""
-if [ "$has_persist_encrypt" = "yes" ]; then
+if [ "$has_persist_encrypt_dev_key" = "yes" ]; then
     broker_dir_flags="-E dev"
 fi
 
@@ -1214,6 +1220,9 @@ elif [ "$has_persist" = "no" ]; then
     echo "SKIP: Persist round-trip (built without --enable-broker-persist)"
 elif [ "$has_retained" = "no" ]; then
     echo "SKIP: Persist round-trip (retained support not built)"
+elif [ "$has_persist_encrypt" = "yes" ] && \
+        [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: Persist round-trip (encrypt build without dev-key CLI hook)"
 else
 T27_DIR="${TMP_DIR}/persist_t27"
 mkdir -p "$T27_DIR"
@@ -1259,10 +1268,18 @@ wait $T27_SUB_PID 2>/dev/null || true
 TEST_PIDS=()
 T27_GOT=no
 grep -q "t27_payload" "${TMP_DIR}/t27_sub.log" 2>/dev/null && T27_GOT=yes
+# On encrypt builds broker_dir_flags includes -E dev, so T27 ends up
+# exercising the encrypted-at-rest round-trip too (T31 still adds the
+# specific no-plaintext-on-disk check). Annotate so the log is honest
+# about what was covered.
+T27_MODE="plaintext"
+if [ "$has_persist_encrypt_dev_key" = "yes" ]; then
+    T27_MODE="encrypted via -E dev"
+fi
 if [ "$T27_GOT" = "yes" ] && [ "$T27_RESTORED" = "yes" ]; then
-    echo "PASS: Persist round-trip (restored=$T27_RESTORED delivered=$T27_GOT)"
+    echo "PASS: Persist round-trip ($T27_MODE; restored=$T27_RESTORED delivered=$T27_GOT)"
 else
-    echo "FAIL: Persist round-trip (restored=$T27_RESTORED delivered=$T27_GOT)"
+    echo "FAIL: Persist round-trip ($T27_MODE; restored=$T27_RESTORED delivered=$T27_GOT)"
     FAIL=1
 fi
 fi # has_persist + has_retained
@@ -1291,6 +1308,11 @@ mkdir -p "$T28_DIR/1"
 # Write a fake META file with a bogus schema version. Magic "WMQB",
 # then schema_ver = 0xFFFF (big endian), rec_kind = 1, body_len = 4,
 # body = some bytes.
+# Filename "00.bin" reflects the POSIX backend's key-to-filename
+# encoding: META uses a single 0x00 key byte, which wmqb_hex_encode
+# (in src/mqtt_broker_persist_posix.c) renders as two lowercase hex
+# chars - "00". If that encoding ever changes, update this filename
+# to match.
 printf 'WMQB\xff\xff\x00\x01\x00\x00\x00\x04zzzz' > "$T28_DIR/1/00.bin"
 if [ $broker_pid != $no_pid ]; then
     kill $broker_pid 2>/dev/null
@@ -1328,6 +1350,9 @@ elif [ "$has_persist" = "no" ]; then
     echo "SKIP: Offline queue (built without --enable-broker-persist)"
 elif [ "$has_static_memory" = "yes" ]; then
     echo "SKIP: Offline queue (orphan/outbound-queue is dynamic-memory only)"
+elif [ "$has_persist_encrypt" = "yes" ] && \
+        [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: Offline queue (encrypt build without dev-key CLI hook)"
 else
 T29_DIR="${TMP_DIR}/persist_t29"
 mkdir -p "$T29_DIR"
@@ -1399,6 +1424,9 @@ elif [ "$has_persist" = "no" ]; then
     echo "SKIP: Offline queue restart (built without --enable-broker-persist)"
 elif [ "$has_static_memory" = "yes" ]; then
     echo "SKIP: Offline queue restart (orphan/outbound-queue is dynamic-memory only)"
+elif [ "$has_persist_encrypt" = "yes" ] && \
+        [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: Offline queue restart (encrypt build without dev-key CLI hook)"
 else
 T30_DIR="${TMP_DIR}/persist_t30"
 mkdir -p "$T30_DIR"
@@ -1474,6 +1502,8 @@ if [ "$skip_plain" = "yes" ]; then
     echo "SKIP: AES-GCM persist (plain listener disabled)"
 elif [ "$has_persist_encrypt" = "no" ]; then
     echo "SKIP: AES-GCM persist (built without --enable-broker-persist-encrypt)"
+elif [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: AES-GCM persist (built without --enable-broker-persist-encrypt-dev-key)"
 elif [ "$has_retained" = "no" ]; then
     echo "SKIP: AES-GCM persist (retained support not built)"
 else

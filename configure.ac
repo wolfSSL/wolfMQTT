@@ -531,6 +531,25 @@ then
 AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_PERSIST_ENCRYPT"
 fi
 
+# Development-only fixed-pattern derive_key hook for the CLI broker.
+# Off by default; required to use "-E dev" on encrypt builds. Never
+# enable in a production build - the resulting binary contains a
+# trivially-recoverable AES-GCM key generator that any flip of the
+# CLI argument would substitute for real key management.
+AC_ARG_ENABLE([broker-persist-encrypt-dev-key],
+[AS_HELP_STRING([--enable-broker-persist-encrypt-dev-key],[Link the CLI broker's fixed-pattern "dev" derive_key hook (default: disabled; requires --enable-broker-persist-encrypt; NOT FOR PRODUCTION)])],
+[ ENABLED_BROKER_PERSIST_ENCRYPT_DEV_KEY=$enableval ],
+[ ENABLED_BROKER_PERSIST_ENCRYPT_DEV_KEY=no ]
+)
+if test "x$ENABLED_BROKER_PERSIST_ENCRYPT_DEV_KEY" = "xyes"
+then
+    if test "x$ENABLED_BROKER_PERSIST_ENCRYPT" != "xyes"
+    then
+        AC_MSG_ERROR([--enable-broker-persist-encrypt-dev-key requires --enable-broker-persist-encrypt])
+    fi
+AM_CFLAGS="$AM_CFLAGS -DWOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY"
+fi
+
 
 AM_CONDITIONAL([HAVE_LIBWOLFSSL], [test "x$ENABLED_TLS" = "xyes"])
 AM_CONDITIONAL([HAVE_LIBCURL], [test "x$ENABLED_CURL" = "xyes"])

@@ -88,10 +88,18 @@ static int wmqb_hex_decode(const char* in, byte* out, word16 out_cap)
 {
     word16 n;
     word16 i;
+    size_t raw_len;
     if (in == NULL) {
         return -1;
     }
-    n = (word16)XSTRLEN(in);
+    /* Reject pathological inputs whose length would silently truncate
+     * on the word16 cast below and slip through as a shorter-but-valid
+     * decode. */
+    raw_len = XSTRLEN(in);
+    if (raw_len > 0xFFFFu) {
+        return -1;
+    }
+    n = (word16)raw_len;
     if ((n & 1) != 0 || (n / 2) > out_cap) {
         return -1;
     }
@@ -489,9 +497,17 @@ int MqttBrokerNet_PersistPosix_Init(MqttBrokerPersistHooks* hooks,
     hooks->ctx        = c;
 
     /* Create root dir up front so first put doesn't race. Tolerates
-     * EEXIST inside wmqb_mkdir. Failure here is non-fatal at init time:
-     * the first put will retry and surface any persistent error. */
-    (void)wmqb_mkdir(c->dir);
+     * EEXIST inside wmqb_mkdir. Non-fatal at init time (the first put
+     * will retry and surface any persistent error), but log a warning
+     * so an operator hitting EACCES on the default /var/lib/wolfmqtt
+     * path (broker run as a non-privileged user without -D) sees the
+     * failure here instead of being puzzled when nothing persists. */
+    if (wmqb_mkdir(c->dir) != 0) {
+        fprintf(stderr,
+            "wolfmqtt: persist root mkdir failed dir=\"%s\" errno=%d (%s) "
+            "- persistence will fail unless the path is writable\n",
+            c->dir, errno, strerror(errno));
+    }
     return 0;
 }
 

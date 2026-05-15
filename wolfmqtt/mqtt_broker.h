@@ -500,12 +500,16 @@ typedef struct BrokerClient {
 #else
     BrokerInboundQos2* qos2_pending;
     int                qos2_pending_count;
+#endif
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
+#ifndef WOLFMQTT_STATIC_MEMORY
     /* Per-subscriber outbound publish queue. FIFO from head to tail;
-     * drain pulls from head. inflight_count is the number of entries in
+     * drain pulls from head. out_q_inflight is the number of entries in
      * state PUBLISH_SENT or PUBREL_SENT (QoS 1/2 awaiting an ack);
      * BROKER_MAX_INFLIGHT_PER_SUB and client_receive_max together bound
-     * how many of those may exist at once. queue_count is total entries
-     * including not-yet-sent QUEUED ones. */
+     * how many of those may exist at once. out_q_count is total entries
+     * including not-yet-sent QUEUED ones. Used for fan-out at every
+     * QoS level (QoS 0 forwards transit the queue too). */
     BrokerOutPub* out_q_head;
     BrokerOutPub* out_q_tail;
     int           out_q_count;
@@ -520,8 +524,7 @@ typedef struct BrokerClient {
      * can stamp it into the orphan slot. 0xFFFFFFFF means "never
      * expire"; the v3.1.1 persistent-session default. */
     word32        session_expiry_sec;
-#endif
-#endif /* WOLFMQTT_MAX_QOS >= 2 */
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
