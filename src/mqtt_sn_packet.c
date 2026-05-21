@@ -875,6 +875,15 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
         }
         rx_payload += rc;
 
+        /* total_len must cover at least the bytes consumed so far
+         * (length + type + topicId + packet_id); otherwise the topic-name
+         * length computation below underflows and the NUL terminator is
+         * written before regist->topicName, leaving the field pointing at
+         * non-terminated memory past the parsed packet. */
+        if ((word32)total_len < (word32)(rx_payload - rx_buf)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+
         /* Decode Topic Name */
         regist->topicName = (char*)rx_payload;
 
