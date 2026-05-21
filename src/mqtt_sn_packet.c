@@ -101,6 +101,7 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
     int rc;
     SN_MsgType packet_type;
     word16 total_len;
+    byte *rx_buf_orig = rx_buf;
 
     if (rx_buf == NULL || rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
@@ -119,6 +120,15 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
 
     if (total_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+    /* Reject a declared total_len that does not cover the bytes already
+     * consumed plus the upcoming message-type read. Without this, a peer
+     * crafted SN_PACKET_LEN_IND packet whose 2-byte length field decodes
+     * to a value equal to rx_buf_len (e.g., rx_buf_len == 3 with
+     * total_len == 3) slips past the > rx_buf_len check above and the
+     * *rx_buf++ below reads one byte past the caller-supplied buffer. */
+    if (total_len < (word16)(rx_buf - rx_buf_orig) + 1) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
     /* Message Type */
