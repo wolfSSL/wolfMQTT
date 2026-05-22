@@ -291,7 +291,15 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     if (total_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
-    if (total_len < 3) {
+    /* Reject a frame whose total_len cannot cover the bytes still to be read
+     * after the length-indicator block (message type + gateway ID). The
+     * short-form header consumes one byte and the extended-length form
+     * consumes three, so the prior fixed "< 3" minimum was only valid for
+     * the short form: an extended-length GWINFO with total_len <= the
+     * header bytes already consumed would slip past it and the
+     * *rx_payload++ reads below would walk past the caller-supplied
+     * buffer. */
+    if (total_len < (word16)(rx_payload - rx_buf) + 2) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
     /* Check message type */
