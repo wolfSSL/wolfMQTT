@@ -1313,6 +1313,21 @@ int SN_Decode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
+    /* MQTT-SN: PUBACK is fixed at 7 octets (Length + MsgType + TopicID(2) +
+     * MsgID(2) + ReturnCode); PUBREC, PUBREL and PUBCOMP are fixed at 4
+     * octets (Length + MsgType + MsgID(2)). Any other total_len cannot
+     * cover the bytes the function still has to read - notably the
+     * *rx_payload++ message-type read below - so reject the frame before
+     * that read walks past the caller-supplied bound. */
+    if (type == SN_MSG_TYPE_PUBACK) {
+        if (total_len != 7) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    }
+    else if (total_len != 4) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     /* Validate packet type */
     rec_type = *rx_payload++;
     if (rec_type != type) {
