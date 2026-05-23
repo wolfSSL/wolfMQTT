@@ -369,8 +369,18 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     int header_len;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
+    /* header->len starts one byte into rx_buf (after type_flags), so the
+     * Remaining-Length VBI has at most rx_buf_len - 1 bytes available.
+     * Without this guard MqttDecode_Vbi was passed rx_buf_len and could
+     * read one byte past the caller-supplied buffer when the only length
+     * byte present has the continuation bit set. */
+    if (rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     /* Decode the length remaining */
-    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len, rx_buf_len);
+    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len,
+        (word32)(rx_buf_len - sizeof(header->type_flags)));
     if (header_len < 0) {
         return header_len;
     }
