@@ -48,10 +48,46 @@ jobs:
         email_len=${#email_var}
         echo "$email_len"
 
-    - uses: vapier/coverity-scan-action@v1
+    - name: Cache key (month-based, tool updates ~twice yearly)
+      id: cov-cache-key
+      run: echo "key=$(date +%Y-%m)" >> $GITHUB_OUTPUT
+
+    - name: Cache Coverity Build Tool
+      id: cov-build-cache
+      uses: actions/cache@v4
       with:
-        build_language: 'cxx'
-        project: "wolfMQTT"
-        token: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
-        email: ${{ secrets.COVERITY_SCAN_EMAIL }}
-        command: "make"
+        path: cov-analysis
+        key: cov-build-cxx-linux64-${{ steps.cov-cache-key.outputs.key }}
+
+    - name: Download Coverity Build Tool
+      if: steps.cov-build-cache.outputs.cache-hit != 'true'
+      env:
+        TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
+      run: |
+        curl https://scan.coverity.com/download/cxx/linux64 \
+          --no-progress-meter \
+          --output cov-analysis.tar.gz \
+          --data "token=${TOKEN}&project=wolfMQTT"
+        mkdir -p cov-analysis
+        tar -xzf cov-analysis.tar.gz --strip 1 -C cov-analysis
+
+    - name: Build with cov-build
+      run: |
+        export PATH="${PWD}/cov-analysis/bin:${PATH}"
+        cov-build --dir cov-int make
+
+    - name: Archive results
+      run: tar -czvf cov-int.tgz cov-int
+
+    - name: Submit results to Coverity Scan
+      env:
+        TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
+        EMAIL: ${{ secrets.COVERITY_SCAN_EMAIL }}
+      run: |
+        curl \
+          --form token="${TOKEN}" \
+          --form email="${EMAIL}" \
+          --form file=@cov-int.tgz \
+          --form version="${GITHUB_SHA}" \
+          --form description="coverity-scan wolfSSL/wolfMQTT / ${GITHUB_REF}" \
+          "https://scan.coverity.com/builds?project=wolfMQTT"
