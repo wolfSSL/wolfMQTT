@@ -369,8 +369,16 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     int header_len;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
-    /* Decode the length remaining */
-    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len, rx_buf_len);
+    /* Every MQTT packet is at least 2 bytes: the type/flags byte plus at
+     * least one Remaining Length VBI byte. header->len points to rx_buf+1,
+     * so the VBI decoder must be told it has at most rx_buf_len-1 bytes
+     * available or it can read one byte past the end of the buffer when
+     * the continuation bit is set on the last available length byte. */
+    if (rx_buf_len < 2) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len,
+        (word32)(rx_buf_len - 1));
     if (header_len < 0) {
         return header_len;
     }
@@ -1612,6 +1620,9 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     /* Validate remain_len */
     if (remain_len < 2) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+    if (rx_buf_len < header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
     rx_payload = &rx_buf[header_len];
