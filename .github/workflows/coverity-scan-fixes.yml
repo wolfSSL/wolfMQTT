@@ -64,10 +64,16 @@ jobs:
       env:
         TOKEN: ${{ secrets.COVERITY_SCAN_TOKEN_WOLFMQTT }}
       run: |
-        curl https://scan.coverity.com/download/cxx/linux64 \
-          --no-progress-meter \
+        curl -L --fail --no-progress-meter \
           --output cov-analysis.tar.gz \
-          --data "token=${TOKEN}&project=wolfMQTT"
+          --data "token=${TOKEN}&project=wolfMQTT" \
+          https://scan.coverity.com/download/cxx/linux64
+        file cov-analysis.tar.gz
+        if ! gzip -t cov-analysis.tar.gz 2>/dev/null; then
+          echo "Downloaded file is not gzip — server response:"
+          head -c 2000 cov-analysis.tar.gz
+          exit 1
+        fi
         mkdir -p cov-analysis
         tar -xzf cov-analysis.tar.gz --strip 1 -C cov-analysis
 
