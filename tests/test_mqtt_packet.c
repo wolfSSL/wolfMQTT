@@ -1444,6 +1444,51 @@ TEST(decode_connack_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* Single-byte buffer carries only the type byte — no Remaining Length VBI
+ * byte is present. The fixed-header decoder must reject this rather than
+ * deref header->len (which points one past the only valid byte). */
+TEST(decode_connack_truncated_one_byte_buffer)
+{
+    byte buf[1];
+    MqttConnectAck ack;
+    int rc;
+
+    buf[0] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_CONNECT_ACK);
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+/* Fixed header claims remain_len=2 but the caller-supplied buffer does
+ * not actually contain both variable-header bytes; MqttDecode_ConnectAck
+ * must reject this rather than read flags/return_code past the buffer end. */
+TEST(decode_connack_truncated_no_var_header)
+{
+    byte buf[2];
+    MqttConnectAck ack;
+    int rc;
+
+    buf[0] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_CONNECT_ACK);
+    buf[1] = 2;  /* remain_len claims 2 bytes follow, but none are present */
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(decode_connack_truncated_partial_var_header)
+{
+    byte buf[3];
+    MqttConnectAck ack;
+    int rc;
+
+    buf[0] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_CONNECT_ACK);
+    buf[1] = 2;  /* remain_len=2 but only 1 var-header byte present */
+    buf[2] = 0;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
 /* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] CONNACK Flags receive-side validation.
  *
  * The Connect Acknowledge Flags byte has only bit 0 (Session Present)
@@ -3605,6 +3650,24 @@ TEST(decode_publish_resp_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* VBI continuation bit set on the last available buffer byte.
+ * MqttDecode_FixedHeader is static, so exercise it via PUBCOMP. The VBI
+ * decoder must be told it has rx_buf_len-1 bytes (header->len points at
+ * rx_buf+1), otherwise it reads one byte past the end of the buffer. */
+TEST(decode_publish_resp_vbi_continuation_oob)
+{
+    byte buf[2];
+    MqttPublishResp resp;
+    int rc;
+
+    buf[0] = MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_PUBLISH_COMP);
+    buf[1] = 0x80;  /* VBI continuation bit set, no further bytes available */
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_COMP, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
 /* MQTT 3.1.1 sections 3.4-3.7: PUBACK/PUBREC/PUBREL/PUBCOMP have a fixed
  * Remaining Length of 2 (the Packet Identifier only). Any extra byte
  * after the Packet Identifier is malformed in v3.x. v5 sections 3.4-3.7
@@ -4554,6 +4617,9 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connack_valid);
     RUN_TEST(decode_connack_malformed_remain_len_zero);
     RUN_TEST(decode_connack_malformed_remain_len_one);
+    RUN_TEST(decode_connack_truncated_one_byte_buffer);
+    RUN_TEST(decode_connack_truncated_no_var_header);
+    RUN_TEST(decode_connack_truncated_partial_var_header);
     RUN_TEST(decode_connack_flags_session_present_accepted);
     RUN_TEST(decode_connack_flags_no_session_accepted);
     RUN_TEST(decode_connack_flags_reserved_bit_1_rejected);
@@ -4683,6 +4749,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_resp_valid);
     RUN_TEST(decode_publish_resp_malformed_remain_len_zero);
     RUN_TEST(decode_publish_resp_malformed_remain_len_one);
+    RUN_TEST(decode_publish_resp_vbi_continuation_oob);
     RUN_TEST(decode_puback_v311_extra_payload_rejected);
     RUN_TEST(decode_pubrec_v311_extra_payload_rejected);
     RUN_TEST(decode_pubrel_v311_extra_payload_rejected);
