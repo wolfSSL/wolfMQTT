@@ -63,6 +63,7 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
     #include <arpa/inet.h>
     #include <fcntl.h>
     #include <netinet/in.h>
+    #include <signal.h>
     #include <sys/select.h>
     #include <sys/socket.h>
     #include <time.h>
@@ -631,6 +632,9 @@ static int BrokerPosix_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
     BROKER_SOCKET_T* client_sock)
 {
     BROKER_SOCKET_T fd;
+#ifdef SO_NOSIGPIPE
+    int on = 1;
+#endif
     (void)ctx;
 
     fd = accept(listen_sock, NULL, NULL);
@@ -644,6 +648,14 @@ static int BrokerPosix_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
         close(fd);
         return MQTT_CODE_ERROR_SYSTEM;
     }
+#ifdef SO_NOSIGPIPE
+    /* macOS / BSDs: suppress SIGPIPE on writes to a peer-closed socket.
+     * Without this (and without MSG_NOSIGNAL in send()), a client that
+     * publishes QoS>0 and immediately closes its socket would cause the
+     * broker's PUBACK/PUBREC write to deliver SIGPIPE, terminating the
+     * broker. Linux uses MSG_NOSIGNAL in BrokerPosix_Write instead. */
+    (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof(on));
+#endif
     *client_sock = fd;
     return MQTT_CODE_SUCCESS;
 }
@@ -714,7 +726,16 @@ static int BrokerPosix_Write(void* ctx, BROKER_SOCKET_T sock,
         return MQTT_CODE_ERROR_NETWORK;
     }
 
+    /* MSG_NOSIGNAL (Linux/BSDs that define it) prevents SIGPIPE delivery when
+     * the peer has already closed the connection - the syscall just returns
+     * EPIPE and we treat it as a normal network error. Platforms without
+     * MSG_NOSIGNAL (e.g. macOS) rely on the SO_NOSIGPIPE socket option set
+     * in BrokerPosix_Accept. */
+#ifdef MSG_NOSIGNAL
+    rc = (int)send(sock, buf, (size_t)buf_len, MSG_NOSIGNAL);
+#else
     rc = (int)send(sock, buf, (size_t)buf_len, 0);
+#endif
     if (rc <= 0) {
         if (rc < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
             return MQTT_CODE_CONTINUE;
@@ -737,9 +758,28 @@ static int BrokerPosix_Close(void* ctx, BROKER_SOCKET_T sock)
 
 int MqttBrokerNet_Init(MqttBrokerNet* net)
 {
+#ifdef SIGPIPE
+    struct sigaction sa;
+#endif
     if (net == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+#ifdef SIGPIPE
+    /* Backstop the per-send (MSG_NOSIGNAL) and per-socket (SO_NOSIGPIPE)
+     * suppression so a write to a peer-closed socket cannot terminate the
+     * process on platforms that define neither, or if the SO_NOSIGPIPE
+     * setsockopt in BrokerPosix_Accept fails. Only install the ignore when
+     * SIGPIPE is still at its default disposition, so we never clobber a
+     * SIGPIPE handler the embedding application has already chosen. The
+     * targeted mechanisms remain primary so send() still returns EPIPE for
+     * clean client teardown. */
+    if (sigaction(SIGPIPE, NULL, &sa) == 0 && sa.sa_handler == SIG_DFL) {
+        sa.sa_handler = SIG_IGN;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+        (void)sigaction(SIGPIPE, &sa, NULL);
+    }
+#endif
     XMEMSET(net, 0, sizeof(*net));
     net->listen = BrokerPosix_Listen;
     net->accept = BrokerPosix_Accept;
@@ -4906,6 +4946,13 @@ int wolfmqtt_broker(int argc, char** argv)
     g_broker_shutdown = 0;
     signal(SIGINT, broker_signal_handler);
     signal(SIGTERM, broker_signal_handler);
+    /* Belt-and-suspenders for the SIGPIPE-on-peer-close path. The socket
+     * layer already uses MSG_NOSIGNAL / SO_NOSIGPIPE per platform, but
+     * ignore SIGPIPE process-wide too so any reused or custom net callback
+     * cannot kill the broker on a write to a closed peer. */
+#ifdef SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
+#endif
 
     rc = MqttBroker_Start(&broker);
     if (rc == MQTT_CODE_SUCCESS) {
