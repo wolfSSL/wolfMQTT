@@ -1423,6 +1423,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
     }
 
     if (will->stat.write == MQTT_MSG_BEGIN) {
+        int xfer = 0;
     #ifdef WOLFMQTT_MULTITHREAD
         /* Lock send socket mutex */
         rc = wm_SemLock(&client->lockSend);
@@ -1461,9 +1462,28 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         }
     #endif
 
-        /* Send Will Message Update packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        /* Send Will Message Update packet. Save write.len into xfer first: the
+         * encoded WILLMSGUPD holds will->willMsg (a possibly rotated/secret will
+         * payload) in tx_buf, which must be scrubbed before lockSend is released
+         * on every return path below.
+         *
+         * This differs intentionally from MqttClient_Connect and SN_WillMessage:
+         * those keep a resume state (MQTT_MSG_HEADER) and so must NOT scrub on
+         * MQTT_CODE_CONTINUE, because tx_buf is still needed to finish a partial
+         * non-blocking send. This function has no such resume state - it re-runs
+         * this whole MQTT_MSG_BEGIN block (re-encoding tx_buf) on every call. A
+         * non-blocking partial write returns MQTT_CODE_CONTINUE, which is != xfer
+         * and therefore lands in the error branch below; scrubbing there is safe
+         * because the next call re-encodes the identical bytes before the write
+         * resumes. */
+        xfer = client->write.len;
+        rc = MqttPacket_Write(client, client->tx_buf, xfer);
+        if (rc != xfer) {
+            /* Send failed (or returned MQTT_CODE_CONTINUE): scrub the will
+             * payload from tx_buf before releasing lockSend so another thread -
+             * or a later memory/core-dump inspection - cannot recover residual
+             * plaintext. */
+            CLIENT_FORCE_ZERO(client->tx_buf, xfer);
         #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockSend);
             if (wm_SemLock(&client->lockClient) == 0) {
@@ -1473,6 +1493,9 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         #endif
             return rc;
         }
+        /* WILLMSGUPD sent: scrub the will payload from tx_buf before releasing
+         * lockSend, for the same reason as the error path above. */
+        CLIENT_FORCE_ZERO(client->tx_buf, xfer);
     #ifdef WOLFMQTT_MULTITHREAD
         wm_SemUnlock(&client->lockSend);
     #endif

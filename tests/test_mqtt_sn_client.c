@@ -89,6 +89,10 @@ typedef struct MockNet {
     byte        out[MOCK_OUT_LEN];
     int         out_len;       /* bytes captured from write() */
 
+    int         write_fail_rc; /* if nonzero, write() returns this instead of
+                                * accepting the buffer (simulate short/failed
+                                * write) */
+
     int         read_calls;
     int         write_calls;
 } MockNet;
@@ -111,6 +115,12 @@ static int mock_write(void *ctx, const byte* buf, int buf_len, int timeout_ms)
     MockNet* net = (MockNet*)ctx;
     (void)timeout_ms;
     net->write_calls++;
+    if (net->write_fail_rc != 0) {
+        /* Simulate a short/failed write so the caller's rc != xfer error path is
+         * exercised. The buffer is left as the caller encoded it (not captured),
+         * matching a real transport that errored mid-send. */
+        return net->write_fail_rc;
+    }
     if (buf_len > 0 && net->out_len + buf_len <= MOCK_OUT_LEN) {
         XMEMCPY(&net->out[net->out_len], buf, (size_t)buf_len);
         net->out_len += buf_len;
@@ -198,6 +208,10 @@ static void mock_net_push(MockNet* net, const byte* frame, int len)
 static const byte WILLTOPICREQ_FRAME[] = { 0x02, SN_MSG_TYPE_WILLTOPICREQ };
 static const byte WILLMSGREQ_FRAME[]   = { 0x02, SN_MSG_TYPE_WILLMSGREQ };
 static const byte CONNACK_FRAME[]      = { 0x03, SN_MSG_TYPE_CONNACK,
+                                           SN_RC_ACCEPTED };
+
+/* Gateway response to a WILLMSGUPD: total_len=3, type, return_code. */
+static const byte WILLMSGRESP_FRAME[]  = { 0x03, SN_MSG_TYPE_WILLMSGRESP,
                                            SN_RC_ACCEPTED };
 
 /* Scripted SUBACK for packet_id 1: total_len=8, type, flags=0,
@@ -370,6 +384,76 @@ static void sn_will_scrub_check(int continues)
     ASSERT_NO_PENDRESP();
 }
 
+/* Drive SN_Client_WillMsgUpdate until it returns something other than CONTINUE,
+ * or until we exceed a sane iteration cap. Returns the terminal code. */
+static int sn_will_msg_update_pump(SN_Will* will)
+{
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    const int max_iters = 50;
+    for (i = 0; i < max_iters; i++) {
+        rc = SN_Client_WillMsgUpdate(&g_client, will);
+        if (rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    return rc;
+}
+
+/* Shared body for the #3138 WILLMSGUPD scrub tests. Drives a scripted
+ * SN_Client_WillMsgUpdate exchange (with `continues` MQTT_CODE_CONTINUE armed
+ * before the WILLMSGRESP) and asserts the updated will payload is scrubbed from
+ * tx_buf once the WILLMSGUPD has been sent. Mirrors sn_will_scrub_check, but for
+ * the standalone will-message update API rather than the connect handshake. */
+static void sn_will_msg_update_scrub_check(int continues)
+{
+    SN_Will will;
+    int rc, i;
+    /* A distinctive "rotated secret" payload so the scrub assertions below
+     * cannot pass by coincidence (e.g. against an already-zero buffer). */
+    static const byte secret[] = "s3cret-rotated-will-payload";
+    const int secretLen = (int)sizeof(secret) - 1; /* drop terminating NUL */
+    /* Small WILLMSGUPD packet: 1-byte length + 1-byte type + payload. */
+    const int willPktLen = 2 + secretLen;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(continues));
+
+    mock_net_push(&g_mock, WILLMSGRESP_FRAME, (int)sizeof(WILLMSGRESP_FRAME));
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.qos = 0;
+    will.retain = 0;
+    will.willTopic = "wolf/lwt";
+    will.willMsg = (byte*)secret;
+    will.willMsgLen = (word16)secretLen;
+
+    rc = sn_will_msg_update_pump(&will);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, will.resp.msgResp.return_code);
+
+    /* Positive control: the will payload really was written to the wire, so the
+     * scrub assertions below cannot pass trivially. */
+    ASSERT_TRUE(sn_buf_contains(g_mock.out, g_mock.out_len,
+                                secret, secretLen));
+
+    /* Core #3138 assertion: the updated will payload must not linger anywhere in
+     * the client tx buffer once the WILLMSGUPD has been sent. */
+    ASSERT_FALSE(sn_buf_contains(g_client.tx_buf, g_client.tx_buf_len,
+                                 secret, secretLen));
+
+    /* Stronger boundary check: every byte of the WILLMSGUPD packet region must
+     * be zero. Catches both deletion of the CLIENT_FORCE_ZERO call and an
+     * xfer -> 0 mutation that turns the wipe into a no-op. */
+    for (i = 0; i < willPktLen; i++) {
+        if (g_client.tx_buf[i] != 0) {
+            FAIL("tx_buf within WILLMSGUPD range is non-zero after update");
+        }
+    }
+
+    ASSERT_NO_PENDRESP();
+}
+
 /* ============================================================================
  * SN LWT connect regression tests
  * ============================================================================ */
@@ -414,6 +498,71 @@ TEST(sn_connect_lwt_no_continue)
 TEST(sn_will_payload_scrubbed_after_send)
 {
     sn_will_scrub_check(0 /* no CONTINUE */);
+}
+
+/* ============================================================================
+ * SN will-message-update scrub test (#3138)
+ *
+ * SN_Client_WillMsgUpdate encodes the new last-will payload into client->tx_buf
+ * via SN_Encode_WillMsgUpdate and used to leave it there after the WILLMSGUPD
+ * had been sent, so a local attacker could recover the rotated will plaintext
+ * (until the next encode overwrote it) via memory inspection or a core dump.
+ * SN_Client_WillMsgUpdate now scrubs tx_buf (CLIENT_FORCE_ZERO) before releasing
+ * lockSend on both the success and short-write paths, mirroring SN_WillMessage
+ * and the MqttClient_Connect credential mitigation. This runs in every SN build
+ * because the scrub happens on the send path regardless of WOLFMQTT_NONBLOCK.
+ * ============================================================================ */
+TEST(sn_willmsgupd_payload_scrubbed_after_send)
+{
+    sn_will_msg_update_scrub_check(0 /* no CONTINUE */);
+}
+
+/* #3138 error-path coverage. The success-path tests above never reach the
+ * rc != xfer branch because mock_write() always accepts the whole buffer, so
+ * the error-path CLIENT_FORCE_ZERO (and the pendResp removal beside it) would go
+ * untested. Here the mock is armed to fail the WILLMSGUPD write, forcing that
+ * branch: the will payload - already encoded into tx_buf before the write failed
+ * - must still be scrubbed, and the pending response removed, before the error
+ * is returned. Runs in every SN build (the write failure is independent of
+ * WOLFMQTT_NONBLOCK). */
+TEST(sn_willmsgupd_payload_scrubbed_on_write_error)
+{
+    SN_Will will;
+    int rc, i;
+    static const byte secret[] = "s3cret-rotated-will-payload";
+    const int secretLen = (int)sizeof(secret) - 1; /* drop terminating NUL */
+    const int willPktLen = 2 + secretLen;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    /* Arm the mock so the WILLMSGUPD write returns a network error, forcing the
+     * rc != xfer branch in SN_Client_WillMsgUpdate. */
+    g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = "wolf/lwt";
+    will.willMsg = (byte*)secret;
+    will.willMsgLen = (word16)secretLen;
+
+    rc = SN_Client_WillMsgUpdate(&g_client, &will);
+
+    /* The failed send surfaces the network error to the caller. */
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+
+    /* The will payload was encoded into tx_buf before the write failed; the
+     * error-path scrub must have wiped it. Deleting the rc != xfer
+     * CLIENT_FORCE_ZERO leaves the plaintext here and fails these assertions. */
+    ASSERT_FALSE(sn_buf_contains(g_client.tx_buf, g_client.tx_buf_len,
+                                 secret, secretLen));
+    for (i = 0; i < willPktLen; i++) {
+        if (g_client.tx_buf[i] != 0) {
+            FAIL("tx_buf within WILLMSGUPD range is non-zero after write error");
+        }
+    }
+
+    /* The pending response added before the send must be removed on the error
+     * path so no dangling entry is left behind. */
+    ASSERT_NO_PENDRESP();
 }
 
 /* ============================================================================
@@ -558,6 +707,15 @@ TEST(sn_will_payload_scrubbed_nonblock)
     sn_will_scrub_check(1 /* one CONTINUE per frame */);
 }
 
+/* #3138 through the non-blocking retry path: with a CONTINUE armed before the
+ * WILLMSGRESP the updated will payload must still be scrubbed from tx_buf once
+ * the update completes. The scrub happens on the send-complete path (before the
+ * wait re-enters), so re-entry after CONTINUE must not resurrect the plaintext. */
+TEST(sn_willmsgupd_payload_scrubbed_nonblock)
+{
+    sn_will_msg_update_scrub_check(1 /* one CONTINUE per frame */);
+}
+
 /* The headline #5864 regression. With a CONTINUE armed before the SUBACK the
  * subscribe must converge to SUCCESS and remove its pending response exactly
  * once. Under MULTITHREAD it also pins the dangling-pointer contract directly:
@@ -651,6 +809,8 @@ int main(int argc, char** argv)
     /* Happy path runs in every SN build (blocking and non-blocking). */
     RUN_TEST(sn_connect_lwt_no_continue);
     RUN_TEST(sn_will_payload_scrubbed_after_send);
+    RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
+    RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);
     RUN_TEST(sn_subscribe_no_continue);
 
     /* The non-blocking retry regression only exists under WOLFMQTT_NONBLOCK. */
@@ -659,6 +819,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connect_lwt_many_continues);
     RUN_TEST(sn_connect_lwt_reconnect);
     RUN_TEST(sn_will_payload_scrubbed_nonblock);
+    RUN_TEST(sn_willmsgupd_payload_scrubbed_nonblock);
     RUN_TEST(sn_subscribe_nonblock_pendresp_lifecycle);
     RUN_TEST(sn_subscribe_many_continues);
 #endif
