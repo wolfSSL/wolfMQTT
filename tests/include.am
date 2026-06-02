@@ -28,6 +28,19 @@ tests_test_mqtt_sn_CFLAGS       = -DWOLFMQTT_SN $(AM_CFLAGS)
 tests_test_mqtt_sn_CPPFLAGS     = -I$(top_srcdir) $(AM_CPPFLAGS)
 tests_test_mqtt_sn_LDADD        = src/libwolfmqtt.la
 tests_test_mqtt_sn_DEPENDENCIES = src/libwolfmqtt.la
+
+# MQTT-SN client state-machine tests. These drive the public SN_Client_* entry
+# points through a mock MqttNet by linking libwolfmqtt (so they run against
+# whatever options the library was configured with). The happy-path will
+# handshake is checked in every SN build; the non-blocking duplicate-pendResp
+# regression tests compile only when WOLFMQTT_NONBLOCK is enabled (handled with
+# #ifdefs in the test source).
+check_PROGRAMS += tests/test_mqtt_sn_client
+tests_test_mqtt_sn_client_SOURCES      = tests/test_mqtt_sn_client.c
+tests_test_mqtt_sn_client_CFLAGS       = -DWOLFMQTT_SN $(AM_CFLAGS)
+tests_test_mqtt_sn_client_CPPFLAGS     = -I$(top_srcdir) $(AM_CPPFLAGS)
+tests_test_mqtt_sn_client_LDADD        = src/libwolfmqtt.la $(LIB_STATIC_ADD)
+tests_test_mqtt_sn_client_DEPENDENCIES = src/libwolfmqtt.la
 endif
 
 # Broker CONNECT handler tests. Compiles src/mqtt_broker.c into the test
