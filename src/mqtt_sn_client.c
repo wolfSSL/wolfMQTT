@@ -66,8 +66,14 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             else {
                 XMEMSET(p_connect_ack, 0, sizeof(SN_ConnectAck));
             }
-            p_connect_ack->return_code =
-                    client->rx_buf[client->packet.buf_len-1];
+
+            /* Validate the fixed-length CONNACK (length, buffer size and
+               packet type) rather than blindly trusting the last byte. */
+            rc = SN_Decode_ConnectAck(client->rx_buf, client->packet.buf_len,
+                    p_connect_ack);
+            if (rc <= 0) {
+                return rc;
+            }
 
             break;
         }

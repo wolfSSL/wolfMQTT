@@ -317,6 +317,101 @@ TEST(sn_register_wrong_type_rejected)
 }
 
 /* ============================================================================
+ * SN_Decode_ConnectAck
+ *
+ * The MQTT-SN CONNACK is a fixed 3-byte frame: [len=3][type=CONNACK][retcode].
+ * SN_Client_HandlePacket routes CONNACK through this decoder, so the length,
+ * buffer-size and packet-type guards here are what stop a malformed gateway
+ * frame (e.g. an over-long packet with a benign trailing byte) from being
+ * accepted as a successful connect by SN_Client_Connect.
+ * ============================================================================ */
+
+TEST(sn_connack_accepted_valid)
+{
+    /* [len=3][type=CONNACK][return_code=ACCEPTED] */
+    byte buf[3] = { 0x03, SN_MSG_TYPE_CONNACK, SN_RC_ACCEPTED };
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0xFF, sizeof(ack)); /* poison: decoder must overwrite */
+    rc = SN_Decode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(3, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, ack.return_code);
+}
+
+TEST(sn_connack_rejected_valid)
+{
+    /* A well-formed CONNACK that refuses the connection. The decoder must
+     * succeed (rc=3) and surface the gateway's reject code unchanged so the
+     * caller can map it to MQTT_CODE_ERROR_CONNECT_REFUSED. */
+    byte buf[3] = { 0x03, SN_MSG_TYPE_CONNACK, SN_RC_CONGESTION };
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = SN_Decode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(3, rc);
+    ASSERT_EQ(SN_RC_CONGESTION, ack.return_code);
+}
+
+TEST(sn_connack_short_len_rejected)
+{
+    /* total_len=2 cannot cover the 3-byte fixed CONNACK. rx_buf_len is larger
+     * so this exercises the fixed-length check, not the buffer guard. */
+    byte buf[3] = { 0x02, SN_MSG_TYPE_CONNACK, SN_RC_ACCEPTED };
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = SN_Decode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(sn_connack_long_len_rejected)
+{
+    /* Regression for the trusted-last-byte bug: a 4-byte frame whose declared
+     * length is 4. The old handler read buf[buf_len-1] (the trailing ACCEPTED
+     * byte) and reported success even though the real return code (offset 2)
+     * was a reject. The decoder must reject the non-3 length outright. */
+    byte buf[4] = { 0x04, SN_MSG_TYPE_CONNACK, SN_RC_CONGESTION,
+                    SN_RC_ACCEPTED };
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = SN_Decode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(sn_connack_total_len_exceeds_buffer_rejected)
+{
+    /* Declared length 3 but only 2 bytes are actually available. Must be
+     * rejected by the buffer guard rather than reading buf[2] past the end. */
+    byte buf[2] = { 0x03, SN_MSG_TYPE_CONNACK };
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = SN_Decode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_connack_wrong_type_rejected)
+{
+    /* Correct length but a non-CONNACK message type. */
+    byte buf[3] = { 0x03, SN_MSG_TYPE_WILLTOPICREQ, SN_RC_ACCEPTED };
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = SN_Decode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_TYPE, rc);
+}
+
+TEST(sn_connack_null_buf_rejected)
+{
+    SN_ConnectAck ack;
+    int rc;
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = SN_Decode_ConnectAck(NULL, 3, &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -352,6 +447,15 @@ int main(int argc, char** argv)
     RUN_TEST(sn_register_ind_form_total_len_too_small_rejected);
     RUN_TEST(sn_register_total_len_below_fixed_min_rejected);
     RUN_TEST(sn_register_wrong_type_rejected);
+
+    /* SN_Decode_ConnectAck */
+    RUN_TEST(sn_connack_accepted_valid);
+    RUN_TEST(sn_connack_rejected_valid);
+    RUN_TEST(sn_connack_short_len_rejected);
+    RUN_TEST(sn_connack_long_len_rejected);
+    RUN_TEST(sn_connack_total_len_exceeds_buffer_rejected);
+    RUN_TEST(sn_connack_wrong_type_rejected);
+    RUN_TEST(sn_connack_null_buf_rejected);
 
     TEST_SUITE_END();
 
