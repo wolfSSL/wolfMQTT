@@ -609,6 +609,13 @@ WOLFMQTT_LOCAL int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
 
+/* Securely zero `len` bytes of `mem` (e.g. client->tx_buf) to scrub plaintext
+ * such as credentials or will payloads before releasing the send lock. Uses a
+ * volatile pointer so the stores are not optimized away. */
+WOLFMQTT_LOCAL void MqttClient_ForceZero(void* mem, word32 len);
+#define CLIENT_FORCE_ZERO(mem, len) \
+    MqttClient_ForceZero(mem, (word32)(len))
+
 #ifdef __cplusplus
     } /* extern "C" */
 #endif

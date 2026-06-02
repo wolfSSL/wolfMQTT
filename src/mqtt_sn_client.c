@@ -1151,14 +1151,25 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
                     rc = 0;
                 }
             }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
 
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {
+                /* Send not complete: tx_buf still holds the will payload and is
+                 * needed to resume, so do not scrub it yet. */
+            #ifdef WOLFMQTT_MULTITHREAD
+                wm_SemUnlock(&client->lockSend);
+            #endif
                 return rc; /* resume send on next call */
             }
+        #endif
+
+            /* The encoded WILLMSG contains the will payload (potentially
+             * sensitive). Scrub tx_buf before releasing lockSend so another
+             * thread cannot observe residual plaintext (mirrors the mitigation
+             * in MqttClient_Connect). */
+            CLIENT_FORCE_ZERO(client->tx_buf, client->write.len);
+        #ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockSend);
         #endif
 
             /* reset state */

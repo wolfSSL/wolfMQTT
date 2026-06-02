@@ -303,6 +303,73 @@ static void teardown(void)
     MqttClient_DeInit(&g_client);
 }
 
+/* memcmp-style search: returns 1 if `needle` (nlen bytes) appears in `hay`. */
+static int sn_buf_contains(const byte* hay, int hlen,
+        const byte* needle, int nlen)
+{
+    int i;
+    if (hay == NULL || nlen <= 0 || hlen < nlen) {
+        return 0;
+    }
+    for (i = 0; i + nlen <= hlen; i++) {
+        if (XMEMCMP(&hay[i], needle, (size_t)nlen) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Shared body for the #3137 will-payload scrub tests. Runs the scripted LWT
+ * connect (with `continues` MQTT_CODE_CONTINUE armed before each gateway frame)
+ * and asserts the will payload is scrubbed from tx_buf once the WILLMSG has been
+ * sent. The ASSERT_* macros bail out of this helper on failure and set the
+ * shared failure flag that RUN_TEST inspects, so factoring this out is safe. */
+static void sn_will_scrub_check(int continues)
+{
+    SN_Connect mc;
+    int rc, i;
+    const byte* willMsg;
+    int willMsgLen, willPktLen;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(continues));
+
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    mock_net_push(&g_mock, CONNACK_FRAME,      (int)sizeof(CONNACK_FRAME));
+
+    sn_will_setup_connect(&mc);
+    willMsg = mc.will.willMsg;
+    willMsgLen = (int)mc.will.willMsgLen;
+    /* Small WILLMSG packet: 1-byte length + 1-byte type + payload. */
+    willPktLen = 2 + willMsgLen;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, mc.ack.return_code);
+
+    /* Positive control: the will payload really was written to the wire, so the
+     * scrub assertions below cannot pass trivially. */
+    ASSERT_TRUE(sn_buf_contains(g_mock.out, g_mock.out_len,
+                                willMsg, willMsgLen));
+
+    /* Core #3137 assertion: the will payload must not linger anywhere in the
+     * client tx buffer once the WILLMSG has been sent. */
+    ASSERT_FALSE(sn_buf_contains(g_client.tx_buf, g_client.tx_buf_len,
+                                 willMsg, willMsgLen));
+
+    /* Stronger boundary check: every byte of the WILLMSG packet region must be
+     * zero. Catches both deletion of the CLIENT_FORCE_ZERO call and an
+     * xfer -> 0 mutation that turns the wipe into a no-op. */
+    for (i = 0; i < willPktLen; i++) {
+        if (g_client.tx_buf[i] != 0) {
+            FAIL("tx_buf within WILLMSG range is non-zero after connect");
+        }
+    }
+
+    ASSERT_NO_PENDRESP();
+}
+
 /* ============================================================================
  * SN LWT connect regression tests
  * ============================================================================ */
@@ -331,6 +398,22 @@ TEST(sn_connect_lwt_no_continue)
     /* The client sent CONNECT, WILLTOPIC and WILLMSG. */
     ASSERT_TRUE(g_mock.write_calls >= 3);
     ASSERT_NO_PENDRESP();
+}
+
+/* ============================================================================
+ * SN will-payload scrub test (#3137)
+ *
+ * SN_WillMessage encodes the last-will payload into client->tx_buf via
+ * SN_Encode_WillMsg and used to leave it there after the WILLMSG had been sent,
+ * so local memory inspection could recover the will plaintext until the next
+ * encode overwrote it. SN_WillMessage now scrubs tx_buf (CLIENT_FORCE_ZERO)
+ * before releasing lockSend once the send completes, mirroring the
+ * MqttClient_Connect credential mitigation. This runs in every SN build because
+ * the scrub happens on the send-complete path regardless of WOLFMQTT_NONBLOCK.
+ * ============================================================================ */
+TEST(sn_will_payload_scrubbed_after_send)
+{
+    sn_will_scrub_check(0 /* no CONTINUE */);
 }
 
 /* ============================================================================
@@ -467,6 +550,14 @@ TEST(sn_connect_lwt_reconnect)
     ASSERT_NO_PENDRESP();
 }
 
+/* #3137 through the non-blocking retry path: with a CONTINUE armed before each
+ * gateway frame the will payload must still be scrubbed from tx_buf once the
+ * connect completes. */
+TEST(sn_will_payload_scrubbed_nonblock)
+{
+    sn_will_scrub_check(1 /* one CONTINUE per frame */);
+}
+
 /* The headline #5864 regression. With a CONTINUE armed before the SUBACK the
  * subscribe must converge to SUCCESS and remove its pending response exactly
  * once. Under MULTITHREAD it also pins the dangling-pointer contract directly:
@@ -559,6 +650,7 @@ int main(int argc, char** argv)
 
     /* Happy path runs in every SN build (blocking and non-blocking). */
     RUN_TEST(sn_connect_lwt_no_continue);
+    RUN_TEST(sn_will_payload_scrubbed_after_send);
     RUN_TEST(sn_subscribe_no_continue);
 
     /* The non-blocking retry regression only exists under WOLFMQTT_NONBLOCK. */
@@ -566,6 +658,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connect_lwt_nonblock_retry);
     RUN_TEST(sn_connect_lwt_many_continues);
     RUN_TEST(sn_connect_lwt_reconnect);
+    RUN_TEST(sn_will_payload_scrubbed_nonblock);
     RUN_TEST(sn_subscribe_nonblock_pendresp_lifecycle);
     RUN_TEST(sn_subscribe_many_continues);
 #endif
