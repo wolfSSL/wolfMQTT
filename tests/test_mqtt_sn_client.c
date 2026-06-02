@@ -200,6 +200,15 @@ static const byte WILLMSGREQ_FRAME[]   = { 0x02, SN_MSG_TYPE_WILLMSGREQ };
 static const byte CONNACK_FRAME[]      = { 0x03, SN_MSG_TYPE_CONNACK,
                                            SN_RC_ACCEPTED };
 
+/* Scripted SUBACK for packet_id 1: total_len=8, type, flags=0,
+ * topicId=0x000A, packet_id=0x0001, return_code=SN_RC_ACCEPTED. */
+#define SN_TEST_SUB_PACKET_ID 1
+#define SN_TEST_SUB_TOPIC_ID  0x0A
+static const byte SUBACK_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
+                                     0x00, SN_TEST_SUB_TOPIC_ID,
+                                     0x00, SN_TEST_SUB_PACKET_ID,
+                                     SN_RC_ACCEPTED };
+
 /* ============================================================================
  * Test fixtures
  * ============================================================================ */
@@ -258,6 +267,36 @@ static int sn_connect_pump(SN_Connect* mc, int* iters)
     return rc;
 }
 
+static void sn_subscribe_setup(SN_Subscribe* s)
+{
+    XMEMSET(s, 0, sizeof(*s));
+    s->duplicate = 0;
+    s->qos = MQTT_QOS_0;
+    s->topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    s->topicNameId = "wolf/topic";
+    s->packet_id = SN_TEST_SUB_PACKET_ID;
+}
+
+/* Drive SN_Client_Subscribe until it returns something other than CONTINUE, or
+ * until we exceed a sane iteration cap. Returns the terminal code and the
+ * number of iterations through *iters. */
+static int sn_subscribe_pump(SN_Subscribe* s, int* iters)
+{
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    const int max_iters = 50;
+    for (i = 0; i < max_iters; i++) {
+        rc = SN_Client_Subscribe(&g_client, s);
+        if (rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    if (iters) {
+        *iters = i + 1;
+    }
+    return rc;
+}
+
 static void setup(void)    { }
 static void teardown(void)
 {
@@ -291,6 +330,43 @@ TEST(sn_connect_lwt_no_continue)
     ASSERT_EQ(SN_RC_ACCEPTED, mc.ack.return_code);
     /* The client sent CONNECT, WILLTOPIC and WILLMSG. */
     ASSERT_TRUE(g_mock.write_calls >= 3);
+    ASSERT_NO_PENDRESP();
+}
+
+/* ============================================================================
+ * SN subscribe pending-response lifecycle tests (CWE-416 regression, #5864)
+ *
+ * SN_Client_Subscribe registers &subscribe->pendResp in client->firstPendResp
+ * (MULTITHREAD) and must remove it exactly once the SUBACK arrives. Under
+ * WOLFMQTT_NONBLOCK the entry stays linked across MQTT_CODE_CONTINUE returns so
+ * a reader thread can route the response - which is precisely why the caller
+ * must keep retrying and must not free the subscribe object until the exchange
+ * completes. These tests pin both halves of that contract: no entry is leaked
+ * once subscribe finishes, and the entry IS still linked while a call is
+ * in-flight (so a "remove before CONTINUE" change would be caught here).
+ * ============================================================================ */
+
+/* Happy path: SUBACK is immediately available. Runs in every SN build and
+ * guards that the pending response is removed once the subscribe completes. */
+TEST(sn_subscribe_no_continue)
+{
+    SN_Subscribe sub;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, SUBACK_FRAME, (int)sizeof(SUBACK_FRAME));
+
+    sn_subscribe_setup(&sub);
+
+    rc = sn_subscribe_pump(&sub, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, sub.subAck.return_code);
+    ASSERT_EQ(SN_TEST_SUB_TOPIC_ID, sub.subAck.topicId);
+    /* The client sent SUBSCRIBE. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* No pending response may be left dangling once subscribe completes. */
     ASSERT_NO_PENDRESP();
 }
 
@@ -391,6 +467,78 @@ TEST(sn_connect_lwt_reconnect)
     ASSERT_NO_PENDRESP();
 }
 
+/* The headline #5864 regression. With a CONTINUE armed before the SUBACK the
+ * subscribe must converge to SUCCESS and remove its pending response exactly
+ * once. Under MULTITHREAD it also pins the dangling-pointer contract directly:
+ * after the first in-flight CONTINUE the entry IS linked and points back into
+ * the caller's subscribe object - the exact pointer the sn-multithread
+ * subscribe_task used to abandon (freeing the stack frame) by returning on
+ * CONTINUE instead of retrying. */
+TEST(sn_subscribe_nonblock_pendresp_lifecycle)
+{
+    SN_Subscribe sub;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
+
+    mock_net_push(&g_mock, SUBACK_FRAME, (int)sizeof(SUBACK_FRAME));
+
+    sn_subscribe_setup(&sub);
+
+    /* First call sends SUBSCRIBE and the armed CONTINUE forces an in-flight
+     * return before the SUBACK is delivered. */
+    rc = SN_Client_Subscribe(&g_client, &sub);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+#ifdef WOLFMQTT_MULTITHREAD
+    /* The pending response must stay registered while the exchange is in
+     * flight (so a reader thread could route the SUBACK) and must point back
+     * into the caller-owned object. This is the entry that becomes a dangling
+     * pointer if the caller returns/frees the object instead of retrying. */
+    ASSERT_NOT_NULL(g_client.firstPendResp);
+    ASSERT_EQ((void*)&sub.pendResp, (void*)g_client.firstPendResp);
+#endif
+
+    /* Keep retrying, as a correct non-blocking caller must, until it resolves.*/
+    rc = sn_subscribe_pump(&sub, &iters);
+
+    /* Pre-fix subscribe_task would have returned on the CONTINUE above. */
+    ASSERT_NE(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, sub.subAck.return_code);
+    ASSERT_EQ(SN_TEST_SUB_TOPIC_ID, sub.subAck.topicId);
+
+    /* All scripted frames consumed and the non-blocking retry path was taken. */
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+
+    /* The pending response is gone once subscribe completes - no dangling
+     * entry remains for another thread to dereference. */
+    ASSERT_NO_PENDRESP();
+}
+
+/* With multiple CONTINUE results armed before the SUBACK the subscribe must
+ * still converge: repeated re-entry resumes the wait rather than re-adding the
+ * pending response (which would surface MQTT_CODE_ERROR_BAD_ARG as a duplicate).
+ */
+TEST(sn_subscribe_many_continues)
+{
+    SN_Subscribe sub;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(3 /* three CONTINUE per frame */));
+
+    mock_net_push(&g_mock, SUBACK_FRAME, (int)sizeof(SUBACK_FRAME));
+
+    sn_subscribe_setup(&sub);
+
+    rc = sn_subscribe_pump(&sub, &iters);
+
+    ASSERT_NE(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, sub.subAck.return_code);
+    ASSERT_TRUE(iters >= 2);
+    ASSERT_NO_PENDRESP();
+}
+
 #endif /* WOLFMQTT_NONBLOCK */
 
 #endif /* WOLFMQTT_SN */
@@ -411,12 +559,15 @@ int main(int argc, char** argv)
 
     /* Happy path runs in every SN build (blocking and non-blocking). */
     RUN_TEST(sn_connect_lwt_no_continue);
+    RUN_TEST(sn_subscribe_no_continue);
 
     /* The non-blocking retry regression only exists under WOLFMQTT_NONBLOCK. */
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(sn_connect_lwt_nonblock_retry);
     RUN_TEST(sn_connect_lwt_many_continues);
     RUN_TEST(sn_connect_lwt_reconnect);
+    RUN_TEST(sn_subscribe_nonblock_pendresp_lifecycle);
+    RUN_TEST(sn_subscribe_many_continues);
 #endif
 
     TEST_SUITE_END();
