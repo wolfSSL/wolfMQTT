@@ -223,6 +223,14 @@ static const byte SUBACK_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
                                      0x00, SN_TEST_SUB_PACKET_ID,
                                      SN_RC_ACCEPTED };
 
+/* Scripted SUBACK rejecting packet_id 1: same framing as SUBACK_FRAME but the
+ * gateway returns SN_RC_INVTOPICNAME and topicId 0x0000 (no topic assigned),
+ * as a gateway does when it declines the subscription. */
+static const byte SUBACK_REJECT_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
+                                            0x00, 0x00,
+                                            0x00, SN_TEST_SUB_PACKET_ID,
+                                            SN_RC_INVTOPICNAME };
+
 /* ============================================================================
  * Test fixtures
  * ============================================================================ */
@@ -602,6 +610,37 @@ TEST(sn_subscribe_no_continue)
     ASSERT_NO_PENDRESP();
 }
 
+/* #2756: when the gateway rejects the subscription the SUBACK still decodes
+ * cleanly, so SN_Client_WaitType normalizes the non-negative decode result to
+ * MQTT_CODE_SUCCESS. Pre-fix SN_Client_Subscribe returned that SUCCESS verbatim
+ * and a caller would wait forever for messages the gateway never delivers. The
+ * function must now map a non-ACCEPTED subAck.return_code to
+ * MQTT_CODE_ERROR_SUBSCRIBE_REJECTED while still leaving the raw gateway code
+ * visible for diagnosis. Runs in every SN build. */
+TEST(sn_subscribe_rejected)
+{
+    SN_Subscribe sub;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, SUBACK_REJECT_FRAME,
+            (int)sizeof(SUBACK_REJECT_FRAME));
+
+    sn_subscribe_setup(&sub);
+
+    rc = sn_subscribe_pump(&sub, NULL);
+
+    /* Pre-fix this returned MQTT_CODE_SUCCESS. */
+    ASSERT_EQ(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED, rc);
+    /* The raw gateway reject code is still surfaced for the caller. */
+    ASSERT_EQ(SN_RC_INVTOPICNAME, sub.subAck.return_code);
+    /* The client still sent the SUBSCRIBE before the rejection came back. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* No pending response may be left dangling, even on the reject path. */
+    ASSERT_NO_PENDRESP();
+}
+
 /* The non-blocking retry behavior is the actual regression and only applies
  * when WOLFMQTT_NONBLOCK is built (otherwise SN_Client_WaitType blocks and
  * never returns MQTT_CODE_CONTINUE). */
@@ -788,6 +827,36 @@ TEST(sn_subscribe_many_continues)
     ASSERT_NO_PENDRESP();
 }
 
+/* #2756 through the non-blocking retry path: a rejected SUBACK arriving after a
+ * CONTINUE must still resolve to MQTT_CODE_ERROR_SUBSCRIBE_REJECTED. The
+ * rejection mapping must run only once the wait converges - the in-flight
+ * CONTINUE is returned verbatim and must never be turned into a rejection. */
+TEST(sn_subscribe_rejected_nonblock)
+{
+    SN_Subscribe sub;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
+
+    mock_net_push(&g_mock, SUBACK_REJECT_FRAME,
+            (int)sizeof(SUBACK_REJECT_FRAME));
+
+    sn_subscribe_setup(&sub);
+
+    /* The armed CONTINUE forces an in-flight return before the SUBACK arrives;
+     * it must be surfaced as CONTINUE, not prematurely mapped to a rejection. */
+    rc = SN_Client_Subscribe(&g_client, &sub);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* Keep retrying until the rejected SUBACK is delivered and resolved. */
+    rc = sn_subscribe_pump(&sub, &iters);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED, rc);
+    ASSERT_EQ(SN_RC_INVTOPICNAME, sub.subAck.return_code);
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    ASSERT_NO_PENDRESP();
+}
+
 #endif /* WOLFMQTT_NONBLOCK */
 
 #endif /* WOLFMQTT_SN */
@@ -812,6 +881,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);
     RUN_TEST(sn_subscribe_no_continue);
+    RUN_TEST(sn_subscribe_rejected);
 
     /* The non-blocking retry regression only exists under WOLFMQTT_NONBLOCK. */
 #ifdef WOLFMQTT_NONBLOCK
@@ -822,6 +892,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_willmsgupd_payload_scrubbed_nonblock);
     RUN_TEST(sn_subscribe_nonblock_pendresp_lifecycle);
     RUN_TEST(sn_subscribe_many_continues);
+    RUN_TEST(sn_subscribe_rejected_nonblock);
 #endif
 
     TEST_SUITE_END();

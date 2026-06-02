@@ -1610,6 +1610,18 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
     /* reset state */
     subscribe->stat.write = MQTT_MSG_BEGIN;
 
+    /* SUBACK was received and decoded, but the gateway rejected the
+     * subscription. The specific reason is in subscribe->subAck.return_code
+     * (SN_ReturnCodes): SN_RC_CONGESTION, SN_RC_INVTOPICNAME, or
+     * SN_RC_NOTSUPPORTED. Unlike v3.1.1/v5 SUBSCRIBE there is only a single
+     * per-packet topic, so the one return code is the whole result. Surface a
+     * distinct error so a caller checking only the function return value does
+     * not wait for messages the gateway will never deliver. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            subscribe->subAck.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED);
+    }
+
     return rc;
 }
 
