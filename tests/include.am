@@ -15,6 +15,21 @@ tests_unit_tests_DEPENDENCIES = src/libwolfmqtt.la
 # Test framework header
 noinst_HEADERS += tests/unit_test.h
 
+# MQTT-SN packet decoder tests. The SN_Decode_* routines are WOLFMQTT_LOCAL
+# (hidden) so they cannot be linked from libwolfmqtt; src/mqtt_sn_packet.c is
+# built directly into this binary (same approach as test_broker_connect) so the
+# decoders are reachable. The test provides stubs for the LOCAL socket helpers
+# the SN network paths reference but the decoder tests never exercise.
+if BUILD_SN
+check_PROGRAMS += tests/test_mqtt_sn
+tests_test_mqtt_sn_SOURCES      = tests/test_mqtt_sn.c \
+                                  src/mqtt_sn_packet.c
+tests_test_mqtt_sn_CFLAGS       = -DWOLFMQTT_SN $(AM_CFLAGS)
+tests_test_mqtt_sn_CPPFLAGS     = -I$(top_srcdir) $(AM_CPPFLAGS)
+tests_test_mqtt_sn_LDADD        = src/libwolfmqtt.la
+tests_test_mqtt_sn_DEPENDENCIES = src/libwolfmqtt.la
+endif
+
 # Broker CONNECT handler tests. Compiles src/mqtt_broker.c into the test
 # binary with WOLFMQTT_BROKER_CUSTOM_NET so the network layer is replaced
 # with mock callbacks driven by the harness.

@@ -101,6 +101,7 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
     int rc;
     SN_MsgType packet_type;
     word16 total_len;
+    byte *rx_buf_orig = rx_buf;
 
     if (rx_buf == NULL || rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
@@ -119,6 +120,15 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
 
     if (total_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+    /* Reject a declared total_len that does not cover the bytes already
+     * consumed plus the upcoming message-type read. Without this, a peer
+     * crafted SN_PACKET_LEN_IND packet whose 2-byte length field decodes
+     * to a value equal to rx_buf_len (e.g., rx_buf_len == 3 with
+     * total_len == 3) slips past the > rx_buf_len check above and the
+     * *rx_buf++ below reads one byte past the caller-supplied buffer. */
+    if (total_len < (word16)(rx_buf - rx_buf_orig) + 1) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
 
     /* Message Type */
@@ -291,7 +301,15 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     if (total_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
-    if (total_len < 3) {
+    /* Reject a frame whose total_len cannot cover the bytes still to be read
+     * after the length-indicator block (message type + gateway ID). The
+     * short-form header consumes one byte and the extended-length form
+     * consumes three, so the prior fixed "< 3" minimum was only valid for
+     * the short form: an extended-length GWINFO with total_len <= the
+     * header bytes already consumed would slip past it and the
+     * *rx_payload++ reads below would walk past the caller-supplied
+     * buffer. */
+    if (total_len < (word16)(rx_payload - rx_buf) + 2) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
     /* Check message type */
@@ -302,11 +320,18 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
 
     /* Decode gateway info */
     if (gw_info != NULL) {
+        word16 consumed;
+
         gw_info->gwId = *rx_payload++;
 
-        if (total_len - 3 > 0) {
+        /* Use the bytes actually consumed so far (1-byte short-form or
+         * 3-byte extended-length header, plus type + gwId) rather than a
+         * fixed 3, so the address length is correct for both forms and the
+         * copy below cannot read past the buffer in the IND form. */
+        consumed = (word16)(rx_payload - rx_buf);
+        if (total_len > consumed) {
             /* The gateway address is only present if sent by a client */
-            word16 addr_len = total_len - 3;
+            word16 addr_len = total_len - consumed;
             if (addr_len > (word16)sizeof(SN_GwAddr)) {
                 addr_len = (word16)sizeof(SN_GwAddr);
             }
@@ -874,6 +899,15 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
             return rc;
         }
         rx_payload += rc;
+
+        /* total_len must cover at least the bytes consumed so far
+         * (length + type + topicId + packet_id); otherwise the topic-name
+         * length computation below underflows and the NUL terminator is
+         * written before regist->topicName, leaving the field pointing at
+         * non-terminated memory past the parsed packet. */
+        if (total_len < (word16)(rx_payload - rx_buf)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         /* Decode Topic Name */
         regist->topicName = (char*)rx_payload;
