@@ -562,27 +562,57 @@ int MqttBroker_SetPersistHooks(MqttBroker* broker,
  * Restore is implemented in P6.                                               */
 /* -------------------------------------------------------------------------- */
 
-/* Snapshot a connected client into a persisted session record and commit.
+/* Write one persisted session record and commit.
  *
- * Body layout:
+ * Body layout (schema v3):
  *   off  size   field
  *     0    1    protocol_level
  *     1    1    _reserved   (0)
  *     2    4    session_expiry_sec  (big endian; 0xFFFFFFFF = never)
- *     6    2    client_id_len  (big endian)
- *     8    N    client_id   (no NUL terminator on the wire)
+ *     6    8    orphan_since        (big endian; 0 = still connected)
+ *    14    2    client_id_len  (big endian)
+ *    16    N    client_id   (no NUL terminator on the wire)
  *
  * Key is the client_id bytes. */
+static int wmqb_put_session_record(MqttBroker* broker, const char* cid,
+    word16 cid_len, byte protocol_level, word32 session_expiry_sec,
+    word64 orphan_since)
+{
+    word32 body_len;
+    word32 total_len;
+    byte*  buf;
+    int    rc;
+
+    body_len = 1 + 1 + 4 + 8 + 2 + cid_len;
+    total_len = WMQB_HDR_LEN + body_len;
+    buf = (byte*)WOLFMQTT_MALLOC(total_len);
+    if (buf == NULL) {
+        return MQTT_CODE_ERROR_MEMORY;
+    }
+    wmqb_write_header(buf, BROKER_PERSIST_NS_SESSION, body_len);
+    buf[WMQB_HDR_LEN + 0] = protocol_level;
+    buf[WMQB_HDR_LEN + 1] = 0;
+    wmqb_w_u32(&buf[WMQB_HDR_LEN + 2], session_expiry_sec);
+    wmqb_w_u64(&buf[WMQB_HDR_LEN + 6], orphan_since);
+    wmqb_w_u16(&buf[WMQB_HDR_LEN + 14], cid_len);
+    XMEMCPY(&buf[WMQB_HDR_LEN + 16], cid, cid_len);
+
+    rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_SESSION,
+        (const byte*)cid, cid_len, buf, total_len);
+    WOLFMQTT_FREE(buf);
+    return rc;
+}
+
+/* Snapshot a connected client into a persisted session record and commit.
+ * orphan_since is stamped 0 here (the client is still connected); it is set
+ * to the disconnect time later via BrokerPersist_PutOrphanSession. */
 int BrokerPersist_PutSession(MqttBroker* broker,
     const struct BrokerClient* bc)
 {
     const BrokerClient* c = (const BrokerClient*)bc;
     const char* cid;
     word16 cid_len;
-    word32 body_len;
-    word32 total_len;
-    byte*  buf;
-    int    rc;
+    word32 expiry;
 
     if (broker == NULL || broker->persist == NULL || c == NULL) {
         return 0;
@@ -595,31 +625,33 @@ int BrokerPersist_PutSession(MqttBroker* broker,
         return 0;
     }
     cid_len = (word16)XSTRLEN(cid);
-
-    body_len = 1 + 1 + 4 + 2 + cid_len;
-    total_len = WMQB_HDR_LEN + body_len;
-    buf = (byte*)WOLFMQTT_MALLOC(total_len);
-    if (buf == NULL) {
-        return MQTT_CODE_ERROR_MEMORY;
-    }
-    wmqb_write_header(buf, BROKER_PERSIST_NS_SESSION, body_len);
-    buf[WMQB_HDR_LEN + 0] = c->protocol_level;
-    buf[WMQB_HDR_LEN + 1] = 0;
     /* Session Expiry plumbed from CONNECT (v5 property) or defaulted to
      * 0xFFFFFFFF (never expire) for clean_session=0 v3.1.1 sessions. */
 #ifndef WOLFMQTT_STATIC_MEMORY
-    wmqb_w_u32(&buf[WMQB_HDR_LEN + 2], c->session_expiry_sec);
+    expiry = c->session_expiry_sec;
 #else
-    wmqb_w_u32(&buf[WMQB_HDR_LEN + 2], 0xFFFFFFFFu);
+    expiry = 0xFFFFFFFFu;
 #endif
-    wmqb_w_u16(&buf[WMQB_HDR_LEN + 6], cid_len);
-    XMEMCPY(&buf[WMQB_HDR_LEN + 8], cid, cid_len);
-
-    rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_SESSION,
-        (const byte*)cid, cid_len, buf, total_len);
-    WOLFMQTT_FREE(buf);
-    return rc;
+    return wmqb_put_session_record(broker, cid, cid_len, c->protocol_level,
+        expiry, 0);
 }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Re-persist a session record for a client that has just been orphaned,
+ * stamping orphan_since so the v5 Session Expiry timer is measured from the
+ * disconnect time across a broker restart (not reset to restore time). */
+int BrokerPersist_PutOrphanSession(MqttBroker* broker, const char* client_id,
+    byte protocol_level, word32 session_expiry_sec, word64 orphan_since)
+{
+    if (broker == NULL || broker->persist == NULL || client_id == NULL ||
+            *client_id == '\0') {
+        return 0;
+    }
+    return wmqb_put_session_record(broker, client_id,
+        (word16)XSTRLEN(client_id), protocol_level, session_expiry_sec,
+        orphan_since);
+}
+#endif
 
 int BrokerPersist_DelSession(MqttBroker* broker, const char* client_id)
 {
@@ -1142,7 +1174,7 @@ struct wmqb_restore_ctx {
  * or NULL on failure. */
 static BrokerOrphanSession* wmqb_restore_create_orphan(MqttBroker* broker,
     const byte* client_id, word16 cid_len, byte protocol_level,
-    word32 session_expiry_sec)
+    word32 session_expiry_sec, word64 orphan_since)
 {
     BrokerOrphanSession* o;
     if (broker == NULL || client_id == NULL || cid_len == 0) {
@@ -1168,7 +1200,12 @@ static BrokerOrphanSession* wmqb_restore_create_orphan(MqttBroker* broker,
     o->client_id[cid_len] = '\0';
     o->protocol_level = protocol_level;
     o->session_expiry_sec = session_expiry_sec;
-    o->orphan_since = WOLFMQTT_BROKER_GET_TIME_S();
+    /* Use the persisted disconnect time so the v5 Session Expiry timer is
+     * not reset by the restart. orphan_since==0 means the record was last
+     * written while the client was still connected (e.g. crash before a
+     * clean orphan), so start the timer now. */
+    o->orphan_since = (orphan_since != 0) ?
+        (WOLFMQTT_BROKER_TIME_T)orphan_since : WOLFMQTT_BROKER_GET_TIME_S();
     o->next = broker->orphan_sessions;
     broker->orphan_sessions = o;
     broker->orphan_session_count++;
@@ -1531,6 +1568,7 @@ static int wmqb_decode_and_insert_session(MqttBroker* broker,
     int rc;
     byte proto_level;
     word32 session_expiry;
+    word64 orphan_since;
     word16 cid_len;
     const byte* p;
     rc = wmqb_read_header(blob, blob_len, BROKER_PERSIST_NS_SESSION,
@@ -1538,19 +1576,20 @@ static int wmqb_decode_and_insert_session(MqttBroker* broker,
     if (rc != 0) {
         return rc;
     }
-    if (body_len < 1 + 1 + 4 + 2) {
+    if (body_len < 1 + 1 + 4 + 8 + 2) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     p = &blob[WMQB_HDR_LEN];
     proto_level = p[0];
     /* p[1] reserved */
     session_expiry = wmqb_r_u32(&p[2]);
-    cid_len = wmqb_r_u16(&p[6]);
-    if (body_len < (word32)(8 + cid_len)) {
+    orphan_since = wmqb_r_u64(&p[6]);
+    cid_len = wmqb_r_u16(&p[14]);
+    if (body_len < (word32)(16 + cid_len)) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
-    if (wmqb_restore_create_orphan(broker, &p[8], cid_len, proto_level,
-            session_expiry) == NULL) {
+    if (wmqb_restore_create_orphan(broker, &p[16], cid_len, proto_level,
+            session_expiry, orphan_since) == NULL) {
         return MQTT_CODE_ERROR_MEMORY;
     }
     return 0;
@@ -1671,6 +1710,17 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     e->enq_time = (WOLFMQTT_BROKER_TIME_T)enq_time;
     e->expiry_sec = expiry_sec;
     e->protocol_level = protocol_level;
+
+    /* Advance the broker packet-id counter past this restored id so a fresh
+     * BrokerNextPacketId() cannot reissue an id that is still queued, which
+     * would corrupt ack correlation and overwrite NS_OUTQ records (the key
+     * is derived from packet_id). */
+    if (packet_id >= broker->next_packet_id) {
+        broker->next_packet_id = (word16)(packet_id + 1);
+        if (broker->next_packet_id == 0) {
+            broker->next_packet_id = 1;
+        }
+    }
 
     /* Insertion-sort by (enq_time, packet_id) so replay preserves
      * publish order. Two messages enqueued within the same second

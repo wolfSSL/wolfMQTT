@@ -1578,6 +1578,36 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
         int enc_rc;
 
         if (cur->state != BROKER_OUTQ_QUEUED) {
+#if WOLFMQTT_MAX_QOS >= 2
+            /* A QoS 2 entry restored to PUBREL_SENT by BrokerOrphan_Reclaim
+             * (retransmit_dup set) must have its PUBREL re-sent on session
+             * resume per MQTT-4.4.0-1: the subscriber will not re-send
+             * PUBREC, so without this the entry and its inflight slot stay
+             * stuck forever. Re-send once, then keep awaiting PUBCOMP. */
+            if (cur->state == BROKER_OUTQ_PUBREL_SENT && cur->retransmit_dup) {
+                MqttPublishResp rel;
+                int rel_rc;
+                XMEMSET(&rel, 0, sizeof(rel));
+                rel.packet_id = cur->packet_id;
+            #ifdef WOLFMQTT_V5
+                rel.protocol_level = cur->protocol_level;
+                rel.reason_code = MQTT_REASON_SUCCESS;
+            #endif
+                rel_rc = MqttEncode_PublishResp(bc->tx_buf,
+                            BROKER_CLIENT_TX_SZ(bc),
+                            MQTT_PACKET_TYPE_PUBLISH_REL, &rel);
+                if (rel_rc > 0) {
+                    if (MqttPacket_Write(&bc->client, bc->tx_buf,
+                            rel_rc) < 0) {
+                        return; /* socket dropped; retry on next reclaim */
+                    }
+                    cur->retransmit_dup = 0;
+                    WBLOG_DBG(bc->broker,
+                        "broker: drain re-send PUBREL sock=%d packet_id=%u",
+                        (int)bc->sock, (unsigned)cur->packet_id);
+                }
+            }
+#endif
             prev = cur;
             cur = cur->next;
             continue;
@@ -2222,6 +2252,12 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
     existing = BrokerOrphan_Find(broker, bc->client_id);
     if (existing != NULL) {
         BrokerOrphan_Remove(broker, existing);
+    #ifdef WOLFMQTT_BROKER_PERSIST
+        /* Purge the previous orphan's persisted outbound queue so its
+         * (different packet_id) records cannot be restored and replayed
+         * after a restart once the new orphan shadow-writes its own. */
+        (void)BrokerPersist_DelOutQueue(broker, bc->client_id);
+    #endif
     }
 
     /* Cap check; evict oldest if at limit. */
@@ -2270,6 +2306,11 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
         o->client_id, o->out_q_count);
 
 #ifdef WOLFMQTT_BROKER_PERSIST
+    /* Re-persist the session record stamped with the orphan time so the v5
+     * Session Expiry timer is measured from disconnect, not from the next
+     * broker restart. */
+    (void)BrokerPersist_PutOrphanSession(broker, o->client_id,
+        o->protocol_level, o->session_expiry_sec, o->orphan_since);
     /* Shadow-write every transferred QoS 1/2 entry so the queue
      * survives a broker restart. QoS 0 entries (if any leaked into
      * the queue) are skipped by PutOutPub. */
@@ -2312,14 +2353,13 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
     if (new_bc->session_expiry_sec == 0xFFFFFFFFu) {
         new_bc->session_expiry_sec = o->session_expiry_sec;
     }
-    /* MQTT-4.4.0-1: any PUBLISH that was previously in-flight on the
-     * old session is re-sent with DUP=1. Reset PUBLISH_SENT -> QUEUED
-     * here and mark retransmit_dup so the drain emits the correct
-     * flag on first re-send. PUBREL_SENT stays as-is: the resend of
-     * a PUBREL is a fresh PUBREL with the same packet_id and carries
-     * no DUP semantics (PUBREL has no flag for it). The drain handles
-     * PUBREL_SENT today by leaving it untouched; the broker re-emits
-     * PUBREL on receipt of a duplicate PUBREC (existing path). */
+    /* MQTT-4.4.0-1: any message that was previously in-flight on the old
+     * session is re-sent on resume. PUBLISH_SENT -> QUEUED with
+     * retransmit_dup so the drain re-sends the PUBLISH with DUP=1.
+     * PUBREL_SENT stays PUBREL_SENT but is also flagged retransmit_dup so
+     * the drain re-sends a fresh PUBREL (same packet_id; PUBREL carries no
+     * DUP flag) - the subscriber will not re-send PUBREC, so the broker
+     * must drive the PUBREL/PUBCOMP completion itself. */
     {
         BrokerOutPub* e = new_bc->out_q_head;
         int retx = 0;
@@ -2330,10 +2370,12 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
                 retx++;
             }
             else if (e->state == BROKER_OUTQ_PUBREL_SENT) {
-                /* Still in flight by definition - the prior session
-                 * was awaiting PUBCOMP. Restore the inflight count
-                 * (zeroed above) so the Receive Maximum /
-                 * BROKER_MAX_INFLIGHT_PER_SUB cap stays accurate. */
+                /* Still in flight by definition - the prior session was
+                 * awaiting PUBCOMP. Restore the inflight count (zeroed
+                 * above) so the Receive Maximum / BROKER_MAX_INFLIGHT_PER_SUB
+                 * cap stays accurate, and flag it so the drain re-sends the
+                 * PUBREL on resume. */
+                e->retransmit_dup = 1;
                 new_bc->out_q_inflight++;
             }
             e = e->next;
@@ -2384,6 +2426,13 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
         }
         if (o->out_q_count > 0) {
             o->out_q_count--;
+        }
+        /* Keep inflight accounting consistent if the evicted head was an
+         * in-flight QoS 1/2 message, else the cap drifts after reclaim. */
+        if ((head->state == BROKER_OUTQ_PUBLISH_SENT ||
+                head->state == BROKER_OUTQ_PUBREL_SENT) &&
+                o->out_q_inflight > 0) {
+            o->out_q_inflight--;
         }
     #ifdef WOLFMQTT_BROKER_PERSIST
         if (o->client_id != NULL && head->packet_id != 0) {

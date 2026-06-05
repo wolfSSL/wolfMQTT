@@ -177,10 +177,12 @@
  * persisted state, and starts clean (per plan: wipe-and-restart). */
 #ifndef WOLFMQTT_BROKER_PERSIST_SCHEMA_VER
     /* Bumped from 1 -> 2 when the header layout split a dedicated
-     * wrap_mode byte out of the schema-version field. Any existing
-     * dev directory written by an older build mismatches and is
-     * wiped via the schema-mismatch path on first restart. */
-    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 2
+     * wrap_mode byte out of the schema-version field. Bumped 2 -> 3 when
+     * the NS_SESSION record gained an orphan_since timestamp so the v5
+     * Session Expiry timer survives a broker restart. Any existing dev
+     * directory written by an older build mismatches and is wiped via the
+     * schema-mismatch path on first restart. */
+    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 3
 #endif
 
 /* Header wrap_mode byte values (record body framing on disk). */
@@ -740,6 +742,11 @@ struct BrokerOutPub;
 
 WOLFMQTT_LOCAL int BrokerPersist_PutSession(MqttBroker* broker,
     const struct BrokerClient* bc);
+#ifndef WOLFMQTT_STATIC_MEMORY
+WOLFMQTT_LOCAL int BrokerPersist_PutOrphanSession(MqttBroker* broker,
+    const char* client_id, byte protocol_level, word32 session_expiry_sec,
+    word64 orphan_since);
+#endif
 WOLFMQTT_LOCAL int BrokerPersist_DelSession(MqttBroker* broker,
     const char* client_id);
 
