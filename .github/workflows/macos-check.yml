@@ -84,5 +84,36 @@ jobs:
     - name: Show logs on failure
       if: failure() || cancelled()
       run: |
-        cat test-suite.log
-        cat scripts/*.log
+        # Copy broker.test tmp dirs ($TMPDIR/tmp.* on macOS, e.g.
+        # /var/folders/.../T/tmp.XXXXXX) into the workspace so the
+        # next step can upload them as an artifact. Globbing the
+        # real /var/folders path directly trips over unreadable
+        # macOS LaunchServices files.
+        mkdir -p ci-logs
+        [ -f test-suite.log ] && cp test-suite.log ci-logs/ || true
+        cp scripts/*.log ci-logs/ 2>/dev/null || true
+        for d in "${TMPDIR%/}"/tmp.* /tmp/tmp.*; do
+            [ -d "$d" ] || continue
+            base=$(basename "$d")
+            mkdir -p "ci-logs/$base"
+            cp "$d"/*.log "ci-logs/$base/" 2>/dev/null || true
+        done
+        echo "=== test-suite.log ==="
+        cat test-suite.log 2>/dev/null || true
+        echo "=== scripts/*.log ==="
+        cat scripts/*.log 2>/dev/null || true
+        echo "=== ci-logs/tmp.*/*.log (broker.test per-test logs) ==="
+        for f in ci-logs/tmp.*/*.log; do
+            [ -f "$f" ] || continue
+            echo "--- $f ---"
+            cat "$f"
+        done
+
+    - name: Upload broker.test logs on failure
+      if: failure() || cancelled()
+      uses: actions/upload-artifact@v4
+      with:
+        name: broker-test-logs-macos
+        path: ci-logs/
+        if-no-files-found: ignore
+        retention-days: 7

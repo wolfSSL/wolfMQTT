@@ -22,7 +22,9 @@ if BUILD_BROKER
 check_PROGRAMS += tests/test_broker_connect
 tests_test_broker_connect_SOURCES = \
     tests/test_broker_connect.c \
-    src/mqtt_broker.c
+    src/mqtt_broker.c \
+    src/mqtt_broker_persist.c \
+    src/mqtt_broker_persist_posix.c
 tests_test_broker_connect_CFLAGS   = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
     -DWOLFMQTT_BROKER_NO_LOG -DNO_MAIN_DRIVER \
     '-DWOLFMQTT_BROKER_GET_TIME_S()=((WOLFMQTT_BROKER_TIME_T)0)' \
@@ -38,7 +40,9 @@ if BUILD_BROKER
 noinst_PROGRAMS += tests/fuzz/broker_fuzz
 tests_fuzz_broker_fuzz_SOURCES = \
     tests/fuzz/broker_fuzz.c \
-    src/mqtt_broker.c
+    src/mqtt_broker.c \
+    src/mqtt_broker_persist.c \
+    src/mqtt_broker_persist_posix.c
 tests_fuzz_broker_fuzz_CFLAGS   = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
     -DWOLFMQTT_BROKER_NO_LOG -DNO_MAIN_DRIVER \
     '-DWOLFMQTT_BROKER_GET_TIME_S()=((WOLFMQTT_BROKER_TIME_T)0)' \

@@ -527,6 +527,13 @@ int sub_client(MQTTCtx *mqttCtx)
                 break;
             }
         }
+    #ifdef WOLFMQTT_NONBLOCK
+        else if (rc == MQTT_CODE_CONTINUE) {
+            /* Non-blocking: no data yet, keep polling. mqtt_check_timeout()
+             * above will convert this to MQTT_CODE_ERROR_TIMEOUT after the
+             * inactivity window, which drives the keep-alive ping branch. */
+        }
+    #endif
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
             PRINTF("MQTT Message Wait: %s (%d)",

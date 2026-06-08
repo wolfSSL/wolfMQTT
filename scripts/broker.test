@@ -87,8 +87,6 @@ start_broker() {
         wait $broker_pid 2>/dev/null || true
         broker_pid=$no_pid
     fi
-    generate_port
-    local tls_args=""
     local has_tls=0
     local has_s_port=0
     for arg in "$@"; do
@@ -98,13 +96,33 @@ start_broker() {
             has_s_port=1
         fi
     done
-    if [ "$has_tls" -eq 1 ] && [ "$has_s_port" -eq 0 ]; then
-        tls_args="-s $port"
-    fi
-    broker_log="${TMP_DIR}/broker_p${port}.log"
-    ./$broker_bin "$@" -p $port $tls_args >"$broker_log" 2>&1 &
-    broker_pid=$!
-    check_broker
+    # Retry a few times to absorb random-port collisions with
+    # unrelated processes on this host (the broker binds without
+    # SO_REUSEADDR, so a previous PID lingering in TIME_WAIT on the
+    # same port also lands us here).
+    local attempt=0
+    while [ $attempt -lt 5 ]; do
+        generate_port
+        local tls_args=""
+        if [ "$has_tls" -eq 1 ] && [ "$has_s_port" -eq 0 ]; then
+            tls_args="-s $port"
+        fi
+        broker_log="${TMP_DIR}/broker_p${port}.log"
+        # -v 3 = DEBUG; emits PUBLISH/PUBACK/drain events so the
+        # preserved broker_p<port>.log makes broker-side failures
+        # actually diagnosable in CI.
+        ./$broker_bin "$@" -v 3 -p $port $tls_args >"$broker_log" 2>&1 &
+        broker_pid=$!
+        if check_broker; then
+            return 0
+        fi
+        kill $broker_pid 2>/dev/null
+        wait $broker_pid 2>/dev/null || true
+        broker_pid=$no_pid
+        attempt=$((attempt + 1))
+    done
+    echo "WARNING: broker failed to start after 5 attempts" >&2
+    return 1
 }
 
 # Start broker with dual ports (plain + TLS).
@@ -121,7 +139,7 @@ start_broker_dual() {
     port_tls=$port
     port=$plain_port
     broker_log="${TMP_DIR}/broker_dual_p${port}_t${port_tls}.log"
-    ./$broker_bin "$@" -p $port -s $port_tls >"$broker_log" 2>&1 &
+    ./$broker_bin "$@" -v 3 -p $port -s $port_tls >"$broker_log" 2>&1 &
     broker_pid=$!
     check_broker $port
     check_broker $port_tls
@@ -141,12 +159,35 @@ has_will=no
 has_wildcards=no
 has_insecure=no
 has_tls=no
+has_persist=no
 echo "$broker_features" | grep -q "auth" && has_auth=yes
 echo "$broker_features" | grep -q "retained" && has_retained=yes
 echo "$broker_features" | grep -q " will" && has_will=yes
 echo "$broker_features" | grep -q "wildcards" && has_wildcards=yes
 echo "$broker_features" | grep -q "insecure" && has_insecure=yes
 echo "$broker_features" | grep -q "tls" && has_tls=yes
+echo "$broker_features" | grep -q " persist" && has_persist=yes
+has_persist_encrypt=no
+echo "$broker_features" | grep -q " persist-encrypt" && \
+    has_persist_encrypt=yes
+has_persist_encrypt_dev_key=no
+echo "$broker_features" | grep -q " persist-encrypt-dev-key" && \
+    has_persist_encrypt_dev_key=yes
+has_static_memory=no
+echo "$broker_features" | grep -q " static-memory" && \
+    has_static_memory=yes
+
+# Persist-encrypt builds refuse to start without an explicit key source.
+# CLI tests opt into the development key with -E dev (NOT for production
+# - the key is a fixed pattern in the binary, only linked into the
+# binary when --enable-broker-persist-encrypt-dev-key was passed at
+# configure time). For non-encrypt builds and encrypt builds without
+# the dev-key hook this stays empty; the encrypt-CLI tests check the
+# capability flag explicitly and SKIP when missing.
+broker_dir_flags=""
+if [ "$has_persist_encrypt_dev_key" = "yes" ]; then
+    broker_dir_flags="-E dev"
+fi
 
 # Determine if plain (non-TLS) tests can run
 skip_plain=no
@@ -604,12 +645,19 @@ if [ "$has_v5" = "yes" ]; then
     T12_RC=$?
 
     # 12b: Verify CONNACK server properties were received.
-    # Type 37 = Retain Available, Type 40 = Wildcard Subscription Available.
-    # Maximum QoS (Type 36) is intentionally omitted per [MQTT-3.2.2.3.4]
-    # (absence signals QoS 2 support; emitting Max QoS=2 is a Protocol Error).
+    # Type 37 = Retain Available, Type 40 = Wildcard Subscription Available,
+    # Type 33 = Receive Maximum. Type 36 (Maximum QoS) is intentionally NOT
+    # emitted on default builds - [MQTT-3.2.2.3.4] forbids values other
+    # than 0 or 1 there, and absence implies the broker supports QoS 2
+    # (which it does). A regression that re-adds it on a full-QoS build
+    # would break strict v5 clients like mosquitto.
     T12_PROPS=yes
     grep -q "Property CB: Type 37" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
     grep -q "Property CB: Type 40" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
+    grep -q "Property CB: Type 33" "${TMP_DIR}/t12.log" 2>/dev/null || T12_PROPS=no
+    if grep -q "Property CB: Type 36" "${TMP_DIR}/t12.log" 2>/dev/null; then
+        T12_PROPS=no
+    fi
 
     # 12c: v5 pub/sub with separate clients (property forwarding)
     start_broker
@@ -1082,6 +1130,486 @@ else
     FAIL=1
 fi
 fi
+
+# --- Test 26: QoS 1 burst delivery preserves order [MQTT-4.6.0-3] ---
+# Validates the per-subscriber outbound queue (BrokerHandle_Publish enqueue +
+# BrokerClient_DrainOutQueue) introduced for #7 ordered delivery. A burst
+# of 20 sequential QoS 1 publishes from one publisher to one subscriber
+# must all arrive, and in publish order, regardless of the inflight cap.
+echo ""
+echo "--- Test 26: QoS 1 burst delivery (ordered) [MQTT-4.6.0-3] ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Burst delivery (plain listener disabled)"
+else
+start_broker
+T26_N=20
+rm -f "${TMP_DIR}/t26_sub.ready"
+# Notes on subscriber flags:
+#   -C 5000   command timeout per wait, in milliseconds. NOT a message
+#             count - mqtt-sub uses -C as cmd_timeout_ms (mqttexample.c
+#             case 'C'). Earlier revisions of this test mistakenly
+#             passed -C $T26_N (=20), giving a 20 ms timeout that on
+#             nonblock builds (--enable-all enables WOLFMQTT_NONBLOCK)
+#             tripped MqttClient_Unsubscribe / Ping_ex before any
+#             output flushed, especially on macOS arm64.
+#   -k 300    keep-alive seconds; bumped above worst-case test duration
+#             so the client-side keep-alive does not fire mid-burst on
+#             slow CI runners. Inbound PUBLISH traffic does not reset
+#             the client keep-alive timer.
+# Subscriber stays alive until the test kills it after the publishers
+# finish; that pattern is below.
+timeout 30 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
+    -i "t26_sub" -C 5000 -k 300 -R "${TMP_DIR}/t26_sub.ready" \
+    >"${TMP_DIR}/t26_sub.log" 2>&1 &
+T26_SUB_PID=$!
+TEST_PIDS+=($T26_SUB_PID)
+wait_for_file "${TMP_DIR}/t26_sub.ready" 10
+# Publish T26_N sequentially numbered QoS 1 messages
+for t26_i in $(seq 1 $T26_N); do
+    ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/burst" -q 1 \
+        -m "burst_${t26_i}" -i "t26_pub_${t26_i}" \
+        >>"${TMP_DIR}/t26_pub.log" 2>&1
+done
+# mqtt-sub has no "exit after N messages" mode, so it never exits on
+# its own. Give the broker a grace window to fan out all 20 messages
+# (each publisher is a separate connect/pub/disconnect; the broker's
+# outbound drain may lag the last publish a bit on slow CI), then kill
+# the subscriber so its log is flushed and we can count what arrived.
+sleep 2
+kill $T26_SUB_PID 2>/dev/null
+wait $T26_SUB_PID 2>/dev/null || true
+TEST_PIDS=()
+# Count how many of the burst_N tokens reached the subscriber and check
+# that they arrived in publish order (1, 2, ..., N).
+T26_RECEIVED=$(grep -oE 'burst_[0-9]+' "${TMP_DIR}/t26_sub.log" 2>/dev/null \
+               | wc -l | tr -d ' ')
+T26_ORDER_OK=yes
+T26_LAST=0
+while read -r tok; do
+    n=${tok#burst_}
+    if [ "$n" -le "$T26_LAST" ]; then
+        T26_ORDER_OK=no
+    fi
+    T26_LAST=$n
+done < <(grep -oE 'burst_[0-9]+' "${TMP_DIR}/t26_sub.log" 2>/dev/null)
+if [ "$T26_RECEIVED" -eq "$T26_N" ] && [ "$T26_ORDER_OK" = "yes" ]; then
+    echo "PASS: QoS 1 burst delivery (received=$T26_RECEIVED order=ok)"
+else
+    echo "FAIL: Burst delivery (received=$T26_RECEIVED expected=$T26_N " \
+         "order=$T26_ORDER_OK)"
+    echo "--- t26 broker_log tail ---"
+    tail -80 "$broker_log" 2>/dev/null || true
+    echo "--- t26_sub.log tail ---"
+    tail -40 "${TMP_DIR}/t26_sub.log" 2>/dev/null || true
+    echo "--- t26_pub.log tail ---"
+    tail -40 "${TMP_DIR}/t26_pub.log" 2>/dev/null || true
+    echo "--- t26 end ---"
+    FAIL=1
+fi
+fi # skip_plain
+
+# --- Test 27: Persist round-trip across broker restart ---
+# Validates the --enable-broker-persist hooks: starting the broker with
+# -D <dir>, retaining a message, then restarting against the same
+# directory must deliver the retained message to a new subscriber.
+echo ""
+echo "--- Test 27: Persist round-trip across restart ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Persist round-trip (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Persist round-trip (built without --enable-broker-persist)"
+elif [ "$has_retained" = "no" ]; then
+    echo "SKIP: Persist round-trip (retained support not built)"
+elif [ "$has_persist_encrypt" = "yes" ] && \
+        [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: Persist round-trip (encrypt build without dev-key CLI hook)"
+else
+T27_DIR="${TMP_DIR}/persist_t27"
+mkdir -p "$T27_DIR"
+# Stop any existing broker started by previous tests.
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t27_broker1.log"
+./$broker_bin -p $port -D "$T27_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+# Retain a message
+./$pub_bin -T -h 127.0.0.1 -p $port -n "test/persist_t27" \
+    -m "t27_payload" -r >"${TMP_DIR}/t27_pub.log" 2>&1
+sleep 0.2
+# Stop broker (graceful)
+kill $broker_pid 2>/dev/null
+wait $broker_pid 2>/dev/null || true
+broker_pid=$no_pid
+# Restart against same dir
+broker_log="${TMP_DIR}/t27_broker2.log"
+./$broker_bin -p $port -D "$T27_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+# Confirm restore line printed (defense in depth: subscriber confirms anyway)
+T27_RESTORED=no
+grep -q "persist restore retained loaded=1" "$broker_log" 2>/dev/null \
+    && T27_RESTORED=yes
+# New subscriber should receive the retained payload
+rm -f "${TMP_DIR}/t27_sub.ready"
+timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/persist_t27" \
+    -i "t27_sub" -R "${TMP_DIR}/t27_sub.ready" \
+    >"${TMP_DIR}/t27_sub.log" 2>&1 &
+T27_SUB_PID=$!
+TEST_PIDS+=($T27_SUB_PID)
+wait_for_file "${TMP_DIR}/t27_sub.ready" 3
+sleep 0.3
+kill $T27_SUB_PID 2>/dev/null
+wait $T27_SUB_PID 2>/dev/null || true
+TEST_PIDS=()
+T27_GOT=no
+grep -q "t27_payload" "${TMP_DIR}/t27_sub.log" 2>/dev/null && T27_GOT=yes
+# On encrypt builds broker_dir_flags includes -E dev, so T27 ends up
+# exercising the encrypted-at-rest round-trip too (T31 still adds the
+# specific no-plaintext-on-disk check). Annotate so the log is honest
+# about what was covered.
+T27_MODE="plaintext"
+if [ "$has_persist_encrypt_dev_key" = "yes" ]; then
+    T27_MODE="encrypted via -E dev"
+fi
+if [ "$T27_GOT" = "yes" ] && [ "$T27_RESTORED" = "yes" ]; then
+    echo "PASS: Persist round-trip ($T27_MODE; restored=$T27_RESTORED delivered=$T27_GOT)"
+else
+    echo "FAIL: Persist round-trip ($T27_MODE; restored=$T27_RESTORED delivered=$T27_GOT)"
+    FAIL=1
+fi
+fi # has_persist + has_retained
+
+# --- Test 28: Persist schema-mismatch wipe-and-restart ---
+# Corrupt a persisted record by stomping its schema_ver bytes. The
+# broker must log "schema mismatch", overwrite META, and start cleanly.
+# Skipped in encrypted-persist builds: an attacker-supplied plaintext
+# bogus record gets rejected by the decrypt stage before the schema
+# check, so the wipe path is exercised via the plaintext build matrix
+# entry instead.
+echo ""
+echo "--- Test 28: Persist schema mismatch ---"
+t28_persist_encrypt=no
+echo "$broker_features" | grep -q " persist-encrypt" && \
+    t28_persist_encrypt=yes
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Persist schema mismatch (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Persist schema mismatch (built without --enable-broker-persist)"
+elif [ "$t28_persist_encrypt" = "yes" ]; then
+    echo "SKIP: Persist schema mismatch (encrypted build - covered by plaintext matrix entry)"
+else
+T28_DIR="${TMP_DIR}/persist_t28"
+mkdir -p "$T28_DIR/1"
+# Write a fake META file with a bogus schema version. Magic "WMQB",
+# then schema_ver = 0xFFFF (big endian), rec_kind = 1, body_len = 4,
+# body = some bytes.
+# Filename "00.bin" reflects the POSIX backend's key-to-filename
+# encoding: META uses a single 0x00 key byte, which wmqb_hex_encode
+# (in src/mqtt_broker_persist_posix.c) renders as two lowercase hex
+# chars - "00". If that encoding ever changes, update this filename
+# to match.
+printf 'WMQB\xff\xff\x00\x01\x00\x00\x00\x04zzzz' > "$T28_DIR/1/00.bin"
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t28_broker.log"
+./$broker_bin -p $port -D "$T28_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+T28_WIPED=no
+grep -q "schema mismatch" "$broker_log" 2>/dev/null && T28_WIPED=yes
+# Broker should still be functional - run a basic pub/sub against it.
+./$client_bin -T -h 127.0.0.1 -p $port -n "test/persist_t28" -C 3000 \
+    >"${TMP_DIR}/t28_client.log" 2>&1
+T28_CLIENT_RC=$?
+if [ "$T28_WIPED" = "yes" ] && [ $T28_CLIENT_RC -eq 0 ]; then
+    echo "PASS: Persist schema mismatch (wiped=$T28_WIPED rc=$T28_CLIENT_RC)"
+else
+    echo "FAIL: Persist schema mismatch (wiped=$T28_WIPED rc=$T28_CLIENT_RC)"
+    FAIL=1
+fi
+fi # has_persist
+
+# --- Test 29: Offline queue across reconnect (same broker) ---
+# A persistent sub disconnects, publisher sends QoS 1 messages, sub
+# reconnects and receives the queue. Exercises the orphan-session pool
+# without going through a broker restart.
+echo ""
+echo "--- Test 29: Offline queue across reconnect ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Offline queue (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Offline queue (built without --enable-broker-persist)"
+elif [ "$has_static_memory" = "yes" ]; then
+    echo "SKIP: Offline queue (orphan/outbound-queue is dynamic-memory only)"
+elif [ "$has_persist_encrypt" = "yes" ] && \
+        [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: Offline queue (encrypt build without dev-key CLI hook)"
+else
+T29_DIR="${TMP_DIR}/persist_t29"
+mkdir -p "$T29_DIR"
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t29_broker.log"
+./$broker_bin -p $port -D "$T29_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+# 1. Persistent sub connects, subscribes; SIGKILL to disconnect
+#    abruptly (graceful exit sends UNSUBSCRIBE which would tear down
+#    the subscription and defeat the orphan path).
+rm -f "${TMP_DIR}/t29_first.ready"
+./$sub_bin -T -h 127.0.0.1 -p $port -n "test/offlineq" -q 1 \
+    -i "t29_sub" -s \
+    -R "${TMP_DIR}/t29_first.ready" \
+    >"${TMP_DIR}/t29_first.log" 2>&1 &
+T29_FIRST_PID=$!
+TEST_PIDS+=($T29_FIRST_PID)
+wait_for_file "${TMP_DIR}/t29_first.ready" 5
+kill -9 $T29_FIRST_PID 2>/dev/null
+wait $T29_FIRST_PID 2>/dev/null || true
+TEST_PIDS=()
+sleep 0.5
+# 2. Publish 3 QoS 1 messages while disconnected.
+for t29_i in 1 2 3; do
+    ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/offlineq" -q 1 \
+        -m "off_${t29_i}" -i "t29_pub_${t29_i}" \
+        >>"${TMP_DIR}/t29_pub.log" 2>&1
+done
+sleep 0.5
+# 3. Reconnect with same client_id + clean_session=0; receive backlog.
+# Use a generous cmd_timeout_ms (-C 5000) so the client's CONNACK wait
+# survives the orphan-reassociate + reclaim path; 3 ms races on slow
+# CI runners (broker writes CONNACK after client has already closed,
+# leaving the drained PUBLISHes to fail with EPIPE).
+timeout 8 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/offlineq" -q 1 \
+    -i "t29_sub" -s -x -C 5000 -R "${TMP_DIR}/t29_sub.ready" \
+    >"${TMP_DIR}/t29_sub.log" 2>&1 &
+T29_PID=$!
+TEST_PIDS+=($T29_PID)
+wait_for_file "${TMP_DIR}/t29_sub.ready" 5
+sleep 1
+kill $T29_PID 2>/dev/null
+wait $T29_PID 2>/dev/null || true
+TEST_PIDS=()
+T29_RECV=$(grep -oE 'off_[0-9]+' "${TMP_DIR}/t29_sub.log" 2>/dev/null \
+    | wc -l)
+if [ "$T29_RECV" -ge 3 ]; then
+    echo "PASS: Offline queue across reconnect (received=$T29_RECV)"
+else
+    echo "FAIL: Offline queue across reconnect (received=$T29_RECV expected>=3)"
+    FAIL=1
+fi
+fi # has_persist (t29)
+
+# --- Test 30: Offline queue across broker restart ---
+# Same as Test 29 but stops the broker between publish and reconnect to
+# confirm NS_OUTQ records replay on restart.
+echo ""
+echo "--- Test 30: Offline queue across broker restart ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Offline queue restart (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Offline queue restart (built without --enable-broker-persist)"
+elif [ "$has_static_memory" = "yes" ]; then
+    echo "SKIP: Offline queue restart (orphan/outbound-queue is dynamic-memory only)"
+elif [ "$has_persist_encrypt" = "yes" ] && \
+        [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: Offline queue restart (encrypt build without dev-key CLI hook)"
+else
+T30_DIR="${TMP_DIR}/persist_t30"
+mkdir -p "$T30_DIR"
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t30_broker1.log"
+./$broker_bin -p $port -D "$T30_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+rm -f "${TMP_DIR}/t30_first.ready"
+./$sub_bin -T -h 127.0.0.1 -p $port -n "test/restartq" -q 1 \
+    -i "t30_sub" -s \
+    -R "${TMP_DIR}/t30_first.ready" \
+    >"${TMP_DIR}/t30_first.log" 2>&1 &
+T30_FIRST_PID=$!
+TEST_PIDS+=($T30_FIRST_PID)
+wait_for_file "${TMP_DIR}/t30_first.ready" 5
+kill -9 $T30_FIRST_PID 2>/dev/null
+wait $T30_FIRST_PID 2>/dev/null || true
+TEST_PIDS=()
+sleep 0.5
+for t30_i in 1 2 3; do
+    ./$pub_bin -T -h 127.0.0.1 -p $port -n "test/restartq" -q 1 \
+        -m "rst_${t30_i}" -i "t30_pub_${t30_i}" \
+        >>"${TMP_DIR}/t30_pub.log" 2>&1
+done
+sleep 0.5
+# Restart broker against same directory
+kill $broker_pid 2>/dev/null
+wait $broker_pid 2>/dev/null || true
+broker_pid=$no_pid
+broker_log="${TMP_DIR}/t30_broker2.log"
+./$broker_bin -p $port -D "$T30_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+T30_REPLAY=no
+grep -q "persist restore outq loaded=3" "$broker_log" 2>/dev/null \
+    && T30_REPLAY=yes
+# Same -C 5000 rationale as Test 29; the restored-from-disk path is
+# even more sensitive to a short client timeout.
+timeout 8 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/restartq" -q 1 \
+    -i "t30_sub" -s -x -C 5000 -R "${TMP_DIR}/t30_sub.ready" \
+    >"${TMP_DIR}/t30_sub.log" 2>&1 &
+T30_PID=$!
+TEST_PIDS+=($T30_PID)
+wait_for_file "${TMP_DIR}/t30_sub.ready" 5
+sleep 1
+kill $T30_PID 2>/dev/null
+wait $T30_PID 2>/dev/null || true
+TEST_PIDS=()
+T30_RECV=$(grep -oE 'rst_[0-9]+' "${TMP_DIR}/t30_sub.log" 2>/dev/null \
+    | wc -l)
+if [ "$T30_REPLAY" = "yes" ] && [ "$T30_RECV" -ge 3 ]; then
+    echo "PASS: Offline queue across restart (replay=$T30_REPLAY recv=$T30_RECV)"
+else
+    echo "FAIL: Offline queue across restart (replay=$T30_REPLAY recv=$T30_RECV)"
+    FAIL=1
+fi
+fi # has_persist (t30)
+
+# --- Test 31: AES-GCM encrypted records at rest ---
+# Only meaningful when the broker is built with
+# --enable-broker-persist-encrypt. Records on disk must not contain the
+# plaintext payload string; round-trip must still work end-to-end.
+echo ""
+echo "--- Test 31: AES-GCM encrypted persist round-trip ---"
+# has_persist_encrypt was detected at startup.
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: AES-GCM persist (plain listener disabled)"
+elif [ "$has_persist_encrypt" = "no" ]; then
+    echo "SKIP: AES-GCM persist (built without --enable-broker-persist-encrypt)"
+elif [ "$has_persist_encrypt_dev_key" = "no" ]; then
+    echo "SKIP: AES-GCM persist (built without --enable-broker-persist-encrypt-dev-key)"
+elif [ "$has_retained" = "no" ]; then
+    echo "SKIP: AES-GCM persist (retained support not built)"
+else
+T31_DIR="${TMP_DIR}/persist_t31"
+mkdir -p "$T31_DIR"
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t31_broker1.log"
+# -E dev opts into the development hard-coded key. Production builds
+# install MqttBrokerPersistHooks.derive_key instead and never reach
+# this flag.
+./$broker_bin -p $port -D "$T31_DIR" -E dev >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+./$pub_bin -T -h 127.0.0.1 -p $port -n "test/secret_t31" \
+    -m "t31_secret_payload" -r >"${TMP_DIR}/t31_pub.log" 2>&1
+sleep 0.3
+# On-disk record must NOT contain the plaintext string.
+T31_LEAK=no
+if grep -ql "t31_secret_payload" "$T31_DIR"/4/*.bin 2>/dev/null; then
+    T31_LEAK=yes
+fi
+# Restart broker - decryption + retained replay should still work.
+kill $broker_pid 2>/dev/null
+wait $broker_pid 2>/dev/null || true
+broker_pid=$no_pid
+broker_log="${TMP_DIR}/t31_broker2.log"
+./$broker_bin -p $port -D "$T31_DIR" -E dev >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+rm -f "${TMP_DIR}/t31_sub.ready"
+timeout 5 ./$sub_bin -T -h 127.0.0.1 -p $port -n "test/secret_t31" \
+    -i "t31_sub" -R "${TMP_DIR}/t31_sub.ready" \
+    >"${TMP_DIR}/t31_sub.log" 2>&1 &
+T31_PID=$!
+TEST_PIDS+=($T31_PID)
+wait_for_file "${TMP_DIR}/t31_sub.ready" 3
+sleep 0.5
+kill $T31_PID 2>/dev/null
+wait $T31_PID 2>/dev/null || true
+TEST_PIDS=()
+T31_RECV=no
+grep -q "t31_secret_payload" "${TMP_DIR}/t31_sub.log" 2>/dev/null \
+    && T31_RECV=yes
+if [ "$T31_LEAK" = "no" ] && [ "$T31_RECV" = "yes" ]; then
+    echo "PASS: AES-GCM persist (no-leak + decrypt round-trip)"
+else
+    echo "FAIL: AES-GCM persist (leak=$T31_LEAK recv=$T31_RECV)"
+    FAIL=1
+fi
+fi # has_persist_encrypt
+
+# --- Test 32: Schema-mismatch wipe deletes every stale file ---
+# Test 28 already verifies that a single bogus META makes the broker
+# overwrite META, but doesn't check that OTHER namespaces get cleaned.
+# This test plants stray files in every namespace and confirms they all
+# disappear after the broker comes up.
+echo ""
+echo "--- Test 32: Schema mismatch wipes every namespace ---"
+if [ "$skip_plain" = "yes" ]; then
+    echo "SKIP: Schema wipe full (plain listener disabled)"
+elif [ "$has_persist" = "no" ]; then
+    echo "SKIP: Schema wipe full (built without --enable-broker-persist)"
+elif [ "$has_persist_encrypt" = "yes" ]; then
+    echo "SKIP: Schema wipe full (encrypted build - exercised by plaintext matrix entry)"
+elif [ "$has_static_memory" = "yes" ]; then
+    echo "SKIP: Schema wipe full (active wipe skipped in static-memory mode by design)"
+else
+T32_DIR="${TMP_DIR}/persist_t32"
+rm -rf "$T32_DIR"
+mkdir -p "$T32_DIR/1" "$T32_DIR/2" "$T32_DIR/3" "$T32_DIR/4" "$T32_DIR/5"
+# Bogus META with wrong schema version (0xFFFF).
+printf 'WMQB\xff\xff\x00\x01\x00\x00\x00\x04zzzz' > "$T32_DIR/1/00.bin"
+# Plant a stray file in each other namespace.
+echo "stray-session" > "$T32_DIR/2/aaaa.bin"
+echo "stray-subs"    > "$T32_DIR/3/bbbb.bin"
+echo "stray-ret"     > "$T32_DIR/4/cccc.bin"
+echo "stray-outq"    > "$T32_DIR/5/dddd.bin"
+T32_BEFORE=$(find "$T32_DIR" -type f -name '*.bin' | wc -l)
+if [ $broker_pid != $no_pid ]; then
+    kill $broker_pid 2>/dev/null
+    wait $broker_pid 2>/dev/null || true
+    broker_pid=$no_pid
+fi
+generate_port
+broker_log="${TMP_DIR}/t32_broker.log"
+./$broker_bin -p $port -D "$T32_DIR" $broker_dir_flags >"$broker_log" 2>&1 &
+broker_pid=$!
+check_broker
+# After wipe-and-restart only the fresh META record should remain.
+T32_AFTER=$(find "$T32_DIR" -type f -name '*.bin' | wc -l)
+T32_WIPED=no
+grep -q "persist wipe deleted" "$broker_log" 2>/dev/null \
+    && T32_WIPED=yes
+if [ "$T32_BEFORE" -eq 5 ] && [ "$T32_AFTER" -eq 1 ] && \
+   [ "$T32_WIPED" = "yes" ]; then
+    echo "PASS: Schema wipe (before=$T32_BEFORE after=$T32_AFTER)"
+else
+    echo "FAIL: Schema wipe (before=$T32_BEFORE after=$T32_AFTER wiped=$T32_WIPED)"
+    FAIL=1
+fi
+fi # has_persist (t32)
 
 # --- WebSocket Tests ---
 ws_client_bin="examples/websocket/websocket_client"
