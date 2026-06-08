@@ -412,6 +412,41 @@ TEST(sn_connack_null_buf_rejected)
 }
 
 /* ============================================================================
+ * SN_Packet_TypeDesc
+ * ============================================================================ */
+
+/* The QoS 2 PUBREC/PUBREL branch of SN_Client_HandlePacket logs the response
+ * message type (SN_MSG_TYPE_PUBREL or SN_MSG_TYPE_PUBCOMP) for its debug trace.
+ * MQTT-SN message-type values do not align with the standard MqttPacketType
+ * values, so describing them with MqttPacket_TypeDesc mis-renders PUBCOMP
+ * (0x0E) as "Disconnect" and PUBREL (0x10) as "Unknown". These tests pin the
+ * correct SN descriptions, including the two values that branch can produce. */
+#ifndef WOLFMQTT_NO_ERROR_STRINGS
+TEST(sn_typedesc_pubcomp)
+{
+    /* 0x0E: would be "Disconnect" if described as an MqttPacketType. */
+    ASSERT_STR_EQ("Publish complete", SN_Packet_TypeDesc(SN_MSG_TYPE_PUBCOMP));
+}
+
+TEST(sn_typedesc_pubrel)
+{
+    /* 0x10: outside the MqttPacketType range, would be "Unknown". */
+    ASSERT_STR_EQ("Publish Release", SN_Packet_TypeDesc(SN_MSG_TYPE_PUBREL));
+}
+
+TEST(sn_typedesc_pubrec)
+{
+    ASSERT_STR_EQ("Publish Received", SN_Packet_TypeDesc(SN_MSG_TYPE_PUBREC));
+}
+
+TEST(sn_typedesc_unknown_type)
+{
+    /* 0x11 is reserved and unhandled, so it falls through to the default. */
+    ASSERT_STR_EQ("Unknown", SN_Packet_TypeDesc((SN_MsgType)0x11));
+}
+#endif /* !WOLFMQTT_NO_ERROR_STRINGS */
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -456,6 +491,14 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connack_total_len_exceeds_buffer_rejected);
     RUN_TEST(sn_connack_wrong_type_rejected);
     RUN_TEST(sn_connack_null_buf_rejected);
+
+    /* SN_Packet_TypeDesc */
+#ifndef WOLFMQTT_NO_ERROR_STRINGS
+    RUN_TEST(sn_typedesc_pubcomp);
+    RUN_TEST(sn_typedesc_pubrel);
+    RUN_TEST(sn_typedesc_pubrec);
+    RUN_TEST(sn_typedesc_unknown_type);
+#endif
 
     TEST_SUITE_END();
 

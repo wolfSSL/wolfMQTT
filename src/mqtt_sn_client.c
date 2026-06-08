@@ -287,7 +287,8 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                     client->tx_buf_len, resp_type, p_publish_resp);
             #ifdef WOLFMQTT_DEBUG_CLIENT
                 PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d",
-                    rc, MqttPacket_TypeDesc(resp_type), resp_type, packet_id);
+                    rc, SN_Packet_TypeDesc((SN_MsgType)resp_type), resp_type,
+                    packet_id);
             #endif
                 if (rc <= 0) {
                 #ifdef WOLFMQTT_MULTITHREAD
