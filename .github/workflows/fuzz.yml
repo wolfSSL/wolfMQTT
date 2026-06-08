@@ -2,7 +2,7 @@ name: Fuzz Testing
 
 on:
   schedule:
-    - cron: '0 4 * * 1'  # Weekly Monday 4am UTC
+    - cron: '0 4 * * *'  # Nightly 4am UTC
   workflow_dispatch:       # Manual trigger
   pull_request:
     branches: [ '*' ]
@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Full fuzz run (weekly/manual) - 10 minutes
+          # Full fuzz run (nightly/manual) - 10 minutes
           - name: fuzz-full
             fuzz_time: 600
             smoke_only: false
@@ -32,7 +32,7 @@ jobs:
         run: sudo sysctl vm.mmap_rnd_bits=28
 
       - name: Run fuzzer
-        if: ${{ !matrix.smoke_only || github.event_name == 'pull_request' }}
+        if: ${{ (matrix.smoke_only && github.event_name == 'pull_request') || (!matrix.smoke_only && github.event_name != 'pull_request') }}
         run: ./scripts/fuzz.sh ${{ matrix.fuzz_time }}
 
       - name: Upload crash artifacts
