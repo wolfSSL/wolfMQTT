@@ -79,7 +79,7 @@ jobs:
             cflags: ""
             wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --enable-tls"
           - name: "Broker with persist + AES-GCM encryption"
-            cflags: ""
+            cflags: "-DWOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY"
             wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --enable-broker-persist-encrypt"
           - name: "Broker with persist + static memory"
             cflags: "-DWOLFMQTT_STATIC_MEMORY"

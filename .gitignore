@@ -128,3 +128,5 @@ src/mqtt_broker
 
 tests/fuzz/broker_fuzz
 tests/fuzz/corpus/
+tests/test_broker_connect
+tests/unit_tests
