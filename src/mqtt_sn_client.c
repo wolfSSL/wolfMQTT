@@ -2044,8 +2044,19 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     rc = SN_Client_WaitType(client, ping,
             SN_MSG_TYPE_PING_RESP, 0, client->cmd_timeout_ms);
 #ifdef WOLFMQTT_NONBLOCK
-    if (rc == MQTT_CODE_CONTINUE)
+    if (rc == MQTT_CODE_CONTINUE && ping != &loc_ping) {
+        /* Caller owns 'ping': the object (and, under MULTITHREAD, its
+         * registered pendResp) lives across calls, so leave the pending
+         * response linked and let the caller resume on the next call. */
         return rc;
+    }
+    /* For the ping==NULL fallback we used the stack-local loc_ping, which
+     * cannot persist across calls. Returning CONTINUE here would leave
+     * &loc_ping.pendResp linked on client->firstPendResp after this frame
+     * unwinds; a later call reuses the stack address, so the stale entry
+     * could be dereferenced by MqttClient_CheckPendResp on the receive path
+     * (use-after-scope). Fall through to remove the entry before returning,
+     * even on a CONTINUE result. */
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
     if (wm_SemLock(&client->lockClient) == 0) {

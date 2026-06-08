@@ -217,6 +217,12 @@ WOLFMQTT_API int SN_Client_Disconnect_ex(
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      ping        Pointer to SN_PingReq structure. NULL is valid.
+ *                          Under WOLFMQTT_NONBLOCK a caller that must resume
+ *                          the request across MQTT_CODE_CONTINUE returns should
+ *                          pass a persistent (caller-owned) object: a NULL ping
+ *                          falls back to internal storage that cannot carry
+ *                          state between calls, so each call is an independent,
+ *                          self-contained request rather than a resumed one.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

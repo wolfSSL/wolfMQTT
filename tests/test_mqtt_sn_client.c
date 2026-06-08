@@ -231,6 +231,9 @@ static const byte SUBACK_REJECT_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
                                             0x00, SN_TEST_SUB_PACKET_ID,
                                             SN_RC_INVTOPICNAME };
 
+/* Gateway PINGRESP: total_len=2, type. */
+static const byte PINGRESP_FRAME[] = { 0x02, SN_MSG_TYPE_PING_RESP };
+
 /* ============================================================================
  * Test fixtures
  * ============================================================================ */
@@ -309,6 +312,26 @@ static int sn_subscribe_pump(SN_Subscribe* s, int* iters)
     const int max_iters = 50;
     for (i = 0; i < max_iters; i++) {
         rc = SN_Client_Subscribe(&g_client, s);
+        if (rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    if (iters) {
+        *iters = i + 1;
+    }
+    return rc;
+}
+
+/* Drive SN_Client_Ping until it returns something other than CONTINUE, or until
+ * we exceed a sane iteration cap. `ping` may be NULL to exercise the internal
+ * fallback. Returns the terminal code and the iteration count through *iters. */
+static int sn_ping_pump(SN_PingReq* ping, int* iters)
+{
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    const int max_iters = 50;
+    for (i = 0; i < max_iters; i++) {
+        rc = SN_Client_Ping(&g_client, ping);
         if (rc != MQTT_CODE_CONTINUE) {
             break;
         }
@@ -859,6 +882,142 @@ TEST(sn_subscribe_rejected_nonblock)
 
 #endif /* WOLFMQTT_NONBLOCK */
 
+/* ============================================================================
+ * SN ping pending-response lifecycle tests (use-after-scope regression, #3132)
+ *
+ * SN_Client_Ping accepts a NULL 'ping' and falls back to a function-local
+ * SN_PingReq (loc_ping) on the stack. Under WOLFMQTT_MULTITHREAD it registers
+ * &ping->pendResp on client->firstPendResp. Under WOLFMQTT_NONBLOCK an in-flight
+ * MQTT_CODE_CONTINUE used to be returned verbatim - which, for the NULL
+ * fallback, left &loc_ping.pendResp linked on the respList after the stack frame
+ * unwound. A later call reused the stack address, so the stale entry could be
+ * dereferenced by the receive path (use-after-scope). The fix removes the entry
+ * before any CONTINUE return for the NULL fallback, while a caller-owned object
+ * (which persists across calls) still keeps its entry linked so it can resume.
+ * These tests pin both halves of that contract.
+ * ============================================================================ */
+
+/* Happy path with a caller-owned ping: PINGRESP is immediately available. Runs
+ * in every SN build and guards that the pending response is removed once the
+ * ping completes. */
+TEST(sn_ping_no_continue)
+{
+    SN_PingReq ping;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+
+    XMEMSET(&ping, 0, sizeof(ping));
+
+    rc = sn_ping_pump(&ping, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The client sent PINGREQ. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* No pending response may be left dangling once the ping completes. */
+    ASSERT_NO_PENDRESP();
+}
+
+/* Happy path with ping==NULL: exercises the internal loc_ping fallback. Runs in
+ * every SN build and guards that the fallback's pending response is removed once
+ * the ping completes (no entry leaked for a blocking single-call ping). */
+TEST(sn_ping_null_no_continue)
+{
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+
+    rc = sn_ping_pump(NULL, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    ASSERT_NO_PENDRESP();
+}
+
+/* The non-blocking dangling-pointer regression only manifests under
+ * WOLFMQTT_NONBLOCK (otherwise SN_Client_WaitType blocks and never returns
+ * MQTT_CODE_CONTINUE, so the early-return path that leaked the entry is never
+ * taken). */
+#ifdef WOLFMQTT_NONBLOCK
+
+/* The headline #3132 regression. With a CONTINUE armed before the PINGRESP, a
+ * ping==NULL call returns in-flight while &loc_ping.pendResp would (pre-fix)
+ * still be linked - a pointer into the now-dead stack frame. Under MULTITHREAD
+ * this pins the dangling-pointer contract directly: after the in-flight CONTINUE
+ * NO pending response may remain. The retry must still converge to SUCCESS. */
+TEST(sn_ping_null_nonblock_no_dangling_pendresp)
+{
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
+
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+
+    /* First call sends PINGREQ and the armed CONTINUE forces an in-flight return
+     * before the PINGRESP is delivered. With ping==NULL the request is built on
+     * a stack-local SN_PingReq that does not survive this return. */
+    rc = SN_Client_Ping(&g_client, NULL);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+#ifdef WOLFMQTT_MULTITHREAD
+    /* Pre-fix &loc_ping.pendResp was left linked on the client respList here and
+     * dangled once SN_Client_Ping returned. The fix removes it before the
+     * CONTINUE return for the NULL fallback, so no entry may remain. */
+    ASSERT_NULL(g_client.firstPendResp);
+#endif
+
+    /* A correct non-blocking caller keeps retrying until the ping resolves. */
+    rc = sn_ping_pump(NULL, &iters);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* All scripted frames consumed and no dangling entry remains. */
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    ASSERT_NO_PENDRESP();
+}
+
+/* The complementary half of the contract: for a caller-owned ping the pending
+ * response MUST stay linked across an in-flight CONTINUE (so a reader thread can
+ * route the PINGRESP and the wait can resume), and must point back into the
+ * caller's object. A "remove before every CONTINUE" change would be caught here.
+ */
+TEST(sn_ping_nonblock_pendresp_lifecycle)
+{
+    SN_PingReq ping;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
+
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+
+    XMEMSET(&ping, 0, sizeof(ping));
+
+    /* First call sends PINGREQ; the armed CONTINUE forces an in-flight return
+     * before the PINGRESP is delivered. */
+    rc = SN_Client_Ping(&g_client, &ping);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+#ifdef WOLFMQTT_MULTITHREAD
+    /* The entry stays registered while the exchange is in flight and points back
+     * into the caller-owned object - the fix must NOT remove it here (only the
+     * stack-local NULL fallback is cleaned up on CONTINUE). */
+    ASSERT_NOT_NULL(g_client.firstPendResp);
+    ASSERT_EQ((void*)&ping.pendResp, (void*)g_client.firstPendResp);
+#endif
+
+    /* Resume until the PINGRESP is delivered and the ping resolves. */
+    rc = sn_ping_pump(&ping, &iters);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    /* The pending response is gone once the ping completes - no dangling entry
+     * remains for another thread to dereference. */
+    ASSERT_NO_PENDRESP();
+}
+
+#endif /* WOLFMQTT_NONBLOCK */
+
 #endif /* WOLFMQTT_SN */
 
 /* ============================================================================
@@ -882,6 +1041,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);
     RUN_TEST(sn_subscribe_no_continue);
     RUN_TEST(sn_subscribe_rejected);
+    RUN_TEST(sn_ping_no_continue);
+    RUN_TEST(sn_ping_null_no_continue);
 
     /* The non-blocking retry regression only exists under WOLFMQTT_NONBLOCK. */
 #ifdef WOLFMQTT_NONBLOCK
@@ -893,6 +1054,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_subscribe_nonblock_pendresp_lifecycle);
     RUN_TEST(sn_subscribe_many_continues);
     RUN_TEST(sn_subscribe_rejected_nonblock);
+    RUN_TEST(sn_ping_null_nonblock_no_dangling_pendresp);
+    RUN_TEST(sn_ping_nonblock_pendresp_lifecycle);
 #endif
 
     TEST_SUITE_END();
