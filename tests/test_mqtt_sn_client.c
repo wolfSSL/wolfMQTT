@@ -234,6 +234,21 @@ static const byte SUBACK_REJECT_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
 /* Gateway PINGRESP: total_len=2, type. */
 static const byte PINGRESP_FRAME[] = { 0x02, SN_MSG_TYPE_PING_RESP };
 
+/* Scripted publish-response frames for packet_id 1.
+ * PUBACK:  total_len=7, type, topicId(2), packet_id(2), return_code.
+ * PUBREC:  total_len=4, type, packet_id(2).
+ * PUBCOMP: total_len=4, type, packet_id(2). */
+#define SN_TEST_PUB_PACKET_ID 1
+#define SN_TEST_PUB_TOPIC_ID  0x0A
+static const byte PUBACK_FRAME[] = { 0x07, SN_MSG_TYPE_PUBACK,
+                                     0x00, SN_TEST_PUB_TOPIC_ID,
+                                     0x00, SN_TEST_PUB_PACKET_ID,
+                                     SN_RC_ACCEPTED };
+static const byte PUBREC_FRAME[]  = { 0x04, SN_MSG_TYPE_PUBREC,
+                                      0x00, SN_TEST_PUB_PACKET_ID };
+static const byte PUBCOMP_FRAME[] = { 0x04, SN_MSG_TYPE_PUBCOMP,
+                                      0x00, SN_TEST_PUB_PACKET_ID };
+
 /* ============================================================================
  * Test fixtures
  * ============================================================================ */
@@ -332,6 +347,43 @@ static int sn_ping_pump(SN_PingReq* ping, int* iters)
     const int max_iters = 50;
     for (i = 0; i < max_iters; i++) {
         rc = SN_Client_Ping(&g_client, ping);
+        if (rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    if (iters) {
+        *iters = i + 1;
+    }
+    return rc;
+}
+
+/* Build a NORMAL-topic-ID publish. topicId must outlive every SN_Client_Publish
+ * call: SN_Encode_Publish reads the 2-byte topic ID through publish->topic_name,
+ * so the caller owns the storage and passes its address here. */
+static void sn_publish_setup(SN_Publish* p, const word16* topicId, MqttQoS qos)
+{
+    XMEMSET(p, 0, sizeof(*p));
+    p->retain = 0;
+    p->qos = qos;
+    p->duplicate = 0;
+    p->topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    p->topic_name = (const char*)topicId;
+    /* QoS 0 publishes carry no packet id (and expect no ACK). */
+    p->packet_id = (qos == MQTT_QOS_0) ? 0 : SN_TEST_PUB_PACKET_ID;
+    p->buffer = (byte*)"test";
+    p->total_len = 4;
+}
+
+/* Drive SN_Client_Publish until it returns something other than CONTINUE, or
+ * until we exceed a sane iteration cap. Returns the terminal code and the
+ * number of iterations through *iters. */
+static int sn_publish_pump(SN_Publish* p, int* iters)
+{
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    const int max_iters = 50;
+    for (i = 0; i < max_iters; i++) {
+        rc = SN_Client_Publish(&g_client, p);
         if (rc != MQTT_CODE_CONTINUE) {
             break;
         }
@@ -664,6 +716,98 @@ TEST(sn_subscribe_rejected)
     ASSERT_NO_PENDRESP();
 }
 
+/* ============================================================================
+ * SN publish pending-response lifecycle tests (CWE-416 regression, #5146)
+ *
+ * For QoS 1/2 SN_Client_Publish registers &publish->pendResp in
+ * client->firstPendResp (MULTITHREAD) and must remove it exactly once the
+ * PUBACK (QoS 1) / PUBCOMP (QoS 2) arrives. Under WOLFMQTT_NONBLOCK the entry
+ * stays linked across MQTT_CODE_CONTINUE returns (the write path returns before
+ * removal, and the wait path breaks before removal) so a reader thread can
+ * route the response - which is exactly why the caller must keep retrying and
+ * must not free the publish object until the exchange completes. The
+ * sn-multithread publish_task stack-allocates SN_Publish and used to call
+ * SN_Client_Publish exactly once: on a CONTINUE it returned, freeing the stack
+ * frame while &publish->pendResp was still linked, and the concurrent
+ * waitMessage_task / ping_task threads dereferenced the dangling entry
+ * (use-after-free). These tests pin both halves of the contract: no entry is
+ * leaked once publish finishes, and the entry IS still linked (pointing back
+ * into the caller's object) while a call is in-flight.
+ * ============================================================================ */
+
+/* Happy path, QoS 1: PUBACK is immediately available. Runs in every SN build
+ * and guards that the pending response is removed once the publish completes. */
+TEST(sn_publish_qos1_no_continue)
+{
+    SN_Publish pub;
+    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
+
+    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+
+    rc = sn_publish_pump(&pub, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, pub.return_code);
+    /* The client sent the PUBLISH. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* No pending response may be left dangling once publish completes. */
+    ASSERT_NO_PENDRESP();
+}
+
+/* Happy path, QoS 2: the gateway answers PUBREC then PUBCOMP. The client must
+ * send PUBREL in between (so >= 2 writes) and converge to SUCCESS with no
+ * dangling pending response. Runs in every SN build. */
+TEST(sn_publish_qos2_no_continue)
+{
+    SN_Publish pub;
+    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, PUBREC_FRAME,  (int)sizeof(PUBREC_FRAME));
+    mock_net_push(&g_mock, PUBCOMP_FRAME, (int)sizeof(PUBCOMP_FRAME));
+
+    sn_publish_setup(&pub, &topicId, MQTT_QOS_2);
+
+    rc = sn_publish_pump(&pub, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* PUBLISH plus the PUBREL sent in response to PUBREC. */
+    ASSERT_TRUE(g_mock.write_calls >= 2);
+    /* Both gateway frames consumed. */
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    ASSERT_NO_PENDRESP();
+}
+
+/* QoS 0 publish expects no ACK, so SN_Client_Publish must never register a
+ * pending response: it completes after the write with nothing left on the
+ * respList. Guards that the no-ACK path cannot leak an entry. Runs in every
+ * SN build. */
+TEST(sn_publish_qos0_no_pendresp)
+{
+    SN_Publish pub;
+    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    sn_publish_setup(&pub, &topicId, MQTT_QOS_0);
+
+    rc = sn_publish_pump(&pub, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The client sent the PUBLISH. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* A QoS 0 publish never adds a pending response. */
+    ASSERT_NO_PENDRESP();
+}
+
 /* The non-blocking retry behavior is the actual regression and only applies
  * when WOLFMQTT_NONBLOCK is built (otherwise SN_Client_WaitType blocks and
  * never returns MQTT_CODE_CONTINUE). */
@@ -880,6 +1024,78 @@ TEST(sn_subscribe_rejected_nonblock)
     ASSERT_NO_PENDRESP();
 }
 
+/* The headline #5146 regression. With a CONTINUE armed before the PUBACK the
+ * QoS 1 publish must converge to SUCCESS and remove its pending response exactly
+ * once. Under MULTITHREAD it also pins the dangling-pointer contract directly:
+ * after the first in-flight CONTINUE the entry IS linked and points back into
+ * the caller's publish object - the exact pointer the sn-multithread
+ * publish_task used to abandon (freeing the stack frame) by returning on
+ * CONTINUE instead of retrying. */
+TEST(sn_publish_qos1_nonblock_pendresp_lifecycle)
+{
+    SN_Publish pub;
+    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
+
+    mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
+
+    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+
+    /* First call sends PUBLISH and the armed CONTINUE forces an in-flight
+     * return before the PUBACK is delivered. */
+    rc = SN_Client_Publish(&g_client, &pub);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+#ifdef WOLFMQTT_MULTITHREAD
+    /* The pending response must stay registered while the exchange is in
+     * flight (so a reader thread could route the PUBACK) and must point back
+     * into the caller-owned object. This is the entry that becomes a dangling
+     * pointer if the caller returns/frees the object instead of retrying. */
+    ASSERT_NOT_NULL(g_client.firstPendResp);
+    ASSERT_EQ((void*)&pub.pendResp, (void*)g_client.firstPendResp);
+#endif
+
+    /* Keep retrying, as a correct non-blocking caller must, until it resolves.*/
+    rc = sn_publish_pump(&pub, &iters);
+
+    /* Pre-fix publish_task would have returned on the CONTINUE above. */
+    ASSERT_NE(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, pub.return_code);
+
+    /* All scripted frames consumed and the non-blocking retry path was taken. */
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+
+    /* The pending response is gone once publish completes - no dangling entry
+     * remains for another thread to dereference. */
+    ASSERT_NO_PENDRESP();
+}
+
+/* With multiple CONTINUE results armed before the PUBACK the publish must still
+ * converge: repeated re-entry resumes the wait rather than re-adding the pending
+ * response (which would surface MQTT_CODE_ERROR_BAD_ARG as a duplicate). */
+TEST(sn_publish_qos1_many_continues)
+{
+    SN_Publish pub;
+    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(3 /* three CONTINUE per frame */));
+
+    mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
+
+    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+
+    rc = sn_publish_pump(&pub, &iters);
+
+    ASSERT_NE(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, pub.return_code);
+    ASSERT_TRUE(iters >= 2);
+    ASSERT_NO_PENDRESP();
+}
+
 #endif /* WOLFMQTT_NONBLOCK */
 
 /* ============================================================================
@@ -1041,6 +1257,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);
     RUN_TEST(sn_subscribe_no_continue);
     RUN_TEST(sn_subscribe_rejected);
+    RUN_TEST(sn_publish_qos1_no_continue);
+    RUN_TEST(sn_publish_qos2_no_continue);
+    RUN_TEST(sn_publish_qos0_no_pendresp);
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);
 
@@ -1054,6 +1273,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_subscribe_nonblock_pendresp_lifecycle);
     RUN_TEST(sn_subscribe_many_continues);
     RUN_TEST(sn_subscribe_rejected_nonblock);
+    RUN_TEST(sn_publish_qos1_nonblock_pendresp_lifecycle);
+    RUN_TEST(sn_publish_qos1_many_continues);
     RUN_TEST(sn_ping_null_nonblock_no_dangling_pendresp);
     RUN_TEST(sn_ping_nonblock_pendresp_lifecycle);
 #endif
