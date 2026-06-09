@@ -20,13 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # AddressSanitizer already performs leak detection at exit, so a
+        # standalone LeakSanitizer job would be largely redundant.
         include:
           - name: "ASan"
             sanitizer_flags: "-fsanitize=address"
           - name: "UBSan"
             sanitizer_flags: "-fsanitize=undefined -fno-sanitize-recover=all"
-          - name: "LeakSan"
-            sanitizer_flags: "-fsanitize=leak"
 
     steps:
       - name: Workaround high-entropy ASLR
@@ -43,35 +43,22 @@ jobs:
           sudo service mosquitto stop
           sleep 1
 
-      - name: Checkout wolfSSL
-        uses: actions/checkout@v4
-        with:
-          repository: wolfssl/wolfssl
-          path: wolfssl
-
-      - name: Build wolfSSL with ${{ matrix.name }}
-        working-directory: ./wolfssl
-        run: |
-          ./autogen.sh
-          ./configure CC="gcc ${{ matrix.sanitizer_flags }}" --enable-enckeys
-          make -j$(nproc)
-          sudo make install
-          sudo ldconfig
-
       - name: Checkout wolfMQTT
         uses: actions/checkout@v4
+
+      - name: Build and install wolfSSL with ${{ matrix.name }}
+        uses: ./.github/actions/build-wolfssl
         with:
-          path: wolfmqtt
+          config: "--enable-enckeys"
+          cc: "gcc ${{ matrix.sanitizer_flags }}"
 
       - name: Build wolfMQTT with ${{ matrix.name }}
-        working-directory: ./wolfmqtt
         run: |
           ./autogen.sh
           ./configure CC="gcc ${{ matrix.sanitizer_flags }}"
           make -j$(nproc)
 
       - name: Run tests
-        working-directory: ./wolfmqtt
         run: make check
 
       - name: Upload failure logs
@@ -80,7 +67,7 @@ jobs:
         with:
           name: wolfmqtt-${{ matrix.name }}-logs
           path: |
-            wolfmqtt/test-suite.log
-            wolfmqtt/scripts/*.log
-            wolfmqtt/config.log
+            test-suite.log
+            scripts/*.log
+            config.log
           retention-days: 5

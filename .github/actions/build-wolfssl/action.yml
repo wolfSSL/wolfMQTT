@@ -1,0 +1,92 @@
+name: 'Build wolfSSL'
+description: >
+  Clone, build, cache and install wolfSSL (autotools) into /usr/local.
+  The build is keyed on the live wolfssl master commit plus the requested
+  configure options, so it is rebuilt only when wolfssl master advances or
+  the options change. Caches created on master are readable by pull-request
+  jobs, so PRs typically get an instant cache hit.
+
+inputs:
+  config:
+    description: 'wolfSSL configure options'
+    required: false
+    default: '--enable-enckeys'
+  cflags:
+    description: 'Extra CFLAGS for the wolfSSL build'
+    required: false
+    default: ''
+  cc:
+    description: 'CC override, e.g. "gcc -fsanitize=address" (empty = default)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Resolve wolfSSL master revision and cache key
+      id: rev
+      shell: bash
+      run: |
+        set -e
+        sha=$(git ls-remote https://github.com/wolfssl/wolfssl refs/heads/master | cut -f1)
+        if [ -z "$sha" ]; then
+          echo "ERROR: failed to resolve wolfssl master SHA" >&2
+          exit 1
+        fi
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        # Key on the specific runner image (e.g. ubuntu22 vs ubuntu24) not
+        # just the OS, so a binary built against a newer glibc is not
+        # restored onto an older image. Falls back to runner.os if unset.
+        echo "image=${ImageOS:-${{ runner.os }}}" >> "$GITHUB_OUTPUT"
+        # Hash the build options so different configs do not share a cache.
+        # sha256sum is absent on some runners (e.g. macOS); fall back to shasum.
+        opts="${{ inputs.config }}|${{ inputs.cflags }}|${{ inputs.cc }}"
+        if command -v sha256sum >/dev/null 2>&1; then
+          optkey=$(printf '%s' "$opts" | sha256sum | cut -c1-12)
+        else
+          optkey=$(printf '%s' "$opts" | shasum -a 256 | cut -c1-12)
+        fi
+        echo "optkey=$optkey" >> "$GITHUB_OUTPUT"
+
+    - name: Cache wolfSSL
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/wolfssl-install
+        key: wolfssl-${{ steps.rev.outputs.image }}-${{ steps.rev.outputs.sha }}-${{ steps.rev.outputs.optkey }}
+
+    - name: Build wolfSSL
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -e
+        cd "$HOME"
+        rm -rf wolfssl-src
+        mkdir wolfssl-src
+        cd wolfssl-src
+        # Check out the exact commit the cache key was computed from, so the
+        # artifact saved under that key matches even if master advanced
+        # between resolving the SHA and cloning.
+        git init -q
+        git remote add origin https://github.com/wolfssl/wolfssl.git
+        git fetch -q --depth 1 origin "${{ steps.rev.outputs.sha }}"
+        git checkout -q FETCH_HEAD
+        ./autogen.sh
+        jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
+        if [ -n "${{ inputs.cc }}" ]; then
+          ./configure --prefix="$HOME/wolfssl-install" ${{ inputs.config }} \
+            CC="${{ inputs.cc }}" CFLAGS="${{ inputs.cflags }}"
+        else
+          ./configure --prefix="$HOME/wolfssl-install" ${{ inputs.config }} \
+            CFLAGS="${{ inputs.cflags }}"
+        fi
+        make -j"$jobs"
+        make install
+
+    - name: Install wolfSSL into /usr/local
+      shell: bash
+      run: |
+        set -e
+        sudo cp -a "$HOME/wolfssl-install/." /usr/local/
+        # ldconfig is Linux-only; macOS resolves via the cached prefix path.
+        sudo ldconfig || true

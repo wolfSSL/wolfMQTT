@@ -7,6 +7,10 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-websocket:
     runs-on: ubuntu-latest
@@ -21,26 +25,10 @@ jobs:
         sudo apt-get install -y build-essential autoconf automake libtool
         sudo apt-get install -y libwebsockets-dev mosquitto mosquitto-clients
         
-    - uses: actions/checkout@master
+    - name: Build and install wolfSSL
+      uses: ./.github/actions/build-wolfssl
       with:
-        repository: wolfssl/wolfssl
-        path: wolfssl
-    - name: wolfssl autogen
-      working-directory: ./wolfssl
-      run: ./autogen.sh
-    - name: wolfssl configure with coexist for default libwebsocket
-      working-directory: ./wolfssl
-      run: ./configure --enable-opensslcoexist
-    - name: wolfssl make
-      working-directory: ./wolfssl
-      run: make
-    - name: wolfssl make install
-      working-directory: ./wolfssl
-      run: sudo make install
-
-    - uses: actions/checkout@master
-    - name: wolfmqtt autogen
-      run: ./autogen.sh
+        config: "--enable-opensslcoexist"
 
     - name: Configure and build wolfMQTT
       run: |

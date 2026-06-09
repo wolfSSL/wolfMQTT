@@ -9,6 +9,10 @@ on:
 env:
   WOLFMQTT_NO_EXTERNAL_BROKER_TESTS: 1
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
@@ -16,26 +20,49 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@master
+
+    - name: Resolve wolfSSL master SHA
+      id: wolfssl-sha
+      run: |
+        set -e
+        sha=$(git ls-remote https://github.com/wolfssl/wolfssl refs/heads/master | cut -f1)
+        if [ -z "$sha" ]; then echo "ERROR: failed to resolve wolfssl master SHA" >&2; exit 1; fi
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
     - uses: actions/checkout@master
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
+        ref: ${{ steps.wolfssl-sha.outputs.sha }}
     - name: brew
       run: |
         brew install automake libtool mosquitto coreutils
         echo "/usr/local/sbin/" >> $GITHUB_PATH
         echo "/usr/local/opt/mosquitto/sbin/" >> $GITHUB_PATH
 
+    # Cache the wolfSSL install (prefix build-dir) keyed on the live
+    # wolfssl master commit, so it is rebuilt only when master advances.
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/build-dir
+        key: wolfssl-macos-${{ steps.wolfssl-sha.outputs.sha }}-enckeys
+
     - name: wolfssl autogen
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: ./wolfssl
       run: ./autogen.sh
     - name: wolfssl configure
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: ./wolfssl
       run: ./configure --enable-enckeys --prefix=$GITHUB_WORKSPACE/build-dir
     - name: wolfssl make
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: ./wolfssl
       run: make
     - name: wolfssl make install
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: ./wolfssl
       run: make install
 

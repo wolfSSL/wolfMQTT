@@ -6,9 +6,39 @@ on:
   pull_request:
     branches: [ '*' ]
 
-jobs:
-  build:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
+jobs:
+  # Build wolfSSL once per distinct configuration and populate the shared
+  # cache. The matrix below covers every wolfssl_opts value used by the
+  # broker build matrix. The build jobs `needs:` this job, so by the time
+  # they run the cache is warm and each restores instead of rebuilding --
+  # turning ~17 wolfSSL builds per run into 3, even on the first run.
+  wolfssl:
+    name: "Build wolfSSL (${{ matrix.label }})"
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: "enckeys"
+            config: "--enable-enckeys"
+          - label: "opensslcoexist"
+            config: "--enable-opensslcoexist"
+          - label: "opensslcoexist+enckeys"
+            config: "--enable-opensslcoexist --enable-enckeys"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and cache wolfSSL
+        uses: ./.github/actions/build-wolfssl
+        with:
+          config: ${{ matrix.config }}
+
+  build:
+    needs: wolfssl
     runs-on: ubuntu-22.04
     timeout-minutes: 5
 
@@ -48,21 +78,14 @@ jobs:
             extra_deps: "libwebsockets-dev"
             wolfssl_opts: "--enable-opensslcoexist --enable-enckeys"
           # Maximum-QoS matrix. WOLFMQTT_MAX_QOS=2 is the default and runs
-          # the full broker.test. =1 and =0 caps compile out the QoS 2
-          # state machine; broker.test exercises QoS 2 pub/sub (tests 3
-          # and 11) which is intentionally rejected on capped builds, so
-          # those entries are build-only.
+          # the full broker.test. The =1 and =0 caps are build-only (they
+          # compile out the QoS 2 state machine, which broker.test
+          # intentionally exercises); their compile coverage is provided by
+          # cmake-build.yml's WOLFMQTT_MAX_QOS matrix, so they are not
+          # duplicated here.
           - name: "Broker MAX_QOS=2 (default, full QoS)"
             cflags: ""
             wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=2"
-          - name: "Broker MAX_QOS=1 (build only)"
-            cflags: ""
-            wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=1"
-            skip_broker_test: "yes"
-          - name: "Broker MAX_QOS=0 (build only)"
-            cflags: ""
-            wolfmqtt_opts: "--enable-v5 --enable-broker --enable-max-qos=0"
-            skip_broker_test: "yes"
           - name: "Broker v5 (ordering / Receive Maximum)"
             cflags: ""
             wolfmqtt_opts: "--enable-broker --enable-v5"
@@ -92,24 +115,13 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y mosquitto-clients ${{ matrix.extra_deps }}
 
-    - uses: actions/checkout@master
-      with:
-        repository: wolfssl/wolfssl
-        path: wolfssl
-    - name: wolfssl autogen
-      working-directory: ./wolfssl
-      run: ./autogen.sh
-    - name: wolfssl configure
-      working-directory: ./wolfssl
-      run: ./configure ${{ matrix.wolfssl_opts || '--enable-enckeys' }}
-    - name: wolfssl make
-      working-directory: ./wolfssl
-      run: make
-    - name: wolfssl make install
-      working-directory: ./wolfssl
-      run: sudo make install
+    - uses: actions/checkout@v4
 
-    - uses: actions/checkout@master
+    - name: Build and install wolfSSL
+      uses: ./.github/actions/build-wolfssl
+      with:
+        config: ${{ matrix.wolfssl_opts || '--enable-enckeys' }}
+
     - name: wolfmqtt autogen
       run: ./autogen.sh
 

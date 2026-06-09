@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ '*' ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
@@ -34,22 +38,45 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y cmake
 
-#pull and build wolfssl
-    - uses: actions/checkout@master
+#pull and build wolfssl (cached, keyed on the live wolfssl master commit)
+    - name: Resolve wolfSSL master SHA
+      id: wolfssl-sha
+      run: |
+        set -e
+        sha=$(git ls-remote https://github.com/wolfssl/wolfssl refs/heads/master | cut -f1)
+        if [ -z "$sha" ]; then echo "ERROR: failed to resolve wolfssl master SHA" >&2; exit 1; fi
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+    - name: Cache wolfSSL
+      id: cache-wolfssl
+      uses: actions/cache@v4
+      with:
+        path: ~/wolfssl-install
+        key: wolfssl-cmake-${{ steps.wolfssl-sha.outputs.sha }}
+
+    - uses: actions/checkout@v4
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       with:
         repository: wolfssl/wolfssl
         path: wolfssl
+        ref: ${{ steps.wolfssl-sha.outputs.sha }}
     - name: Build wolfssl
+      if: steps.cache-wolfssl.outputs.cache-hit != 'true'
       working-directory: ./wolfssl
       run: |
         mkdir build
         cd build
-        cmake ..
+        cmake -DCMAKE_INSTALL_PREFIX=$HOME/wolfssl-install ..
         cmake --build .
-        sudo cmake --install .
+        cmake --install .
+
+    - name: Install wolfSSL into /usr/local
+      run: |
+        sudo cp -a $HOME/wolfssl-install/. /usr/local/
+        sudo ldconfig
 
 #pull wolfMQTT
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
 
 #build wolfMQTT
     - name: "Build wolfMQTT (${{ matrix.name }})"
