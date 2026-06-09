@@ -456,8 +456,13 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     int total_len;
     byte *tx_payload, flags = 0;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL) {
+    /* Validate required arguments. A NULL willTopic is valid: it produces an
+     * empty WILLTOPIC message (2 octets) used to delete the will. But when
+     * willTopic is non-NULL its willTopic string is dereferenced by XSTRLEN
+     * (and XMEMCPY) below, so a non-NULL struct carrying a NULL string must be
+     * rejected here rather than crashing in XSTRLEN(NULL). */
+    if (tx_buf == NULL ||
+            (willTopic != NULL && willTopic->willTopic == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -601,8 +606,13 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     int total_len;
     byte *tx_payload, flags = 0;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL) {
+    /* Validate required arguments. A NULL willTopic is valid: it produces an
+     * empty WILLTOPICUPD message (2 octets) used to delete the will. But when
+     * willTopic is non-NULL its willTopic string is dereferenced by XSTRLEN
+     * (and XMEMCPY) below, so a non-NULL struct carrying a NULL string must be
+     * rejected here rather than crashing in XSTRLEN(NULL). */
+    if (tx_buf == NULL ||
+            (willTopic != NULL && willTopic->willTopic == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 

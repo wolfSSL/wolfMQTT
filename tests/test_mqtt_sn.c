@@ -1232,6 +1232,155 @@ TEST(sn_encode_unsubscribe_short_topic_valid)
 }
 
 /* ============================================================================
+ * SN_Encode_WillTopic
+ *
+ * A NULL willTopic argument is valid and produces an empty (2-octet) WILLTOPIC
+ * message that deletes the will stored on the gateway. But when willTopic is
+ * non-NULL the encoder dereferences willTopic->willTopic via XSTRLEN (length
+ * sizing) and XMEMCPY (payload copy). A caller that passes a non-NULL SN_Will
+ * but leaves the willTopic string unset (NULL) would crash in XSTRLEN(NULL);
+ * the encoder must reject that with BAD_ARG instead - report 2333.
+ * ============================================================================ */
+
+TEST(sn_encode_willtopic_null_topic_string_rejected)
+{
+    /* Regression for report 2333: a zero-initialized SN_Will is non-NULL but
+     * its willTopic string is NULL. The pre-fix code called XSTRLEN(NULL) and
+     * crashed; it must now return BAD_ARG. */
+    byte tx_buf[32];
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    /* willTopic string left NULL by the memset */
+
+    rc = SN_Encode_WillTopic(tx_buf, (int)sizeof(tx_buf), &will);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_willtopic_null_buf_rejected)
+{
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = "abc";
+
+    rc = SN_Encode_WillTopic(NULL, 32, &will);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_willtopic_empty_will_valid)
+{
+    /* A NULL willTopic deletes the will: an empty 2-octet WILLTOPIC message
+     * [len=2][WILLTOPIC]. This must keep working after the NULL-string fix. */
+    byte tx_buf[32];
+    int rc;
+
+    rc = SN_Encode_WillTopic(tx_buf, (int)sizeof(tx_buf), NULL);
+    ASSERT_EQ(2, rc);
+    ASSERT_EQ(2, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_WILLTOPIC, tx_buf[1]);
+}
+
+TEST(sn_encode_willtopic_topic_valid)
+{
+    /* Will topic "abc", QoS2, retain=1 -> 6-byte packet:
+     * [len=6][WILLTOPIC][flags][a][b][c]
+     * flags = ((2 << 5) & 0x60) | RETAIN(0x10) = 0x40 | 0x10 = 0x50 */
+    byte tx_buf[32];
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = "abc";
+    will.qos = 2;
+    will.retain = 1;
+
+    rc = SN_Encode_WillTopic(tx_buf, (int)sizeof(tx_buf), &will);
+    ASSERT_EQ(6, rc);
+    ASSERT_EQ(6, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_WILLTOPIC, tx_buf[1]);
+    ASSERT_EQ(0x50, tx_buf[2]);
+    ASSERT_EQ('a', tx_buf[3]);
+    ASSERT_EQ('b', tx_buf[4]);
+    ASSERT_EQ('c', tx_buf[5]);
+}
+
+/* ============================================================================
+ * SN_Encode_WillTopicUpdate
+ *
+ * Identical NULL-string footgun to SN_Encode_WillTopic: a NULL willTopic
+ * argument is valid (empty 2-octet WILLTOPICUPD that deletes the will), but a
+ * non-NULL SN_Will whose willTopic string is NULL is dereferenced by XSTRLEN
+ * (and XMEMCPY) and must be rejected with BAD_ARG instead of crashing.
+ * ============================================================================ */
+
+TEST(sn_encode_willtopicupd_null_topic_string_rejected)
+{
+    /* Zero-initialized SN_Will is non-NULL with a NULL willTopic string. The
+     * pre-fix code called XSTRLEN(NULL) and crashed; it must return BAD_ARG. */
+    byte tx_buf[32];
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    /* willTopic string left NULL by the memset */
+
+    rc = SN_Encode_WillTopicUpdate(tx_buf, (int)sizeof(tx_buf), &will);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_willtopicupd_null_buf_rejected)
+{
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = "abc";
+
+    rc = SN_Encode_WillTopicUpdate(NULL, 32, &will);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_willtopicupd_empty_will_valid)
+{
+    /* A NULL willTopic deletes the will: an empty 2-octet WILLTOPICUPD message
+     * [len=2][WILLTOPICUPD]. This must keep working after the NULL-string fix. */
+    byte tx_buf[32];
+    int rc;
+
+    rc = SN_Encode_WillTopicUpdate(tx_buf, (int)sizeof(tx_buf), NULL);
+    ASSERT_EQ(2, rc);
+    ASSERT_EQ(2, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_WILLTOPICUPD, tx_buf[1]);
+}
+
+TEST(sn_encode_willtopicupd_topic_valid)
+{
+    /* Will topic "abc", QoS2, retain=1 -> 6-byte packet:
+     * [len=6][WILLTOPICUPD][flags][a][b][c]
+     * flags = ((2 << 5) & 0x60) | RETAIN(0x10) = 0x40 | 0x10 = 0x50 */
+    byte tx_buf[32];
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = "abc";
+    will.qos = 2;
+    will.retain = 1;
+
+    rc = SN_Encode_WillTopicUpdate(tx_buf, (int)sizeof(tx_buf), &will);
+    ASSERT_EQ(6, rc);
+    ASSERT_EQ(6, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_WILLTOPICUPD, tx_buf[1]);
+    ASSERT_EQ(0x50, tx_buf[2]);
+    ASSERT_EQ('a', tx_buf[3]);
+    ASSERT_EQ('b', tx_buf[4]);
+    ASSERT_EQ('c', tx_buf[5]);
+}
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -1327,6 +1476,18 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_unsubscribe_null_args_rejected);
     RUN_TEST(sn_encode_unsubscribe_normal_topic_valid);
     RUN_TEST(sn_encode_unsubscribe_short_topic_valid);
+
+    /* SN_Encode_WillTopic */
+    RUN_TEST(sn_encode_willtopic_null_topic_string_rejected);
+    RUN_TEST(sn_encode_willtopic_null_buf_rejected);
+    RUN_TEST(sn_encode_willtopic_empty_will_valid);
+    RUN_TEST(sn_encode_willtopic_topic_valid);
+
+    /* SN_Encode_WillTopicUpdate */
+    RUN_TEST(sn_encode_willtopicupd_null_topic_string_rejected);
+    RUN_TEST(sn_encode_willtopicupd_null_buf_rejected);
+    RUN_TEST(sn_encode_willtopicupd_empty_will_valid);
+    RUN_TEST(sn_encode_willtopicupd_topic_valid);
 
     /* SN_Packet_TypeDesc */
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
