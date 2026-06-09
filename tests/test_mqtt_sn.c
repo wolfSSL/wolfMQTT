@@ -751,6 +751,90 @@ TEST(sn_decode_publish_null_args_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+/* ----------------------------------------------------------------------------
+ * MsgId=0 guard for QoS > 0 (report 4248)
+ *
+ * MQTT-SN v1.2 §5.2.10 requires a QoS 1 or QoS 2 PUBLISH to carry a non-zero
+ * MsgId. The pre-fix decoder returned success with packet_id=0, so
+ * SN_Client_HandlePacket emitted a PUBACK/PUBREC carrying MsgId=0 that no
+ * conformant gateway can correlate; the gateway then retransmits the same
+ * PUBLISH, replaying the message to msg_cb. The guard rejects MsgId=0 for
+ * QoS > 0 while still accepting MsgId=0 for QoS 0 (where no response is sent).
+ *
+ * Frame layout (short form, 7-byte header):
+ *   [len][PUBLISH][flags][topic hi][topic lo][id hi][id lo] payload...
+ * flags QoS bits = bits[6:5]: 0x20 -> QoS1, 0x40 -> QoS2.
+ * -------------------------------------------------------------------------- */
+
+TEST(sn_decode_publish_qos1_zero_packet_id_rejected)
+{
+    /* Report 4248 PoC: flags=0x20 -> QoS1, MsgId=0x0000. */
+    byte buf[7] = { 0x07, 0x0C, 0x20, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+}
+
+TEST(sn_decode_publish_qos2_zero_packet_id_rejected)
+{
+    /* flags=0x40 -> QoS2, MsgId=0x0000. */
+    byte buf[7] = { 0x07, 0x0C, 0x40, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+}
+
+TEST(sn_decode_publish_qos0_zero_packet_id_valid)
+{
+    /* QoS0 (flags=0x00) carries no MsgId and sends no response, so MsgId=0
+     * is legal and must still decode. */
+    byte buf[7] = { 0x07, 0x0C, 0x00, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(MQTT_QOS_0, publish.qos);
+    ASSERT_EQ(0, publish.packet_id);
+}
+
+TEST(sn_decode_publish_qos1_nonzero_packet_id_valid)
+{
+    /* flags=0x20 -> QoS1 with a valid non-zero MsgId 0x1234 must decode. */
+    byte buf[7] = { 0x07, 0x0C, 0x20, 0x00, 0x01, 0x12, 0x34 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(MQTT_QOS_1, publish.qos);
+    ASSERT_EQ(0x1234, publish.packet_id);
+}
+
+TEST(sn_decode_publish_qosneg1_zero_packet_id_valid)
+{
+    /* flags=0x60 -> QoS bits 0b11 = MQTT_QOS_3, MQTT-SN's QoS -1
+     * (connectionless publish). It sends no PUBACK/PUBREC and uses MsgId=0,
+     * so the guard must NOT reject it. */
+    byte buf[7] = { 0x07, 0x0C, 0x60, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(MQTT_QOS_3, publish.qos);
+    ASSERT_EQ(0, publish.packet_id);
+}
+
 /* ============================================================================
  * Suite runner
  * ============================================================================ */
@@ -814,6 +898,11 @@ int main(int argc, char** argv)
     RUN_TEST(sn_decode_publish_predef_topic_type_valid);
     RUN_TEST(sn_decode_publish_short_topic_type_valid);
     RUN_TEST(sn_decode_publish_null_args_rejected);
+    RUN_TEST(sn_decode_publish_qos1_zero_packet_id_rejected);
+    RUN_TEST(sn_decode_publish_qos2_zero_packet_id_rejected);
+    RUN_TEST(sn_decode_publish_qos0_zero_packet_id_valid);
+    RUN_TEST(sn_decode_publish_qos1_nonzero_packet_id_valid);
+    RUN_TEST(sn_decode_publish_qosneg1_zero_packet_id_valid);
 
     /* SN_Packet_TypeDesc */
 #ifndef WOLFMQTT_NO_ERROR_STRINGS

@@ -1287,6 +1287,19 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
     publish->qos = (MqttQoS)((flags & SN_PACKET_FLAG_QOS_MASK) >>
             SN_PACKET_FLAG_QOS_SHIFT);
 
+    /* MQTT-SN v1.2 §5.2.10: a QoS 1 or QoS 2 PUBLISH must carry a non-zero
+     * MsgId so the matching PUBACK/PUBREC can be correlated. Reject MsgId=0
+     * here; otherwise SN_Client_HandlePacket would emit a response carrying
+     * MsgId=0 that no conformant gateway can match, leaving its retransmit
+     * timer to replay the same message (CWE-20). Mirrors the standard MQTT
+     * decoder guard in mqtt_packet.c. QoS 0 and QoS -1 (MQTT_QOS_3, the
+     * connectionless publish) send no response and legitimately use MsgId=0,
+     * so they are intentionally excluded. */
+    if ((publish->qos == MQTT_QOS_1 || publish->qos == MQTT_QOS_2) &&
+            publish->packet_id == 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+    }
+
     publish->retain = flags & SN_PACKET_FLAG_RETAIN;
 
     publish->topic_type = flags & SN_PACKET_FLAG_TOPICIDTYPE_MASK;
