@@ -1381,6 +1381,74 @@ TEST(sn_encode_willtopicupd_topic_valid)
 }
 
 /* ============================================================================
+ * SN_Encode_Register
+ *
+ * topicName is dereferenced unconditionally - XSTRLEN for length sizing and
+ * again before the XMEMCPY that copies the payload. A caller that zero-
+ * initializes an SN_Register and forgets to set topicName would crash in
+ * XSTRLEN(NULL); the encoder must reject that with BAD_ARG instead - report
+ * 2330.
+ * ============================================================================ */
+
+TEST(sn_encode_register_null_topic_string_rejected)
+{
+    /* Regression for report 2330: a zero-initialized SN_Register is non-NULL
+     * but its topicName string is NULL. The pre-fix code called XSTRLEN(NULL)
+     * and crashed; it must now return BAD_ARG. */
+    byte tx_buf[32];
+    SN_Register regist;
+    int rc;
+
+    XMEMSET(&regist, 0, sizeof(regist));
+    /* topicName left NULL by the memset */
+
+    rc = SN_Encode_Register(tx_buf, (int)sizeof(tx_buf), &regist);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_register_null_args_rejected)
+{
+    byte tx_buf[32];
+    SN_Register regist;
+    int rc;
+
+    XMEMSET(&regist, 0, sizeof(regist));
+    regist.topicName = "abc";
+
+    rc = SN_Encode_Register(NULL, (int)sizeof(tx_buf), &regist);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    rc = SN_Encode_Register(tx_buf, (int)sizeof(tx_buf), NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_register_topic_valid)
+{
+    /* Topic "abc", topicId 0x1234, msgid 0x5678 -> 9-byte packet:
+     * [len=9][REGISTER][id hi][id lo][pid hi][pid lo][a][b][c] */
+    byte tx_buf[32];
+    SN_Register regist;
+    int rc;
+
+    XMEMSET(&regist, 0, sizeof(regist));
+    regist.topicId = 0x1234;
+    regist.packet_id = 0x5678;
+    regist.topicName = "abc";
+
+    rc = SN_Encode_Register(tx_buf, (int)sizeof(tx_buf), &regist);
+    ASSERT_EQ(9, rc);
+    ASSERT_EQ(9, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_REGISTER, tx_buf[1]);
+    ASSERT_EQ(0x12, tx_buf[2]);
+    ASSERT_EQ(0x34, tx_buf[3]);
+    ASSERT_EQ(0x56, tx_buf[4]);
+    ASSERT_EQ(0x78, tx_buf[5]);
+    ASSERT_EQ('a', tx_buf[6]);
+    ASSERT_EQ('b', tx_buf[7]);
+    ASSERT_EQ('c', tx_buf[8]);
+}
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -1488,6 +1556,10 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_willtopicupd_null_buf_rejected);
     RUN_TEST(sn_encode_willtopicupd_empty_will_valid);
     RUN_TEST(sn_encode_willtopicupd_topic_valid);
+
+    RUN_TEST(sn_encode_register_null_topic_string_rejected);
+    RUN_TEST(sn_encode_register_null_args_rejected);
+    RUN_TEST(sn_encode_register_topic_valid);
 
     /* SN_Packet_TypeDesc */
 #ifndef WOLFMQTT_NO_ERROR_STRINGS

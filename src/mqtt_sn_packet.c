@@ -824,8 +824,11 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     int total_len, topic_len;
     byte *tx_payload;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL || regist == NULL) {
+    /* Validate required arguments. topicName is dereferenced unconditionally
+     * via XSTRLEN below (and again before the XMEMCPY), so reject NULL up front.
+     * A caller that zero-initializes an SN_Register and forgets to set topicName
+     * would otherwise crash in XSTRLEN(NULL) instead of getting BAD_ARG. */
+    if (tx_buf == NULL || regist == NULL || regist->topicName == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
