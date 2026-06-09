@@ -94,7 +94,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
 
             XMEMSET(&reg_s, 0, sizeof(SN_Register));
 
-            rc = SN_Decode_Register(client->rx_buf, client->packet.buf_len,
+            /* Pass the full receive-buffer capacity (rx_buf_len), not the
+             * decoded packet length (packet.buf_len). SN_Decode_Register
+             * NUL-terminates topicName in place one byte past the packet, so
+             * its strict bounds check needs the writable buffer size to leave
+             * room for that terminator. Passing packet.buf_len (== total_len)
+             * made the check reject every valid REGISTER. */
+            rc = SN_Decode_Register(client->rx_buf, client->rx_buf_len,
                     &reg_s);
 
             if (rc > 0) {

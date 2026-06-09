@@ -495,6 +495,87 @@ TEST(sn_register_wrong_type_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_PACKET_TYPE, rc);
 }
 
+TEST(sn_register_no_room_for_terminator_rejected)
+{
+    /* Regression for report 3831. SN_Decode_Register NUL-terminates topicName
+     * in place at offset total_len, one byte past the packet. When rx_buf_len
+     * only covers the packet itself (rx_buf_len == total_len) there is no slot
+     * for that terminator, so the strict guard must reject with OUT_OF_BUFFER
+     * rather than write out of bounds. This is exactly why SN_Client_HandlePacket
+     * must hand the decoder the full rx_buf capacity (client->rx_buf_len), not
+     * the decoded packet length (client->packet.buf_len): the latter equals
+     * total_len, which made this guard reject every valid REGISTER. */
+    byte buf[8] = { 0x08, SN_MSG_TYPE_REGISTER, 0x01, 0x02, 0x03, 0x04,
+                    'a', 'b' };
+    SN_Register reg;
+    int rc;
+    XMEMSET(&reg, 0, sizeof(reg));
+    /* rx_buf_len == total_len (8): no room for the trailing NUL */
+    rc = SN_Decode_Register(buf, 8, &reg);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_register_roundtrip_short_form)
+{
+    /* Report 3831: encode then decode a normal REGISTER and confirm every
+     * field survives the round trip. "sensors/temp" is 12 bytes, so
+     * total_len = 12 + 6 = 18 (<= 255 -> short, single-byte length). The decode
+     * buffer is larger than the packet so the in-place NUL terminator fits. */
+    byte buf[64];
+    SN_Register enc, dec;
+    int enc_len, rc;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.topicId = 0x1234;
+    enc.packet_id = 0x5678;
+    enc.topicName = "sensors/temp";
+
+    enc_len = SN_Encode_Register(buf, (int)sizeof(buf), &enc);
+    ASSERT_EQ(18, enc_len);
+    ASSERT_EQ(18, buf[0]); /* short form: length in the first byte */
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = SN_Decode_Register(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(enc_len, rc);
+    ASSERT_EQ(0x1234, dec.topicId);
+    ASSERT_EQ(0x5678, dec.packet_id);
+    ASSERT_NOT_NULL(dec.topicName);
+    ASSERT_STR_EQ("sensors/temp", dec.topicName);
+}
+
+TEST(sn_register_roundtrip_ind_form)
+{
+    /* Report 3831: same round trip but with an extended-length (IND) encoding.
+     * A 260-byte topic gives total_len = 260 + 6 = 266 (> 255), so the encoder
+     * switches to the 3-byte length header (IND + 2 length bytes) and
+     * total_len becomes 268. Confirms the decoder honors the IND form and that
+     * a long topic name survives the round trip intact. */
+    byte buf[300];
+    char topic[261];
+    SN_Register enc, dec;
+    int enc_len, rc;
+
+    XMEMSET(topic, 'x', 260);
+    topic[260] = '\0';
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.topicId = 0x0102;
+    enc.packet_id = 0x0304;
+    enc.topicName = topic;
+
+    enc_len = SN_Encode_Register(buf, (int)sizeof(buf), &enc);
+    ASSERT_EQ(268, enc_len);
+    ASSERT_EQ(SN_PACKET_LEN_IND, buf[0]); /* extended-length indicator */
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = SN_Decode_Register(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(enc_len, rc);
+    ASSERT_EQ(0x0102, dec.topicId);
+    ASSERT_EQ(0x0304, dec.packet_id);
+    ASSERT_NOT_NULL(dec.topicName);
+    ASSERT_STR_EQ(topic, dec.topicName);
+}
+
 /* ============================================================================
  * SN_Decode_ConnectAck
  *
@@ -1498,6 +1579,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_register_ind_form_total_len_too_small_rejected);
     RUN_TEST(sn_register_total_len_below_fixed_min_rejected);
     RUN_TEST(sn_register_wrong_type_rejected);
+    RUN_TEST(sn_register_no_room_for_terminator_rejected);
+    RUN_TEST(sn_register_roundtrip_short_form);
+    RUN_TEST(sn_register_roundtrip_ind_form);
 
     /* SN_Decode_ConnectAck */
     RUN_TEST(sn_connack_accepted_valid);

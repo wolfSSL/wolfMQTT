@@ -877,6 +877,12 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     return total_len;
 }
 
+/* Note: rx_buf_len must be the writable capacity of rx_buf, not the decoded
+ * packet length. Unlike the other SN decoders this one NUL-terminates topicName
+ * in place at offset total_len (one byte past the packet), so the strict
+ * total_len >= rx_buf_len guard below relies on rx_buf_len leaving room for that
+ * terminator. Callers therefore pass client->rx_buf_len (see
+ * SN_Client_HandlePacket), not client->packet.buf_len. */
 int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
 {
     word16 total_len;
