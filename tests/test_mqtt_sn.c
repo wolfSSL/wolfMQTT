@@ -354,6 +354,22 @@ TEST(sn_gwinfo_ind_form_total_len_equals_consumed_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+TEST(sn_gwinfo_ind_form_poc_4byte_datagram_rejected)
+{
+    /* Exact attacker PoC from f-3632: a 4-byte IND-form GWINFO datagram.
+     * IND header consumes 3 bytes; total_len=4 leaves room for only one of
+     * the two remaining reads (type + gwId), so the gwId read (and the old
+     * "total_len - 3" address copy) would walk past this 4-byte buffer.
+     * total_len=4 is the boundary value: the largest total_len that must
+     * still be rejected for the extended-length form. */
+    byte buf[4] = { SN_PACKET_LEN_IND, 0x00, 0x04, SN_MSG_TYPE_GWINFO };
+    SN_GwInfo info;
+    int rc;
+    XMEMSET(&info, 0, sizeof(info));
+    rc = SN_Decode_GWInfo(buf, (int)sizeof(buf), &info);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 TEST(sn_gwinfo_ind_form_no_addr_no_overread)
 {
     /* IND form, total_len=5: the 5 bytes are exactly [IND][len(2)][type][gwId]
@@ -1254,6 +1270,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_gwinfo_short_form_with_addr_valid);
     RUN_TEST(sn_gwinfo_short_form_total_len_too_small_rejected);
     RUN_TEST(sn_gwinfo_ind_form_total_len_equals_consumed_rejected);
+    RUN_TEST(sn_gwinfo_ind_form_poc_4byte_datagram_rejected);
     RUN_TEST(sn_gwinfo_ind_form_no_addr_no_overread);
     RUN_TEST(sn_gwinfo_ind_form_with_addr_valid);
     RUN_TEST(sn_gwinfo_wrong_type_rejected);
