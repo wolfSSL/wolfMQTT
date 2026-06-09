@@ -662,6 +662,96 @@ TEST(sn_encode_publish_null_args_rejected)
 }
 
 /* ============================================================================
+ * SN_Decode_Publish
+ *
+ * The PUBLISH flags byte carries the topic id type in bits[1:0]. MQTT-SN v1.2
+ * defines only NORMAL (0), PREDEF (1) and SHORT (2); value 3 (0b11) is reserved
+ * and must not appear on the wire. The decoder must reject it rather than
+ * fail-open and hand topic_type=3 to the application callback, which would
+ * mis-classify the message (report 4659). These tests pin the rejection of the
+ * reserved value and confirm the three defined values still decode (boundary at
+ * SHORT=2).
+ *
+ * Frame layout (short form, 7-byte header):
+ *   [len][PUBLISH][flags][topic hi][topic lo][id hi][id lo] payload...
+ * ============================================================================ */
+
+TEST(sn_decode_publish_reserved_topic_type_rejected)
+{
+    /* Report 4659 PoC: flags=0x03 sets the reserved topic id type 0b11. The
+     * pre-fix decoder returned 7 (success) with topic_type=3. */
+    byte buf[7] = { 0x07, 0x0C, 0x03, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(sn_decode_publish_normal_topic_type_valid)
+{
+    /* topic_type bits = 0b00 (NORMAL): must still decode. */
+    byte buf[7] = { 0x07, 0x0C, 0x00, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_NORMAL, publish.topic_type);
+}
+
+TEST(sn_decode_publish_predef_topic_type_valid)
+{
+    /* topic_type bits = 0b01 (PREDEF): must still decode. */
+    byte buf[7] = { 0x07, 0x0C, 0x01, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_PREDEF, publish.topic_type);
+}
+
+TEST(sn_decode_publish_short_topic_type_valid)
+{
+    /* topic_type bits = 0b10 (SHORT): the boundary value the guard must accept.
+     * Full frame with QoS1, topic "tp", packet id 0x1234 and payload "hi"; pins
+     * the other decoded flag fields too. */
+    byte buf[9] = { 0x09, 0x0C, 0x22, 't', 'p', 0x12, 0x34, 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), &publish);
+    ASSERT_EQ(9, rc);
+    /* flags = 0x22 -> QoS1, no retain/dup, SHORT topic type */
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_SHORT, publish.topic_type);
+    ASSERT_EQ(MQTT_QOS_1, publish.qos);
+    ASSERT_EQ(0, publish.retain);
+    ASSERT_EQ(0, publish.duplicate);
+    ASSERT_EQ(0x1234, publish.packet_id);
+    ASSERT_EQ(2, publish.total_len);
+}
+
+TEST(sn_decode_publish_null_args_rejected)
+{
+    byte buf[7] = { 0x07, 0x0C, 0x00, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+
+    rc = SN_Decode_Publish(NULL, (int)sizeof(buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    rc = SN_Decode_Publish(buf, (int)sizeof(buf), NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -717,6 +807,13 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_publish_buffer_too_small_rejected);
     RUN_TEST(sn_encode_publish_negative_buf_len_rejected);
     RUN_TEST(sn_encode_publish_null_args_rejected);
+
+    /* SN_Decode_Publish */
+    RUN_TEST(sn_decode_publish_reserved_topic_type_rejected);
+    RUN_TEST(sn_decode_publish_normal_topic_type_valid);
+    RUN_TEST(sn_decode_publish_predef_topic_type_valid);
+    RUN_TEST(sn_decode_publish_short_topic_type_valid);
+    RUN_TEST(sn_decode_publish_null_args_rejected);
 
     /* SN_Packet_TypeDesc */
 #ifndef WOLFMQTT_NO_ERROR_STRINGS

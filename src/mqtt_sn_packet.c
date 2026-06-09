@@ -1291,6 +1291,14 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
 
     publish->topic_type = flags & SN_PACKET_FLAG_TOPICIDTYPE_MASK;
 
+    /* Reject the reserved topic id type (0b11). MQTT-SN v1.2 defines only
+     * NORMAL (0), PREDEF (1) and SHORT (2); value 3 must not appear on the
+     * wire. Without this guard a spoofed gateway could hand topic_type=3 to
+     * the application callback, which mis-classifies the message. */
+    if (publish->topic_type > SN_TOPIC_ID_TYPE_SHORT) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     /* Decode payload: use pointer difference to account for both short (7)
      * and extended-length (9) header formats */
     if (total_len < (word16)(rx_payload - rx_buf)) {
