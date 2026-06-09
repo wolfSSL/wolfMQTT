@@ -836,6 +836,223 @@ TEST(sn_decode_publish_qosneg1_zero_packet_id_valid)
 }
 
 /* ============================================================================
+ * SN_Encode_Subscribe
+ *
+ * Identical topicNameId footgun to SN_Encode_Unsubscribe (the "seed" of report
+ * 2332): topicNameId is dereferenced for every topic_type - XSTRLEN on the
+ * NORMAL (string) path, a 2-byte XMEMCPY otherwise - and SN_TOPIC_ID_TYPE_NORMAL
+ * (0x0) is the zero-initialized default, so a caller that forgets to set
+ * topicNameId would crash in XSTRLEN(NULL). The encoder must reject a NULL
+ * topicNameId with BAD_ARG instead.
+ * ============================================================================ */
+
+TEST(sn_encode_subscribe_null_topic_normal_rejected)
+{
+    /* Zero-initialized SN_Subscribe: topic_type == SN_TOPIC_ID_TYPE_NORMAL (0x0)
+     * and topicNameId == NULL. The pre-fix code called XSTRLEN(NULL) and
+     * crashed; it must now return BAD_ARG. */
+    byte tx_buf[32];
+    SN_Subscribe subscribe;
+    int rc;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_NORMAL, subscribe.topic_type);
+
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_subscribe_null_topic_short_rejected)
+{
+    /* The non-NORMAL path also dereferences topicNameId (a 2-byte XMEMCPY), so a
+     * NULL topicNameId must be rejected there too rather than copying from NULL. */
+    byte tx_buf[32];
+    SN_Subscribe subscribe;
+    int rc;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    subscribe.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    subscribe.topicNameId = NULL;
+
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_subscribe_null_args_rejected)
+{
+    byte tx_buf[32];
+    SN_Subscribe subscribe;
+    int rc;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    subscribe.topicNameId = "abc";
+
+    rc = SN_Encode_Subscribe(NULL, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_subscribe_normal_topic_valid)
+{
+    /* NORMAL topic "abc", QoS0, msgid 0x1234 -> 8-byte packet:
+     * [len=8][SUBSCRIBE][flags=0x00][id hi][id lo][a][b][c] */
+    byte tx_buf[32];
+    SN_Subscribe subscribe;
+    int rc;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    subscribe.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    subscribe.topicNameId = "abc";
+    subscribe.packet_id = 0x1234;
+
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(8, rc);
+    ASSERT_EQ(8, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_SUBSCRIBE, tx_buf[1]);
+    ASSERT_EQ(0x00, tx_buf[2]);
+    ASSERT_EQ(0x12, tx_buf[3]);
+    ASSERT_EQ(0x34, tx_buf[4]);
+    ASSERT_EQ('a', tx_buf[5]);
+    ASSERT_EQ('b', tx_buf[6]);
+    ASSERT_EQ('c', tx_buf[7]);
+}
+
+TEST(sn_encode_subscribe_short_topic_valid)
+{
+    /* SHORT topic "tp" (2 chars, no XSTRLEN), QoS0, msgid 0x1234 -> 7-byte
+     * packet: [len=7][SUBSCRIBE][flags=SHORT(0x02)][id hi][id lo][t][p] */
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    SN_Subscribe subscribe;
+    int rc;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    subscribe.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    subscribe.topicNameId = topic;
+    subscribe.packet_id = 0x1234;
+
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(7, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_SUBSCRIBE, tx_buf[1]);
+    ASSERT_EQ(0x02, tx_buf[2]);
+    ASSERT_EQ(0x12, tx_buf[3]);
+    ASSERT_EQ(0x34, tx_buf[4]);
+    ASSERT_EQ('t', tx_buf[5]);
+    ASSERT_EQ('p', tx_buf[6]);
+}
+
+/* ============================================================================
+ * SN_Encode_Unsubscribe
+ *
+ * topicNameId is dereferenced for every topic_type: XSTRLEN on the NORMAL
+ * (string) path, a 2-byte XMEMCPY otherwise. SN_TOPIC_ID_TYPE_NORMAL is 0x0,
+ * which is also the zero-initialized default, so a caller that forgets to set
+ * topicNameId would crash in XSTRLEN(NULL). The encoder must reject a NULL
+ * topicNameId with BAD_ARG instead - report 2332.
+ * ============================================================================ */
+
+TEST(sn_encode_unsubscribe_null_topic_normal_rejected)
+{
+    /* Regression for report 2332: a zero-initialized SN_Unsubscribe has
+     * topic_type == SN_TOPIC_ID_TYPE_NORMAL (0x0) and topicNameId == NULL. The
+     * pre-fix code called XSTRLEN(NULL) and crashed; it must now return BAD_ARG. */
+    byte tx_buf[32];
+    SN_Unsubscribe unsubscribe;
+    int rc;
+
+    XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_NORMAL, unsubscribe.topic_type);
+
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_unsubscribe_null_topic_short_rejected)
+{
+    /* The non-NORMAL path also dereferences topicNameId (a 2-byte XMEMCPY), so a
+     * NULL topicNameId must be rejected there too rather than copying from NULL. */
+    byte tx_buf[32];
+    SN_Unsubscribe unsubscribe;
+    int rc;
+
+    XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
+    unsubscribe.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    unsubscribe.topicNameId = NULL;
+
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_unsubscribe_null_args_rejected)
+{
+    byte tx_buf[32];
+    SN_Unsubscribe unsubscribe;
+    int rc;
+
+    XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
+    unsubscribe.topicNameId = "abc";
+
+    rc = SN_Encode_Unsubscribe(NULL, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_unsubscribe_normal_topic_valid)
+{
+    /* NORMAL topic "abc", QoS0, msgid 0x1234 -> 8-byte packet:
+     * [len=8][UNSUBSCRIBE][flags=0x00][id hi][id lo][a][b][c] */
+    byte tx_buf[32];
+    SN_Unsubscribe unsubscribe;
+    int rc;
+
+    XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
+    unsubscribe.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    unsubscribe.topicNameId = "abc";
+    unsubscribe.packet_id = 0x1234;
+
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(8, rc);
+    ASSERT_EQ(8, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_UNSUBSCRIBE, tx_buf[1]);
+    ASSERT_EQ(0x00, tx_buf[2]);
+    ASSERT_EQ(0x12, tx_buf[3]);
+    ASSERT_EQ(0x34, tx_buf[4]);
+    ASSERT_EQ('a', tx_buf[5]);
+    ASSERT_EQ('b', tx_buf[6]);
+    ASSERT_EQ('c', tx_buf[7]);
+}
+
+TEST(sn_encode_unsubscribe_short_topic_valid)
+{
+    /* SHORT topic "tp" (2 chars, no XSTRLEN), QoS0, msgid 0x1234 -> 7-byte
+     * packet: [len=7][UNSUBSCRIBE][flags=SHORT(0x02)][id hi][id lo][t][p] */
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    SN_Unsubscribe unsubscribe;
+    int rc;
+
+    XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
+    unsubscribe.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    unsubscribe.topicNameId = topic;
+    unsubscribe.packet_id = 0x1234;
+
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(7, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_UNSUBSCRIBE, tx_buf[1]);
+    ASSERT_EQ(0x02, tx_buf[2]);
+    ASSERT_EQ(0x12, tx_buf[3]);
+    ASSERT_EQ(0x34, tx_buf[4]);
+    ASSERT_EQ('t', tx_buf[5]);
+    ASSERT_EQ('p', tx_buf[6]);
+}
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -903,6 +1120,20 @@ int main(int argc, char** argv)
     RUN_TEST(sn_decode_publish_qos0_zero_packet_id_valid);
     RUN_TEST(sn_decode_publish_qos1_nonzero_packet_id_valid);
     RUN_TEST(sn_decode_publish_qosneg1_zero_packet_id_valid);
+
+    /* SN_Encode_Subscribe */
+    RUN_TEST(sn_encode_subscribe_null_topic_normal_rejected);
+    RUN_TEST(sn_encode_subscribe_null_topic_short_rejected);
+    RUN_TEST(sn_encode_subscribe_null_args_rejected);
+    RUN_TEST(sn_encode_subscribe_normal_topic_valid);
+    RUN_TEST(sn_encode_subscribe_short_topic_valid);
+
+    /* SN_Encode_Unsubscribe */
+    RUN_TEST(sn_encode_unsubscribe_null_topic_normal_rejected);
+    RUN_TEST(sn_encode_unsubscribe_null_topic_short_rejected);
+    RUN_TEST(sn_encode_unsubscribe_null_args_rejected);
+    RUN_TEST(sn_encode_unsubscribe_normal_topic_valid);
+    RUN_TEST(sn_encode_unsubscribe_short_topic_valid);
 
     /* SN_Packet_TypeDesc */
 #ifndef WOLFMQTT_NO_ERROR_STRINGS

@@ -1018,8 +1018,13 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     int total_len;
     byte *tx_payload, flags = 0x00;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL || subscribe == NULL) {
+    /* Validate required arguments. topicNameId is dereferenced for every
+     * topic_type below (XSTRLEN on the NORMAL path, a 2-byte XMEMCPY
+     * otherwise), so reject NULL up front. topic_type is SN_TOPIC_ID_TYPE_NORMAL
+     * (0x0) when the SN_Subscribe is zero-initialized, so a caller that forgets
+     * to assign topicNameId would otherwise crash in XSTRLEN(NULL). */
+    if (tx_buf == NULL || subscribe == NULL ||
+            subscribe->topicNameId == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -1421,8 +1426,13 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     int total_len;
     byte *tx_payload, flags = 0x00;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL || unsubscribe == NULL) {
+    /* Validate required arguments. topicNameId is dereferenced for every
+     * topic_type below (XSTRLEN on the NORMAL path, a 2-byte XMEMCPY
+     * otherwise), so reject NULL up front. topic_type is SN_TOPIC_ID_TYPE_NORMAL
+     * (0x0) when the SN_Unsubscribe is zero-initialized, so a caller that forgets
+     * to assign topicNameId would otherwise crash in XSTRLEN(NULL). */
+    if (tx_buf == NULL || unsubscribe == NULL ||
+            unsubscribe->topicNameId == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
