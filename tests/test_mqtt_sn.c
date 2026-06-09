@@ -51,6 +51,14 @@
  * to a PRINTF sink by sn_reg_callback; this helper is the CWE-117 defense. */
 #include "examples/mqtt_log.h"
 
+/* PRINT_BUFFER_SIZE is the payload clamp the SN example clients apply before
+ * logging (examples/mqttexample.h). Mirror it here so the payload sanitizer
+ * tests reproduce that exact clamp without pulling in the heavy example header;
+ * guarded so it stays in sync if that header is ever included transitively. */
+#ifndef PRINT_BUFFER_SIZE
+#define PRINT_BUFFER_SIZE 80
+#endif
+
 /* Provide storage for the unit-test framework's global counters. Must be
  * defined before unit_test.h is included. */
 #define UNIT_TEST_IMPLEMENTATION
@@ -693,6 +701,75 @@ TEST(log_sanitize_poc_payloads_no_raw_controls)
     mqtt_log_sanitize(out, (word32)sizeof(out),
         "legit\r\n\x1b[2K\x1b[1A[CRITICAL] Authentication bypass succeeded");
     ASSERT_FALSE(contains_raw_control(out));
+}
+
+/* ----------------------------------------------------------------------------
+ * Log injection via the MQTT-SN PUBLISH payload.
+ *
+ * sn_message_cb (and sn-multithread.c) clamp the gateway-supplied PUBLISH
+ * payload to PRINT_BUFFER_SIZE, copy it into a fixed buffer, NUL-terminate, and
+ * log it. SN_Decode_Publish aliases the payload straight from the UDP receive
+ * buffer, so a spoofed gateway controls the bytes and can embed CR/LF/ESC. This
+ * helper reproduces that exact byte sequence so the tests pin the sanitizer on
+ * the payload path, not just the REGISTER topic-name path covered above.
+ * -------------------------------------------------------------------------- */
+static const char* sanitize_sn_payload(char* safebuf, word32 safebufLen,
+    const byte* payload, word32 payloadLen)
+{
+    byte buf[PRINT_BUFFER_SIZE+1];
+    word32 len = payloadLen;
+    if (len > PRINT_BUFFER_SIZE) {
+        len = PRINT_BUFFER_SIZE;
+    }
+    XMEMCPY(buf, payload, len);
+    buf[len] = '\0'; /* Make sure its null terminated */
+    return mqtt_log_sanitize(safebuf, safebufLen, (char*)buf);
+}
+
+TEST(log_sanitize_publish_payload_poc)
+{
+    /* A hostile PUBLISH payload whose embedded LF would otherwise forge a
+     * second, attacker-authored log line. */
+    const char* poc = "hello\n[ERROR] Auth failure overridden by admin";
+    char out[PRINT_BUFFER_SIZE+1];
+    const char* res = sanitize_sn_payload(out, (word32)sizeof(out),
+        (const byte*)poc, (word32)XSTRLEN(poc));
+    ASSERT_FALSE(contains_raw_control(res));
+    /* The LF is rendered as a printable escape, not a real line break. */
+    ASSERT_STR_EQ("hello\\n[ERROR] Auth failure overridden by admin", res);
+}
+
+TEST(log_sanitize_publish_payload_ansi_escape)
+{
+    /* A binary payload driving ANSI terminal sequences (ESC) must not reach the
+     * terminal as raw escapes. */
+    const byte payload[] = {
+        'o','k', 0x1b, '[', '2', 'J', 0x1b, '[', 'H', '!'
+    };
+    char out[PRINT_BUFFER_SIZE+1];
+    const char* res = sanitize_sn_payload(out, (word32)sizeof(out),
+        payload, (word32)sizeof(payload));
+    ASSERT_FALSE(contains_raw_control(res));
+    ASSERT_STR_EQ("ok\\e[2J\\e[H!", res);
+}
+
+TEST(log_sanitize_publish_payload_clamped)
+{
+    /* A payload far larger than PRINT_BUFFER_SIZE and laced with LF bytes must
+     * still log with no raw control bytes and stay within the fixed output
+     * buffer (the sanitizer truncates to fit, all-or-nothing per escape). */
+    byte payload[PRINT_BUFFER_SIZE * 3];
+    char out[PRINT_BUFFER_SIZE+1];
+    word32 i;
+    const char* res;
+    for (i = 0; i < (word32)sizeof(payload); i++) {
+        payload[i] = (i & 1) ? (byte)'\n' : (byte)'A';
+    }
+    res = sanitize_sn_payload(out, (word32)sizeof(out), payload,
+        (word32)sizeof(payload));
+    ASSERT_FALSE(contains_raw_control(res));
+    /* Always NUL-terminated inside the fixed buffer, never overflowed. */
+    ASSERT_TRUE(XSTRLEN(res) < sizeof(out));
 }
 
 /* ============================================================================
@@ -1712,6 +1789,11 @@ int main(int argc, char** argv)
     RUN_TEST(log_sanitize_truncation_is_nul_terminated);
     RUN_TEST(log_sanitize_no_split_escape_on_truncation);
     RUN_TEST(log_sanitize_poc_payloads_no_raw_controls);
+
+    /* PUBLISH payload sink (log-injection defense) */
+    RUN_TEST(log_sanitize_publish_payload_poc);
+    RUN_TEST(log_sanitize_publish_payload_ansi_escape);
+    RUN_TEST(log_sanitize_publish_payload_clamped);
 
     /* SN_Decode_ConnectAck */
     RUN_TEST(sn_connack_accepted_valid);

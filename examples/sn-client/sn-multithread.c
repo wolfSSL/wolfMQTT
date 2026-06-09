@@ -104,6 +104,7 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
     word16 topicId;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
@@ -139,7 +140,8 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     PRINTF("........Payload (%d - %d): %s",
-        msg->buffer_pos, msg->buffer_pos + len, buf);
+        msg->buffer_pos, msg->buffer_pos + len,
+        mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         PRINTF("....MQTT-SN Message: Done");
