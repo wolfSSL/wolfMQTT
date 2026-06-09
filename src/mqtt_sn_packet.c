@@ -138,40 +138,30 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
         *p_packet_type = packet_type;
 
     if (p_packet_id) {
+        /* Bytes already consumed from rx_buf_orig: the 1-byte length field
+         * (plus the 2-byte extended length when SN_PACKET_LEN_IND was used)
+         * and the 1-byte message type. The 2-byte MsgId sits id_offset bytes
+         * past the current rx_buf position; where it begins depends on the
+         * packet type. */
+        int consumed = (int)(rx_buf - rx_buf_orig);
+        int id_offset;
+
         switch(packet_type) {
             case SN_MSG_TYPE_REGACK:
             case SN_MSG_TYPE_PUBACK:
-                if (rx_buf_len < 3) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
-                }
-                /* octet 4-5 */
-                rc = MqttDecode_Num(rx_buf + 2, p_packet_id,
-                    (word32)(rx_buf_len - 3));
-                if (rc < 0) {
-                    return rc;
-                }
+                /* TopicId(2) precedes the MsgId(2): octet 4-5 */
+                id_offset = 2;
                 break;
             case SN_MSG_TYPE_PUBCOMP:
             case SN_MSG_TYPE_PUBREC:
             case SN_MSG_TYPE_PUBREL:
             case SN_MSG_TYPE_UNSUBACK:
-                /* octet 2-3 */
-                rc = MqttDecode_Num(rx_buf, p_packet_id,
-                    (word32)(rx_buf_len - 1));
-                if (rc < 0) {
-                    return rc;
-                }
+                /* MsgId(2) immediately follows the type: octet 2-3 */
+                id_offset = 0;
                 break;
             case SN_MSG_TYPE_SUBACK:
-                if (rx_buf_len < 4) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
-                }
-                /* octet 5-6 */
-                rc = MqttDecode_Num(rx_buf + 3, p_packet_id,
-                    (word32)(rx_buf_len - 4));
-                if (rc < 0) {
-                    return rc;
-                }
+                /* Flags(1) + TopicId(2) precede the MsgId(2): octet 5-6 */
+                id_offset = 3;
                 break;
             case SN_MSG_TYPE_ADVERTISE:
             case SN_MSG_TYPE_SEARCHGW:
@@ -196,8 +186,35 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
             case SN_MSG_TYPE_ENCAPMSG:
             case SN_MSG_TYPE_RESERVED:
             default:
-                *p_packet_id = 0;
+                /* No MsgId carried in this packet type */
+                id_offset = -1;
                 break;
+        }
+
+        if (id_offset < 0) {
+            *p_packet_id = 0;
+        }
+        else {
+            /* Bytes the declared packet leaves for the MsgId at
+             * rx_buf + id_offset. Bound the read by total_len (the declared
+             * packet length, already validated <= rx_buf_len above), not by
+             * rx_buf_len: this keeps the read inside the buffer (CWE-125) and
+             * additionally rejects a frame whose declared length stops short
+             * of the MsgId rather than reading adjacent bytes. Evaluate as a
+             * signed int and reject before the unsigned cast below, so a short
+             * frame cannot wrap to a huge length and slip past MqttDecode_Num's
+             * internal bound check. Measuring from consumed keeps the bound
+             * correct for the IND form, where the header occupies 4 bytes
+             * rather than 2. */
+            int id_avail = (int)total_len - consumed - id_offset;
+            if (id_avail < (int)MQTT_DATA_LEN_SIZE) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+            }
+            rc = MqttDecode_Num(rx_buf + id_offset, p_packet_id,
+                (word32)id_avail);
+            if (rc < 0) {
+                return rc;
+            }
         }
     }
 

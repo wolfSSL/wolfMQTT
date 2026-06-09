@@ -135,6 +135,169 @@ TEST(sn_header_buf_too_short_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+TEST(sn_header_puback_packet_id_extracted)
+{
+    /* [len][type=PUBACK][topicId(2)][packetId(2)][retcode] */
+    byte buf[7] = { 0x07, SN_MSG_TYPE_PUBACK, 0x00, 0x01, 0x9A, 0xBC, 0x00 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(7, rc);
+    ASSERT_EQ(SN_MSG_TYPE_PUBACK, type);
+    ASSERT_EQ(0x9ABC, packet_id);
+}
+
+TEST(sn_header_pubcomp_packet_id_extracted)
+{
+    /* [len=4][type=PUBCOMP][packetId(2)] - MsgId immediately follows type */
+    byte buf[4] = { 0x04, SN_MSG_TYPE_PUBCOMP, 0xAB, 0xCD };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(4, rc);
+    ASSERT_EQ(SN_MSG_TYPE_PUBCOMP, type);
+    ASSERT_EQ(0xABCD, packet_id);
+}
+
+TEST(sn_header_suback_packet_id_extracted)
+{
+    /* [len=8][type=SUBACK][flags][topicId(2)][packetId(2)][retcode] */
+    byte buf[8] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00, 0x00, 0x01,
+                    0x56, 0x78, 0x00 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(8, rc);
+    ASSERT_EQ(SN_MSG_TYPE_SUBACK, type);
+    ASSERT_EQ(0x5678, packet_id);
+}
+
+/* The MsgId bound handed to MqttDecode_Num must be measured from the bytes
+ * already consumed, not from rx_buf_len. Each case below declares a total_len
+ * that fits the buffer (so the > rx_buf_len guard passes) yet leaves the
+ * 2-byte MsgId one byte short. The old rx_buf_len-derived bound read one past
+ * the end; the decoder must now reject these. */
+TEST(sn_header_pubcomp_short_id_rejected)
+{
+    /* [len=3][type=PUBCOMP][1 stray byte]: MsgId(2) needs byte 3 (OOB). */
+    byte buf[3] = { 0x03, SN_MSG_TYPE_PUBCOMP, 0x00 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0xFFFF;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_header_regack_short_id_rejected)
+{
+    /* [len=5][type=REGACK][topicId(2)][1 byte]: MsgId(2) at octet 4-5 needs
+     * byte 5 (OOB). Old bound rx_buf_len-3 = 2 let MqttDecode_Num read it. */
+    byte buf[5] = { 0x05, SN_MSG_TYPE_REGACK, 0x00, 0x01, 0x12 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0xFFFF;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_header_suback_short_id_rejected)
+{
+    /* [len=6][type=SUBACK][flags][topicId(2)][1 byte]: MsgId(2) at octet 5-6
+     * needs byte 6 (OOB). Old bound rx_buf_len-4 = 2 over-read buf[6]. */
+    byte buf[6] = { 0x06, SN_MSG_TYPE_SUBACK, 0x00, 0x00, 0x01, 0x12 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0xFFFF;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_header_ind_form_pubcomp_short_id_rejected)
+{
+    /* Extended-length (IND) PUBCOMP whose total_len(4) covers only the 4
+     * header bytes (len-ind + 2-byte length + type), leaving no room for the
+     * MsgId. Because the IND form consumes 4 header bytes (not 2), the old
+     * rx_buf_len-1 bound read two bytes past this 4-byte buffer. */
+    byte buf[4] = { SN_PACKET_LEN_IND, 0x00, 0x04, SN_MSG_TYPE_PUBCOMP };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0xFFFF;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_header_ind_form_pubcomp_packet_id_extracted)
+{
+    /* Extended-length (IND) PUBCOMP carrying a MsgId at octet 4-5: the bound
+     * must be measured from the 4 consumed header bytes. */
+    byte buf[6] = { SN_PACKET_LEN_IND, 0x00, 0x06, SN_MSG_TYPE_PUBCOMP,
+                    0xDE, 0xF0 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(6, rc);
+    ASSERT_EQ(SN_MSG_TYPE_PUBCOMP, type);
+    ASSERT_EQ(0xDEF0, packet_id);
+}
+
+/* PUBREC, PUBREL and UNSUBACK share PUBCOMP's id_offset=0 case grouping; pin
+ * each so an accidental removal of a case label would fall through to the
+ * no-MsgId default (returning packet_id=0) and fail a test. */
+TEST(sn_header_pubrec_packet_id_extracted)
+{
+    byte buf[4] = { 0x04, SN_MSG_TYPE_PUBREC, 0x30, 0x31 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(4, rc);
+    ASSERT_EQ(SN_MSG_TYPE_PUBREC, type);
+    ASSERT_EQ(0x3031, packet_id);
+}
+
+TEST(sn_header_pubrel_packet_id_extracted)
+{
+    byte buf[4] = { 0x04, SN_MSG_TYPE_PUBREL, 0x40, 0x41 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(4, rc);
+    ASSERT_EQ(SN_MSG_TYPE_PUBREL, type);
+    ASSERT_EQ(0x4041, packet_id);
+}
+
+TEST(sn_header_unsuback_packet_id_extracted)
+{
+    byte buf[4] = { 0x04, SN_MSG_TYPE_UNSUBACK, 0x20, 0x21 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(4, rc);
+    ASSERT_EQ(SN_MSG_TYPE_UNSUBACK, type);
+    ASSERT_EQ(0x2021, packet_id);
+}
+
+TEST(sn_header_declared_len_short_of_msgid_rejected)
+{
+    /* total_len=3 declares a 3-byte PUBCOMP, but the buffer holds more bytes
+     * (e.g. adjacent/trailing data). The MsgId is bounded by the declared
+     * length, not the physical buffer, so this malformed frame is rejected
+     * rather than reading the id from bytes past the declared packet. */
+    byte buf[6] = { 0x03, SN_MSG_TYPE_PUBCOMP, 0x11, 0x22, 0x33, 0x44 };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0xFFFF;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_header_no_msgid_type_zeroes_packet_id)
+{
+    /* A packet type that carries no MsgId must zero a caller-supplied id
+     * (the id_offset < 0 branch), not leave the pre-set value untouched. */
+    byte buf[2] = { 0x02, SN_MSG_TYPE_DISCONNECT };
+    SN_MsgType type = SN_MSG_TYPE_RESERVED;
+    word16 packet_id = 0xFFFF;
+    int rc = SN_Decode_Header(buf, (int)sizeof(buf), &type, &packet_id);
+    ASSERT_EQ(2, rc);
+    ASSERT_EQ(SN_MSG_TYPE_DISCONNECT, type);
+    ASSERT_EQ(0, packet_id);
+}
+
 /* ============================================================================
  * SN_Decode_GWInfo
  * ============================================================================ */
@@ -1068,10 +1231,23 @@ int main(int argc, char** argv)
     /* SN_Decode_Header */
     RUN_TEST(sn_header_short_form_valid);
     RUN_TEST(sn_header_regack_packet_id_extracted);
+    RUN_TEST(sn_header_puback_packet_id_extracted);
+    RUN_TEST(sn_header_pubcomp_packet_id_extracted);
+    RUN_TEST(sn_header_suback_packet_id_extracted);
     RUN_TEST(sn_header_ind_form_total_len_equals_consumed_rejected);
     RUN_TEST(sn_header_total_len_exceeds_buffer_rejected);
     RUN_TEST(sn_header_null_buf_rejected);
     RUN_TEST(sn_header_buf_too_short_rejected);
+    RUN_TEST(sn_header_pubcomp_short_id_rejected);
+    RUN_TEST(sn_header_regack_short_id_rejected);
+    RUN_TEST(sn_header_suback_short_id_rejected);
+    RUN_TEST(sn_header_ind_form_pubcomp_short_id_rejected);
+    RUN_TEST(sn_header_ind_form_pubcomp_packet_id_extracted);
+    RUN_TEST(sn_header_pubrec_packet_id_extracted);
+    RUN_TEST(sn_header_pubrel_packet_id_extracted);
+    RUN_TEST(sn_header_unsuback_packet_id_extracted);
+    RUN_TEST(sn_header_declared_len_short_of_msgid_rejected);
+    RUN_TEST(sn_header_no_msgid_type_zeroes_packet_id);
 
     /* SN_Decode_GWInfo */
     RUN_TEST(sn_gwinfo_short_form_no_addr_valid);
