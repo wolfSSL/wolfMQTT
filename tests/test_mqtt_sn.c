@@ -45,6 +45,12 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "wolfmqtt/mqtt_sn_packet.h"
 
+/* Log-sanitization helper shared by the SN example clients. Exercised here
+ * because the MQTT-SN REGISTER topic name decoded above is aliased straight
+ * from the receive buffer (gateway-/attacker-controlled over UDP) and is fed
+ * to a PRINTF sink by sn_reg_callback; this helper is the CWE-117 defense. */
+#include "examples/mqtt_log.h"
+
 /* Provide storage for the unit-test framework's global counters. Must be
  * defined before unit_test.h is included. */
 #define UNIT_TEST_IMPLEMENTATION
@@ -574,6 +580,119 @@ TEST(sn_register_roundtrip_ind_form)
     ASSERT_EQ(0x0304, dec.packet_id);
     ASSERT_NOT_NULL(dec.topicName);
     ASSERT_STR_EQ(topic, dec.topicName);
+}
+
+/* ============================================================================
+ * mqtt_log_sanitize (CWE-117 log-injection defense)
+ *
+ * Report 5663: the MQTT-SN REGISTER topic name decoded by SN_Decode_Register is
+ * aliased straight from the UDP receive buffer with no control-character
+ * filtering, then logged verbatim by sn_reg_callback's PRINTF. A spoofed
+ * gateway can therefore inject forged log lines (CR/LF) or hijack the terminal
+ * (ANSI ESC). These tests pin the sanitizer that the example clients now run on
+ * the topic name before logging it.
+ * ============================================================================ */
+
+/* Return non-zero if buf (NUL-terminated) still contains any raw control byte
+ * that could break out of a log line or drive a terminal. */
+static int contains_raw_control(const char* buf)
+{
+    word32 i;
+    for (i = 0; buf[i] != '\0'; i++) {
+        byte c = (byte)buf[i];
+        if (c < 0x20 || c == 0x7f) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+TEST(log_sanitize_printable_passthrough)
+{
+    char out[64];
+    /* A legitimate topic name must survive byte-for-byte. */
+    const char* in = "wolfMQTT/example/topic";
+    ASSERT_STR_EQ(in, mqtt_log_sanitize(out, (word32)sizeof(out), in));
+}
+
+TEST(log_sanitize_crlf_escaped)
+{
+    char out[64];
+    /* CR and LF are the log-line-injection primitives: they must not pass
+     * through as raw bytes. */
+    ASSERT_STR_EQ("a\\r\\nb",
+        mqtt_log_sanitize(out, (word32)sizeof(out), "a\r\nb"));
+}
+
+TEST(log_sanitize_vt_esc_tab_escaped)
+{
+    char out[64];
+    /* VT, ESC and TAB are the named escapes called out in the report
+     * recommendation (ESC drives ANSI terminal sequences). */
+    ASSERT_STR_EQ("\\v\\e\\t",
+        mqtt_log_sanitize(out, (word32)sizeof(out), "\v\x1b\t"));
+}
+
+TEST(log_sanitize_generic_control_hex)
+{
+    char out[64];
+    /* Any other control byte (and DEL 0x7f) falls back to a \xHH escape. */
+    ASSERT_STR_EQ("\\x01\\x7f",
+        mqtt_log_sanitize(out, (word32)sizeof(out), "\x01\x7f"));
+}
+
+TEST(log_sanitize_null_src)
+{
+    char out[64];
+    /* A NULL topic name must not crash the logger. */
+    ASSERT_STR_EQ("(null)", mqtt_log_sanitize(out, (word32)sizeof(out), NULL));
+}
+
+TEST(log_sanitize_zero_len_buffer)
+{
+    char out[2];
+    out[0] = 'X';
+    out[1] = 'Y';
+    /* dstLen 0 must write nothing at all and just return the buffer. */
+    ASSERT_NOT_NULL(mqtt_log_sanitize(out, 0, "abc"));
+    ASSERT_EQ('X', out[0]);
+}
+
+TEST(log_sanitize_truncation_is_nul_terminated)
+{
+    /* Output is truncated to fit and always NUL-terminated. */
+    char out[4];
+    XMEMSET(out, 'Z', sizeof(out));
+    mqtt_log_sanitize(out, (word32)sizeof(out), "abcdef");
+    ASSERT_EQ('\0', out[3]);            /* terminated within the buffer */
+    ASSERT_STR_EQ("abc", out);
+}
+
+TEST(log_sanitize_no_split_escape_on_truncation)
+{
+    /* A multi-byte escape must be emitted all-or-nothing so truncation can
+     * never leave a dangling backslash. out has room for 'a' + NUL but not for
+     * the 2-byte "\r" escape, so the escape is dropped entirely. */
+    char out[3];
+    XMEMSET(out, 'Z', sizeof(out));
+    mqtt_log_sanitize(out, (word32)sizeof(out), "a\r\nb");
+    ASSERT_STR_EQ("a", out);
+    ASSERT_FALSE(contains_raw_control(out));
+}
+
+TEST(log_sanitize_poc_payloads_no_raw_controls)
+{
+    /* The exact hostile inputs from the report's proof-of-concept: after
+     * sanitization the output must contain no raw control byte, so it cannot
+     * forge a log line or emit a terminal escape. */
+    char out[256];
+    mqtt_log_sanitize(out, (word32)sizeof(out),
+        "wolfMQTT/pwn\nMQTT-SN Register CB: New topic ID: 1 : \"FORGED\"");
+    ASSERT_FALSE(contains_raw_control(out));
+
+    mqtt_log_sanitize(out, (word32)sizeof(out),
+        "legit\r\n\x1b[2K\x1b[1A[CRITICAL] Authentication bypass succeeded");
+    ASSERT_FALSE(contains_raw_control(out));
 }
 
 /* ============================================================================
@@ -1582,6 +1701,17 @@ int main(int argc, char** argv)
     RUN_TEST(sn_register_no_room_for_terminator_rejected);
     RUN_TEST(sn_register_roundtrip_short_form);
     RUN_TEST(sn_register_roundtrip_ind_form);
+
+    /* mqtt_log_sanitize (report 5663 log-injection defense) */
+    RUN_TEST(log_sanitize_printable_passthrough);
+    RUN_TEST(log_sanitize_crlf_escaped);
+    RUN_TEST(log_sanitize_vt_esc_tab_escaped);
+    RUN_TEST(log_sanitize_generic_control_hex);
+    RUN_TEST(log_sanitize_null_src);
+    RUN_TEST(log_sanitize_zero_len_buffer);
+    RUN_TEST(log_sanitize_truncation_is_nul_terminated);
+    RUN_TEST(log_sanitize_no_split_escape_on_truncation);
+    RUN_TEST(log_sanitize_poc_payloads_no_raw_controls);
 
     /* SN_Decode_ConnectAck */
     RUN_TEST(sn_connack_accepted_valid);

@@ -29,6 +29,7 @@
 #include "sn-client.h"
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
+#include "examples/mqtt_log.h"
 
 #include <stdint.h>
 
@@ -192,7 +193,13 @@ static void client_disconnect(MQTTCtx *mqttCtx)
    assigns a new topic ID to a topic name. */
 static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
 {
-    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId, topicName);
+    /* topicName is gateway-controlled and, over UDP, attacker-spoofable. It is
+     * aliased straight from the receive buffer with no control-character
+     * filtering (see SN_Decode_Register), so sanitize before logging to avoid
+     * CR/LF log-line injection and ANSI terminal escape attacks (CWE-117). */
+    char safeTopic[PRINT_BUFFER_SIZE + 1];
+    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId,
+        mqtt_log_sanitize(safeTopic, (word32)sizeof(safeTopic), topicName));
     (void)ctx;
 
     return(MQTT_CODE_SUCCESS);
