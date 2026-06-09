@@ -1138,7 +1138,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 
 int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 {
-    int total_len;
+    word32 total_len;
     byte *tx_payload = tx_buf;
     byte flags = 0;
 
@@ -1146,9 +1146,23 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     if (tx_buf == NULL || publish == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+    if (tx_buf_len < 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
+    /* publish->total_len is a caller-supplied word32. Reject any payload large
+     * enough that adding the MQTT-SN header overhead would overflow or exceed
+     * the maximum packet length, before the length arithmetic below. The header
+     * is at most 9 bytes: a 3-byte extended length field, msgType, flags, topic
+     * ID (2), and msgID (2). Validating the word32 up front keeps the payload
+     * copy bounded and prevents the narrowing wrap that could bypass the
+     * SN_PACKET_MAX_LEN / tx_buf_len checks. */
+    if (publish->total_len > (word32)(SN_PACKET_MAX_LEN - 9)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
 
     /* Determine packet length */
-    total_len = (int)publish->total_len;
+    total_len = publish->total_len;
 
     /* Add length, msgType, flags, topic ID (2), and msgID (2) */
     total_len += 7;
@@ -1158,7 +1172,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
         total_len += 2;
     }
 
-    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
+    if (total_len > SN_PACKET_MAX_LEN || total_len > (word32)tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -1168,7 +1182,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     else {
         *tx_payload++ = SN_PACKET_LEN_IND;
-        tx_payload += MqttEncode_Num(tx_payload, total_len);
+        tx_payload += MqttEncode_Num(tx_payload, (word16)total_len);
     }
 
     *tx_payload++ = SN_MSG_TYPE_PUBLISH;
@@ -1213,7 +1227,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     (void)tx_payload;
 
     /* Return length of packet placed into tx_buf */
-    return total_len;
+    return (int)total_len;
 }
 
 int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)

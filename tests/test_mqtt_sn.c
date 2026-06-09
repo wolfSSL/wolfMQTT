@@ -447,6 +447,221 @@ TEST(sn_typedesc_unknown_type)
 #endif /* !WOLFMQTT_NO_ERROR_STRINGS */
 
 /* ============================================================================
+ * SN_Encode_Publish
+ *
+ * publish->total_len is a caller-supplied word32 payload length. The encoder
+ * must keep its length arithmetic in an unsigned wide type and reject oversized
+ * lengths before they can wrap negative/small and slip past the
+ * SN_PACKET_MAX_LEN / tx_buf_len bounds checks (which previously preceded a
+ * XMEMCPY of the full word32 length - report 5510).
+ * ============================================================================ */
+
+TEST(sn_encode_publish_short_topic_valid)
+{
+    /* QoS1, SHORT topic "tp", packet id 0x1234, payload "hi" -> 9-byte packet:
+     * [len=9][PUBLISH][flags][t][p][id hi][id lo][h][i] */
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos        = MQTT_QOS_1;
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = sizeof(payload);
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(9, rc);
+    ASSERT_EQ(9, tx_buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_PUBLISH, tx_buf[1]);
+    /* flags = (QOS_MASK & (1<<5)) | (TOPICIDTYPE_MASK & SHORT) = 0x20 | 0x02 */
+    ASSERT_EQ(0x22, tx_buf[2]);
+    ASSERT_EQ('t', tx_buf[3]);
+    ASSERT_EQ('p', tx_buf[4]);
+    ASSERT_EQ(0x12, tx_buf[5]);
+    ASSERT_EQ(0x34, tx_buf[6]);
+    ASSERT_EQ('h', tx_buf[7]);
+    ASSERT_EQ('i', tx_buf[8]);
+}
+
+TEST(sn_encode_publish_ind_form_valid)
+{
+    /* A 300-byte payload pushes the packet past SN_PACKET_MAX_SMALL_SIZE, so the
+     * length is encoded in the 3-byte extended (IND) form. Total = 300 + 9. */
+    static byte tx_buf[512];
+    static byte payload[300];
+    char topic[2] = { 't', 'p' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = sizeof(payload);
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(309, rc);
+    ASSERT_EQ(SN_PACKET_LEN_IND, tx_buf[0]);
+    /* 309 = 0x0135, big-endian */
+    ASSERT_EQ(0x01, tx_buf[1]);
+    ASSERT_EQ(0x35, tx_buf[2]);
+    ASSERT_EQ(SN_MSG_TYPE_PUBLISH, tx_buf[3]);
+}
+
+TEST(sn_encode_publish_oversized_total_len_rejected)
+{
+    /* Regression for report 5510: total_len = 0xFFFFFFFF. The old code cast this
+     * to int (-1), added 7 (=6), passed both bounds checks, then XMEMCPY'd
+     * 0xFFFFFFFF bytes. A valid topic and buffer are supplied so the pre-fix
+     * path would have reached that copy; the fix must reject up front. */
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = 0xFFFFFFFFU;
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_encode_publish_total_len_int_max_rejected)
+{
+    /* total_len = INT_MAX (0x7FFFFFFF): adding the 7-byte header overflows
+     * signed int (wraps negative under -fwrapv), which the old code let slip
+     * past the bounds checks. Must be rejected. */
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = 0x7FFFFFFFU;
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_encode_publish_total_len_over_max_rejected)
+{
+    /* One byte past the largest encodable payload (SN_PACKET_MAX_LEN - 9). The
+     * buffer length is not the limiting factor here - the payload itself cannot
+     * fit in a valid MQTT-SN packet. */
+    static byte tx_buf[SN_PACKET_MAX_LEN];
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = (word32)(SN_PACKET_MAX_LEN - 9) + 1;
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_encode_publish_max_payload_accepted)
+{
+    /* The largest payload that still fits a valid packet: SN_PACKET_MAX_LEN - 9
+     * encodes to exactly SN_PACKET_MAX_LEN bytes (extended length form). Guards
+     * the bounds check against being off-by-one and rejecting a valid maximum. */
+    static byte tx_buf[SN_PACKET_MAX_LEN];
+    static byte payload[SN_PACKET_MAX_LEN - 9];
+    char topic[2] = { 't', 'p' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = (word32)sizeof(payload);
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(SN_PACKET_MAX_LEN, rc);
+    ASSERT_EQ(SN_PACKET_LEN_IND, tx_buf[0]);
+}
+
+TEST(sn_encode_publish_buffer_too_small_rejected)
+{
+    /* total_len is encodable, but tx_buf cannot hold the resulting packet. The
+     * tx_buf_len bounds check (now unsigned) must still reject it. */
+    byte tx_buf[8]; /* packet would need 9 bytes */
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = sizeof(payload);
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_encode_publish_negative_buf_len_rejected)
+{
+    /* A negative tx_buf_len must not be sign-converted into a huge unsigned
+     * limit that lets the bounds check pass. */
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.topic_type = SN_TOPIC_ID_TYPE_SHORT;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = sizeof(payload);
+
+    rc = SN_Encode_Publish(tx_buf, -1, &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+TEST(sn_encode_publish_null_args_rejected)
+{
+    byte tx_buf[32];
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+
+    rc = SN_Encode_Publish(NULL, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+/* ============================================================================
  * Suite runner
  * ============================================================================ */
 
@@ -491,6 +706,17 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connack_total_len_exceeds_buffer_rejected);
     RUN_TEST(sn_connack_wrong_type_rejected);
     RUN_TEST(sn_connack_null_buf_rejected);
+
+    /* SN_Encode_Publish */
+    RUN_TEST(sn_encode_publish_short_topic_valid);
+    RUN_TEST(sn_encode_publish_ind_form_valid);
+    RUN_TEST(sn_encode_publish_oversized_total_len_rejected);
+    RUN_TEST(sn_encode_publish_total_len_int_max_rejected);
+    RUN_TEST(sn_encode_publish_total_len_over_max_rejected);
+    RUN_TEST(sn_encode_publish_max_payload_accepted);
+    RUN_TEST(sn_encode_publish_buffer_too_small_rejected);
+    RUN_TEST(sn_encode_publish_negative_buf_len_rejected);
+    RUN_TEST(sn_encode_publish_null_args_rejected);
 
     /* SN_Packet_TypeDesc */
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
