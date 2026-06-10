@@ -195,10 +195,6 @@ static void client_disconnect(MQTTCtx *mqttCtx)
    assigns a new topic ID to a topic name. */
 static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
 {
-    /* topicName is gateway-controlled and, over UDP, attacker-spoofable. It is
-     * aliased straight from the receive buffer with no control-character
-     * filtering (see SN_Decode_Register), so sanitize before logging to avoid
-     * CR/LF log-line injection and ANSI terminal escape attacks (CWE-117). */
     char safeTopic[PRINT_BUFFER_SIZE + 1];
     PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId,
         mqtt_log_sanitize(safeTopic, (word32)sizeof(safeTopic), topicName));
@@ -384,11 +380,7 @@ static void *subscribe_task(void *param)
 
     PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
     /* Under WOLFMQTT_NONBLOCK the call returns MQTT_CODE_CONTINUE until the
-       SUBACK arrives. The pending response registered for this thread holds a
-       pointer into this stack frame (&subscribe.pendResp), so we must keep
-       retrying until the exchange finishes. Returning on CONTINUE would free the
-       frame while the entry is still linked in client->firstPendResp, and the
-       concurrent waitMessage_task would dereference it (use-after-free). */
+       SUBACK arrives. */
     do {
         rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
     } while (rc == MQTT_CODE_CONTINUE);
@@ -519,10 +511,7 @@ static void *publish_task(void *param)
     publish.buffer = (byte*)buf;
     publish.total_len = (word16)XSTRLEN(buf);
 
-    /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK): publish.pendResp lives in
-       this stack frame, so returning before the exchange finishes would leave a
-       dangling entry in client->firstPendResp for the reader thread to traverse
-       (use-after-free). See subscribe_task for the same rationale. */
+    /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) */
     do {
         rc = SN_Client_Publish(&mqttCtx->client, &publish);
     } while (rc == MQTT_CODE_CONTINUE);
@@ -557,11 +546,7 @@ static void *ping_task(void *param)
         /* Keep Alive Ping */
         PRINTF("Sending ping keep-alive");
 
-        /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK): ping.pendResp lives in
-           this stack frame, so breaking out and exiting the thread before the
-           exchange finishes would leave a dangling entry in
-           client->firstPendResp for the reader thread to traverse
-           (use-after-free). See subscribe_task for the same rationale. */
+        /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) */
         do {
             rc = SN_Client_Ping(&mqttCtx->client, &ping);
         } while (rc == MQTT_CODE_CONTINUE);
@@ -586,8 +571,7 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
     unsubscribe.topicNameId = mqttCtx->topic_name;
     unsubscribe.packet_id = mqtt_get_packetid_threadsafe();
 
-    /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) so unsubscribe.pendResp is
-       not left linked in client->firstPendResp when this frame returns. */
+    /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) */
     do {
         rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
     } while (rc == MQTT_CODE_CONTINUE);
