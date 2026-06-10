@@ -70,20 +70,35 @@
  * decoders are reachable. That translation unit also contains the SN
  * network send/receive wrappers, which reference these WOLFMQTT_LOCAL socket
  * helpers. They are hidden in libwolfmqtt and never exercised by the decoder
- * tests, so we satisfy the link with stubs that simply report no data. */
-int MqttSocket_Read(struct _MqttClient *client, byte* buf, int buf_len,
-    int timeout_ms)
+ * tests, so we satisfy the link with stubs that simply report no data.
+ *
+ * The stubs are weak: in a shared build the real helpers have hidden
+ * visibility and are not exported, so these are the only definitions and the
+ * SN wrappers bind to them. In a static build the same translation unit's
+ * references to MqttEncode_Num/MqttClient_Flags pull mqtt_packet.o and
+ * mqtt_socket.o out of libwolfmqtt.a, which carry strong definitions of these
+ * symbols; the weak attribute lets those real implementations win instead of
+ * colliding (multiple-definition link error). The decoder tests never drive
+ * the network path, so which definition is used does not affect them. */
+#if defined(__GNUC__) || defined(__clang__)
+    #define SN_TEST_WEAK __attribute__((weak))
+#else
+    #define SN_TEST_WEAK
+#endif
+
+SN_TEST_WEAK int MqttSocket_Read(struct _MqttClient *client, byte* buf,
+    int buf_len, int timeout_ms)
 {
     (void)client; (void)buf; (void)buf_len; (void)timeout_ms;
     return MQTT_CODE_ERROR_NETWORK;
 }
-int MqttSocket_Peek(struct _MqttClient *client, byte* buf, int buf_len,
-    int timeout_ms)
+SN_TEST_WEAK int MqttSocket_Peek(struct _MqttClient *client, byte* buf,
+    int buf_len, int timeout_ms)
 {
     (void)client; (void)buf; (void)buf_len; (void)timeout_ms;
     return MQTT_CODE_ERROR_NETWORK;
 }
-int MqttPacket_HandleNetError(MqttClient *client, int rc)
+SN_TEST_WEAK int MqttPacket_HandleNetError(MqttClient *client, int rc)
 {
     (void)client;
     return rc;
