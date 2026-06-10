@@ -29,6 +29,7 @@
 #include "sn-client.h"
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
+#include "examples/mqtt_log.h"
 
 #include <stdint.h>
 
@@ -103,6 +104,7 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
     word16 topicId;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
@@ -138,7 +140,8 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     PRINTF("........Payload (%d - %d): %s",
-        msg->buffer_pos, msg->buffer_pos + len, buf);
+        msg->buffer_pos, msg->buffer_pos + len,
+        mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         PRINTF("....MQTT-SN Message: Done");
@@ -192,7 +195,9 @@ static void client_disconnect(MQTTCtx *mqttCtx)
    assigns a new topic ID to a topic name. */
 static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
 {
-    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId, topicName);
+    char safeTopic[PRINT_BUFFER_SIZE + 1];
+    PRINTF("MQTT-SN Register CB: New topic ID: %d : \"%s\"", topicId,
+        mqtt_log_sanitize(safeTopic, (word32)sizeof(safeTopic), topicName));
     (void)ctx;
 
     return(MQTT_CODE_SUCCESS);
@@ -214,8 +219,12 @@ static int client_register(MQTTCtx *mqttCtx)
 
         PRINTF("MQTT-SN Register: topic = %s", regist.topicName);
 
-        /* Register topic name to get the assigned topic ID */
-        rc = SN_Client_Register(&mqttCtx->client, &regist);
+        /* Register topic name to get the assigned topic ID. Retry on
+           MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) so regist.pendResp is not left
+           linked in client->firstPendResp when this frame returns. */
+        do {
+            rc = SN_Client_Register(&mqttCtx->client, &regist);
+        } while (rc == MQTT_CODE_CONTINUE);
 
         if ((rc == 0) && (regist.regack.return_code == SN_RC_ACCEPTED)) {
             /* Topic ID is returned in RegAck */
@@ -370,7 +379,11 @@ static void *subscribe_task(void *param)
     subscribe.packet_id = mqtt_get_packetid_threadsafe();
 
     PRINTF("MQTT-SN Subscribe: topic name = %s", subscribe.topicNameId);
-    rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+    /* Under WOLFMQTT_NONBLOCK the call returns MQTT_CODE_CONTINUE until the
+       SUBACK arrives. */
+    do {
+        rc = SN_Client_Subscribe(&mqttCtx->client, &subscribe);
+    } while (rc == MQTT_CODE_CONTINUE);
 
     PRINTF("....MQTT-SN Subscribe Ack: topic id = %d, rc = %d",
             subscribe.subAck.topicId, (rc != 0) ? rc : subscribe.subAck.return_code);
@@ -498,7 +511,10 @@ static void *publish_task(void *param)
     publish.buffer = (byte*)buf;
     publish.total_len = (word16)XSTRLEN(buf);
 
-    rc = SN_Client_Publish(&mqttCtx->client, &publish);
+    /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) */
+    do {
+        rc = SN_Client_Publish(&mqttCtx->client, &publish);
+    } while (rc == MQTT_CODE_CONTINUE);
 
     PRINTF("MQTT-SN Publish: topic id = %d, rc = %d\r\nPayload = %s",
         (word16)*publish.topic_name,
@@ -530,7 +546,10 @@ static void *ping_task(void *param)
         /* Keep Alive Ping */
         PRINTF("Sending ping keep-alive");
 
-        rc = SN_Client_Ping(&mqttCtx->client, &ping);
+        /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) */
+        do {
+            rc = SN_Client_Ping(&mqttCtx->client, &ping);
+        } while (rc == MQTT_CODE_CONTINUE);
         if (rc != MQTT_CODE_SUCCESS) {
             PRINTF("MQTT-SN Ping Error: %s (%d)",
                 MqttClient_ReturnCodeToString(rc), rc);
@@ -552,7 +571,10 @@ static int unsubscribe_do(MQTTCtx *mqttCtx)
     unsubscribe.topicNameId = mqttCtx->topic_name;
     unsubscribe.packet_id = mqtt_get_packetid_threadsafe();
 
-    rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
+    /* Retry on MQTT_CODE_CONTINUE (WOLFMQTT_NONBLOCK) */
+    do {
+        rc = SN_Client_Unsubscribe(&mqttCtx->client, &unsubscribe);
+    } while (rc == MQTT_CODE_CONTINUE);
 
     PRINTF("MQTT Unsubscribe: %s (rc = %d)",
         MqttClient_ReturnCodeToString(rc), rc);

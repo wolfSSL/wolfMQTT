@@ -27,8 +27,10 @@
 #include "wolfmqtt/mqtt_client.h"
 
 /* Secure memory zeroing - uses volatile pointer to prevent the compiler
- * from optimizing away the stores (dead-store elimination). */
-static void MqttClient_ForceZero(void* mem, word32 len)
+ * from optimizing away the stores (dead-store elimination).
+ * Declared WOLFMQTT_LOCAL in mqtt_client.h so the MQTT-SN client can reuse it
+ * (see SN_WillMessage) via the shared CLIENT_FORCE_ZERO macro. */
+WOLFMQTT_LOCAL void MqttClient_ForceZero(void* mem, word32 len)
 {
     volatile byte* p = (volatile byte*)mem;
     word32 i;
@@ -36,9 +38,6 @@ static void MqttClient_ForceZero(void* mem, word32 len)
         p[i] = 0;
     }
 }
-
-#define CLIENT_FORCE_ZERO(mem, len) \
-    MqttClient_ForceZero(mem, (word32)(len))
 
 /* DOCUMENTED BUILD OPTIONS:
  *

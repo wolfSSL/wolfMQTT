@@ -156,8 +156,14 @@ WOLFMQTT_API int SN_Client_Publish(
  *  \param      client      Pointer to MqttClient structure
  *  \param      subscribe   Pointer to SN_Subscribe structure initialized with
                             subscription topic list and desired QoS.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS if the gateway accepted the subscription,
+                MQTT_CODE_ERROR_SUBSCRIBE_REJECTED if the gateway returned a
+                non-zero SUBACK return_code (check subscribe->subAck.return_code
+                for the specific SN_ReturnCodes value), or another
+                MQTT_CODE_ERROR_* for transport/protocol failures (see enum
+                MqttPacketResponseCodes). Callers must not assume messages will
+                be delivered for this topic when this function does not return
+                MQTT_CODE_SUCCESS.
  */
 WOLFMQTT_API int SN_Client_Subscribe(
     MqttClient *client,
@@ -211,6 +217,12 @@ WOLFMQTT_API int SN_Client_Disconnect_ex(
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      ping        Pointer to SN_PingReq structure. NULL is valid.
+ *                          Under WOLFMQTT_NONBLOCK a caller that must resume
+ *                          the request across MQTT_CODE_CONTINUE returns should
+ *                          pass a persistent (caller-owned) object: a NULL ping
+ *                          falls back to internal storage that cannot carry
+ *                          state between calls, so each call is an independent,
+ *                          self-contained request rather than a resumed one.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

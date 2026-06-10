@@ -101,6 +101,7 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
     int rc;
     SN_MsgType packet_type;
     word16 total_len;
+    byte *rx_buf_orig = rx_buf;
 
     if (rx_buf == NULL || rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
@@ -120,6 +121,15 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
     if (total_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
+    /* Reject a declared total_len that does not cover the bytes already
+     * consumed plus the upcoming message-type read. Without this, a peer
+     * crafted SN_PACKET_LEN_IND packet whose 2-byte length field decodes
+     * to a value equal to rx_buf_len (e.g., rx_buf_len == 3 with
+     * total_len == 3) slips past the > rx_buf_len check above and the
+     * *rx_buf++ below reads one byte past the caller-supplied buffer. */
+    if (total_len < (word16)(rx_buf - rx_buf_orig) + 1) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
 
     /* Message Type */
     packet_type = (SN_MsgType)*rx_buf++;
@@ -128,40 +138,30 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
         *p_packet_type = packet_type;
 
     if (p_packet_id) {
+        /* Bytes already consumed from rx_buf_orig: the 1-byte length field
+         * (plus the 2-byte extended length when SN_PACKET_LEN_IND was used)
+         * and the 1-byte message type. The 2-byte MsgId sits id_offset bytes
+         * past the current rx_buf position; where it begins depends on the
+         * packet type. */
+        int consumed = (int)(rx_buf - rx_buf_orig);
+        int id_offset;
+
         switch(packet_type) {
             case SN_MSG_TYPE_REGACK:
             case SN_MSG_TYPE_PUBACK:
-                if (rx_buf_len < 3) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
-                }
-                /* octet 4-5 */
-                rc = MqttDecode_Num(rx_buf + 2, p_packet_id,
-                    (word32)(rx_buf_len - 3));
-                if (rc < 0) {
-                    return rc;
-                }
+                /* TopicId(2) precedes the MsgId(2): octet 4-5 */
+                id_offset = 2;
                 break;
             case SN_MSG_TYPE_PUBCOMP:
             case SN_MSG_TYPE_PUBREC:
             case SN_MSG_TYPE_PUBREL:
             case SN_MSG_TYPE_UNSUBACK:
-                /* octet 2-3 */
-                rc = MqttDecode_Num(rx_buf, p_packet_id,
-                    (word32)(rx_buf_len - 1));
-                if (rc < 0) {
-                    return rc;
-                }
+                /* MsgId(2) immediately follows the type: octet 2-3 */
+                id_offset = 0;
                 break;
             case SN_MSG_TYPE_SUBACK:
-                if (rx_buf_len < 4) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
-                }
-                /* octet 5-6 */
-                rc = MqttDecode_Num(rx_buf + 3, p_packet_id,
-                    (word32)(rx_buf_len - 4));
-                if (rc < 0) {
-                    return rc;
-                }
+                /* Flags(1) + TopicId(2) precede the MsgId(2): octet 5-6 */
+                id_offset = 3;
                 break;
             case SN_MSG_TYPE_ADVERTISE:
             case SN_MSG_TYPE_SEARCHGW:
@@ -186,8 +186,35 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
             case SN_MSG_TYPE_ENCAPMSG:
             case SN_MSG_TYPE_RESERVED:
             default:
-                *p_packet_id = 0;
+                /* No MsgId carried in this packet type */
+                id_offset = -1;
                 break;
+        }
+
+        if (id_offset < 0) {
+            *p_packet_id = 0;
+        }
+        else {
+            /* Bytes the declared packet leaves for the MsgId at
+             * rx_buf + id_offset. Bound the read by total_len (the declared
+             * packet length, already validated <= rx_buf_len above), not by
+             * rx_buf_len: this keeps the read inside the buffer (CWE-125) and
+             * additionally rejects a frame whose declared length stops short
+             * of the MsgId rather than reading adjacent bytes. Evaluate as a
+             * signed int and reject before the unsigned cast below, so a short
+             * frame cannot wrap to a huge length and slip past MqttDecode_Num's
+             * internal bound check. Measuring from consumed keeps the bound
+             * correct for the IND form, where the header occupies 4 bytes
+             * rather than 2. */
+            int id_avail = (int)total_len - consumed - id_offset;
+            if (id_avail < (int)MQTT_DATA_LEN_SIZE) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+            }
+            rc = MqttDecode_Num(rx_buf + id_offset, p_packet_id,
+                (word32)id_avail);
+            if (rc < 0) {
+                return rc;
+            }
         }
     }
 
@@ -291,7 +318,15 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
     if (total_len > rx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
-    if (total_len < 3) {
+    /* Reject a frame whose total_len cannot cover the bytes still to be read
+     * after the length-indicator block (message type + gateway ID). The
+     * short-form header consumes one byte and the extended-length form
+     * consumes three, so the prior fixed "< 3" minimum was only valid for
+     * the short form: an extended-length GWINFO with total_len <= the
+     * header bytes already consumed would slip past it and the
+     * *rx_payload++ reads below would walk past the caller-supplied
+     * buffer. */
+    if (total_len < (word16)(rx_payload - rx_buf) + 2) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
     /* Check message type */
@@ -302,11 +337,18 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
 
     /* Decode gateway info */
     if (gw_info != NULL) {
+        word16 consumed;
+
         gw_info->gwId = *rx_payload++;
 
-        if (total_len - 3 > 0) {
+        /* Use the bytes actually consumed so far (1-byte short-form or
+         * 3-byte extended-length header, plus type + gwId) rather than a
+         * fixed 3, so the address length is correct for both forms and the
+         * copy below cannot read past the buffer in the IND form. */
+        consumed = (word16)(rx_payload - rx_buf);
+        if (total_len > consumed) {
             /* The gateway address is only present if sent by a client */
-            word16 addr_len = total_len - 3;
+            word16 addr_len = total_len - consumed;
             if (addr_len > (word16)sizeof(SN_GwAddr)) {
                 addr_len = (word16)sizeof(SN_GwAddr);
             }
@@ -414,8 +456,13 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     int total_len;
     byte *tx_payload, flags = 0;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL) {
+    /* Validate required arguments. A NULL willTopic is valid: it produces an
+     * empty WILLTOPIC message (2 octets) used to delete the will. But when
+     * willTopic is non-NULL its willTopic string is dereferenced by XSTRLEN
+     * (and XMEMCPY) below, so a non-NULL struct carrying a NULL string must be
+     * rejected here rather than crashing in XSTRLEN(NULL). */
+    if (tx_buf == NULL ||
+            (willTopic != NULL && willTopic->willTopic == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -559,8 +606,13 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     int total_len;
     byte *tx_payload, flags = 0;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL) {
+    /* Validate required arguments. A NULL willTopic is valid: it produces an
+     * empty WILLTOPICUPD message (2 octets) used to delete the will. But when
+     * willTopic is non-NULL its willTopic string is dereferenced by XSTRLEN
+     * (and XMEMCPY) below, so a non-NULL struct carrying a NULL string must be
+     * rejected here rather than crashing in XSTRLEN(NULL). */
+    if (tx_buf == NULL ||
+            (willTopic != NULL && willTopic->willTopic == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -772,8 +824,11 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     int total_len, topic_len;
     byte *tx_payload;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL || regist == NULL) {
+    /* Validate required arguments. topicName is dereferenced unconditionally
+     * via XSTRLEN below (and again before the XMEMCPY), so reject NULL up front.
+     * A caller that zero-initializes an SN_Register and forgets to set topicName
+     * would otherwise crash in XSTRLEN(NULL) instead of getting BAD_ARG. */
+    if (tx_buf == NULL || regist == NULL || regist->topicName == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -822,6 +877,12 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
     return total_len;
 }
 
+/* Note: rx_buf_len must be the writable capacity of rx_buf, not the decoded
+ * packet length. Unlike the other SN decoders this one NUL-terminates topicName
+ * in place at offset total_len (one byte past the packet), so the strict
+ * total_len >= rx_buf_len guard below relies on rx_buf_len leaving room for that
+ * terminator. Callers therefore pass client->rx_buf_len (see
+ * SN_Client_HandlePacket), not client->packet.buf_len. */
 int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
 {
     word16 total_len;
@@ -874,6 +935,15 @@ int SN_Decode_Register(byte *rx_buf, int rx_buf_len, SN_Register *regist)
             return rc;
         }
         rx_payload += rc;
+
+        /* total_len must cover at least the bytes consumed so far
+         * (length + type + topicId + packet_id); otherwise the topic-name
+         * length computation below underflows and the NUL terminator is
+         * written before regist->topicName, leaving the field pointing at
+         * non-terminated memory past the parsed packet. */
+        if (total_len < (word16)(rx_payload - rx_buf)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         /* Decode Topic Name */
         regist->topicName = (char*)rx_payload;
@@ -984,8 +1054,13 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     int total_len;
     byte *tx_payload, flags = 0x00;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL || subscribe == NULL) {
+    /* Validate required arguments. topicNameId is dereferenced for every
+     * topic_type below (XSTRLEN on the NORMAL path, a 2-byte XMEMCPY
+     * otherwise), so reject NULL up front. topic_type is SN_TOPIC_ID_TYPE_NORMAL
+     * (0x0) when the SN_Subscribe is zero-initialized, so a caller that forgets
+     * to assign topicNameId would otherwise crash in XSTRLEN(NULL). */
+    if (tx_buf == NULL || subscribe == NULL ||
+            subscribe->topicNameId == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -1104,7 +1179,7 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
 
 int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 {
-    int total_len;
+    word32 total_len;
     byte *tx_payload = tx_buf;
     byte flags = 0;
 
@@ -1112,9 +1187,23 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     if (tx_buf == NULL || publish == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+    if (tx_buf_len < 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
+    /* publish->total_len is a caller-supplied word32. Reject any payload large
+     * enough that adding the MQTT-SN header overhead would overflow or exceed
+     * the maximum packet length, before the length arithmetic below. The header
+     * is at most 9 bytes: a 3-byte extended length field, msgType, flags, topic
+     * ID (2), and msgID (2). Validating the word32 up front keeps the payload
+     * copy bounded and prevents the narrowing wrap that could bypass the
+     * SN_PACKET_MAX_LEN / tx_buf_len checks. */
+    if (publish->total_len > (word32)(SN_PACKET_MAX_LEN - 9)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
 
     /* Determine packet length */
-    total_len = (int)publish->total_len;
+    total_len = publish->total_len;
 
     /* Add length, msgType, flags, topic ID (2), and msgID (2) */
     total_len += 7;
@@ -1124,7 +1213,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
         total_len += 2;
     }
 
-    if (total_len > SN_PACKET_MAX_LEN || total_len > tx_buf_len) {
+    if (total_len > SN_PACKET_MAX_LEN || total_len > (word32)tx_buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
@@ -1134,7 +1223,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     else {
         *tx_payload++ = SN_PACKET_LEN_IND;
-        tx_payload += MqttEncode_Num(tx_payload, total_len);
+        tx_payload += MqttEncode_Num(tx_payload, (word16)total_len);
     }
 
     *tx_payload++ = SN_MSG_TYPE_PUBLISH;
@@ -1179,7 +1268,7 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     (void)tx_payload;
 
     /* Return length of packet placed into tx_buf */
-    return total_len;
+    return (int)total_len;
 }
 
 int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
@@ -1239,9 +1328,30 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
     publish->qos = (MqttQoS)((flags & SN_PACKET_FLAG_QOS_MASK) >>
             SN_PACKET_FLAG_QOS_SHIFT);
 
+    /* MQTT-SN v1.2 §5.2.10: a QoS 1 or QoS 2 PUBLISH must carry a non-zero
+     * MsgId so the matching PUBACK/PUBREC can be correlated. Reject MsgId=0
+     * here; otherwise SN_Client_HandlePacket would emit a response carrying
+     * MsgId=0 that no conformant gateway can match, leaving its retransmit
+     * timer to replay the same message (CWE-20). Mirrors the standard MQTT
+     * decoder guard in mqtt_packet.c. QoS 0 and QoS -1 (MQTT_QOS_3, the
+     * connectionless publish) send no response and legitimately use MsgId=0,
+     * so they are intentionally excluded. */
+    if ((publish->qos == MQTT_QOS_1 || publish->qos == MQTT_QOS_2) &&
+            publish->packet_id == 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+    }
+
     publish->retain = flags & SN_PACKET_FLAG_RETAIN;
 
     publish->topic_type = flags & SN_PACKET_FLAG_TOPICIDTYPE_MASK;
+
+    /* Reject the reserved topic id type (0b11). MQTT-SN v1.2 defines only
+     * NORMAL (0), PREDEF (1) and SHORT (2); value 3 must not appear on the
+     * wire. Without this guard a spoofed gateway could hand topic_type=3 to
+     * the application callback, which mis-classifies the message. */
+    if (publish->topic_type > SN_TOPIC_ID_TYPE_SHORT) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
 
     /* Decode payload: use pointer difference to account for both short (7)
      * and extended-length (9) header formats */
@@ -1352,8 +1462,13 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     int total_len;
     byte *tx_payload, flags = 0x00;
 
-    /* Validate required arguments */
-    if (tx_buf == NULL || unsubscribe == NULL) {
+    /* Validate required arguments. topicNameId is dereferenced for every
+     * topic_type below (XSTRLEN on the NORMAL path, a 2-byte XMEMCPY
+     * otherwise), so reject NULL up front. topic_type is SN_TOPIC_ID_TYPE_NORMAL
+     * (0x0) when the SN_Unsubscribe is zero-initialized, so a caller that forgets
+     * to assign topicNameId would otherwise crash in XSTRLEN(NULL). */
+    if (tx_buf == NULL || unsubscribe == NULL ||
+            unsubscribe->topicNameId == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 

@@ -28,6 +28,7 @@
 
 #include "sn-client.h"
 #include "examples/mqttnet.h"
+#include "examples/mqtt_log.h"
 
 /* Locals */
 static int mStopRead = 0;
@@ -46,6 +47,7 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
     word16 topicId;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
@@ -86,7 +88,8 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     PRINTF("........Payload (%d - %d): %s",
-        msg->buffer_pos, msg->buffer_pos + len, buf);
+        msg->buffer_pos, msg->buffer_pos + len,
+        mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         PRINTF("....MQTT-SN Message: Done");
@@ -100,7 +103,9 @@ static int sn_message_cb(MqttClient *client, MqttMessage *msg,
    assigns a new topic ID to a topic name. */
 static int sn_reg_callback(word16 topicId, const char* topicName, void *ctx)
 {
-    PRINTF("MQTT-SN Register CB: New topic ID: %hu : \"%s\"", topicId, topicName);
+    char safeTopic[PRINT_BUFFER_SIZE + 1];
+    PRINTF("MQTT-SN Register CB: New topic ID: %hu : \"%s\"", topicId,
+        mqtt_log_sanitize(safeTopic, (word32)sizeof(safeTopic), topicName));
     (void)ctx;
 
     return(MQTT_CODE_SUCCESS);

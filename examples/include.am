@@ -29,6 +29,7 @@ noinst_HEADERS +=  examples/mqttclient/mqttclient.h \
                    examples/wiot/wiot.h \
                    examples/mqttnet.h \
                    examples/mqttexample.h \
+                   examples/mqtt_log.h \
                    examples/mqttport.h \
                    examples/nbclient/nbclient.h \
                    examples/multithread/multithread.h \
