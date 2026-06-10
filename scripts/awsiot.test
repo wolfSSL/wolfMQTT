@@ -2,6 +2,16 @@
 
 # AWS IoT Client test
 
+# This test connects to a live AWS IoT endpoint using the hard-coded
+# "demoDevice" client ID. Rapid sequential connects (and parallel runs from
+# sibling CI jobs) can collide on that client ID, producing transient
+# "Network (-8)" errors. To absorb those without masking real failures, each
+# connection attempt is retried up to AWSIOT_RETRIES times with a backoff. A
+# genuine trust-anchor/verification failure fails on every attempt, so the
+# retries cannot hide a real regression.
+AWSIOT_RETRIES=${AWSIOT_RETRIES:-3}
+AWSIOT_RETRY_DELAY=${AWSIOT_RETRY_DELAY:-5}
+
 # Check for application
 [ ! -x ./examples/aws/awsiot ] && echo -e "\n\nAWS IoT MQTT Client doesn't exist" && exit 1
 
@@ -12,17 +22,42 @@ if [ $? -eq 0 ]; then
     has_tls=yes
 fi
 
-if test -n "$WOLFMQTT_NO_EXTERNAL_BROKER_TESTS" && test $has_tls == yes; then
+# Run the AWS IoT client, retrying on transient failures.
+run_awsiot() {
+    attempt=1
+    while true; do
+        ./examples/aws/awsiot "$@"
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            return 0
+        fi
+        if [ $attempt -ge $AWSIOT_RETRIES ]; then
+            return $rc
+        fi
+        # Linear backoff: wait longer after each failure to give AWS IoT
+        # time to drop the prior same-client-ID session.
+        backoff=$((attempt * AWSIOT_RETRY_DELAY))
+        echo -e "\nAWS IoT attempt $attempt failed (rc=$rc), retrying in ${backoff}s..."
+        sleep $backoff
+        attempt=$((attempt + 1))
+    done
+}
+
+if test -n "$WOLFMQTT_NO_EXTERNAL_BROKER_TESTS" || test "$has_tls" != "yes"; then
     echo "WOLFMQTT_NO_EXTERNAL_BROKER_TESTS set or no TLS, won't run"
 else
     def_args="-T -C 2000"
 
     # Run with TLS and QoS 0-1
-    ./examples/aws/awsiot $def_args -t -q 0 $1
+    run_awsiot $def_args -t -q 0 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nAWS IoT MQTT Client failed! TLS=On, QoS=0" && exit 1
 
-    ./examples/aws/awsiot $def_args -t -q 1 $1
+    # Settle so AWS IoT fully tears down the prior "demoDevice" session
+    # before the next connect with the same client ID.
+    sleep $AWSIOT_RETRY_DELAY
+
+    run_awsiot $def_args -t -q 1 $1
     RESULT=$?
     [ $RESULT -ne 0 ] && echo -e "\n\nAWS IoT MQTT Client failed! TLS=On, QoS=1" && exit 1
 

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ '*' ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
@@ -59,24 +63,13 @@ jobs:
         sudo route
         sudo netstat -tulpan
 
-    - uses: actions/checkout@master
-      with:
-        repository: wolfssl/wolfssl
-        path: wolfssl
-    - name: wolfssl autogen
-      working-directory: ./wolfssl
-      run: ./autogen.sh
-    - name: wolfssl configure
-      working-directory: ./wolfssl
-      run: ./configure --enable-enckeys
-    - name: wolfssl make
-      working-directory: ./wolfssl
-      run: make
-    - name: wolfssl make install
-      working-directory: ./wolfssl
-      run: sudo make install
+    - uses: actions/checkout@v4
 
-    - uses: actions/checkout@master
+    - name: Build and install wolfSSL
+      uses: ./.github/actions/build-wolfssl
+      with:
+        config: "--enable-enckeys"
+
     - name: wolfmqtt autogen
       run: ./autogen.sh
 

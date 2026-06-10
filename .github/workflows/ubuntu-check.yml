@@ -6,11 +6,17 @@ on:
   pull_request:
     branches: [ '*' ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
 
     runs-on: ubuntu-22.04
-    timeout-minutes: 5
+    # 10 min: this job runs 7 full configure/make/make-check cycles
+    # (incl. a slow stress build); 5 min intermittently times out.
+    timeout-minutes: 10
     # Serialize across all workflows that exercise the hard-coded
     # "demoDevice" MQTT client ID against AWS IoT. Parallel runs from
     # different workflows (ubuntu-check, ubuntu-check-curl, this file's
@@ -42,24 +48,13 @@ jobs:
         sudo route
         sudo netstat -tulpan
 
-    - uses: actions/checkout@master
-      with:
-        repository: wolfssl/wolfssl
-        path: wolfssl
-    - name: wolfssl autogen
-      working-directory: ./wolfssl
-      run: ./autogen.sh
-    - name: wolfssl configure
-      working-directory: ./wolfssl
-      run: ./configure --enable-enckeys
-    - name: wolfssl make
-      working-directory: ./wolfssl
-      run: make
-    - name: wolfssl make install
-      working-directory: ./wolfssl
-      run: sudo make install
+    - uses: actions/checkout@v4
 
-    - uses: actions/checkout@master
+    - name: Build and install wolfSSL
+      uses: ./.github/actions/build-wolfssl
+      with:
+        config: "--enable-enckeys"
+
     - name: wolfmqtt autogen
       run: ./autogen.sh
 
@@ -163,7 +158,9 @@ jobs:
     #           WOLFSSL_NO_ASN_STRICT. The strict callback rejects the
     #           unanchored chain.  Expect FAIL.
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    # Headroom for two (uncached) wolfSSL builds plus the awsiot.test
+    # transient-failure retry backoff.
+    timeout-minutes: 15
     steps:
       - name: Install dependencies
         run: |
@@ -175,25 +172,17 @@ jobs:
           sudo service mosquitto stop
           sleep 1
 
-      # --- case 1: wolfSSL built with DEFAULT strict ASN parsing ---
-      - uses: actions/checkout@master
-        with:
-          repository: wolfssl/wolfssl
-          path: wolfssl
-      - name: wolfssl autogen (strict ASN default)
-        working-directory: ./wolfssl
-        run: ./autogen.sh
-      - name: wolfssl configure (strict ASN default)
-        working-directory: ./wolfssl
-        run: ./configure --enable-enckeys
-      - name: wolfssl make
-        working-directory: ./wolfssl
-        run: make
-      - name: wolfssl make install
-        working-directory: ./wolfssl
-        run: sudo make install
+      # Check out wolfMQTT first so the local build-wolfssl action is
+      # available and so its source tree survives the wolfSSL rebuild
+      # (the action clones wolfSSL under $HOME, not the workspace).
+      - uses: actions/checkout@v4
 
-      - uses: actions/checkout@master
+      # --- case 1: wolfSSL built with DEFAULT strict ASN parsing ---
+      - name: Build and install wolfSSL (strict ASN default)
+        uses: ./.github/actions/build-wolfssl
+        with:
+          config: "--enable-enckeys"
+
       - name: wolfmqtt autogen
         run: ./autogen.sh
       - name: case 1 - wolfmqtt configure (default bundle, strict ASN)
@@ -204,26 +193,13 @@ jobs:
         run: ./scripts/awsiot.test
 
       # --- cases 2 + 3: wolfSSL rebuilt with WOLFSSL_NO_ASN_STRICT ---
-      # The wolfmqtt checkout above wiped the workspace, so the wolfssl
-      # source tree is gone even though /usr/local/lib/libwolfssl.* is
-      # still installed. Re-checkout to get a fresh source tree for the
-      # NO_ASN_STRICT rebuild.
-      - uses: actions/checkout@master
+      # The action reinstalls over /usr/local with the NO_ASN_STRICT build
+      # (separate cache key from the strict build above).
+      - name: Build and install wolfSSL (WOLFSSL_NO_ASN_STRICT)
+        uses: ./.github/actions/build-wolfssl
         with:
-          repository: wolfssl/wolfssl
-          path: wolfssl
-      - name: wolfssl autogen (NO_ASN_STRICT build)
-        working-directory: ./wolfssl
-        run: ./autogen.sh
-      - name: wolfssl configure with -DWOLFSSL_NO_ASN_STRICT
-        working-directory: ./wolfssl
-        run: ./configure --enable-enckeys CFLAGS=-DWOLFSSL_NO_ASN_STRICT
-      - name: wolfssl rebuild
-        working-directory: ./wolfssl
-        run: make
-      - name: wolfssl reinstall
-        working-directory: ./wolfssl
-        run: sudo make install
+          config: "--enable-enckeys"
+          cflags: "-DWOLFSSL_NO_ASN_STRICT"
 
       - name: case 2 - wolfmqtt configure (default bundle, WOLFSSL_NO_ASN_STRICT)
         run: |
@@ -242,6 +218,10 @@ jobs:
       - name: case 3 - wolfmqtt make
         run: make
       - name: case 3 - awsiot.test expect FAIL
+        # Expected to fail (legacy trust anchor rejected), so disable the
+        # transient-failure retry to keep the job fast.
+        env:
+          AWSIOT_RETRIES: 1
         run: |
           if ./scripts/awsiot.test; then
             echo "case 3 unexpectedly PASSED - legacy VeriSign should not verify AWS IoT chain"

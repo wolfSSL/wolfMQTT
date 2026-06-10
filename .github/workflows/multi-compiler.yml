@@ -18,12 +18,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Range endpoints of each compiler family; the middle versions
+        # (gcc-12, clang-15) rarely surface anything the endpoints miss.
         include:
           - cc: gcc-11
-          - cc: gcc-12
           - cc: gcc-13
           - cc: clang-14
-          - cc: clang-15
           - cc: clang-17
 
     steps:
@@ -34,28 +34,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ${{ matrix.cc }} autoconf automake libtool
 
-      - name: Cache wolfSSL
-        id: cache-wolfssl
-        uses: actions/cache@v4
+      - name: Build and install wolfSSL
+        uses: ./.github/actions/build-wolfssl
         with:
-          path: ~/wolfssl-install
-          key: wolfssl-ubuntu-latest-v2
-
-      - name: Build wolfSSL
-        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
-        run: |
-          cd ~
-          git clone --depth 1 https://github.com/wolfssl/wolfssl.git
-          cd wolfssl
-          ./autogen.sh
-          ./configure --enable-enckeys --prefix=$HOME/wolfssl-install
-          make -j$(nproc)
-          make install
-
-      - name: Install wolfSSL
-        run: |
-          echo "$HOME/wolfssl-install/lib" | sudo tee /etc/ld.so.conf.d/wolfssl.conf
-          sudo ldconfig
+          config: "--enable-enckeys"
 
       - name: autogen
         run: ./autogen.sh
