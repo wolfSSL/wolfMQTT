@@ -3167,10 +3167,18 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     if (msg == NULL) {
         /* Allocate new node + topic */
         int tlen = (int)XSTRLEN(topic);
-        msg = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(
-            sizeof(BrokerRetainedMsg));
-        if (msg == NULL) {
+        /* Cap the dynamic retained list so a client publishing RETAIN=1 to
+         * many distinct topics cannot grow it without bound and exhaust the
+         * heap; the static path is already bounded by BROKER_MAX_RETAINED. */
+        if (broker->retained_count >= BROKER_MAX_RETAINED) {
             rc = MQTT_CODE_ERROR_MEMORY;
+        }
+        if (rc == MQTT_CODE_SUCCESS) {
+            msg = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(
+                sizeof(BrokerRetainedMsg));
+            if (msg == NULL) {
+                rc = MQTT_CODE_ERROR_MEMORY;
+            }
         }
         if (rc == MQTT_CODE_SUCCESS) {
             XMEMSET(msg, 0, sizeof(*msg));
@@ -3207,6 +3215,7 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         if (is_new) {
             msg->next = broker->retained;
             broker->retained = msg;
+            broker->retained_count++;
         }
     }
     else if (is_new && msg != NULL) {
@@ -3274,6 +3283,9 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
                 WOLFMQTT_FREE(cur->payload);
             }
             WOLFMQTT_FREE(cur);
+            if (broker->retained_count > 0) {
+                broker->retained_count--;
+            }
             found = 1;
             break;
         }
@@ -3316,6 +3328,7 @@ static void BrokerRetained_FreeAll(MqttBroker* broker)
         cur = next;
     }
     broker->retained = NULL;
+    broker->retained_count = 0;
 #endif
 }
 #endif /* WOLFMQTT_BROKER_RETAINED */
@@ -3714,6 +3727,9 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             if (rm->topic) WOLFMQTT_FREE(rm->topic);
             if (rm->payload) WOLFMQTT_FREE(rm->payload);
             WOLFMQTT_FREE(rm);
+            if (broker->retained_count > 0) {
+                broker->retained_count--;
+            }
             rm = rm_next;
             continue;
         }

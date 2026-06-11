@@ -1675,6 +1675,54 @@ TEST(broker_publish_before_connect_closes)
     MqttBroker_Free(&broker);
 }
 
+#if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* [CWE-400] The dynamic retained-message list must be bounded. A client that
+ * publishes RETAIN=1 to more than BROKER_MAX_RETAINED distinct topics must not
+ * grow the list past the cap - pre-fix it grew without bound, enabling
+ * heap-exhaustion DoS. */
+TEST(broker_retained_list_capped)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    byte pub[8];
+    static const byte connect[] = {
+        0x10, 0x0F,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x03, 'p', 'u', 'b'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    /* Publish RETAIN=1 (QoS 0) to BROKER_MAX_RETAINED + 5 distinct topics. */
+    for (i = 0; i < BROKER_MAX_RETAINED + 5; i++) {
+        pub[0] = 0x31;                          /* PUBLISH, retain=1 */
+        pub[1] = 0x06;                          /* remain = 6 */
+        pub[2] = 0x00; pub[3] = 0x03;           /* topic len 3 */
+        pub[4] = 'r';
+        pub[5] = (byte)('0' + (i / 10));
+        pub[6] = (byte)('0' + (i % 10));
+        pub[7] = 'x';                           /* payload */
+        mock_client_input_append(0, pub, sizeof(pub));
+    }
+    for (i = 0; i < BROKER_MAX_RETAINED + 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The list is capped, not grown to BROKER_MAX_RETAINED + 5. */
+    ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
+
 /* [MQTT-2.3.1-1] / [MQTT-4.13]: a SUBSCRIBE packet with Packet
  * Identifier = 0 is malformed and the broker MUST close the connection.
  * MqttDecode_Subscribe returns MQTT_CODE_ERROR_PACKET_ID; this test
@@ -2561,6 +2609,9 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
     RUN_TEST(broker_unhandled_packet_type_closes);
     RUN_TEST(broker_publish_before_connect_closes);
+#if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(broker_retained_list_capped);
+#endif
     RUN_TEST(broker_subscribe_packet_id_zero_closes);
     RUN_TEST(connack_session_present_set_on_resumed_session);
     RUN_TEST(connack_session_present_set_on_takeover);

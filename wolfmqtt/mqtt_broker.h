@@ -637,6 +637,7 @@ typedef struct MqttBroker {
     BrokerSub*    subs;
 #ifdef WOLFMQTT_BROKER_RETAINED
     BrokerRetainedMsg* retained;
+    int                retained_count;
 #endif
 #ifdef WOLFMQTT_BROKER_WILL
     BrokerPendingWill* pending_wills;

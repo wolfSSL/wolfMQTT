@@ -902,6 +902,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 buf += tmp;
                 total += tmp;
                 prop_len -= (word32)tmp;
+                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_TOPIC_ALIAS &&
+                        cur_prop->data_short == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_INT:

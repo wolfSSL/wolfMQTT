@@ -1255,6 +1255,21 @@ TEST(decode_publish_v5_subscription_id_zero_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
     ASSERT_NULL(pub.props);
 }
+
+/* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. Wire: PUBLISH QoS 0,
+ * topic "t", props_len=3, TOPIC_ALIAS(35)=0. */
+TEST(decode_publish_v5_topic_alias_zero_rejected)
+{
+    byte buf[] = { 0x30, 0x08, 0x00, 0x01, 't', 0x03, 0x23, 0x00, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-2.3.1-1] PUBLISH with QoS > 0 must carry a non-zero Packet
@@ -4714,6 +4729,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_empty_topic_with_alias_accepted);
     RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
     RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
+    RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
