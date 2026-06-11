@@ -2159,6 +2159,7 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
 #ifndef WOLFMQTT_STATIC_MEMORY
     BrokerClient* cur;
     BrokerClient* prev = NULL;
+    int found = 0;
 #endif
 
     if (broker == NULL || bc == NULL) {
@@ -2175,13 +2176,21 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
             else {
                 broker->clients = cur->next;
             }
+            found = 1;
             break;
         }
         prev = cur;
         cur = cur->next;
     }
-#endif
+    /* Only free when bc was actually unlinked. A re-entrant close callback
+     * (e.g. WebSocket LWS_CALLBACK_CLOSED during a takeover fan-out) can have
+     * already removed and freed bc; freeing again here would double-free. */
+    if (found) {
+        BrokerClient_Free(bc);
+    }
+#else
     BrokerClient_Free(bc);
+#endif
 }
 
 /* -------------------------------------------------------------------------- */
@@ -4461,6 +4470,15 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             WBLOG_INFO(broker, "broker: duplicate client_id=%s, disconnecting "
                 "old sock=%d", BrokerLog_Sanitize(bc->client_id),
                 (int)old->sock);
+#ifdef ENABLE_MQTT_WEBSOCKET
+            /* Guard old across its takeover fan-out: a re-entrant
+             * LWS_CALLBACK_CLOSED for old's dropped socket must take the
+             * deferred-remove path instead of freeing old mid-takeover, which
+             * would UAF (BrokerSubs_RemoveClient) and double-free below. */
+            if (old->ws_ctx != NULL) {
+                ((BrokerWsCtx*)old->ws_ctx)->processing = 1;
+            }
+#endif
             /* Publish old client's will on takeover */
 #ifdef WOLFMQTT_V5
             if (old->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
@@ -4473,6 +4491,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             }
 #else
             BrokerClient_PublishWill(broker, old);
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+            if (old->ws_ctx != NULL) {
+                ((BrokerWsCtx*)old->ws_ctx)->processing = 0;
+            }
 #endif
             if (!mc.clean_session) {
                 /* Reassociate old client's subs to new client */
