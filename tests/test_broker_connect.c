@@ -1562,6 +1562,61 @@ TEST(broker_unhandled_packet_type_closes)
     MqttBroker_Free(&broker);
 }
 
+/* [MQTT-3.1.0-1]: a client's first packet MUST be CONNECT. The broker's
+ * pre-dispatch guard closes any client that sends another packet type
+ * first. A PUBLISH from a never-connected client must be dropped and the
+ * client closed - it must NOT fan out to subscribers. A deletion of the
+ * guard would let BrokerHandle_Publish run on the unauthenticated client,
+ * so the subscriber receiving zero PUBLISH packets is the load-bearing
+ * assertion. */
+TEST(broker_publish_before_connect_closes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* Subscriber: CONNECT then SUBSCRIBE to "t" (qos 0). */
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x06,
+        0x00, 0x01,                    /* packet_id */
+        0x00, 0x01, 't',
+        0x00
+    };
+    /* Attacker: PUBLISH "t"/"x" as the very first packet, no CONNECT. */
+    static const byte pub_no_connect[] = {
+        0x30, 0x04,
+        0x00, 0x01, 't',
+        'x'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_no_connect, sizeof(pub_no_connect));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Attacker connection closed for violating [MQTT-3.1.0-1]. */
+    ASSERT_TRUE(g_clients[1].closed);
+    /* Subscriber must have received no fan-out from the pre-CONNECT PUBLISH. */
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* [MQTT-2.3.1-1] / [MQTT-4.13]: a SUBSCRIBE packet with Packet
  * Identifier = 0 is malformed and the broker MUST close the connection.
  * MqttDecode_Subscribe returns MQTT_CODE_ERROR_PACKET_ID; this test
@@ -2446,6 +2501,7 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
     RUN_TEST(broker_unhandled_packet_type_closes);
+    RUN_TEST(broker_publish_before_connect_closes);
     RUN_TEST(broker_subscribe_packet_id_zero_closes);
     RUN_TEST(connack_session_present_set_on_resumed_session);
     RUN_TEST(connack_session_present_set_on_takeover);

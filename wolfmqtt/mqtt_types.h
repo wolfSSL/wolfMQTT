@@ -211,6 +211,10 @@ enum MqttPacketResponseCodes {
                                                  see each
                                                  MqttTopic.return_code for the
                                                  per-filter result. */
+    MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED = -20, /* Broker rejected one or more
+                                                   topic filters in an
+                                                   UNSUBSCRIBE; see each reason
+                                                   code in MqttUnsubscribeAck. */
 
     MQTT_CODE_CONTINUE = -101,
     MQTT_CODE_STDIN_WAKE = -102,

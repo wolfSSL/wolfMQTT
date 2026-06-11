@@ -3052,6 +3052,34 @@ TEST(decode_subscribe_v5_empty_payload_rejected)
     rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* A v5 SUBSCRIBE whose Properties block decodes cleanly but whose topic
+ * filter is malformed must not leak the decoded property list. The decoder
+ * fails on the bad filter after allocating the User Property; without the
+ * cleanup the broker caller returns before freeing props. Catches the
+ * structural invariant: sub.props == NULL on error. */
+TEST(decode_subscribe_v5_props_freed_on_bad_filter)
+{
+    byte rx_buf[] = {
+        0x82, 0x0F,                        /* SUBSCRIBE, remain_len = 15 */
+        0x00, 0x01,                        /* packet_id */
+        0x07,                              /* props_len VBI = 7 */
+        0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v', /* User Property k=v */
+        0x00, 0x02, 'a', '#',              /* bad filter "a#" */
+        0x00                               /* options */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(sub.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3] Topic Filter syntax
@@ -3367,6 +3395,31 @@ TEST(decode_unsubscribe_v5_empty_payload_rejected)
     unsub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* A v5 UNSUBSCRIBE whose Properties block decodes cleanly but whose topic
+ * filter is malformed must not leak the decoded property list. Mirrors the
+ * SUBSCRIBE case: catches the invariant unsub.props == NULL on error. */
+TEST(decode_unsubscribe_v5_props_freed_on_bad_filter)
+{
+    byte rx_buf[] = {
+        0xA2, 0x0E,                        /* UNSUBSCRIBE, remain_len = 14 */
+        0x00, 0x01,                        /* packet_id */
+        0x07,                              /* props_len VBI = 7 */
+        0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v', /* User Property k=v */
+        0x00, 0x02, 'a', '#'               /* bad filter "a#" */
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    unsub.topics = topic_arr;
+    unsub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(unsub.props);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -3929,6 +3982,32 @@ TEST(decode_unsuback_malformed_remain_len_one)
     rc = MqttDecode_UnsubscribeAck(buf, 3, &ack);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+#ifdef WOLFMQTT_V5
+/* A v5 UNSUBACK carries one reason code per topic filter after the
+ * properties block. The decoder must expose the count and bytes so the
+ * client can detect a rejection (high-bit code), mirroring SUBSCRIBE. */
+TEST(decode_unsuback_v5_reason_codes)
+{
+    byte buf[] = {
+        0xB0, 0x05,                        /* UNSUBACK, remain_len = 5 */
+        0x00, 0x01,                        /* packet_id */
+        0x00,                              /* props_len = 0 */
+        0x00, 0x87                         /* success, NOT_AUTHORIZED */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(2, ack.reason_code_count);
+    ASSERT_TRUE(ack.reason_codes != NULL);
+    ASSERT_EQ(0x00, ack.reason_codes[0]);
+    ASSERT_EQ(0x87, ack.reason_codes[1]);
+}
+#endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
  * MqttDecode_Ping (PINGRESP) and MqttDecode_Disconnect length validation
@@ -4710,6 +4789,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_empty_payload_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_empty_payload_rejected);
+    RUN_TEST(decode_subscribe_v5_props_freed_on_bad_filter);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_options_byte_qos_extracted);
@@ -4726,6 +4806,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsubscribe_bad_plus_placement_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_unsubscribe_v5_empty_payload_rejected);
+    RUN_TEST(decode_unsubscribe_v5_props_freed_on_bad_filter);
 #endif
 #endif
 
@@ -4772,6 +4853,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_valid);
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
+    RUN_TEST(decode_unsuback_v5_reason_codes);
 
     /* MqttDecode_Ping (PINGRESP) length validation */
     RUN_TEST(decode_pingresp_valid);

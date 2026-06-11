@@ -2506,6 +2506,10 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
 int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
 {
     int rc;
+#ifdef WOLFMQTT_V5
+    int i;
+    word16 reason_count;
+#endif
 
     /* Validate required arguments */
     if (client == NULL || unsubscribe == NULL) {
@@ -2595,6 +2599,25 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
 #endif
 
 #ifdef WOLFMQTT_V5
+    /* Detect broker rejection. A v5 UNSUBACK carries one reason code per
+     * topic filter; any code with the high bit set (>= 0x80) means the
+     * broker refused to remove that subscription, so the caller must not
+     * assume the filter is gone. Mirrors the SUBSCRIBE rejection path. */
+    if (rc == MQTT_CODE_SUCCESS &&
+        unsubscribe->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+        unsubscribe->ack.reason_codes != NULL) {
+        reason_count = unsubscribe->ack.reason_code_count;
+        if (reason_count > (word16)unsubscribe->topic_count) {
+            reason_count = (word16)unsubscribe->topic_count;
+        }
+        for (i = 0; i < (int)reason_count; i++) {
+            if (unsubscribe->ack.reason_codes[i] & 0x80) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED);
+                break;
+            }
+        }
+    }
+
     if (unsubscribe->ack.props != NULL) {
         /* Release the allocated properties */
         MqttClient_PropsFree(unsubscribe->ack.props);
@@ -2890,6 +2913,11 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
         wm_SemUnlock(&client->lockClient);
     }
 #endif
+
+    /* Scrub the decoded AUTH response from rx_buf. Its properties (e.g. the
+     * MQTT_PROP_AUTH_DATA SASL blob) point into rx_buf and linger there until
+     * the next read overwrites them, so zero the buffer before returning. */
+    CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
 
     /* reset state */
     auth->stat.write = MQTT_MSG_BEGIN;
