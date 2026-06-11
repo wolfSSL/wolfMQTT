@@ -832,6 +832,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
 {
     int rc = 0;
     int total, tmp;
+    int prop_count = 0;
     MqttProp* cur_prop;
     byte* buf = pbuf;
 
@@ -839,6 +840,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
 
     while (((int)prop_len > 0) && (rc >= 0))
     {
+        /* Bound the number of properties a single message may carry so a peer
+         * cannot saturate the shared property pool (CWE-770). */
+        if (++prop_count > MQTT_MAX_PROPS) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+            break;
+        }
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
         if (cur_prop == NULL) {
@@ -947,6 +954,14 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     buf += tmp;
                     total += tmp;
                     prop_len -= (word32)tmp;
+                    /* [MQTT-3.3.2-14] A Response Topic is a Topic Name and
+                     * MUST NOT contain wildcard characters. */
+                    if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
+                            !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                                cur_prop->data_str.len,
+                                MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    }
                 }
                 else {
                     /* Invalid length */

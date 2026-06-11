@@ -1270,6 +1270,57 @@ TEST(decode_publish_v5_topic_alias_zero_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
     ASSERT_NULL(pub.props);
 }
+
+/* [MQTT-3.3.2-14] A Response Topic is a Topic Name and MUST NOT contain
+ * wildcards. Wire: PUBLISH QoS 0, topic "t", props_len=6, RESP_TOPIC(8)="a/#". */
+TEST(decode_publish_v5_response_topic_wildcard_rejected)
+{
+    byte buf[] = { 0x30, 0x0B, 0x00, 0x01, 't', 0x06,
+                   0x08, 0x00, 0x03, 'a', '/', '#', 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [CWE-770] A single message may not carry more than the internal
+ * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
+ * shared property pool. 40 User Property entries exceeds that cap. The cap
+ * returns MQTT_CODE_ERROR_PROPERTY, distinct from the MQTT_CODE_ERROR_MEMORY a
+ * pool-exhaustion would have produced before the fix. */
+TEST(decode_publish_v5_property_count_capped)
+{
+    byte buf[300];
+    MqttPublish pub;
+    int rc, i, pos;
+    /* 40 User Property entries, 7 bytes each (k=v). */
+    word32 nprops = 40;
+    word32 props_len = nprops * 7;
+    word32 remain = 3 + 2 + props_len; /* topic(3) + props_vbi(2) + props */
+
+    pos = 0;
+    buf[pos++] = 0x30;                              /* PUBLISH QoS 0 */
+    buf[pos++] = (byte)((remain & 0x7F) | 0x80);    /* remain VBI low */
+    buf[pos++] = (byte)(remain >> 7);               /* remain VBI high */
+    buf[pos++] = 0x00; buf[pos++] = 0x01; buf[pos++] = 't'; /* topic "t" */
+    buf[pos++] = (byte)((props_len & 0x7F) | 0x80); /* props_len VBI low */
+    buf[pos++] = (byte)(props_len >> 7);            /* props_len VBI high */
+    for (i = 0; i < (int)nprops; i++) {
+        buf[pos++] = 0x26;                          /* User Property */
+        buf[pos++] = 0x00; buf[pos++] = 0x01; buf[pos++] = 'k';
+        buf[pos++] = 0x00; buf[pos++] = 0x01; buf[pos++] = 'v';
+    }
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, pos, &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(pub.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-2.3.1-1] PUBLISH with QoS > 0 must carry a non-zero Packet
@@ -4730,6 +4781,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
     RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
     RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
+    RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
+    RUN_TEST(decode_publish_v5_property_count_capped);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
