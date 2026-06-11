@@ -118,13 +118,31 @@ static int fw_message_process(MQTTCtx *mqttCtx, byte* buffer, word32 len)
 #ifdef ENABLE_FIRMWARE_SIG
     ecc_key eccKey;
 #endif
-    word32 check_len = sizeof(FirmwareHeader) + header->sigLen +
-        header->pubKeyLen + header->fwLen;
+    word32 remaining;
 
-    /* Verify entire message was received */
-    if (len != check_len) {
+    /* Validate the field sizes sequentially against the received length.
+     * A summed length check (sizeof(header) + sigLen + pubKeyLen + fwLen)
+     * overflows word32 for attacker-chosen fwLen, letting a too-short buffer
+     * pass and leaving pubKeyBuf/fwBuf pointing past the allocation
+     * (CWE-190 -> heap OOB read/write). */
+    if (len < sizeof(FirmwareHeader)) {
+        PRINTF("Message smaller than firmware header! %d", len);
+        return EXIT_FAILURE;
+    }
+    remaining = len - sizeof(FirmwareHeader);
+    if (header->sigLen > remaining) {
+        PRINTF("Firmware sigLen exceeds message! %d", header->sigLen);
+        return EXIT_FAILURE;
+    }
+    remaining -= header->sigLen;
+    if (header->pubKeyLen > remaining) {
+        PRINTF("Firmware pubKeyLen exceeds message! %d", header->pubKeyLen);
+        return EXIT_FAILURE;
+    }
+    remaining -= header->pubKeyLen;
+    if (header->fwLen != remaining) {
         PRINTF("Message header vs. actual size mismatch! %d != %d",
-            len, check_len);
+            header->fwLen, remaining);
         return EXIT_FAILURE;
     }
 
@@ -172,10 +190,13 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 {
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
-    /* Verify this message is for the firmware topic */
+    /* Verify this message is for the firmware topic. Compare against the full
+     * expected length (not the wire-supplied topic_name_len) so a zero-length
+     * (v5 Topic Alias) or byte-prefix topic cannot pass the gate. */
     if (msg_new &&
+        msg->topic_name_len == (word16)XSTRLEN(mqttCtx->topic_name) &&
         XSTRNCMP(msg->topic_name, mqttCtx->topic_name,
-            msg->topic_name_len) == 0 &&
+            XSTRLEN(mqttCtx->topic_name)) == 0 &&
         !mFwBuf)
     {
         /* Allocate buffer for entire message */
