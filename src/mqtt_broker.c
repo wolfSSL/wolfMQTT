@@ -1105,6 +1105,7 @@ static int BrokerWsNetWrite(void* context, const byte* buf, int buf_len,
     BrokerClient* bc = (BrokerClient*)context;
     BrokerWsCtx* ws;
     int attempts = 0;
+    int prev_processing;
 
     (void)timeout_ms;
 
@@ -1132,12 +1133,19 @@ static int BrokerWsNetWrite(void* context, const byte* buf, int buf_len,
     XMEMCPY(ws->tx_pending + LWS_PRE, buf, buf_len);
     ws->tx_len = (size_t)buf_len;
 
-    /* Request writable callback and service until data is flushed */
+    /* Request writable callback and service until data is flushed. Mark this
+     * context busy across the spin so a peer-initiated LWS_CALLBACK_CLOSED for
+     * this wsi (e.g. a subscriber whose peer closes during publish fan-out)
+     * takes the deferred-remove path instead of freeing ws and bc out from
+     * under this function. Mirrors the publisher guard in BrokerClient_Process. */
     lws_callback_on_writable((struct lws*)ws->wsi);
+    prev_processing = ws->processing;
+    ws->processing = 1;
     while (ws->tx_pending != NULL && ws->status > 0 && attempts < 100) {
         lws_service(lws_get_context((struct lws*)ws->wsi), 0);
         attempts++;
     }
+    ws->processing = prev_processing;
 
     if (ws->tx_pending != NULL) {
         /* Data was not flushed - connection may be in bad state */
@@ -4935,6 +4943,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         int i;
 #else
         BrokerSub* sub = broker->subs;
+        BrokerSub* next_sub = NULL;
 #endif
         /* Fan out to matching subscribers */
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -4943,6 +4952,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             if (!sub->in_use) continue;
 #else
         while (sub) {
+            /* Snapshot the successor before any MqttPacket_Write: a fan-out
+             * write can drive an lws_service spin that frees this client's
+             * BrokerSub nodes re-entrantly (LWS_CALLBACK_CLOSED), so reading
+             * sub->next afterwards would dereference a freed node. */
+            next_sub = sub->next;
 #endif
             if (sub->client != NULL &&
                 sub->client->protocol_level != 0 &&
@@ -5056,7 +5070,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     }
                 }
             }
-            sub = sub->next;
+            sub = next_sub;
 #endif
         }
     }
