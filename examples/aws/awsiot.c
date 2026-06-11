@@ -291,11 +291,18 @@ static int mqtt_aws_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
         PRINTF("  Rejecting cert: verification must succeed under"
                " WOLFSSL_NO_ASN_STRICT");
         return 0;
+#elif defined(WOLFMQTT_ALLOW_INSECURE_TLS)
+        /* Development/testing override only: strict ASN parsing drops
+         * Starfield Services Root CA G2 (serialNumber=0), so the chain can
+         * legitimately fail here. Accept anyway to keep the demo running.
+         * MUST NOT be defined in production - it disables authentication. */
+        PRINTF("  Allowing cert anyways (WOLFMQTT_ALLOW_INSECURE_TLS)");
 #else
-        /* Strict ASN parsing drops Starfield Services Root CA G2
-         * (serialNumber=0), so chain verification can legitimately
-         * fail here. Keep the demo running. */
-        PRINTF("  Allowing cert anyways");
+        /* Reject on any verification error by default. To run the AWS IoT
+         * demo against the live endpoint, build with WOLFSSL_NO_ASN_STRICT
+         * (loads the full trust bundle) or supply a trusted chain. */
+        PRINTF("  Rejecting cert: verification failed");
+        return 0;
 #endif
     }
 
