@@ -116,6 +116,72 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
     #define WBLOG_DBG(b, ...)   WBLOG(b, BROKER_LOG_DEBUG, __VA_ARGS__)
 #endif
 
+#ifndef WOLFMQTT_BROKER_NO_LOG
+#define BROKER_LOG_SAN_SZ   128 /* per-string scratch size */
+#define BROKER_LOG_SAN_POOL 4   /* distinct buffers per log statement */
+
+/* Sanitize a peer-controlled string (topic, filter, client_id, cert CN, ...)
+ * before it reaches a PRINTF log sink (CWE-117). Control bytes (< 0x20 and
+ * DEL 0x7f) become printable escapes so a remote peer cannot inject forged log
+ * lines (CR/LF) or hijack the operator terminal (ANSI ESC). The result is
+ * returned from a small rotating pool of static buffers so several sanitized
+ * arguments can appear in one log statement; the broker log path is single
+ * threaded (as is PRINTF itself). Output is NUL-terminated and truncated to
+ * fit. NULL src yields "(null)". */
+static const char* BrokerLog_Sanitize(const char* src)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+    static char pool[BROKER_LOG_SAN_POOL][BROKER_LOG_SAN_SZ];
+    static int pool_idx = 0;
+    char* dst = pool[pool_idx];
+    word32 di = 0;
+
+    pool_idx = (pool_idx + 1) % BROKER_LOG_SAN_POOL;
+
+    if (src == NULL) {
+        src = "(null)";
+    }
+
+    while (*src != '\0') {
+        byte c = (byte)*src++;
+        char rep[4];
+        word32 repLen = 0;
+        word32 j;
+
+        switch (c) {
+            case '\r': rep[0] = '\\'; rep[1] = 'r'; repLen = 2; break;
+            case '\n': rep[0] = '\\'; rep[1] = 'n'; repLen = 2; break;
+            case '\t': rep[0] = '\\'; rep[1] = 't'; repLen = 2; break;
+            case '\v': rep[0] = '\\'; rep[1] = 'v'; repLen = 2; break;
+            case 0x1b: rep[0] = '\\'; rep[1] = 'e'; repLen = 2; break;
+            default:
+                if (c < 0x20 || c == 0x7f) {
+                    rep[0] = '\\';
+                    rep[1] = 'x';
+                    rep[2] = hex_digits[(c >> 4) & 0x0f];
+                    rep[3] = hex_digits[c & 0x0f];
+                    repLen = 4;
+                }
+                else {
+                    rep[0] = (char)c;
+                    repLen = 1;
+                }
+                break;
+        }
+
+        if (di + repLen + 1 > BROKER_LOG_SAN_SZ) {
+            break;
+        }
+        for (j = 0; j < repLen; j++) {
+            dst[di++] = rep[j];
+        }
+    }
+
+    dst[di] = '\0';
+    return dst;
+}
+#endif /* !WOLFMQTT_BROKER_NO_LOG */
+
 /* Buffer size accessors - unify static/dynamic code paths */
 #ifdef WOLFMQTT_STATIC_MEMORY
     #define BROKER_CLIENT_TX_SZ(bc) BROKER_TX_BUF_SZ
@@ -1687,7 +1753,7 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
         if (enc_rc <= 0) {
             WBLOG_ERR(bc->broker,
                 "broker: drain encode failed sock=%d topic=%s rc=%d",
-                (int)bc->sock, cur->topic, enc_rc);
+                (int)bc->sock, BrokerLog_Sanitize(cur->topic), enc_rc);
             /* Drop just this entry and continue. Encoding failure for
              * a single message is not fatal to the connection. */
             if (prev == NULL) {
@@ -1733,13 +1799,13 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
                  * stop the drain here. */
                 WBLOG_ERR(bc->broker,
                     "broker: drain write failed sock=%d topic=%s rc=%d",
-                    (int)bc->sock, cur->topic, wr_rc);
+                    (int)bc->sock, BrokerLog_Sanitize(cur->topic), wr_rc);
                 return;
             }
         }
         WBLOG_DBG(bc->broker,
             "broker: drain send sock=%d topic=%s qos=%d packet_id=%u dup=%d",
-            (int)bc->sock, cur->topic, (int)cur->qos,
+            (int)bc->sock, BrokerLog_Sanitize(cur->topic), (int)cur->qos,
             (unsigned)cur->packet_id, (int)cur->retransmit_dup);
         cur->retransmit_dup = 0;
 
@@ -2223,8 +2289,8 @@ static int BrokerOrphan_EvictOldest(MqttBroker* broker)
     }
     WBLOG_INFO(broker,
         "broker: evicting oldest orphan client_id=%s (cap reached)",
-        BROKER_STR_VALID(oldest->client_id) ? oldest->client_id
-            : "(null)");
+        BrokerLog_Sanitize(BROKER_STR_VALID(oldest->client_id)
+            ? oldest->client_id : "(null)"));
     BrokerOrphan_DropFull(broker, oldest);
     return 1;
 }
@@ -2351,7 +2417,7 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
     broker->orphan_session_count++;
     WBLOG_INFO(broker,
         "broker: orphan session created client_id=%s queued=%d",
-        o->client_id, o->out_q_count);
+        BrokerLog_Sanitize(o->client_id), o->out_q_count);
 
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Re-persist the session record stamped with the orphan time so the v5
@@ -2431,12 +2497,12 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
         if (retx > 0) {
             WBLOG_INFO(broker,
                 "broker: orphan reclaim queued retransmit=%d client_id=%s",
-                retx, new_bc->client_id);
+                retx, BrokerLog_Sanitize(new_bc->client_id));
         }
     }
     WBLOG_INFO(broker,
         "broker: orphan reclaimed client_id=%s queued=%d",
-        new_bc->client_id, new_bc->out_q_count);
+        BrokerLog_Sanitize(new_bc->client_id), new_bc->out_q_count);
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* The reclaimed queue is now in a LIVE BrokerClient. Persisted
      * records for this client_id are no longer authoritative - the
@@ -2497,7 +2563,8 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     if (e == NULL) {
         WBLOG_ERR(broker,
             "broker: orphan enqueue alloc failed client_id=%s",
-            BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)");
+            BrokerLog_Sanitize(
+                BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
         return;
     }
     e->qos = qos;
@@ -2520,8 +2587,9 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
 #endif
     WBLOG_DBG(broker,
         "broker: orphan enqueue client_id=%s topic=%s qos=%d count=%d",
-        BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)",
-        topic, (int)qos, o->out_q_count);
+        BrokerLog_Sanitize(
+            BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"),
+        BrokerLog_Sanitize(topic), (int)qos, o->out_q_count);
 }
 
 /* Free every orphan (used by MqttBroker_Free and by wipe paths). */
@@ -2593,7 +2661,8 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
     if (BrokerOrphan_Take(broker, bc) == NULL) {
         WBLOG_ERR(broker,
             "broker: orphan take failed client_id=%s - removing %d subs",
-            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)",
+            BrokerLog_Sanitize(
+                BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"),
             count);
         BrokerSubs_RemoveClient(broker, bc);
         return;
@@ -2620,7 +2689,8 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
 #endif
     WBLOG_INFO(broker,
         "broker: orphaned %d subs for client_id=%s (session persist)",
-        count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+        count, BrokerLog_Sanitize(
+            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"));
 }
 
 static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
@@ -2698,7 +2768,7 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             XMEMCMP(broker->subs[i].filter, filter, filter_len) == 0) {
             broker->subs[i].qos = qos;
             WBLOG_INFO(broker, "broker: sub update sock=%d filter=%s qos=%d",
-                (int)bc->sock, broker->subs[i].filter, qos);
+                (int)bc->sock, BrokerLog_Sanitize(broker->subs[i].filter), qos);
             return MQTT_CODE_SUCCESS;
         }
     }
@@ -2709,7 +2779,7 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             XMEMCMP(cur->filter, filter, filter_len) == 0) {
             cur->qos = qos;
             WBLOG_INFO(broker, "broker: sub update sock=%d filter=%s qos=%d",
-                (int)bc->sock, cur->filter, qos);
+                (int)bc->sock, BrokerLog_Sanitize(cur->filter), qos);
             return MQTT_CODE_SUCCESS;
         }
         cur = cur->next;
@@ -2783,7 +2853,7 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
         }
 #endif
         WBLOG_INFO(broker, "broker: sub add sock=%d filter=%s qos=%d",
-            (int)bc->sock, sub->filter, qos);
+            (int)bc->sock, BrokerLog_Sanitize(sub->filter), qos);
     }
     return rc;
 }
@@ -2806,7 +2876,7 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             (word16)XSTRLEN(s->filter) == filter_len &&
             XMEMCMP(s->filter, filter, filter_len) == 0) {
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
-                (int)bc->sock, s->filter);
+                (int)bc->sock, BrokerLog_Sanitize(s->filter));
             XMEMSET(s, 0, sizeof(BrokerSub));
             return;
         }
@@ -2826,7 +2896,7 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
                 broker->subs = next;
             }
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
-                (int)bc->sock, cur->filter);
+                (int)bc->sock, BrokerLog_Sanitize(cur->filter));
             WOLFMQTT_FREE(cur->filter);
             if (cur->client_id) {
                 WOLFMQTT_FREE(cur->client_id);
@@ -3017,7 +3087,7 @@ static int BrokerSubs_ReassociateClient(MqttBroker* broker,
 #endif
     if (count > 0) {
         WBLOG_INFO(broker, "broker: reassociated %d subs for client_id=%s",
-            count, client_id);
+            count, BrokerLog_Sanitize(client_id));
     }
     return count;
 }
@@ -3153,7 +3223,8 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         msg->qos = qos;
         WBLOG_DBG(broker, "broker: retained store topic=%s len=%u qos=%d "
             "expiry=%u",
-            topic, (unsigned)payload_len, (int)qos, (unsigned)expiry_sec);
+            BrokerLog_Sanitize(topic), (unsigned)payload_len, (int)qos,
+            (unsigned)expiry_sec);
 #ifdef WOLFMQTT_BROKER_PERSIST
         (void)BrokerPersist_PutRetained(broker, msg);
 #endif
@@ -3178,7 +3249,8 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
     for (i = 0; i < BROKER_MAX_RETAINED; i++) {
         if (broker->retained[i].in_use &&
             XSTRCMP(broker->retained[i].topic, topic) == 0) {
-            WBLOG_DBG(broker, "broker: retained delete topic=%s", topic);
+            WBLOG_DBG(broker, "broker: retained delete topic=%s",
+                BrokerLog_Sanitize(topic));
             XMEMSET(&broker->retained[i], 0, sizeof(BrokerRetainedMsg));
             found = 1;
             break;
@@ -3189,7 +3261,8 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
     while (cur) {
         BrokerRetainedMsg* next = cur->next;
         if (cur->topic != NULL && XSTRCMP(cur->topic, topic) == 0) {
-            WBLOG_DBG(broker, "broker: retained delete topic=%s", topic);
+            WBLOG_DBG(broker, "broker: retained delete topic=%s",
+                BrokerLog_Sanitize(topic));
             if (prev) {
                 prev->next = next;
             }
@@ -3393,7 +3466,8 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
         pw->retain = bc->will_retain;
         pw->publish_time = now + (WOLFMQTT_BROKER_TIME_T)bc->will_delay_sec;
         WBLOG_DBG(broker, "broker: will deferred sock=%d client_id=%s delay=%u",
-            (int)bc->sock, bc->client_id, (unsigned)bc->will_delay_sec);
+            (int)bc->sock, BrokerLog_Sanitize(bc->client_id),
+            (unsigned)bc->will_delay_sec);
     }
     return rc;
 }
@@ -3416,7 +3490,8 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
     for (i = 0; i < BROKER_MAX_PENDING_WILLS; i++) {
         if (broker->pending_wills[i].in_use &&
             XSTRCMP(broker->pending_wills[i].client_id, client_id) == 0) {
-            WBLOG_DBG(broker, "broker: will cancelled client_id=%s", client_id);
+            WBLOG_DBG(broker, "broker: will cancelled client_id=%s",
+                BrokerLog_Sanitize(client_id));
             XMEMSET(&broker->pending_wills[i], 0,
                 sizeof(BrokerPendingWill));
             return;
@@ -3428,7 +3503,8 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
         BrokerPendingWill* next = pw->next;
         if (pw->client_id != NULL &&
             XSTRCMP(pw->client_id, client_id) == 0) {
-            WBLOG_DBG(broker, "broker: will cancelled client_id=%s", client_id);
+            WBLOG_DBG(broker, "broker: will cancelled client_id=%s",
+                BrokerLog_Sanitize(client_id));
             if (prev) {
                 prev->next = next;
             }
@@ -3512,7 +3588,8 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
         }
         if (now >= pw->publish_time) {
             WBLOG_DBG(broker, "broker: LWT deferred publish client_id=%s topic=%s "
-                "len=%u", pw->client_id, pw->topic,
+                "len=%u", BrokerLog_Sanitize(pw->client_id),
+                BrokerLog_Sanitize(pw->topic),
                 (unsigned)pw->payload_len);
             BrokerClient_PublishWillImmediate(broker, pw->topic,
                 pw->payload, pw->payload_len, pw->qos, pw->retain);
@@ -3526,7 +3603,8 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
         BrokerPendingWill* next = pw->next;
         if (now >= pw->publish_time) {
             WBLOG_DBG(broker, "broker: LWT deferred publish client_id=%s topic=%s "
-                "len=%u", pw->client_id, pw->topic,
+                "len=%u", BrokerLog_Sanitize(pw->client_id),
+                BrokerLog_Sanitize(pw->topic),
                 (unsigned)pw->payload_len);
             BrokerClient_PublishWillImmediate(broker, pw->topic,
                 pw->payload, pw->payload_len, pw->qos, pw->retain);
@@ -3585,7 +3663,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         /* Skip expired messages */
         if (rm->expiry_sec > 0 &&
             (now - rm->store_time) >= rm->expiry_sec) {
-            WBLOG_DBG(broker, "broker: retained expired topic=%s", rm->topic);
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(rm->topic));
             XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
             continue;
         }
@@ -3610,7 +3689,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
             if (enc_rc > 0) {
                 WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                    "len=%u qos=%d", (int)bc->sock, rm->topic,
+                    "len=%u qos=%d", (int)bc->sock,
+                    BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
                 (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
             }
@@ -3623,7 +3703,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         /* Skip and remove expired messages */
         if (rm->expiry_sec > 0 &&
             (now - rm->store_time) >= rm->expiry_sec) {
-            WBLOG_DBG(broker, "broker: retained expired topic=%s", rm->topic);
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(rm->topic));
             if (rm_prev) {
                 rm_prev->next = rm_next;
             }
@@ -3657,7 +3738,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
             if (enc_rc > 0) {
                 WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                    "len=%u qos=%d", (int)bc->sock, rm->topic,
+                    "len=%u qos=%d", (int)bc->sock,
+                    BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
                 (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
             }
@@ -3695,7 +3777,8 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
     }
 
     WBLOG_DBG(broker, "broker: LWT publish sock=%d topic=%s len=%u",
-        (int)bc->sock, bc->will_topic, (unsigned)bc->will_payload_len);
+        (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
+        (unsigned)bc->will_payload_len);
 
     BrokerClient_PublishWillImmediate(broker, bc->will_topic,
         bc->will_payload, bc->will_payload_len, bc->will_qos,
@@ -4210,7 +4293,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 
     WBLOG_INFO(broker, "broker: CONNECT proto=%u clean=%d will=%d client_id=%s",
         mc.protocol_level, mc.clean_session, mc.enable_lwt,
-        BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+        BrokerLog_Sanitize(
+            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"));
 
     /* Client ID uniqueness and clean session handling */
     bc->clean_session = mc.clean_session;
@@ -4224,7 +4308,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         old = BrokerClient_FindByClientId(broker, bc->client_id, bc);
         if (old != NULL) {
             WBLOG_INFO(broker, "broker: duplicate client_id=%s, disconnecting "
-                "old sock=%d", bc->client_id, (int)old->sock);
+                "old sock=%d", BrokerLog_Sanitize(bc->client_id),
+                (int)old->sock);
             /* Publish old client's will on takeover */
 #ifdef WOLFMQTT_V5
             if (old->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
@@ -4356,7 +4441,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
         bc->has_will = 1;
         WBLOG_DBG(broker, "broker: LWT stored sock=%d topic=%s qos=%d retain=%d "
-            "len=%u delay=%u", (int)bc->sock, bc->will_topic,
+            "len=%u delay=%u", (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
             bc->will_qos, bc->will_retain,
             (unsigned)bc->will_payload_len,
             (unsigned)bc->will_delay_sec);
@@ -5016,7 +5101,8 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             "broker: PUBLISH fwd sock=%d -> sock=%d "
                             "topic=%s qos=%d len=%u",
                             (int)bc->sock, (int)sub->client->sock,
-                            topic, eff_qos, (unsigned)pub.total_len);
+                            BrokerLog_Sanitize(topic), eff_qos,
+                            (unsigned)pub.total_len);
                         (void)MqttPacket_Write(&sub->client->client,
                             sub->client->tx_buf, sub_rc);
                     }
@@ -5061,7 +5147,8 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             "broker: PUBLISH enq sock=%d -> sock=%d "
                             "topic=%s qos=%d len=%u",
                             (int)bc->sock, (int)sub->client->sock,
-                            topic, eff_qos, (unsigned)pub.total_len);
+                            BrokerLog_Sanitize(topic), eff_qos,
+                            (unsigned)pub.total_len);
                         BrokerClient_DrainOutQueue(sub->client);
                     }
                 }
@@ -5279,7 +5366,8 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     char* cn = wolfSSL_X509_get_subjectCN(peer);
                     (void)cn; /* may be unused if logging disabled */
                     WBLOG_INFO(broker, "broker: TLS client cert sock=%d CN=%s",
-                        (int)bc->sock, cn ? cn : "(unknown)");
+                        (int)bc->sock,
+                        BrokerLog_Sanitize(cn ? cn : "(unknown)"));
                     wolfSSL_X509_free(peer);
                 }
             }
