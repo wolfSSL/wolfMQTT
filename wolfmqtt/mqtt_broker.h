@@ -120,6 +120,12 @@
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
 #endif
+/* Upper bound (seconds) the broker accepts for a v5 Will Delay Interval.
+ * Caps how long a deferred-will slot can be monopolized so a few clients
+ * advertising near-UINT32_MAX delays cannot permanently exhaust the pool. */
+#ifndef BROKER_MAX_WILL_DELAY_SEC
+    #define BROKER_MAX_WILL_DELAY_SEC 3600
+#endif
 /* Maximum concurrent inbound QoS 2 packet IDs awaiting PUBREL per client.
  * Used to dedup duplicate PUBLISHes per [MQTT-4.3.3] (Method B). 16 covers
  * any reasonable client; a misbehaving client that exceeds this gets a

@@ -3685,7 +3685,13 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
             BrokerClient_ClearWill(bc);
             return; /* will deferred, not published now */
         }
-        /* If add failed (out of slots), publish immediately as fallback */
+        /* Out of pending-will slots: fall back to immediate publication, but
+         * surface it - a silent fallback lets slot exhaustion erase the Will
+         * Delay grace window invisibly to the operator. */
+        WBLOG_ERR(broker,
+            "broker: pending-will pool full, publishing LWT immediately "
+            "(delay=%u lost) sock=%d", (unsigned)bc->will_delay_sec,
+            (int)bc->sock);
     }
 
     WBLOG_DBG(broker, "broker: LWT publish sock=%d topic=%s len=%u",
@@ -4336,7 +4342,15 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             MqttProp* prop = BrokerProps_Find(mc.lwt_msg->props,
                 MQTT_PROP_WILL_DELAY_INTERVAL);
             if (prop != NULL) {
-                bc->will_delay_sec = prop->data_int;
+                /* Clamp to a sane maximum so a client advertising a huge
+                 * delay (e.g. UINT32_MAX) cannot monopolize a pending-will
+                 * slot indefinitely. */
+                if (prop->data_int > BROKER_MAX_WILL_DELAY_SEC) {
+                    bc->will_delay_sec = BROKER_MAX_WILL_DELAY_SEC;
+                }
+                else {
+                    bc->will_delay_sec = prop->data_int;
+                }
             }
         }
 #endif
@@ -4880,7 +4894,14 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_STATIC_MEMORY
         word16 tlen = pub.topic_name_len;
         if (tlen >= BROKER_MAX_TOPIC_LEN) {
-            tlen = BROKER_MAX_TOPIC_LEN - 1;
+            /* Reject rather than truncate: a truncated topic can match a
+             * different subscriber filter than the wire topic (filter/auth
+             * bypass) and collide retained-message keys. */
+            WBLOG_ERR(broker,
+                "broker: PUBLISH topic too long len=%u max=%d sock=%d",
+                (unsigned)tlen, BROKER_MAX_TOPIC_LEN, (int)bc->sock);
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            goto publish_cleanup;
         }
         XMEMCPY(topic_buf, pub.topic_name, tlen);
         topic_buf[tlen] = '\0';
