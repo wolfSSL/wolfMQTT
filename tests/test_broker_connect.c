@@ -589,6 +589,64 @@ TEST(connect_v311_binary_password_exact_match_accepted)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* [CWE-863/CWE-639] An unauthenticated CONNECT must not mutate another
+ * client's session. A victim authenticates and stays connected; an attacker
+ * then reuses the victim's client_id with a wrong password. The broker must
+ * reject the attacker at the credential gate BEFORE the duplicate-takeover
+ * path, so the victim is never disconnected. Pre-fix, takeover ran before
+ * auth and closed the victim - g_clients[0].closed is the load-bearing
+ * assertion. */
+TEST(connect_unauth_client_id_does_not_take_over_victim)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* Victim: client_id "vic", user "user", pass "pass", CleanSession=1. */
+    static const byte victim[] = {
+        0x10, 0x1B,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0xC2, 0x00, 0x3C,
+        0x00, 0x03, 'v', 'i', 'c',
+        0x00, 0x04, 'u', 's', 'e', 'r',
+        0x00, 0x04, 'p', 'a', 's', 's'
+    };
+    /* Attacker: same client_id "vic", user "user", WRONG pass "bad". */
+    static const byte attacker[] = {
+        0x10, 0x1A,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0xC2, 0x00, 0x3C,
+        0x00, 0x03, 'v', 'i', 'c',
+        0x00, 0x04, 'u', 's', 'e', 'r',
+        0x00, 0x03, 'b', 'a', 'd'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "user";
+    broker.auth_pass = "pass";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, victim, sizeof(victim));
+    mock_client_input_append(1, attacker, sizeof(attacker));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Victim authenticated and must remain connected. */
+    ASSERT_TRUE(g_clients[0].out_len >= 4);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_clients[0].out_buf[3]);
+    ASSERT_FALSE(g_clients[0].closed);
+    /* Attacker rejected on auth, not via session takeover. */
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD,
+        g_clients[1].out_buf[3]);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
@@ -2478,6 +2536,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_BROKER_AUTH
     RUN_TEST(connect_v311_binary_password_with_embedded_nul_refused);
     RUN_TEST(connect_v311_binary_password_exact_match_accepted);
+    RUN_TEST(connect_unauth_client_id_does_not_take_over_victim);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);

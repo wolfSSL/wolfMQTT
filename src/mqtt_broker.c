@@ -4299,6 +4299,122 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     /* Client ID uniqueness and clean session handling */
     bc->clean_session = mc.clean_session;
 
+    /* Validate credentials BEFORE any session-state mutation. Storing the
+     * username/password and running the credential gate here ensures an
+     * unauthenticated peer that guesses a client_id cannot disconnect the
+     * victim, fire its LWT, or hijack/destroy its persisted subscriptions:
+     * the duplicate-takeover and orphan-reassociation logic below only runs
+     * once auth has passed. */
+#ifdef WOLFMQTT_BROKER_AUTH
+#ifdef WOLFMQTT_STATIC_MEMORY
+    bc->username[0] = '\0';
+    bc->password[0] = '\0';
+#endif
+    bc->password_len = 0;
+    if (mc.username) {
+        word16 ulen = 0;
+        if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
+                &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (ulen >= BROKER_MAX_USERNAME_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: username too long (%u >= %d) sock=%d",
+                    (unsigned)ulen, BROKER_MAX_USERNAME_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
+            BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
+                BROKER_MAX_USERNAME_LEN);
+        }
+    }
+    if (mc.password) {
+        word16 plen = 0;
+        if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
+                &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (plen >= BROKER_MAX_PASSWORD_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: password too long (%u >= %d) sock=%d",
+                    (unsigned)plen, BROKER_MAX_PASSWORD_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
+            /* [MQTT-3.1.3.5] Password is Binary Data and may legally
+             * contain 0x00. The binary-sensitive store records the
+             * actual length in bc->password_len so wipe and compare
+             * paths don't fall back to XSTRLEN truncation. */
+            BROKER_STORE_BIN_SENSITIVE(bc->password, bc->password_len,
+                mc.password, plen, BROKER_MAX_PASSWORD_LEN);
+        }
+    }
+    if (broker->auth_user || broker->auth_pass) {
+        int auth_ok = 1;
+        if (broker->auth_user && (
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            bc->username == NULL ||
+        #endif
+            bc->username[0] == '\0' ||
+            BrokerStrCompare(broker->auth_user, bc->username,
+                BROKER_MAX_USERNAME_LEN) != 0)) {
+            auth_ok = 0;
+        }
+        if (broker->auth_pass && (
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            bc->password == NULL ||
+        #endif
+            bc->password_len == 0 ||
+            BrokerBufCompare((const byte*)broker->auth_pass,
+                (int)XSTRLEN(broker->auth_pass),
+                (const byte*)bc->password, (int)bc->password_len,
+                BROKER_MAX_PASSWORD_LEN) != 0)) {
+            auth_ok = 0;
+        }
+        if (!auth_ok) {
+            WBLOG_ERR(broker, "broker: auth failed sock=%d user=%s",
+                (int)bc->sock,
+            #ifdef WOLFMQTT_STATIC_MEMORY
+                BrokerLog_Sanitize(bc->username[0] ? bc->username : "(null)"));
+            #else
+                BrokerLog_Sanitize((bc->username && bc->username[0])
+                    ? bc->username : "(null)"));
+            #endif
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+            }
+            else
+        #endif
+            {
+                ack.return_code =
+                    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+            }
+            goto send_connack;
+        }
+    }
+#endif /* WOLFMQTT_BROKER_AUTH */
+
     if (BROKER_STR_VALID(bc->client_id)) {
         BrokerClient* old;
 
@@ -4448,128 +4564,17 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif /* WOLFMQTT_BROKER_WILL */
 
-    /* Store credentials */
-#ifdef WOLFMQTT_BROKER_AUTH
-#ifdef WOLFMQTT_STATIC_MEMORY
-    bc->username[0] = '\0';
-    bc->password[0] = '\0';
-#endif
-    bc->password_len = 0;
-    if (mc.username) {
-        word16 ulen = 0;
-        if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
-                &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-        #ifdef WOLFMQTT_STATIC_MEMORY
-            if (ulen >= BROKER_MAX_USERNAME_LEN) {
-                WBLOG_ERR(broker,
-                    "broker: username too long (%u >= %d) sock=%d",
-                    (unsigned)ulen, BROKER_MAX_USERNAME_LEN,
-                    (int)bc->sock);
-            #ifdef WOLFMQTT_V5
-                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
-                }
-                else
-            #endif
-                {
-                    ack.return_code =
-                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-                }
-                goto send_connack;
-            }
-        #endif
-            BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
-                BROKER_MAX_USERNAME_LEN);
-        }
-    }
-    if (mc.password) {
-        word16 plen = 0;
-        if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
-                &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-        #ifdef WOLFMQTT_STATIC_MEMORY
-            if (plen >= BROKER_MAX_PASSWORD_LEN) {
-                WBLOG_ERR(broker,
-                    "broker: password too long (%u >= %d) sock=%d",
-                    (unsigned)plen, BROKER_MAX_PASSWORD_LEN,
-                    (int)bc->sock);
-            #ifdef WOLFMQTT_V5
-                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
-                }
-                else
-            #endif
-                {
-                    ack.return_code =
-                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-                }
-                goto send_connack;
-            }
-        #endif
-            /* [MQTT-3.1.3.5] Password is Binary Data and may legally
-             * contain 0x00. The binary-sensitive store records the
-             * actual length in bc->password_len so wipe and compare
-             * paths don't fall back to XSTRLEN truncation. */
-            BROKER_STORE_BIN_SENSITIVE(bc->password, bc->password_len,
-                mc.password, plen, BROKER_MAX_PASSWORD_LEN);
-        }
-    }
-#endif /* WOLFMQTT_BROKER_AUTH */
-
-    /* Check auth before sending CONNACK. [MQTT-3.2.2-2]: when the
-     * accepted CleanSession=0 connection finds stored session state,
-     * Session Present MUST be 1; otherwise it MUST be 0. The flag is
-     * cleared again below for any path that overrides return_code to a
-     * non-zero refusal - [MQTT-3.2.2-4] requires Session Present=0 on a
-     * refused CONNACK. */
+    /* Credentials were already validated above, before any session-state
+     * mutation. [MQTT-3.2.2-2]: when the accepted CleanSession=0 connection
+     * finds stored session state, Session Present MUST be 1; otherwise it
+     * MUST be 0. The flag is cleared again below for any path that overrides
+     * return_code to a non-zero refusal - [MQTT-3.2.2-4] requires Session
+     * Present=0 on a refused CONNACK. */
     ack.flags = session_present ? MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT : 0;
     ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
 #ifdef WOLFMQTT_V5
     ack.props = NULL;
 #endif
-
-#ifdef WOLFMQTT_BROKER_AUTH
-    if (broker->auth_user || broker->auth_pass) {
-        int auth_ok = 1;
-        if (broker->auth_user && (
-        #ifndef WOLFMQTT_STATIC_MEMORY
-            bc->username == NULL ||
-        #endif
-            bc->username[0] == '\0' ||
-            BrokerStrCompare(broker->auth_user, bc->username,
-                BROKER_MAX_USERNAME_LEN) != 0)) {
-            auth_ok = 0;
-        }
-        if (broker->auth_pass && (
-        #ifndef WOLFMQTT_STATIC_MEMORY
-            bc->password == NULL ||
-        #endif
-            bc->password_len == 0 ||
-            BrokerBufCompare((const byte*)broker->auth_pass,
-                (int)XSTRLEN(broker->auth_pass),
-                (const byte*)bc->password, (int)bc->password_len,
-                BROKER_MAX_PASSWORD_LEN) != 0)) {
-            auth_ok = 0;
-        }
-        if (!auth_ok) {
-            WBLOG_ERR(broker, "broker: auth failed sock=%d user=%s", (int)bc->sock,
-            #ifdef WOLFMQTT_STATIC_MEMORY
-                bc->username[0] ? bc->username : "(null)");
-            #else
-                (bc->username && bc->username[0]) ? bc->username : "(null)");
-            #endif
-        #ifdef WOLFMQTT_V5
-            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
-            }
-            else
-        #endif
-            {
-                ack.return_code =
-                    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-            }
-        }
-    }
-#endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
     if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
