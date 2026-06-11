@@ -384,6 +384,72 @@ TEST(connect_clears_tx_buf_credentials)
     }
 }
 
+/* Serves a pre-staged response packet (e.g. a SUBACK) one chunk per read so a
+ * full client request/response round-trip can run against the mock net. */
+static byte g_canned_buf[64];
+static int g_canned_len;
+static int g_canned_pos;
+
+static int mock_net_read_canned(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    int n;
+    (void)context; (void)timeout_ms;
+    n = g_canned_len - g_canned_pos;
+    if (n <= 0) {
+        return 0; /* exhausted -> MQTT_CODE_CONTINUE under nonblock */
+    }
+    if (n > buf_len) {
+        n = buf_len;
+    }
+    XMEMCPY(buf, g_canned_buf + g_canned_pos, n);
+    g_canned_pos += n;
+    return n;
+}
+
+/* [issue 3129] A broker that rejects a subscription returns a SUBACK whose
+ * per-topic return code has the high bit set (0x80 in v3.1.1, any reason
+ * code >= 0x80 in v5). MqttClient_Subscribe must surface this as
+ * MQTT_CODE_ERROR_SUBSCRIBE_REJECTED rather than MQTT_CODE_SUCCESS, else the
+ * application waits forever for messages on a filter the broker never
+ * installed. This pins the detection that previously had no test. */
+TEST(subscribe_broker_rejection_returns_subscribe_rejected)
+{
+    int rc;
+    int i;
+    MqttSubscribe subscribe;
+    MqttTopic topics[1];
+    /* SUBACK v3.1.1: type=0x90, remain=3, packet_id=42, return_code=0x80. */
+    static const byte suback[] = { 0x90, 0x03, 0x00, 0x2A, 0x80 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, suback, sizeof(suback));
+    g_canned_len = (int)sizeof(suback);
+    g_canned_pos = 0;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(topics, 0, sizeof(topics));
+    topics[0].topic_filter = "test/topic";
+    topics[0].qos = MQTT_QOS_0;
+    subscribe.packet_id = 42;
+    subscribe.topic_count = 1;
+    subscribe.topics = topics;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Subscribe(&test_client, &subscribe);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED, rc);
+    ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_FAILURE,
+        subscribe.topics[0].return_code);
+}
+
 /* ============================================================================
  * MqttClient_Disconnect Tests
  * ============================================================================ */
@@ -786,6 +852,7 @@ void run_mqtt_client_tests(void)
     /* MqttClient_Subscribe tests */
     RUN_TEST(subscribe_null_client);
     RUN_TEST(subscribe_null_subscribe);
+    RUN_TEST(subscribe_broker_rejection_returns_subscribe_rejected);
 
     /* MqttClient_Unsubscribe tests */
     RUN_TEST(unsubscribe_null_client);
