@@ -1723,6 +1723,56 @@ TEST(broker_retained_list_capped)
 }
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* [CWE-770] A single client cannot occupy more than BROKER_MAX_SUBS_PER_CLIENT
+ * slots in the shared subscription table; excess SUBSCRIBEs are refused so
+ * other clients are not denied service. */
+TEST(broker_per_client_subscription_cap)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    byte sub[10];
+    static const byte connect[] = {
+        0x10, 0x0F,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x03, 's', 'u', 'b'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    /* Subscribe to BROKER_MAX_SUBS_PER_CLIENT + 3 distinct filters. */
+    for (i = 0; i < BROKER_MAX_SUBS_PER_CLIENT + 3; i++) {
+        sub[0] = 0x82;                       /* SUBSCRIBE */
+        sub[1] = 0x08;                       /* remain = 8 */
+        sub[2] = (byte)((i + 1) >> 8);       /* packet_id hi */
+        sub[3] = (byte)((i + 1) & 0xFF);     /* packet_id lo */
+        sub[4] = 0x00; sub[5] = 0x03;        /* filter len 3 */
+        sub[6] = 'f';
+        sub[7] = (byte)('0' + (i / 10));
+        sub[8] = (byte)('0' + (i % 10));
+        sub[9] = 0x00;                       /* options: QoS 0 */
+        mock_client_input_append(0, sub, sizeof(sub));
+    }
+    for (i = 0; i < BROKER_MAX_SUBS_PER_CLIENT + 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Capped, not grown to BROKER_MAX_SUBS_PER_CLIENT + 3. */
+    ASSERT_TRUE(broker.clients != NULL);
+    ASSERT_EQ(BROKER_MAX_SUBS_PER_CLIENT, broker.clients->sub_count);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 /* [MQTT-2.3.1-1] / [MQTT-4.13]: a SUBSCRIBE packet with Packet
  * Identifier = 0 is malformed and the broker MUST close the connection.
  * MqttDecode_Subscribe returns MQTT_CODE_ERROR_PACKET_ID; this test
@@ -2611,6 +2661,9 @@ int main(int argc, char** argv)
     RUN_TEST(broker_publish_before_connect_closes);
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_retained_list_capped);
+#endif
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(broker_per_client_subscription_cap);
 #endif
     RUN_TEST(broker_subscribe_packet_id_zero_closes);
     RUN_TEST(connack_session_present_set_on_resumed_session);

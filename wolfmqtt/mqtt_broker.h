@@ -93,6 +93,11 @@
 #ifndef BROKER_MAX_SUBS
     #define BROKER_MAX_SUBS          32
 #endif
+/* Per-client subscription cap so one client cannot occupy the whole shared
+ * subscription table and deny other clients (CWE-770). */
+#ifndef BROKER_MAX_SUBS_PER_CLIENT
+    #define BROKER_MAX_SUBS_PER_CLIENT (BROKER_MAX_SUBS / BROKER_MAX_CLIENTS)
+#endif
 #ifndef BROKER_MAX_CLIENT_ID_LEN
     #define BROKER_MAX_CLIENT_ID_LEN 64
 #endif
@@ -474,6 +479,7 @@ typedef struct BrokerClient {
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
     byte    connected;       /* set after successful CONNECT handshake */
+    int     sub_count;       /* active subscriptions owned by this client */
 #ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;

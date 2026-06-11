@@ -2732,6 +2732,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
         cur = next;
     }
 #endif
+    bc->sub_count = 0;
 
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Clean-session disconnect drops the persistent record. For
@@ -2785,6 +2786,14 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
         cur = cur->next;
     }
 #endif
+
+    /* Per-client cap: prevent a single client from occupying the whole shared
+     * subscription table and denying SUBSCRIBE to other clients. */
+    if (bc->sub_count >= BROKER_MAX_SUBS_PER_CLIENT) {
+        WBLOG_ERR(broker, "broker: sub cap reached sock=%d (max %d)",
+            (int)bc->sock, BROKER_MAX_SUBS_PER_CLIENT);
+        return MQTT_CODE_ERROR_MEMORY;
+    }
 
 #ifdef WOLFMQTT_STATIC_MEMORY
     for (i = 0; i < BROKER_MAX_SUBS; i++) {
@@ -2852,6 +2861,7 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             }
         }
 #endif
+        bc->sub_count++;
         WBLOG_INFO(broker, "broker: sub add sock=%d filter=%s qos=%d",
             (int)bc->sock, BrokerLog_Sanitize(sub->filter), qos);
     }
@@ -2878,6 +2888,9 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
                 (int)bc->sock, BrokerLog_Sanitize(s->filter));
             XMEMSET(s, 0, sizeof(BrokerSub));
+            if (bc->sub_count > 0) {
+                bc->sub_count--;
+            }
             return;
         }
     }
@@ -2902,6 +2915,9 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
                 WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
+            if (bc->sub_count > 0) {
+                bc->sub_count--;
+            }
             return;
         }
         prev = cur;
@@ -3086,6 +3102,9 @@ static int BrokerSubs_ReassociateClient(MqttBroker* broker,
     }
 #endif
     if (count > 0) {
+        /* The new client now owns these subs; reflect them in its cap count
+         * so a reconnect cannot be used to exceed BROKER_MAX_SUBS_PER_CLIENT. */
+        new_bc->sub_count += count;
         WBLOG_INFO(broker, "broker: reassociated %d subs for client_id=%s",
             count, BrokerLog_Sanitize(client_id));
     }
