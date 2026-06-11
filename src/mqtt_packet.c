@@ -964,6 +964,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 buf += tmp;
                 total += tmp;
                 prop_len -= (word32)tmp;
+                /* [MQTT-3.8.2.1.2] A Subscription Identifier of 0 is
+                 * reserved and a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_SUBSCRIPTION_ID &&
+                        cur_prop->data_int == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_BINARY:
@@ -1990,6 +1996,8 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     if (publish->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         word32 props_len = 0;
         int tmp;
+        MqttProp* prop_iter;
+        byte has_topic_alias = 0;
 
         /* Decode Length of Properties */
         if (rx_buf_len < (rx_payload - rx_buf)) {
@@ -2014,6 +2022,23 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         }
         else {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
+
+        /* [MQTT-3.3.2-8] v5 section 3.3.2.3.4: a zero-length Topic Name is
+         * only valid when a Topic Alias property supplies the topic. */
+        if (publish->topic_name_len == 0) {
+            for (prop_iter = publish->props; prop_iter != NULL;
+                    prop_iter = prop_iter->next) {
+                if (prop_iter->type == MQTT_PROP_TOPIC_ALIAS) {
+                    has_topic_alias = 1;
+                    break;
+                }
+            }
+            if (!has_topic_alias) {
+                MqttProps_Free(publish->props);
+                publish->props = NULL;
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
         }
     }
 #endif

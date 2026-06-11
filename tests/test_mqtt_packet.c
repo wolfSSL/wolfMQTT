@@ -1209,12 +1209,12 @@ TEST(decode_publish_topic_contains_u0000_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted (paired
- * with a Topic Alias property at the application layer). Wire shape:
- * PUBLISH | QoS 0, remain=4, topic_len=0, props_len=0, payload "x". */
-TEST(decode_publish_v5_empty_topic_accepted)
+/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted only when
+ * paired with a Topic Alias property. Wire: PUBLISH QoS 0, remain=7,
+ * topic_len=0, props_len=3, TOPIC_ALIAS(35)=1, payload "x". */
+TEST(decode_publish_v5_empty_topic_with_alias_accepted)
 {
-    byte buf[] = { 0x30, 0x04, 0x00, 0x00, 0x00, 'x' };
+    byte buf[] = { 0x30, 0x07, 0x00, 0x00, 0x03, 0x23, 0x00, 0x01, 'x' };
     MqttPublish pub;
     int rc;
 
@@ -1223,6 +1223,37 @@ TEST(decode_publish_v5_empty_topic_accepted)
     rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, pub.topic_name_len);
+    MqttProps_Free(pub.props);
+}
+
+/* [MQTT-3.3.2-8] A zero-length Topic Name with no Topic Alias property is a
+ * Protocol Error. Wire: PUBLISH QoS 0, remain=4, topic_len=0, props_len=0. */
+TEST(decode_publish_v5_empty_topic_no_alias_rejected)
+{
+    byte buf[] = { 0x30, 0x04, 0x00, 0x00, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [MQTT-3.8.2.1.2] A Subscription Identifier of 0 is reserved and a Protocol
+ * Error. Wire: PUBLISH QoS 0, topic "t", props_len=2, SUBSCRIPTION_ID(11)=0. */
+TEST(decode_publish_v5_subscription_id_zero_rejected)
+{
+    byte buf[] = { 0x30, 0x07, 0x00, 0x01, 't', 0x02, 0x0B, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -4680,7 +4711,9 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_wildcard_plus_topic_rejected);
     RUN_TEST(decode_publish_topic_contains_u0000_rejected);
 #ifdef WOLFMQTT_V5
-    RUN_TEST(decode_publish_v5_empty_topic_accepted);
+    RUN_TEST(decode_publish_v5_empty_topic_with_alias_accepted);
+    RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
+    RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
