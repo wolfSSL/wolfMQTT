@@ -833,6 +833,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     int rc = 0;
     int total, tmp;
     int prop_count = 0;
+    word32 seen_lo = 0, seen_hi = 0; /* singleton-property duplicate guard */
     MqttProp* cur_prop;
     byte* buf = pbuf;
 
@@ -878,6 +879,30 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         if (!(gPropMatrix[cur_prop->type].packet_type_mask & (1 << packet))) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY_MISMATCH);
             break;
+        }
+
+        /* [MQTT v5 2.2.2.2] Every property except User Property and
+         * Subscription Identifier MUST appear at most once; a duplicate is a
+         * Protocol Error. */
+        if (cur_prop->type != MQTT_PROP_USER_PROP &&
+                cur_prop->type != MQTT_PROP_SUBSCRIPTION_ID) {
+            word32 bit;
+            if (cur_prop->type < 32) {
+                bit = (word32)1 << cur_prop->type;
+                if (seen_lo & bit) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                    break;
+                }
+                seen_lo |= bit;
+            }
+            else {
+                bit = (word32)1 << (cur_prop->type - 32);
+                if (seen_hi & bit) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                    break;
+                }
+                seen_hi |= bit;
+            }
         }
 
         switch (gPropMatrix[cur_prop->type].data)
@@ -1921,6 +1946,14 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         /* Determine max size to copy into tx_payload */
         if (payload_len > (tx_buf_len - (header_len + variable_len))) {
             payload_len = (tx_buf_len - (header_len + variable_len));
+        }
+        /* Never copy more than the bytes actually present in publish->buffer.
+         * total_len carries the wire-declared size, which can exceed the
+         * decoded buffer_len; clamping here prevents an OOB read past the
+         * source buffer during fan-out. */
+        if (publish->buffer_len > 0 &&
+                payload_len > (int)publish->buffer_len) {
+            payload_len = (int)publish->buffer_len;
         }
         if (tx_payload != NULL) {
             XMEMCPY(tx_payload, publish->buffer, payload_len);
@@ -3614,8 +3647,11 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 {
     int rc;
 #ifdef WOLFMQTT_V5
-    if ((client->packet_sz_max > 0) && (tx_buf_len >
-        (int)client->packet_sz_max))
+    /* Compare unsigned: packet_sz_max is word32 and a malicious CONNACK can
+     * set it above INT_MAX, where the old (int) cast turned it negative and
+     * wedged every write. */
+    if ((client->packet_sz_max > 0) && (tx_buf_len > 0) &&
+        ((word32)tx_buf_len > client->packet_sz_max))
     {
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }

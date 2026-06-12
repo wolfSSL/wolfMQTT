@@ -5197,6 +5197,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     out_pub.duplicate = 0;
                     out_pub.buffer = payload;
                     out_pub.total_len = pub.total_len;
+                    out_pub.buffer_len = pub.buffer_len;
                 #ifdef WOLFMQTT_V5
                     out_pub.protocol_level = sub->client->protocol_level;
                     if (sub->client->protocol_level >=

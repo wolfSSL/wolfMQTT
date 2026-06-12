@@ -772,6 +772,28 @@ TEST(encode_publish_qos1_valid)
     ASSERT_TRUE(rc > 0);
 }
 
+/* [CWE-125] The encoder must clamp the copied payload to buffer_len so a
+ * total_len larger than the bytes actually present cannot read past the
+ * source buffer (the broker fan-out OOB read). */
+TEST(encode_publish_clamps_payload_to_buffer_len)
+{
+    byte tx_buf[256];
+    byte payload[100];
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    XMEMSET(payload, 'x', sizeof(payload));
+    pub.topic_name = "t";
+    pub.qos = MQTT_QOS_0;
+    pub.buffer = payload;
+    pub.buffer_len = 10;   /* only 10 valid bytes present */
+    pub.total_len = 100;   /* wire-declared size exceeds buffer_len */
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(10, (int)pub.buffer_pos);
+}
+
 /* Verify the fixed-header flag bits (retain/QoS/dup) are actually emitted.
  * Covers deletion mutations of the retain / qos / duplicate branches in
  * MqttEncode_FixedHeader. */
@@ -1318,6 +1340,23 @@ TEST(decode_publish_v5_property_count_capped)
     XMEMSET(&pub, 0, sizeof(pub));
     pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_Publish(buf, pos, &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [MQTT v5 2.2.2.2] A singleton property (here TOPIC_ALIAS) appearing twice is
+ * a Protocol Error. Wire: PUBLISH QoS 0, topic "t", props_len=6, two
+ * TOPIC_ALIAS(35)=1 entries. */
+TEST(decode_publish_v5_duplicate_singleton_prop_rejected)
+{
+    byte buf[] = { 0x30, 0x0A, 0x00, 0x01, 't', 0x06,
+                   0x23, 0x00, 0x01, 0x23, 0x00, 0x01 };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_NULL(pub.props);
 }
@@ -4751,6 +4790,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_qos2_packet_id_zero);
     RUN_TEST(encode_publish_qos0_packet_id_zero_ok);
     RUN_TEST(encode_publish_qos1_valid);
+    RUN_TEST(encode_publish_clamps_payload_to_buffer_len);
     RUN_TEST(encode_publish_qos1_retain_flags_in_header);
     RUN_TEST(encode_publish_qos2_duplicate_flags_in_header);
     RUN_TEST(encode_publish_qos0_no_flags_in_header);
@@ -4783,6 +4823,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(decode_publish_v5_property_count_capped);
+    RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
