@@ -5031,6 +5031,21 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         return rc;
     }
 
+#ifdef WOLFMQTT_V5
+    /* [MQTT-3.3.4-6] A PUBLISH sent from a client to the server MUST NOT carry
+     * a Subscription Identifier; reject as a Protocol Error instead of
+     * forwarding the foreign id to subscribers. */
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            pub.props != NULL &&
+            BrokerProps_Find(pub.props, MQTT_PROP_SUBSCRIPTION_ID) != NULL) {
+        WBLOG_ERR(broker, "broker: client PUBLISH carried SUBSCRIPTION_ID "
+            "sock=%d", (int)bc->sock);
+        (void)BrokerSend_Disconnect(bc, MQTT_REASON_PROTOCOL_ERR);
+        rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+        goto publish_cleanup;
+    }
+#endif
+
     /* [MQTT-3.3.2-2] PUBLISH topic name wildcard / [MQTT-4.7.3-1]
      * empty-topic checks now live in MqttDecode_Publish via
      * MqttPacket_TopicNameValid, which has already returned
@@ -5116,10 +5131,18 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         topic = topic_buf;
 #else
         topic = (char*)WOLFMQTT_MALLOC(pub.topic_name_len + 1);
-        if (topic != NULL) {
-            XMEMCPY(topic, pub.topic_name, pub.topic_name_len);
-            topic[pub.topic_name_len] = '\0';
+        if (topic == NULL) {
+            /* Without the topic copy, retained-store and fan-out are skipped;
+             * returning here prevents the QoS 1/2 ACK encoder below from
+             * falsely reporting SUCCESS for a message that was never
+             * delivered. */
+            WBLOG_ERR(broker, "broker: PUBLISH topic alloc failed sock=%d",
+                (int)bc->sock);
+            rc = MQTT_CODE_ERROR_MEMORY;
+            goto publish_cleanup;
         }
+        XMEMCPY(topic, pub.topic_name, pub.topic_name_len);
+        topic[pub.topic_name_len] = '\0';
 #endif
     }
     /* Use payload pointer directly from decoded packet - rx_buf is not

@@ -1773,6 +1773,47 @@ TEST(broker_per_client_subscription_cap)
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
+#ifdef WOLFMQTT_V5
+/* [MQTT-3.3.4-6] A client PUBLISH carrying a Subscription Identifier is a
+ * Protocol Error; the broker must reject and close, not forward the foreign
+ * id to subscribers. */
+TEST(broker_publish_with_subscription_id_closes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,                          /* props len = 0 */
+        0x00, 0x01, 'P'
+    };
+    static const byte publish[] = {
+        0x30, 0x06,
+        0x00, 0x01, 't',
+        0x02, 0x0B, 0x05               /* props: SUBSCRIPTION_ID = 5 */
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, publish, sizeof(publish));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* [MQTT-2.3.1-1] / [MQTT-4.13]: a SUBSCRIBE packet with Packet
  * Identifier = 0 is malformed and the broker MUST close the connection.
  * MqttDecode_Subscribe returns MQTT_CODE_ERROR_PACKET_ID; this test
@@ -2664,6 +2705,9 @@ int main(int argc, char** argv)
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_per_client_subscription_cap);
+#endif
+#ifdef WOLFMQTT_V5
+    RUN_TEST(broker_publish_with_subscription_id_closes);
 #endif
     RUN_TEST(broker_subscribe_packet_id_zero_closes);
     RUN_TEST(connack_session_present_set_on_resumed_session);
