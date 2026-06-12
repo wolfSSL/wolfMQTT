@@ -2945,6 +2945,14 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         return header_len;
     }
 
+    /* Reject a truncated read: a broker advertising a Remaining Length larger
+     * than the bytes actually received would otherwise make reason_code_count
+     * (derived from remain_len) point past the buffer, so the caller's
+     * rejection scan reads out of bounds. */
+    if (rx_buf_len < header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     /* Validate remain_len (need at least packet_id) */
     if (remain_len < MQTT_DATA_LEN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);

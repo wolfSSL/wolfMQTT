@@ -5053,6 +5053,18 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     }
 #endif
 
+    /* The decoder only captured pub.buffer_len bytes of the payload; if that is
+     * short of the declared pub.total_len the message exceeded the broker
+     * receive buffer. Reject it rather than fanning out a packet whose
+     * Remaining Length overstates the bytes we actually hold. */
+    if (pub.total_len > 0 && pub.buffer_len < pub.total_len) {
+        WBLOG_ERR(broker,
+            "broker: PUBLISH payload exceeds buffer (have %u of %u) sock=%d",
+            (unsigned)pub.buffer_len, (unsigned)pub.total_len, (int)bc->sock);
+        rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        goto publish_cleanup;
+    }
+
     /* [MQTT-3.3.2-2] PUBLISH topic name wildcard / [MQTT-4.7.3-1]
      * empty-topic checks now live in MqttDecode_Publish via
      * MqttPacket_TopicNameValid, which has already returned

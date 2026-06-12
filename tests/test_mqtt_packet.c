@@ -4119,6 +4119,24 @@ TEST(decode_unsuback_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* A broker advertising a Remaining Length larger than the bytes actually
+ * received must be rejected, not decoded - otherwise reason_code_count would
+ * span past the buffer and the client's rejection scan reads out of bounds. */
+TEST(decode_unsuback_truncated_remain_len_rejected)
+{
+    /* Remaining Length = 10, but only 3 bytes follow the 2-byte header. */
+    byte buf[] = { 0xB0, 0x0A, 0x00, 0x01, 0x00 };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+#ifdef WOLFMQTT_V5
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+#endif
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
 #ifdef WOLFMQTT_V5
 /* A v5 UNSUBACK carries one reason code per topic filter after the
  * properties block. The decoder must expose the count and bytes so the
@@ -4996,6 +5014,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_valid);
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
+    RUN_TEST(decode_unsuback_truncated_remain_len_rejected);
     RUN_TEST(decode_unsuback_v5_reason_codes);
 
     /* MqttDecode_Ping (PINGRESP) length validation */

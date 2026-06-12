@@ -1311,6 +1311,12 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
 #else
     {
         BrokerRetainedMsg* m;
+        /* Enforce the same dynamic cap on restore that BrokerRetained_Store
+         * applies, otherwise a restart would reset retained_count to 0 and
+         * let a client add another BROKER_MAX_RETAINED topics (heap DoS). */
+        if (broker->retained_count >= BROKER_MAX_RETAINED) {
+            return 0;
+        }
         m = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(sizeof(*m));
         if (m == NULL) {
             return MQTT_CODE_ERROR_MEMORY;
@@ -1346,6 +1352,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         m->expiry_sec = expiry;
         m->next = broker->retained;
         broker->retained = m;
+        broker->retained_count++;
     }
 #endif
     return 0;
