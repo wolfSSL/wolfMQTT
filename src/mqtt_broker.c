@@ -3797,11 +3797,19 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     rm = broker->retained;
     while (rm) {
         BrokerRetainedMsg* rm_next = rm->next;
-        /* Reap expired messages and any nodes a re-entrant delete deferred
-         * (pending_delete). The free here is safe: rm_next is already saved. */
+        /* Reap deferred-delete and expired nodes. Freeing is only safe at the
+         * outermost delivery depth; a nested re-entrant (WS fan-out) delivery
+         * may hold rm in an enclosing loop's saved rm_next, so at deeper depths
+         * mark the node and defer to the retained_delivering==0 post-loop reap. */
         if (rm->pending_delete ||
             (rm->expiry_sec > 0 &&
             (now - rm->store_time) >= rm->expiry_sec)) {
+            if (broker->retained_delivering > 1) {
+                rm->pending_delete = 1;
+                rm_prev = rm;
+                rm = rm_next;
+                continue;
+            }
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(rm->topic));
             if (rm_prev) {
