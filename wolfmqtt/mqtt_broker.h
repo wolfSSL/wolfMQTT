@@ -658,6 +658,10 @@ typedef struct MqttBroker {
     const char *ws_tls_cert;
     const char *ws_tls_key;
     const char *ws_tls_ca;
+    /* Optional exact Origin allowlist for browser WebSocket connections. When
+     * non-NULL, a request whose HTTP Origin header is present and does not
+     * match is rejected (CSWSH defense). NULL = no Origin enforcement. */
+    const char *ws_allowed_origin;
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Pointer (not embedded struct) so the broker stays small when no

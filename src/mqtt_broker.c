@@ -1007,7 +1007,24 @@ static int callback_broker_mqtt(struct lws *wsi,
 
     (void)user;
 
-    if (reason == LWS_CALLBACK_ESTABLISHED) {
+    if (reason == LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION) {
+        /* CSWSH defense: when an Origin allowlist is configured, reject a
+         * browser-supplied Origin that does not match exactly. Requests with
+         * no Origin header (native clients) are not browser-originated and are
+         * allowed through. */
+        if (broker != NULL && broker->ws_allowed_origin != NULL) {
+            char origin[256];
+            int olen = lws_hdr_copy(wsi, origin, (int)sizeof(origin),
+                WSI_TOKEN_ORIGIN);
+            if (olen > 0 &&
+                    XSTRCMP(origin, broker->ws_allowed_origin) != 0) {
+                WBLOG_ERR(broker, "broker: ws origin rejected: %s",
+                    BrokerLog_Sanitize(origin));
+                return -1;
+            }
+        }
+    }
+    else if (reason == LWS_CALLBACK_ESTABLISHED) {
         bc = BrokerClient_AddWs(broker, wsi);
         if (bc == NULL) {
             WBLOG_ERR(broker, "broker: ws accept rejected (alloc)");
@@ -6059,6 +6076,16 @@ int MqttBroker_Start(MqttBroker* broker)
 
 #ifdef ENABLE_MQTT_WEBSOCKET
     if (broker->use_websocket) {
+    #ifdef WOLFMQTT_BROKER_NO_INSECURE
+        /* TLS-only build: a plaintext WebSocket listener would silently bypass
+         * the policy the plain-TCP listener enforces. Require WSS. */
+        if (broker->ws_tls_cert == NULL) {
+            WBLOG_ERR(broker, "broker: plaintext WebSocket listener refused in "
+                "TLS-only build (WOLFMQTT_BROKER_NO_INSECURE); set ws_tls_cert "
+                "for WSS");
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
+    #endif
         rc = BrokerWs_Init(broker);
         if (rc != MQTT_CODE_SUCCESS) {
             WBLOG_ERR(broker, "broker: WebSocket init failed rc=%d", rc);
