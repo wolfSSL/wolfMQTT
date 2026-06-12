@@ -1952,7 +1952,7 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
          * decoded buffer_len; clamping here prevents an OOB read past the
          * source buffer during fan-out. */
         if (publish->buffer_len > 0 &&
-                payload_len > (int)publish->buffer_len) {
+                publish->buffer_len < (word32)payload_len) {
             payload_len = (int)publish->buffer_len;
         }
         if (tx_payload != NULL) {

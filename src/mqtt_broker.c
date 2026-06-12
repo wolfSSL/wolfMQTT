@@ -5303,12 +5303,17 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             (unsigned)pub.total_len);
                         wr = MqttPacket_Write(&sub->client->client,
                             sub->client->tx_buf, sub_rc);
-                        /* On a partial/non-blocking write the subscriber's
-                         * write.pos is left mid-packet; reset it so the next
-                         * fan-out does not resume a stale offset and desync
-                         * this subscriber's stream. */
-                        if (wr != sub_rc) {
-                            sub->client->client.write.pos = 0;
+                        /* Static fan-out has no per-subscriber resume queue, so
+                         * a partial write leaves this subscriber's stream
+                         * desynced and unrecoverable. Tear down its socket; the
+                         * main loop reaps it on the next read error. Removal is
+                         * deferred so next_sub stays valid this iteration. */
+                        if (wr != sub_rc &&
+                            sub->client->sock != BROKER_SOCKET_INVALID) {
+                            broker->net.close(broker->net.ctx,
+                                sub->client->sock);
+                            sub->client->sock = BROKER_SOCKET_INVALID;
+                            sub->client->connected = 0;
                         }
                     }
                     else {

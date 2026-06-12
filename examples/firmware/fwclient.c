@@ -120,29 +120,28 @@ static int fw_message_process(MQTTCtx *mqttCtx, byte* buffer, word32 len)
 #endif
     word32 remaining;
 
-    /* Validate the field sizes sequentially against the received length.
-     * A summed length check (sizeof(header) + sigLen + pubKeyLen + fwLen)
-     * overflows word32 for attacker-chosen fwLen, letting a too-short buffer
-     * pass and leaving pubKeyBuf/fwBuf pointing past the allocation
-     * (CWE-190 -> heap OOB read/write). */
+    /* Validate sequentially; a summed length check overflows word32 for
+     * attacker-chosen fwLen (CWE-190 -> heap OOB on pubKeyBuf/fwBuf). */
     if (len < sizeof(FirmwareHeader)) {
-        PRINTF("Message smaller than firmware header! %d", len);
+        PRINTF("Message smaller than firmware header! %u", (unsigned int)len);
         return EXIT_FAILURE;
     }
     remaining = len - sizeof(FirmwareHeader);
     if (header->sigLen > remaining) {
-        PRINTF("Firmware sigLen exceeds message! %d", header->sigLen);
+        PRINTF("Firmware sigLen exceeds message! %u",
+            (unsigned int)header->sigLen);
         return EXIT_FAILURE;
     }
     remaining -= header->sigLen;
     if (header->pubKeyLen > remaining) {
-        PRINTF("Firmware pubKeyLen exceeds message! %d", header->pubKeyLen);
+        PRINTF("Firmware pubKeyLen exceeds message! %u",
+            (unsigned int)header->pubKeyLen);
         return EXIT_FAILURE;
     }
     remaining -= header->pubKeyLen;
     if (header->fwLen != remaining) {
-        PRINTF("Message header vs. actual size mismatch! %d != %d",
-            header->fwLen, remaining);
+        PRINTF("Message header vs. actual size mismatch! %u != %u",
+            (unsigned int)header->fwLen, (unsigned int)remaining);
         return EXIT_FAILURE;
     }
 
