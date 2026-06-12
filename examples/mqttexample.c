@@ -640,8 +640,14 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
     }
     return 1;
 #else
-    /* Propagate wolfSSL's chain-validation result so a bad certificate
+    /* With no CA configured there is no trust anchor to validate against
+     * (getting-started/demo mode), so accept and warn. When a CA is provided
+     * the chain-validation result is enforced so a bad certificate
      * (self-signed, expired, wrong host, untrusted CA) fails the handshake. */
+    if (mqttCtx != NULL && mqttCtx->ca_file == NULL) {
+        PRINTF("  Warning: no CA configured, skipping server authentication");
+        return 1;
+    }
     return preverify;
 #endif
 }
