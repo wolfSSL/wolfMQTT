@@ -2915,8 +2915,12 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 #endif
 
     /* Scrub the decoded AUTH response from rx_buf. Its properties (e.g. the
-     * MQTT_PROP_AUTH_DATA SASL blob) point into rx_buf and linger there until
-     * the next read overwrites them, so zero the buffer before returning. */
+     * MQTT_PROP_AUTH_DATA SASL blob) point into rx_buf and would otherwise
+     * linger until the next read overwrites them. This is safe to do here:
+     * MqttClient_WaitType above has already run MqttClient_DecodePacket, which
+     * delivered auth->props to the property callback and then freed them and
+     * set auth->props = NULL. So the bytes are consumed before this scrub and
+     * the caller has no live pointer into rx_buf. */
     CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
 
     /* reset state */
