@@ -5015,7 +5015,9 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
     RUN_TEST(decode_unsuback_truncated_remain_len_rejected);
+#ifdef WOLFMQTT_V5
     RUN_TEST(decode_unsuback_v5_reason_codes);
+#endif
 
     /* MqttDecode_Ping (PINGRESP) length validation */
     RUN_TEST(decode_pingresp_valid);

@@ -424,7 +424,9 @@ TEST(subscribe_broker_rejection_returns_subscribe_rejected)
 
     rc = test_init_client();
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
     test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
 
     test_net.write = mock_net_write_accept;
     test_net.read = mock_net_read_canned;
