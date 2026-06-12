@@ -3212,6 +3212,9 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     while (cur) {
         if (cur->topic != NULL && XSTRCMP(cur->topic, topic) == 0) {
             msg = cur;
+            /* Re-publishing this topic cancels a deferred delete, otherwise a
+             * later delivery would reap the freshly stored message. */
+            msg->pending_delete = 0;
             break;
         }
         cur = cur->next;
@@ -3851,6 +3854,34 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
 #ifndef WOLFMQTT_STATIC_MEMORY
     if (broker->retained_delivering > 0) {
         broker->retained_delivering--;
+    }
+    /* When the outermost delivery finishes, reap nodes a re-entrant delete
+     * marked after this loop had already passed them, so they stop counting
+     * against BROKER_MAX_RETAINED. Safe now: no delivery loop holds pointers. */
+    if (broker->retained_delivering == 0) {
+        BrokerRetainedMsg* p = broker->retained;
+        BrokerRetainedMsg* pprev = NULL;
+        while (p != NULL) {
+            BrokerRetainedMsg* pnext = p->next;
+            if (p->pending_delete) {
+                if (pprev) {
+                    pprev->next = pnext;
+                }
+                else {
+                    broker->retained = pnext;
+                }
+                if (p->topic) WOLFMQTT_FREE(p->topic);
+                if (p->payload) WOLFMQTT_FREE(p->payload);
+                WOLFMQTT_FREE(p);
+                if (broker->retained_count > 0) {
+                    broker->retained_count--;
+                }
+            }
+            else {
+                pprev = p;
+            }
+            p = pnext;
+        }
     }
 #endif
 }
