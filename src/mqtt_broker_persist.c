@@ -1313,9 +1313,11 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         BrokerRetainedMsg* m;
         /* Enforce the same dynamic cap on restore that BrokerRetained_Store
          * applies, otherwise a restart would reset retained_count to 0 and
-         * let a client add another BROKER_MAX_RETAINED topics (heap DoS). */
+         * let a client add another BROKER_MAX_RETAINED topics (heap DoS).
+         * Return non-zero so the iterator counts it as skipped (not loaded)
+         * rather than silently hiding the dropped record. */
         if (broker->retained_count >= BROKER_MAX_RETAINED) {
-            return 0;
+            return 1;
         }
         m = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(sizeof(*m));
         if (m == NULL) {

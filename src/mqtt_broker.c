@@ -5774,6 +5774,10 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     else {
                         BrokerClient_ClearWill(bc);
                     }
+                    /* Free any decoded v5 DISCONNECT properties. */
+                    if (disc.props != NULL) {
+                        (void)MqttProps_Free(disc.props);
+                    }
                 }
                 else
             #endif
