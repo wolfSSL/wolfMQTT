@@ -3678,8 +3678,21 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
             if (prev) {
                 prev->next = next;
             }
-            else {
+            else if (broker->pending_wills == pw) {
                 broker->pending_wills = next;
+            }
+            else {
+                /* The fan-out above re-entered BrokerPendingWill_Add (a WS
+                 * close), prepending a node, so pw is no longer the head.
+                 * Unlink pw via its real predecessor instead of clobbering the
+                 * new head with the stale saved next. */
+                BrokerPendingWill* p = broker->pending_wills;
+                while (p != NULL && p->next != pw) {
+                    p = p->next;
+                }
+                if (p != NULL) {
+                    p->next = next;
+                }
             }
             if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
             if (pw->topic) {
@@ -5186,6 +5199,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                  * Sub-encoder failure is logged but not propagated. */
                 {
                     int sub_rc;
+                    int wr;
                     MqttPublish out_pub;
                     XMEMSET(&out_pub, 0, sizeof(out_pub));
                     out_pub.topic_name = topic;
@@ -5214,8 +5228,15 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             (int)bc->sock, (int)sub->client->sock,
                             BrokerLog_Sanitize(topic), eff_qos,
                             (unsigned)pub.total_len);
-                        (void)MqttPacket_Write(&sub->client->client,
+                        wr = MqttPacket_Write(&sub->client->client,
                             sub->client->tx_buf, sub_rc);
+                        /* On a partial/non-blocking write the subscriber's
+                         * write.pos is left mid-packet; reset it so the next
+                         * fan-out does not resume a stale offset and desync
+                         * this subscriber's stream. */
+                        if (wr != sub_rc) {
+                            sub->client->client.write.pos = 0;
+                        }
                     }
                     else {
                         WBLOG_ERR(broker,
@@ -5694,6 +5715,26 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
+            #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
+                /* [MQTT-3.14.4-3] A v5 DISCONNECT with Reason Code 0x04
+                 * (Disconnect with Will Message) asks the broker to publish
+                 * the Will rather than discard it. */
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                        bc->client.packet.remain_len > 0) {
+                    MqttDisconnect disc;
+                    XMEMSET(&disc, 0, sizeof(disc));
+                    disc.protocol_level = bc->protocol_level;
+                    if (MqttDecode_Disconnect(bc->rx_buf, rc, &disc) >= 0 &&
+                            disc.reason_code ==
+                                MQTT_REASON_DISCONNECT_W_WILL_MSG) {
+                        BrokerClient_PublishWill(broker, bc);
+                    }
+                    else {
+                        BrokerClient_ClearWill(bc);
+                    }
+                }
+                else
+            #endif
                 BrokerClient_ClearWill(bc); /* normal disconnect */
                 /* Session persistence: keep subs if clean_session=0 */
                 if (bc->clean_session) {
