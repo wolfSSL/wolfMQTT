@@ -1174,8 +1174,13 @@ static int BrokerWsNetRead(void* context, byte* buf, int buf_len,
     if (ret < (int)ws->rx_len) {
         XMEMMOVE(ws->rx_buffer, ws->rx_buffer + ret, ws->rx_len - ret);
         ws->rx_len -= ret;
+        /* Scrub the vacated tail so consumed CONNECT credentials do not
+         * linger in the WS staging buffer. */
+        BROKER_FORCE_ZERO(ws->rx_buffer + ws->rx_len, (word32)ret);
     }
     else {
+        /* Scrub the whole consumed buffer (may hold username/password). */
+        BROKER_FORCE_ZERO(ws->rx_buffer, (word32)ws->rx_len);
         ws->rx_len = 0;
     }
 
@@ -1299,6 +1304,8 @@ static int BrokerWsNetDisconnect(void* context)
         ws->tx_pending = NULL;
     }
     ws->tx_len = 0;
+    /* Scrub any unconsumed staged bytes (may hold credentials) before free. */
+    BROKER_FORCE_ZERO(ws->rx_buffer, (word32)sizeof(ws->rx_buffer));
     ws->rx_len = 0;
     ws->status = 0;
 
@@ -5814,6 +5821,22 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             else {
                 BrokerSubs_OrphanClient(broker, bc);
             }
+            BrokerClient_Remove(broker, bc);
+            return 0;
+        }
+    }
+    else if (!bc->connected) {
+        /* Pre-CONNECT idle timeout. A freshly accepted client has
+         * keep_alive_sec == 0 until CONNECT completes, so it is not covered by
+         * the keepalive check above; evict it once it has been idle past the
+         * deadline (last_rx is the accept time until the first full packet)
+         * so half-open sockets cannot squat the client table. */
+        WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
+        if ((now - bc->last_rx) >
+                (WOLFMQTT_BROKER_TIME_T)BROKER_CONNECT_TIMEOUT_SEC) {
+            WBLOG_ERR(broker, "broker: pre-CONNECT idle timeout sock=%d",
+                (int)bc->sock);
+            BrokerSubs_RemoveClient(broker, bc);
             BrokerClient_Remove(broker, bc);
             return 0;
         }

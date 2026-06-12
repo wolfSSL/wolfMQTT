@@ -131,6 +131,12 @@
 #ifndef BROKER_MAX_WILL_DELAY_SEC
     #define BROKER_MAX_WILL_DELAY_SEC 3600
 #endif
+/* Seconds a freshly accepted client has to complete a CONNECT before the
+ * broker evicts it, so half-open pre-CONNECT sockets cannot exhaust the client
+ * table (Slowloris / slot exhaustion). */
+#ifndef BROKER_CONNECT_TIMEOUT_SEC
+    #define BROKER_CONNECT_TIMEOUT_SEC 10
+#endif
 /* Maximum concurrent inbound QoS 2 packet IDs awaiting PUBREL per client.
  * Used to dedup duplicate PUBLISHes per [MQTT-4.3.3] (Method B). 16 covers
  * any reasonable client; a misbehaving client that exceeds this gets a
