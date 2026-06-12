@@ -576,6 +576,7 @@ typedef struct BrokerRetainedMsg {
     WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
     MqttQoS qos;                        /* [MQTT-3.3.1-5] stored QoS */
+    byte    pending_delete;             /* deferred free during delivery */
 } BrokerRetainedMsg;
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
@@ -644,6 +645,7 @@ typedef struct MqttBroker {
 #ifdef WOLFMQTT_BROKER_RETAINED
     BrokerRetainedMsg* retained;
     int                retained_count;
+    int                retained_delivering; /* re-entrancy guard for delete */
 #endif
 #ifdef WOLFMQTT_BROKER_WILL
     BrokerPendingWill* pending_wills;

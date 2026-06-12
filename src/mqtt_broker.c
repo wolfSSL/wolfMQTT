@@ -3300,6 +3300,15 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
         if (cur->topic != NULL && XSTRCMP(cur->topic, topic) == 0) {
             WBLOG_DBG(broker, "broker: retained delete topic=%s",
                 BrokerLog_Sanitize(topic));
+            if (broker->retained_delivering > 0) {
+                /* A delivery loop is iterating this list (possibly re-entered
+                 * via a WebSocket fan-out). Freeing now would invalidate that
+                 * loop's saved next pointer (CWE-416); flag for deferred reap
+                 * by the delivery loop instead. */
+                cur->pending_delete = 1;
+                found = 1;
+                break;
+            }
             if (prev) {
                 prev->next = next;
             }
@@ -3695,6 +3704,13 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     }
     now = WOLFMQTT_BROKER_GET_TIME_S();
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Mark a delivery in progress so a re-entrant BrokerRetained_Delete (via a
+     * WebSocket fan-out close) defers its free instead of invalidating the
+     * loop's saved next pointer. */
+    broker->retained_delivering++;
+#endif
+
 #ifdef WOLFMQTT_STATIC_MEMORY
     for (i = 0; i < BROKER_MAX_RETAINED; i++) {
         BrokerRetainedMsg* rm = &broker->retained[i];
@@ -3741,9 +3757,11 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     rm = broker->retained;
     while (rm) {
         BrokerRetainedMsg* rm_next = rm->next;
-        /* Skip and remove expired messages */
-        if (rm->expiry_sec > 0 &&
-            (now - rm->store_time) >= rm->expiry_sec) {
+        /* Reap expired messages and any nodes a re-entrant delete deferred
+         * (pending_delete). The free here is safe: rm_next is already saved. */
+        if (rm->pending_delete ||
+            (rm->expiry_sec > 0 &&
+            (now - rm->store_time) >= rm->expiry_sec)) {
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(rm->topic));
             if (rm_prev) {
@@ -3790,6 +3808,12 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         }
         rm_prev = rm;
         rm = rm_next;
+    }
+#endif
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    if (broker->retained_delivering > 0) {
+        broker->retained_delivering--;
     }
 #endif
 }
@@ -3839,6 +3863,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     int i;
 #else
     BrokerSub* sub;
+    BrokerSub* next_sub = NULL;
 #endif
 
     if (broker == NULL || topic == NULL) {
@@ -3868,6 +3893,11 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
 #else
     sub = broker->subs;
     while (sub) {
+        /* Snapshot the successor before any MqttPacket_Write: a WS fan-out
+         * write can drive an lws_service spin whose re-entrant CLOSED frees
+         * this client's BrokerSub nodes, so reading sub->next afterwards
+         * would dereference a freed node. */
+        next_sub = sub->next;
 #endif
         if (sub->client != NULL && sub->client->protocol_level != 0 &&
             BROKER_STR_VALID(sub->filter) &&
@@ -3897,7 +3927,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             }
         }
 #ifndef WOLFMQTT_STATIC_MEMORY
-        sub = sub->next;
+        sub = next_sub;
 #endif
     }
 }
