@@ -856,14 +856,13 @@ mqttcurl_connect(SocketContext* sock, const char* host, word16 port,
             return MQTT_CODE_ERROR_CURL;
         }
 
-        /* Only do server host verification when not running against
-         * localhost broker. */
-        if (XSTRCMP(host, "localhost") == 0) {
-            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 0L);
-        }
-        else {
-            res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2L);
-        }
+        /* Enforce server hostname verification. The cert's CN/SAN must match
+         * the connect host (broker_test certs carry a localhost SAN). */
+#ifdef WOLFMQTT_ALLOW_INSECURE_TLS
+        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 0L);
+#else
+        res = curl_easy_setopt(sock->curl, CURLOPT_SSL_VERIFYHOST, 2L);
+#endif
 
         if (res != CURLE_OK) {
             PRINTF("error: curl_easy_setopt(SSL_VERIFYHOST) returned: %d",
