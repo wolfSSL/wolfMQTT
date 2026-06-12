@@ -3194,6 +3194,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Broker refused connection)";
         case MQTT_CODE_ERROR_SUBSCRIBE_REJECTED:
             return "Error (Broker rejected subscription)";
+        case MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED:
+            return "Error (Broker rejected unsubscribe)";
 #if defined(ENABLE_MQTT_CURL)
         case MQTT_CODE_ERROR_CURL:
             return "Error (libcurl)";

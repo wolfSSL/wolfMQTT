@@ -452,6 +452,46 @@ TEST(subscribe_broker_rejection_returns_subscribe_rejected)
         subscribe.topics[0].return_code);
 }
 
+#ifdef WOLFMQTT_V5
+/* A v5 UNSUBACK whose per-topic reason code has the high bit set means the
+ * broker refused the unsubscribe; MqttClient_Unsubscribe must surface that as
+ * MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED rather than success. */
+TEST(unsubscribe_broker_rejection_returns_unsubscribe_rejected)
+{
+    int rc;
+    int i;
+    MqttUnsubscribe unsub;
+    MqttTopic topics[1];
+    /* v5 UNSUBACK: type=0xB0, remain=4, packet_id=43, props_len=0,
+     * reason=0x87 (NOT_AUTHORIZED). */
+    static const byte unsuback[] = { 0xB0, 0x04, 0x00, 0x2B, 0x00, 0x87 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, unsuback, sizeof(unsuback));
+    g_canned_len = (int)sizeof(unsuback);
+    g_canned_pos = 0;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topics, 0, sizeof(topics));
+    topics[0].topic_filter = "test/topic";
+    unsub.packet_id = 43;
+    unsub.topic_count = 1;
+    unsub.topics = topics;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Unsubscribe(&test_client, &unsub);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED, rc);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* ============================================================================
  * MqttClient_Disconnect Tests
  * ============================================================================ */
@@ -855,6 +895,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(subscribe_null_client);
     RUN_TEST(subscribe_null_subscribe);
     RUN_TEST(subscribe_broker_rejection_returns_subscribe_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(unsubscribe_broker_rejection_returns_unsubscribe_rejected);
+#endif
 
     /* MqttClient_Unsubscribe tests */
     RUN_TEST(unsubscribe_null_client);
