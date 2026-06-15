@@ -121,7 +121,7 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
 #define BROKER_LOG_SAN_POOL 4   /* distinct buffers per log statement */
 
 /* Sanitize a peer-controlled string (topic, filter, client_id, cert CN, ...)
- * before it reaches a PRINTF log sink (CWE-117). Control bytes (< 0x20 and
+ * before it reaches a PRINTF log sink. Control bytes (< 0x20 and
  * DEL 0x7f) become printable escapes so a remote peer cannot inject forged log
  * lines (CR/LF) or hijack the operator terminal (ANSI ESC). The result is
  * returned from a small rotating pool of static buffers so several sanitized
@@ -3330,7 +3330,7 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
             if (broker->retained_delivering > 0) {
                 /* A delivery loop is iterating this list (possibly re-entered
                  * via a WebSocket fan-out). Freeing now would invalidate that
-                 * loop's saved next pointer (CWE-416); flag for deferred reap
+                 * loop's saved next pointer; flag for deferred reap
                  * by the delivery loop instead. */
                 cur->pending_delete = 1;
                 found = 1;

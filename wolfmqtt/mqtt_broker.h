@@ -94,7 +94,7 @@
     #define BROKER_MAX_SUBS          32
 #endif
 /* Per-client subscription cap so one client cannot occupy the whole shared
- * subscription table and deny other clients (CWE-770). */
+ * subscription table and deny other clients. */
 #ifndef BROKER_MAX_SUBS_PER_CLIENT
     /* At least 1 so a config where BROKER_MAX_CLIENTS > BROKER_MAX_SUBS does
      * not collapse the cap to 0 and reject every subscription. */

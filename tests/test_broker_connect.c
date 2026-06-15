@@ -590,7 +590,7 @@ TEST(connect_v311_binary_password_exact_match_accepted)
     MqttBroker_Free(&broker);
 }
 
-/* [CWE-863/CWE-639] An unauthenticated CONNECT must not mutate another
+/* An unauthenticated CONNECT must not mutate another
  * client's session. A victim authenticates and stays connected; an attacker
  * then reuses the victim's client_id with a wrong password. The broker must
  * reject the attacker at the credential gate BEFORE the duplicate-takeover
@@ -1676,7 +1676,7 @@ TEST(broker_publish_before_connect_closes)
 }
 
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
-/* [CWE-400] The dynamic retained-message list must be bounded. A client that
+/* The dynamic retained-message list must be bounded. A client that
  * publishes RETAIN=1 to more than BROKER_MAX_RETAINED distinct topics must not
  * grow the list past the cap - pre-fix it grew without bound, enabling
  * heap-exhaustion DoS. */
@@ -1724,7 +1724,7 @@ TEST(broker_retained_list_capped)
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
-/* [CWE-770] A single client cannot occupy more than BROKER_MAX_SUBS_PER_CLIENT
+/* A single client cannot occupy more than BROKER_MAX_SUBS_PER_CLIENT
  * slots in the shared subscription table; excess SUBSCRIBEs are refused so
  * other clients are not denied service. */
 TEST(broker_per_client_subscription_cap)

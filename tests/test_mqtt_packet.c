@@ -772,7 +772,7 @@ TEST(encode_publish_qos1_valid)
     ASSERT_TRUE(rc > 0);
 }
 
-/* [CWE-125] The encoder must clamp the copied payload to buffer_len so a
+/* The encoder must clamp the copied payload to buffer_len so a
  * total_len larger than the bytes actually present cannot read past the
  * source buffer (the broker fan-out OOB read). */
 TEST(encode_publish_clamps_payload_to_buffer_len)
@@ -1309,7 +1309,7 @@ TEST(decode_publish_v5_response_topic_wildcard_rejected)
     ASSERT_NULL(pub.props);
 }
 
-/* [CWE-770] A single message may not carry more than the internal
+/* A single message may not carry more than the internal
  * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
  * shared property pool. 40 User Property entries exceeds that cap. The cap
  * returns MQTT_CODE_ERROR_PROPERTY, distinct from the MQTT_CODE_ERROR_MEMORY a

@@ -73,7 +73,7 @@ static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
         net->status = 0;
         /* libwebsockets frees the wsi after this callback returns; clear the
          * dangling pointer so NetWebsocket_Disconnect's `if (net->wsi)` guard
-         * skips lws_close_reason() on freed memory (CWE-416). */
+         * skips lws_close_reason() on freed memory. */
         net->wsi = NULL;
     }
     else if (reason == LWS_CALLBACK_CLIENT_RECEIVE) {

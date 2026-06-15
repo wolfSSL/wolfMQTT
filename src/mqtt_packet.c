@@ -842,7 +842,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     while (((int)prop_len > 0) && (rc >= 0))
     {
         /* Bound the number of properties a single message may carry so a peer
-         * cannot saturate the shared property pool (CWE-770). */
+         * cannot saturate the shared property pool. */
         if (++prop_count > MQTT_MAX_PROPS) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
             break;

@@ -407,7 +407,7 @@ static int mock_net_read_canned(void *context, byte* buf, int buf_len,
     return n;
 }
 
-/* [issue 3129] A broker that rejects a subscription returns a SUBACK whose
+/* A broker that rejects a subscription returns a SUBACK whose
  * per-topic return code has the high bit set (0x80 in v3.1.1, any reason
  * code >= 0x80 in v5). MqttClient_Subscribe must surface this as
  * MQTT_CODE_ERROR_SUBSCRIBE_REJECTED rather than MQTT_CODE_SUCCESS, else the

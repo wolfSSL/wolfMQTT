@@ -405,7 +405,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
    least one property. The property list is deallocated after returning from
    the callback. */
 /* Copy a length-delimited, broker-controlled property string into dst and
- * sanitize it for safe logging (CWE-117). */
+ * sanitize it for safe logging. */
 static const char* awsiot_log_prop(char* dst, word32 dstLen,
     const char* src, word32 srcLen)
 {

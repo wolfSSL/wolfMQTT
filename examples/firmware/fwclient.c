@@ -120,8 +120,7 @@ static int fw_message_process(MQTTCtx *mqttCtx, byte* buffer, word32 len)
 #endif
     word32 remaining;
 
-    /* Validate sequentially; a summed length check overflows word32 for
-     * attacker-chosen fwLen (CWE-190 -> heap OOB on pubKeyBuf/fwBuf). */
+    /* Validate field sizes sequentially; a summed length check can overflow. */
     if (len < sizeof(FirmwareHeader)) {
         PRINTF("Message smaller than firmware header! %u", (unsigned int)len);
         return EXIT_FAILURE;
@@ -189,9 +188,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 {
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
-    /* Verify this message is for the firmware topic. Compare against the full
-     * expected length (not the wire-supplied topic_name_len) so a zero-length
-     * (v5 Topic Alias) or byte-prefix topic cannot pass the gate. */
+    /* Verify this message is for the firmware topic */
     if (msg_new &&
         msg->topic_name_len == (word16)XSTRLEN(mqttCtx->topic_name) &&
         XSTRNCMP(msg->topic_name, mqttCtx->topic_name,
