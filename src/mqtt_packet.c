@@ -2152,6 +2152,11 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
     if (header_len < 0) {
         return header_len;
     }
+    /* Remaining Length is attacker-controlled; bound it by the bytes the
+     * caller actually supplied before any remain_len-gated read below. */
+    if (rx_buf_len < header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
 
     /* MQTT 3.1.1 sections 3.4-3.7: PUBACK/PUBREC/PUBREL/PUBCOMP variable header is
      * exactly the two-byte Packet Identifier and there is no payload -
@@ -3186,6 +3191,11 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
     if (header_len < 0) {
         return header_len;
     }
+    /* Remaining Length is attacker-controlled; bound it by the bytes the
+     * caller actually supplied before the reason-code read below. */
+    if (rx_buf_len < header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
     rx_payload = &rx_buf[header_len];
 
     disc->props = NULL;
@@ -3319,6 +3329,11 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
                   MQTT_PACKET_TYPE_AUTH, NULL, NULL, NULL);
     if (header_len < 0) {
         return header_len;
+    }
+    /* Remaining Length is attacker-controlled; bound it by the bytes the
+     * caller actually supplied before the reason-code read below. */
+    if (rx_buf_len < header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
     rx_payload = &rx_buf[header_len];
 
