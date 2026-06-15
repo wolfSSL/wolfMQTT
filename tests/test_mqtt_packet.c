@@ -3990,6 +3990,22 @@ TEST(decode_puback_v5_with_reason_code_accepted)
     ASSERT_EQ(0, resp.reason_code);
     MqttProps_Free(resp.props);
 }
+
+/* Remaining Length advertises a Reason Code but the supplied buffer stops
+ * right after the Packet Identifier. The decoder must reject the short frame
+ * instead of reading the reason-code byte out of bounds. */
+TEST(decode_puback_v5_reason_code_past_buf_rejected)
+{
+    byte buf[4] = { 0x40, 0x03, 0x00, 0x05 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -4274,6 +4290,20 @@ TEST(decode_disconnect_v5_with_reason_code_accepted)
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, disc.reason_code);
     MqttProps_Free(disc.props);
+}
+
+/* Remaining Length advertises a Reason Code but the supplied buffer is only
+ * the fixed header. The decoder must reject the short frame instead of
+ * reading the reason-code byte out of bounds. */
+TEST(decode_disconnect_v5_reason_code_past_buf_rejected)
+{
+    byte buf[2] = { 0xE0, 0x01 };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -4726,6 +4756,23 @@ TEST(auth_v5_invalid_reason_code_rejected)
     dec_len = MqttDecode_Auth(buf, 4, &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, dec_len);
 }
+
+/* Remaining Length advertises a Reason Code but the supplied buffer is only
+ * the fixed header. The decoder must reject the short frame instead of
+ * reading the reason-code byte out of bounds. */
+TEST(decode_auth_v5_reason_code_past_buf_rejected)
+{
+    byte buf[2];
+    MqttAuth dec;
+    int dec_len;
+
+    buf[0] = (byte)(MQTT_PACKET_TYPE_AUTH << 4);
+    buf[1] = 0x01; /* Remaining Length claims a reason-code byte */
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec_len = MqttDecode_Auth(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, dec_len);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -5002,6 +5049,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_puback_null_resp_extra_payload_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_puback_v5_with_reason_code_accepted);
+    RUN_TEST(decode_puback_v5_reason_code_past_buf_rejected);
 #endif
 
     /* MqttEncode_PublishResp fixed-header QoS bits */
@@ -5032,6 +5080,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected);
     RUN_TEST(decode_disconnect_v5_with_reason_code_accepted);
+    RUN_TEST(decode_disconnect_v5_reason_code_past_buf_rejected);
 #endif
 
     /* Fixed-header reserved-flag validation [MQTT-2.2.2-2] */
@@ -5060,6 +5109,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(auth_v5_reauth_decodes_without_error);
     RUN_TEST(auth_v5_success_remaining_length_zero);
     RUN_TEST(auth_v5_invalid_reason_code_rejected);
+    RUN_TEST(decode_auth_v5_reason_code_past_buf_rejected);
 #endif
 
     TEST_SUITE_END();

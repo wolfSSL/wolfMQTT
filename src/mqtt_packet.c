@@ -2270,6 +2270,11 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         publish_resp->props = NULL;
         if (publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             if (remain_len > MQTT_DATA_LEN_SIZE) {
+                /* remain_len is attacker-controlled; confirm the reason-code
+                 * byte was received before reading past the buffer */
+                if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
                 /* Decode the Reason Code */
                 publish_resp->reason_code = *rx_payload++;
             }
@@ -3307,6 +3312,11 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
     disc->props = NULL;
     if (remain_len > 0) {
+        /* remain_len is attacker-controlled; confirm the reason-code byte
+         * was received before reading past the buffer */
+        if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         /* Decode variable header */
         disc->reason_code = *rx_payload++;
 
@@ -3441,6 +3451,11 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 
     auth->props = NULL;
     if (remain_len > 0) {
+        /* remain_len is attacker-controlled; confirm the reason-code byte
+         * was received before reading past the buffer */
+        if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         /* Decode variable header */
         auth->reason_code = *rx_payload++;
         if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
