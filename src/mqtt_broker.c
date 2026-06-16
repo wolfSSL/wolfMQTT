@@ -5278,7 +5278,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #endif
             if (sub->client != NULL &&
                 sub->client->protocol_level != 0 &&
-                sub->client->sock != BROKER_SOCKET_INVALID &&
+                sub->client->connected &&
                 BROKER_STR_VALID(sub->filter) &&
                 BrokerTopicMatch(sub->filter, topic)) {
                 MqttQoS eff_qos;
@@ -5322,10 +5322,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             sub->client->tx_buf, sub_rc);
                         /* Static fan-out has no per-subscriber resume queue, so
                          * a partial write leaves this subscriber's stream
-                         * desynced and unrecoverable. Tear down its socket; the
-                         * main loop reaps it on the next read error. The match
-                         * guard above then skips this client's other matching
-                         * subscriptions once its socket is invalidated. */
+                         * desynced and unrecoverable. Tear down its socket and
+                         * clear connected; the main loop reaps it on the next
+                         * read error, and the match guard above then skips this
+                         * client's other matching subscriptions. */
                         if (wr != sub_rc &&
                             sub->client->sock != BROKER_SOCKET_INVALID) {
                             broker->net.close(broker->net.ctx,
@@ -5571,6 +5571,19 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
 {
     int rc;
     int activity = 0;
+
+#ifdef ENABLE_MQTT_WEBSOCKET
+    /* A peer-initiated WS close during another client's fan-out write defers
+     * this client's removal via pending_remove, but no end-of-dispatch
+     * consumer runs on its own stack. Reap it here before any read so it is
+     * not re-closed by BrokerClient_AbnormalClose, which would publish its
+     * Will a second time. Will and subscriptions were handled at close. */
+    if (bc->ws_ctx != NULL &&
+        ((BrokerWsCtx*)bc->ws_ctx)->pending_remove) {
+        BrokerClient_Remove(broker, bc);
+        return 0;
+    }
+#endif
 
 #ifdef ENABLE_MQTT_TLS
     /* Complete TLS handshake before processing MQTT packets */
