@@ -3159,7 +3159,10 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
     int i;
     for (i = 0; i < BROKER_MAX_RETAINED; i++) {
         BrokerRetainedMsg* rm = &broker->retained[i];
+        /* now >= store_time guards the unsigned subtraction so a backward
+         * clock step reads as "not expired" instead of wrapping huge. */
         if (rm->in_use && rm->expiry_sec > 0 &&
+            now >= rm->store_time &&
             (now - rm->store_time) >= rm->expiry_sec) {
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(rm->topic));
@@ -3178,6 +3181,7 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
     while (cur != NULL) {
         BrokerRetainedMsg* next = cur->next;
         if (cur->expiry_sec > 0 &&
+            now >= cur->store_time &&
             (now - cur->store_time) >= cur->expiry_sec) {
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(cur->topic));
@@ -3815,8 +3819,9 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         if (!rm->in_use || rm->topic[0] == '\0') {
             continue;
         }
-        /* Skip expired messages */
+        /* Skip expired messages (now >= store_time guards clock rollback) */
         if (rm->expiry_sec > 0 &&
+            now >= rm->store_time &&
             (now - rm->store_time) >= rm->expiry_sec) {
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(rm->topic));
@@ -3861,6 +3866,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
          * mark the node and defer to the retained_delivering==0 post-loop reap. */
         if (rm->pending_delete ||
             (rm->expiry_sec > 0 &&
+            now >= rm->store_time &&
             (now - rm->store_time) >= rm->expiry_sec)) {
             if (broker->retained_delivering > 1) {
                 rm->pending_delete = 1;
@@ -5948,7 +5954,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     /* Check keepalive timeout (MQTT spec 3.1.2.10: 1.5x keep alive) */
     if (bc->keep_alive_sec > 0) {
         WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
-        if ((now - bc->last_rx) >
+        if (now >= bc->last_rx && (now - bc->last_rx) >
             (WOLFMQTT_BROKER_TIME_T)(bc->keep_alive_sec * 3 / 2)) {
             WBLOG_ERR(broker, "broker: keepalive timeout sock=%d", (int)bc->sock);
         #ifdef WOLFMQTT_V5
@@ -5973,7 +5979,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
          * deadline (last_rx is the accept time until the first full packet)
          * so half-open sockets cannot squat the client table. */
         WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
-        if ((now - bc->last_rx) >
+        if (now >= bc->last_rx && (now - bc->last_rx) >
                 (WOLFMQTT_BROKER_TIME_T)BROKER_CONNECT_TIMEOUT_SEC) {
             WBLOG_ERR(broker, "broker: pre-CONNECT idle timeout sock=%d",
                 (int)bc->sock);

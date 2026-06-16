@@ -1273,9 +1273,12 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     }
 
     /* Skip records whose expiry already elapsed so they do not consume a
-     * retained slot / the cap at restore. Counted as skipped, not loaded. */
+     * retained slot / the cap at restore. Counted as skipped, not loaded.
+     * now >= store_time guards the unsigned subtraction against a backward
+     * clock step (mirrors the orphan-session restore sweep below). */
     now = WOLFMQTT_BROKER_GET_TIME_S();
     if (expiry > 0 &&
+            now >= (WOLFMQTT_BROKER_TIME_T)store_time &&
             (now - (WOLFMQTT_BROKER_TIME_T)store_time) >= expiry) {
         return 1;
     }

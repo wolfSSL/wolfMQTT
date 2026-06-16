@@ -1722,10 +1722,12 @@ TEST(broker_retained_list_capped)
     MqttBroker_Free(&broker);
 }
 
-/* Expired retained messages must not hold the cap against a fresh retained
- * publish. Pre-fix the cap was enforced before any expiry pruning, so a list
- * full of expired entries rejected new retained topics with OUT_OF_MEMORY. */
-TEST(broker_retained_expired_freed_under_cap)
+/* A backward clock step must not make live retained messages look expired.
+ * Entries stamped in the "future" (store_time > now) would, with an unguarded
+ * unsigned subtraction, wrap to a huge elapsed value and be wrongly reaped;
+ * the now >= store_time guard keeps them. Test time is pinned to 0, so a node
+ * stamped at tick 1 models a clock that has since rolled back to 0. */
+TEST(broker_retained_clock_rollback_not_expired)
 {
     MqttBroker broker;
     MqttBrokerNet net;
@@ -1762,14 +1764,15 @@ TEST(broker_retained_expired_freed_under_cap)
     }
     ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
 
-    /* Test time is pinned to 0, so a node stamped at tick 1 with a 1s expiry
-     * already reads as expired at tick 0 - force every entry expired. */
+    /* Stamp every entry in the future relative to the pinned now=0 clock. */
     for (rm = broker.retained; rm != NULL; rm = rm->next) {
         rm->store_time = 1;
         rm->expiry_sec = 1;
     }
 
-    /* A new retained topic must now be accepted, reaping the expired ones. */
+    /* A new retained topic triggers the reap path. The future-stamped entries
+     * must be kept (not falsely expired), so the cap still rejects the new
+     * topic and the count is unchanged. */
     pub[0] = 0x31;
     pub[1] = 0x06;
     pub[2] = 0x00; pub[3] = 0x03;
@@ -1780,8 +1783,7 @@ TEST(broker_retained_expired_freed_under_cap)
         MqttBroker_Step(&broker);
     }
 
-    /* Expired entries freed, only the fresh topic remains. */
-    ASSERT_EQ(1, broker.retained_count);
+    ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -2767,7 +2769,7 @@ int main(int argc, char** argv)
     RUN_TEST(broker_publish_before_connect_closes);
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_retained_list_capped);
-    RUN_TEST(broker_retained_expired_freed_under_cap);
+    RUN_TEST(broker_retained_clock_rollback_not_expired);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_per_client_subscription_cap);
