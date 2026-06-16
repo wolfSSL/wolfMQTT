@@ -187,12 +187,14 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
+    size_t topic_len = XSTRLEN(mqttCtx->topic_name);
 
-    /* Verify this message is for the firmware topic */
+    /* Verify this message is for the firmware topic. Compare lengths without
+     * narrowing to word16 so an overlong configured topic cannot alias a
+     * 16-bit received length and over-read the length-delimited topic_name. */
     if (msg_new &&
-        msg->topic_name_len == (word16)XSTRLEN(mqttCtx->topic_name) &&
-        XSTRNCMP(msg->topic_name, mqttCtx->topic_name,
-            XSTRLEN(mqttCtx->topic_name)) == 0 &&
+        (size_t)msg->topic_name_len == topic_len &&
+        XMEMCMP(msg->topic_name, mqttCtx->topic_name, topic_len) == 0 &&
         !mFwBuf)
     {
         /* Allocate buffer for entire message */

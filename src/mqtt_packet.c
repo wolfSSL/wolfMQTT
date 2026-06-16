@@ -2977,26 +2977,29 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 #ifdef WOLFMQTT_V5
         unsubscribe_ack->props = NULL;
         if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Bound properties by the packet end, not rx_buf_len: a caller
+             * buffer may hold bytes from the next packet, and consuming them
+             * here would push rx_payload past this packet and underflow
+             * reason_code_count to a huge word16. */
+            byte* packet_end = &rx_buf[header_len + remain_len];
+
             if (remain_len > MQTT_DATA_LEN_SIZE) {
                 word32 props_len = 0;
                 int props_tmp;
 
                 /* Decode Length of Properties */
-                if (rx_buf_len < (rx_payload - rx_buf)) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-                }
                 props_tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                        (word32)(rx_buf_len - (rx_payload - rx_buf)));
+                        (word32)(packet_end - rx_payload));
                 if (props_tmp < 0)
                     return props_tmp;
 
-                if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
+                if (props_len <= (word32)(packet_end - (rx_payload + props_tmp))) {
                     rx_payload += props_tmp;
                     if (props_len > 0) {
                         /* Decode the Properties */
                         props_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK,
                                 &unsubscribe_ack->props, rx_payload,
-                                (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                                (word32)(packet_end - rx_payload),
                                 props_len);
                         if (props_tmp < 0)
                             return props_tmp;
@@ -3009,9 +3012,12 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             }
 
             /* Reason codes are stored in the payload, one per topic filter */
+            if (rx_payload > packet_end) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             unsubscribe_ack->reason_codes = rx_payload;
             unsubscribe_ack->reason_code_count =
-                (word16)((rx_buf + header_len + remain_len) - rx_payload);
+                (word16)(packet_end - rx_payload);
         }
 #endif
     }

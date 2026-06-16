@@ -4177,6 +4177,28 @@ TEST(decode_unsuback_v5_reason_codes)
     ASSERT_EQ(0x00, ack.reason_codes[0]);
     ASSERT_EQ(0x87, ack.reason_codes[1]);
 }
+
+/* A v5 UNSUBACK whose property length runs past its own Remaining Length must
+ * be rejected even when the caller buffer holds trailing bytes from the next
+ * packet: consuming them would push past the packet and underflow
+ * reason_code_count. props_len=3 but only one packet byte follows it. */
+TEST(decode_unsuback_v5_props_past_remain_len_rejected)
+{
+    byte buf[] = {
+        0xB0, 0x04,                        /* UNSUBACK, remain_len = 4 */
+        0x00, 0x01,                        /* packet_id */
+        0x03,                              /* props_len = 3 (overruns packet) */
+        0x1F,                              /* last byte inside Remaining Length */
+        0x00, 0x00                         /* trailing bytes from next packet */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -5065,6 +5087,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_truncated_remain_len_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_unsuback_v5_reason_codes);
+    RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
 #endif
 
     /* MqttDecode_Ping (PINGRESP) length validation */
