@@ -4935,6 +4935,14 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
             }
             if (sub_rc != MQTT_CODE_SUCCESS) {
                 granted_qos = (MqttQoS)fail_code;
+            #ifdef WOLFMQTT_V5
+                /* A capacity rejection (per-client cap or full table) maps to
+                 * the v5 Quota Exceeded reason so the client sees why. */
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                    sub_rc == MQTT_CODE_ERROR_MEMORY) {
+                    granted_qos = (MqttQoS)MQTT_REASON_QUOTA_EXCEEDED;
+                }
+            #endif
             }
 #ifdef WOLFMQTT_BROKER_RETAINED
             else {
@@ -5270,6 +5278,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #endif
             if (sub->client != NULL &&
                 sub->client->protocol_level != 0 &&
+                sub->client->sock != BROKER_SOCKET_INVALID &&
                 BROKER_STR_VALID(sub->filter) &&
                 BrokerTopicMatch(sub->filter, topic)) {
                 MqttQoS eff_qos;
@@ -5314,8 +5323,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                         /* Static fan-out has no per-subscriber resume queue, so
                          * a partial write leaves this subscriber's stream
                          * desynced and unrecoverable. Tear down its socket; the
-                         * main loop reaps it on the next read error. Removal is
-                         * deferred so next_sub stays valid this iteration. */
+                         * main loop reaps it on the next read error. The match
+                         * guard above then skips this client's other matching
+                         * subscriptions once its socket is invalidated. */
                         if (wr != sub_rc &&
                             sub->client->sock != BROKER_SOCKET_INVALID) {
                             broker->net.close(broker->net.ctx,

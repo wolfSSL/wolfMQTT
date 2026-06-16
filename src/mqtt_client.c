@@ -2916,12 +2916,18 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 
     /* Scrub the decoded AUTH response from rx_buf. Its properties (e.g. the
      * MQTT_PROP_AUTH_DATA SASL blob) point into rx_buf and would otherwise
-     * linger until the next read overwrites them. This is safe to do here:
-     * MqttClient_WaitType above has already run MqttClient_DecodePacket, which
-     * delivered auth->props to the property callback and then freed them and
-     * set auth->props = NULL. So the bytes are consumed before this scrub and
-     * the caller has no live pointer into rx_buf. */
+     * linger until the next read overwrites them. MqttClient_WaitType above
+     * already delivered and freed auth->props, so the bytes are consumed
+     * before this scrub and the caller has no live pointer into rx_buf. */
+#ifdef WOLFMQTT_MULTITHREAD
+    /* Hold lockRecv so the scrub cannot race a concurrent read into rx_buf. */
+    if (wm_SemLock(&client->lockRecv) == 0) {
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+        wm_SemUnlock(&client->lockRecv);
+    }
+#else
     CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+#endif
 
     /* reset state */
     auth->stat.write = MQTT_MSG_BEGIN;

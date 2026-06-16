@@ -96,12 +96,16 @@
 /* Per-client subscription cap so one client cannot occupy the whole shared
  * subscription table and deny other clients. */
 #ifndef BROKER_MAX_SUBS_PER_CLIENT
-    /* At least 1 so a config where BROKER_MAX_CLIENTS > BROKER_MAX_SUBS does
-     * not collapse the cap to 0 and reject every subscription. */
-    #if (BROKER_MAX_SUBS / BROKER_MAX_CLIENTS) > 0
+    /* Fair share of the shared table, but floored at 8 (and never above the
+     * table size) so the default does not silently reject a client that
+     * subscribes to a normal handful of topics. Override to tighten the
+     * anti-DoS cap or to raise it for subscription-heavy clients. */
+    #if (BROKER_MAX_SUBS / BROKER_MAX_CLIENTS) >= 8
         #define BROKER_MAX_SUBS_PER_CLIENT (BROKER_MAX_SUBS / BROKER_MAX_CLIENTS)
+    #elif BROKER_MAX_SUBS < 8
+        #define BROKER_MAX_SUBS_PER_CLIENT BROKER_MAX_SUBS
     #else
-        #define BROKER_MAX_SUBS_PER_CLIENT 1
+        #define BROKER_MAX_SUBS_PER_CLIENT 8
     #endif
 #endif
 #ifndef BROKER_MAX_CLIENT_ID_LEN
