@@ -1251,6 +1251,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     word64 store_time;
     word32 expiry;
     byte qos;
+    WOLFMQTT_BROKER_TIME_T now;
 
     rc = wmqb_read_header(blob, blob_len, BROKER_PERSIST_NS_RETAINED,
             &body_len);
@@ -1269,6 +1270,14 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     topic_len = wmqb_r_u16(p); p += 2;
     if ((word32)(end - p) < (word32)topic_len + 4) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+
+    /* Skip records whose expiry already elapsed so they do not consume a
+     * retained slot / the cap at restore. Counted as skipped, not loaded. */
+    now = WOLFMQTT_BROKER_GET_TIME_S();
+    if (expiry > 0 &&
+            (now - (WOLFMQTT_BROKER_TIME_T)store_time) >= expiry) {
+        return 1;
     }
 
 #ifdef WOLFMQTT_STATIC_MEMORY

@@ -3148,6 +3148,60 @@ static int BrokerSubs_ReassociateClient(MqttBroker* broker,
 /* Retained message management                                                 */
 /* -------------------------------------------------------------------------- */
 #ifdef WOLFMQTT_BROKER_RETAINED
+/* Free retained messages whose v5 Message Expiry Interval has elapsed so they
+ * stop occupying a slot / the retained_count cap. Delivery also reaps expired
+ * entries, but a publisher can hit the cap with only-expired entries before any
+ * subscription triggers that path. */
+static void BrokerRetained_ReapExpired(MqttBroker* broker,
+    WOLFMQTT_BROKER_TIME_T now)
+{
+#ifdef WOLFMQTT_STATIC_MEMORY
+    int i;
+    for (i = 0; i < BROKER_MAX_RETAINED; i++) {
+        BrokerRetainedMsg* rm = &broker->retained[i];
+        if (rm->in_use && rm->expiry_sec > 0 &&
+            (now - rm->store_time) >= rm->expiry_sec) {
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(rm->topic));
+            XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
+        }
+    }
+#else
+    BrokerRetainedMsg* cur;
+    BrokerRetainedMsg* prev = NULL;
+
+    /* A delivery loop may hold node pointers; defer to its post-loop reap. */
+    if (broker->retained_delivering > 0) {
+        return;
+    }
+    cur = broker->retained;
+    while (cur != NULL) {
+        BrokerRetainedMsg* next = cur->next;
+        if (cur->expiry_sec > 0 &&
+            (now - cur->store_time) >= cur->expiry_sec) {
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(cur->topic));
+            if (prev != NULL) {
+                prev->next = next;
+            }
+            else {
+                broker->retained = next;
+            }
+            if (cur->topic != NULL) WOLFMQTT_FREE(cur->topic);
+            if (cur->payload != NULL) WOLFMQTT_FREE(cur->payload);
+            WOLFMQTT_FREE(cur);
+            if (broker->retained_count > 0) {
+                broker->retained_count--;
+            }
+        }
+        else {
+            prev = cur;
+        }
+        cur = next;
+    }
+#endif
+}
+
 static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     const byte* payload, word32 payload_len, MqttQoS qos, word32 expiry_sec)
 {
@@ -3164,6 +3218,10 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     if (broker == NULL || topic == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+    /* Drop expired entries first so they do not hold the cap against a new
+     * retained message. */
+    BrokerRetained_ReapExpired(broker, WOLFMQTT_BROKER_GET_TIME_S());
 #ifndef WOLFMQTT_STATIC_MEMORY
     cur = broker->retained;
 #endif

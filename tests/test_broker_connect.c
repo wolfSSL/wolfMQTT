@@ -1721,6 +1721,71 @@ TEST(broker_retained_list_capped)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* Expired retained messages must not hold the cap against a fresh retained
+ * publish. Pre-fix the cap was enforced before any expiry pruning, so a list
+ * full of expired entries rejected new retained topics with OUT_OF_MEMORY. */
+TEST(broker_retained_expired_freed_under_cap)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerRetainedMsg* rm;
+    int i;
+    byte pub[8];
+    static const byte connect[] = {
+        0x10, 0x0F,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x03, 'p', 'u', 'b'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    /* Fill the cap with distinct retained topics. */
+    for (i = 0; i < BROKER_MAX_RETAINED; i++) {
+        pub[0] = 0x31;                          /* PUBLISH, retain=1 */
+        pub[1] = 0x06;
+        pub[2] = 0x00; pub[3] = 0x03;
+        pub[4] = 'r';
+        pub[5] = (byte)('0' + (i / 10));
+        pub[6] = (byte)('0' + (i % 10));
+        pub[7] = 'x';
+        mock_client_input_append(0, pub, sizeof(pub));
+    }
+    for (i = 0; i < BROKER_MAX_RETAINED + 4; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
+
+    /* Test time is pinned to 0, so a node stamped at tick 1 with a 1s expiry
+     * already reads as expired at tick 0 - force every entry expired. */
+    for (rm = broker.retained; rm != NULL; rm = rm->next) {
+        rm->store_time = 1;
+        rm->expiry_sec = 1;
+    }
+
+    /* A new retained topic must now be accepted, reaping the expired ones. */
+    pub[0] = 0x31;
+    pub[1] = 0x06;
+    pub[2] = 0x00; pub[3] = 0x03;
+    pub[4] = 'n'; pub[5] = '0'; pub[6] = '0';
+    pub[7] = 'y';
+    mock_client_input_append(0, pub, sizeof(pub));
+    for (i = 0; i < 4; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Expired entries freed, only the fresh topic remains. */
+    ASSERT_EQ(1, broker.retained_count);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
@@ -2702,6 +2767,7 @@ int main(int argc, char** argv)
     RUN_TEST(broker_publish_before_connect_closes);
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_retained_list_capped);
+    RUN_TEST(broker_retained_expired_freed_under_cap);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_per_client_subscription_cap);
