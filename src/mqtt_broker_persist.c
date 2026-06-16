@@ -1251,6 +1251,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     word64 store_time;
     word32 expiry;
     byte qos;
+    WOLFMQTT_BROKER_TIME_T now;
 
     rc = wmqb_read_header(blob, blob_len, BROKER_PERSIST_NS_RETAINED,
             &body_len);
@@ -1269,6 +1270,17 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     topic_len = wmqb_r_u16(p); p += 2;
     if ((word32)(end - p) < (word32)topic_len + 4) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+
+    /* Skip records whose expiry already elapsed so they do not consume a
+     * retained slot / the cap at restore. Counted as skipped, not loaded.
+     * now >= store_time guards the unsigned subtraction against a backward
+     * clock step (mirrors the orphan-session restore sweep below). */
+    now = WOLFMQTT_BROKER_GET_TIME_S();
+    if (expiry > 0 &&
+            now >= (WOLFMQTT_BROKER_TIME_T)store_time &&
+            (now - (WOLFMQTT_BROKER_TIME_T)store_time) >= expiry) {
+        return 1;
     }
 
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -1311,6 +1323,14 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
 #else
     {
         BrokerRetainedMsg* m;
+        /* Enforce the same dynamic cap on restore that BrokerRetained_Store
+         * applies, otherwise a restart would reset retained_count to 0 and
+         * let a client add another BROKER_MAX_RETAINED topics (heap DoS).
+         * Return non-zero so the iterator counts it as skipped (not loaded)
+         * rather than silently hiding the dropped record. */
+        if (broker->retained_count >= BROKER_MAX_RETAINED) {
+            return 1;
+        }
         m = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(sizeof(*m));
         if (m == NULL) {
             return MQTT_CODE_ERROR_MEMORY;
@@ -1346,6 +1366,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         m->expiry_sec = expiry;
         m->next = broker->retained;
         broker->retained = m;
+        broker->retained_count++;
     }
 #endif
     return 0;

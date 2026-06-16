@@ -48,7 +48,7 @@
 /* Log-sanitization helper shared by the SN example clients. Exercised here
  * because the MQTT-SN REGISTER topic name decoded above is aliased straight
  * from the receive buffer (gateway-/attacker-controlled over UDP) and is fed
- * to a PRINTF sink by sn_reg_callback; this helper is the CWE-117 defense. */
+ * to a PRINTF sink by sn_reg_callback; this helper is the log defense. */
 #include "examples/mqtt_log.h"
 
 /* PRINT_BUFFER_SIZE is the payload clamp the SN example clients apply before
@@ -546,7 +546,7 @@ TEST(sn_register_no_room_for_terminator_rejected)
 
 TEST(sn_register_roundtrip_short_form)
 {
-    /* Report 3831: encode then decode a normal REGISTER and confirm every
+    /* Encode then decode a normal REGISTER and confirm every
      * field survives the round trip. "sensors/temp" is 12 bytes, so
      * total_len = 12 + 6 = 18 (<= 255 -> short, single-byte length). The decode
      * buffer is larger than the packet so the in-place NUL terminator fits. */
@@ -574,7 +574,7 @@ TEST(sn_register_roundtrip_short_form)
 
 TEST(sn_register_roundtrip_ind_form)
 {
-    /* Report 3831: same round trip but with an extended-length (IND) encoding.
+    /* Same round trip but with an extended-length (IND) encoding.
      * A 260-byte topic gives total_len = 260 + 6 = 266 (> 255), so the encoder
      * switches to the 3-byte length header (IND + 2 length bytes) and
      * total_len becomes 268. Confirms the decoder honors the IND form and that
@@ -606,9 +606,9 @@ TEST(sn_register_roundtrip_ind_form)
 }
 
 /* ============================================================================
- * mqtt_log_sanitize (CWE-117 log-injection defense)
+ * mqtt_log_sanitize (log-injection defense)
  *
- * Report 5663: the MQTT-SN REGISTER topic name decoded by SN_Decode_Register is
+ * The MQTT-SN REGISTER topic name decoded by SN_Decode_Register is
  * aliased straight from the UDP receive buffer with no control-character
  * filtering, then logged verbatim by sn_reg_callback's PRINTF. A spoofed
  * gateway can therefore inject forged log lines (CR/LF) or hijack the terminal
@@ -1149,7 +1149,7 @@ TEST(sn_encode_publish_null_args_rejected)
 
 TEST(sn_decode_publish_reserved_topic_type_rejected)
 {
-    /* Report 4659 PoC: flags=0x03 sets the reserved topic id type 0b11. The
+    /* flags=0x03 sets the reserved topic id type 0b11. The
      * pre-fix decoder returned 7 (success) with topic_type=3. */
     byte buf[7] = { 0x07, 0x0C, 0x03, 0x00, 0x01, 0x00, 0x00 };
     SN_Publish publish;
@@ -1239,7 +1239,7 @@ TEST(sn_decode_publish_null_args_rejected)
 
 TEST(sn_decode_publish_qos1_zero_packet_id_rejected)
 {
-    /* Report 4248 PoC: flags=0x20 -> QoS1, MsgId=0x0000. */
+    /* flags=0x20 -> QoS1, MsgId=0x0000. */
     byte buf[7] = { 0x07, 0x0C, 0x20, 0x00, 0x01, 0x00, 0x00 };
     SN_Publish publish;
     int rc;

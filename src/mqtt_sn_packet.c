@@ -198,7 +198,7 @@ int SN_Decode_Header(byte *rx_buf, int rx_buf_len,
             /* Bytes the declared packet leaves for the MsgId at
              * rx_buf + id_offset. Bound the read by total_len (the declared
              * packet length, already validated <= rx_buf_len above), not by
-             * rx_buf_len: this keeps the read inside the buffer (CWE-125) and
+             * rx_buf_len: this keeps the read inside the buffer and
              * additionally rejects a frame whose declared length stops short
              * of the MsgId rather than reading adjacent bytes. Evaluate as a
              * signed int and reject before the unsigned cast below, so a short
@@ -1332,7 +1332,7 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
      * MsgId so the matching PUBACK/PUBREC can be correlated. Reject MsgId=0
      * here; otherwise SN_Client_HandlePacket would emit a response carrying
      * MsgId=0 that no conformant gateway can match, leaving its retransmit
-     * timer to replay the same message (CWE-20). Mirrors the standard MQTT
+     * timer to replay the same message. Mirrors the standard MQTT
      * decoder guard in mqtt_packet.c. QoS 0 and QoS -1 (MQTT_QOS_3, the
      * connectionless publish) send no response and legitimately use MsgId=0,
      * so they are intentionally excluded. */

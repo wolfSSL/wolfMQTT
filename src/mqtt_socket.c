@@ -435,6 +435,12 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
             /* Setup the WolfSSL library */
             rc = wolfSSL_Init();
+            if (rc == WOLFSSL_SUCCESS) {
+                /* Record that this client incremented wolfSSL's global init
+                 * refcount so only it calls wolfSSL_Cleanup() on disconnect,
+                 * never tearing down wolfSSL for sibling clients. */
+                MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_WOLFSSL_INIT);
+            }
 
             /* Issue callback to allow setup of the wolfSSL_CTX and cert
                verification settings */
@@ -571,7 +577,13 @@ int MqttSocket_Disconnect(MqttClient *client)
             wolfSSL_CTX_free(client->tls.ctx);
             client->tls.ctx = NULL;
         }
-        wolfSSL_Cleanup();
+        /* Only balance a wolfSSL_Init() this client actually made; otherwise a
+         * non-TLS disconnect could drive the global refcount to 0 and tear
+         * wolfSSL down for other live clients in the same process. */
+        if (MqttClient_Flags(client, 0, 0) & MQTT_CLIENT_FLAG_WOLFSSL_INIT) {
+            wolfSSL_Cleanup();
+            MqttClient_Flags(client, MQTT_CLIENT_FLAG_WOLFSSL_INIT, 0);
+        }
         #endif
         MqttClient_Flags(client,
                 (MQTT_CLIENT_FLAG_IS_TLS | MQTT_CLIENT_FLAG_IS_DTLS), 0);

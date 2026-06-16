@@ -772,6 +772,28 @@ TEST(encode_publish_qos1_valid)
     ASSERT_TRUE(rc > 0);
 }
 
+/* The encoder must clamp the copied payload to buffer_len so a
+ * total_len larger than the bytes actually present cannot read past the
+ * source buffer (the broker fan-out OOB read). */
+TEST(encode_publish_clamps_payload_to_buffer_len)
+{
+    byte tx_buf[256];
+    byte payload[100];
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    XMEMSET(payload, 'x', sizeof(payload));
+    pub.topic_name = "t";
+    pub.qos = MQTT_QOS_0;
+    pub.buffer = payload;
+    pub.buffer_len = 10;   /* only 10 valid bytes present */
+    pub.total_len = 100;   /* wire-declared size exceeds buffer_len */
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(10, (int)pub.buffer_pos);
+}
+
 /* Verify the fixed-header flag bits (retain/QoS/dup) are actually emitted.
  * Covers deletion mutations of the retain / qos / duplicate branches in
  * MqttEncode_FixedHeader. */
@@ -1209,12 +1231,12 @@ TEST(decode_publish_topic_contains_u0000_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted (paired
- * with a Topic Alias property at the application layer). Wire shape:
- * PUBLISH | QoS 0, remain=4, topic_len=0, props_len=0, payload "x". */
-TEST(decode_publish_v5_empty_topic_accepted)
+/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted only when
+ * paired with a Topic Alias property. Wire: PUBLISH QoS 0, remain=7,
+ * topic_len=0, props_len=3, TOPIC_ALIAS(35)=1, payload "x". */
+TEST(decode_publish_v5_empty_topic_with_alias_accepted)
 {
-    byte buf[] = { 0x30, 0x04, 0x00, 0x00, 0x00, 'x' };
+    byte buf[] = { 0x30, 0x07, 0x00, 0x00, 0x03, 0x23, 0x00, 0x01, 'x' };
     MqttPublish pub;
     int rc;
 
@@ -1223,6 +1245,120 @@ TEST(decode_publish_v5_empty_topic_accepted)
     rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, pub.topic_name_len);
+    MqttProps_Free(pub.props);
+}
+
+/* [MQTT-3.3.2-8] A zero-length Topic Name with no Topic Alias property is a
+ * Protocol Error. Wire: PUBLISH QoS 0, remain=4, topic_len=0, props_len=0. */
+TEST(decode_publish_v5_empty_topic_no_alias_rejected)
+{
+    byte buf[] = { 0x30, 0x04, 0x00, 0x00, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [MQTT-3.8.2.1.2] A Subscription Identifier of 0 is reserved and a Protocol
+ * Error. Wire: PUBLISH QoS 0, topic "t", props_len=2, SUBSCRIPTION_ID(11)=0. */
+TEST(decode_publish_v5_subscription_id_zero_rejected)
+{
+    byte buf[] = { 0x30, 0x07, 0x00, 0x01, 't', 0x02, 0x0B, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. Wire: PUBLISH QoS 0,
+ * topic "t", props_len=3, TOPIC_ALIAS(35)=0. */
+TEST(decode_publish_v5_topic_alias_zero_rejected)
+{
+    byte buf[] = { 0x30, 0x08, 0x00, 0x01, 't', 0x03, 0x23, 0x00, 0x00, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [MQTT-3.3.2-14] A Response Topic is a Topic Name and MUST NOT contain
+ * wildcards. Wire: PUBLISH QoS 0, topic "t", props_len=6, RESP_TOPIC(8)="a/#". */
+TEST(decode_publish_v5_response_topic_wildcard_rejected)
+{
+    byte buf[] = { 0x30, 0x0B, 0x00, 0x01, 't', 0x06,
+                   0x08, 0x00, 0x03, 'a', '/', '#', 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* A single message may not carry more than the internal
+ * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
+ * shared property pool. 40 User Property entries exceeds that cap. The cap
+ * returns MQTT_CODE_ERROR_PROPERTY, distinct from the MQTT_CODE_ERROR_MEMORY a
+ * pool-exhaustion would have produced before the fix. */
+TEST(decode_publish_v5_property_count_capped)
+{
+    byte buf[300];
+    MqttPublish pub;
+    int rc, i, pos;
+    /* 40 User Property entries, 7 bytes each (k=v). */
+    word32 nprops = 40;
+    word32 props_len = nprops * 7;
+    word32 remain = 3 + 2 + props_len; /* topic(3) + props_vbi(2) + props */
+
+    pos = 0;
+    buf[pos++] = 0x30;                              /* PUBLISH QoS 0 */
+    buf[pos++] = (byte)((remain & 0x7F) | 0x80);    /* remain VBI low */
+    buf[pos++] = (byte)(remain >> 7);               /* remain VBI high */
+    buf[pos++] = 0x00; buf[pos++] = 0x01; buf[pos++] = 't'; /* topic "t" */
+    buf[pos++] = (byte)((props_len & 0x7F) | 0x80); /* props_len VBI low */
+    buf[pos++] = (byte)(props_len >> 7);            /* props_len VBI high */
+    for (i = 0; i < (int)nprops; i++) {
+        buf[pos++] = 0x26;                          /* User Property */
+        buf[pos++] = 0x00; buf[pos++] = 0x01; buf[pos++] = 'k';
+        buf[pos++] = 0x00; buf[pos++] = 0x01; buf[pos++] = 'v';
+    }
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, pos, &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* [MQTT v5 2.2.2.2] A singleton property (here TOPIC_ALIAS) appearing twice is
+ * a Protocol Error. Wire: PUBLISH QoS 0, topic "t", props_len=6, two
+ * TOPIC_ALIAS(35)=1 entries. */
+TEST(decode_publish_v5_duplicate_singleton_prop_rejected)
+{
+    byte buf[] = { 0x30, 0x0A, 0x00, 0x01, 't', 0x06,
+                   0x23, 0x00, 0x01, 0x23, 0x00, 0x01 };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(pub.props);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -3052,6 +3188,34 @@ TEST(decode_subscribe_v5_empty_payload_rejected)
     rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* A v5 SUBSCRIBE whose Properties block decodes cleanly but whose topic
+ * filter is malformed must not leak the decoded property list. The decoder
+ * fails on the bad filter after allocating the User Property; without the
+ * cleanup the broker caller returns before freeing props. Catches the
+ * structural invariant: sub.props == NULL on error. */
+TEST(decode_subscribe_v5_props_freed_on_bad_filter)
+{
+    byte rx_buf[] = {
+        0x82, 0x0F,                        /* SUBSCRIBE, remain_len = 15 */
+        0x00, 0x01,                        /* packet_id */
+        0x07,                              /* props_len VBI = 7 */
+        0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v', /* User Property k=v */
+        0x00, 0x02, 'a', '#',              /* bad filter "a#" */
+        0x00                               /* options */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(sub.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3] Topic Filter syntax
@@ -3367,6 +3531,31 @@ TEST(decode_unsubscribe_v5_empty_payload_rejected)
     unsub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* A v5 UNSUBSCRIBE whose Properties block decodes cleanly but whose topic
+ * filter is malformed must not leak the decoded property list. Mirrors the
+ * SUBSCRIBE case: catches the invariant unsub.props == NULL on error. */
+TEST(decode_unsubscribe_v5_props_freed_on_bad_filter)
+{
+    byte rx_buf[] = {
+        0xA2, 0x0E,                        /* UNSUBSCRIBE, remain_len = 14 */
+        0x00, 0x01,                        /* packet_id */
+        0x07,                              /* props_len VBI = 7 */
+        0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v', /* User Property k=v */
+        0x00, 0x02, 'a', '#'               /* bad filter "a#" */
+    };
+    MqttUnsubscribe unsub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    unsub.topics = topic_arr;
+    unsub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Unsubscribe(rx_buf, (int)sizeof(rx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(unsub.props);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -3801,6 +3990,22 @@ TEST(decode_puback_v5_with_reason_code_accepted)
     ASSERT_EQ(0, resp.reason_code);
     MqttProps_Free(resp.props);
 }
+
+/* Remaining Length advertises a Reason Code but the supplied buffer stops
+ * right after the Packet Identifier. The decoder must reject the short frame
+ * instead of reading the reason-code byte out of bounds. */
+TEST(decode_puback_v5_reason_code_past_buf_rejected)
+{
+    byte buf[4] = { 0x40, 0x03, 0x00, 0x05 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -3930,6 +4135,72 @@ TEST(decode_unsuback_malformed_remain_len_one)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
+/* A broker advertising a Remaining Length larger than the bytes actually
+ * received must be rejected, not decoded - otherwise reason_code_count would
+ * span past the buffer and the client's rejection scan reads out of bounds. */
+TEST(decode_unsuback_truncated_remain_len_rejected)
+{
+    /* Remaining Length = 10, but only 3 bytes follow the 2-byte header. */
+    byte buf[] = { 0xB0, 0x0A, 0x00, 0x01, 0x00 };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+#ifdef WOLFMQTT_V5
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+#endif
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* A v5 UNSUBACK carries one reason code per topic filter after the
+ * properties block. The decoder must expose the count and bytes so the
+ * client can detect a rejection (high-bit code), mirroring SUBSCRIBE. */
+TEST(decode_unsuback_v5_reason_codes)
+{
+    byte buf[] = {
+        0xB0, 0x05,                        /* UNSUBACK, remain_len = 5 */
+        0x00, 0x01,                        /* packet_id */
+        0x00,                              /* props_len = 0 */
+        0x00, 0x87                         /* success, NOT_AUTHORIZED */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(2, ack.reason_code_count);
+    ASSERT_TRUE(ack.reason_codes != NULL);
+    ASSERT_EQ(0x00, ack.reason_codes[0]);
+    ASSERT_EQ(0x87, ack.reason_codes[1]);
+}
+
+/* A v5 UNSUBACK whose property length runs past its own Remaining Length must
+ * be rejected even when the caller buffer holds trailing bytes from the next
+ * packet: consuming them would push past the packet and underflow
+ * reason_code_count. props_len=3 but only one packet byte follows it. */
+TEST(decode_unsuback_v5_props_past_remain_len_rejected)
+{
+    byte buf[] = {
+        0xB0, 0x04,                        /* UNSUBACK, remain_len = 4 */
+        0x00, 0x01,                        /* packet_id */
+        0x03,                              /* props_len = 3 (overruns packet) */
+        0x1F,                              /* last byte inside Remaining Length */
+        0x00, 0x00                         /* trailing bytes from next packet */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* ============================================================================
  * MqttDecode_Ping (PINGRESP) and MqttDecode_Disconnect length validation
  *
@@ -4041,6 +4312,20 @@ TEST(decode_disconnect_v5_with_reason_code_accepted)
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, disc.reason_code);
     MqttProps_Free(disc.props);
+}
+
+/* Remaining Length advertises a Reason Code but the supplied buffer is only
+ * the fixed header. The decoder must reject the short frame instead of
+ * reading the reason-code byte out of bounds. */
+TEST(decode_disconnect_v5_reason_code_past_buf_rejected)
+{
+    byte buf[2] = { 0xE0, 0x01 };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -4493,6 +4778,23 @@ TEST(auth_v5_invalid_reason_code_rejected)
     dec_len = MqttDecode_Auth(buf, 4, &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, dec_len);
 }
+
+/* Remaining Length advertises a Reason Code but the supplied buffer is only
+ * the fixed header. The decoder must reject the short frame instead of
+ * reading the reason-code byte out of bounds. */
+TEST(decode_auth_v5_reason_code_past_buf_rejected)
+{
+    byte buf[2];
+    MqttAuth dec;
+    int dec_len;
+
+    buf[0] = (byte)(MQTT_PACKET_TYPE_AUTH << 4);
+    buf[1] = 0x01; /* Remaining Length claims a reason-code byte */
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec_len = MqttDecode_Auth(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, dec_len);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -4575,6 +4877,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_qos2_packet_id_zero);
     RUN_TEST(encode_publish_qos0_packet_id_zero_ok);
     RUN_TEST(encode_publish_qos1_valid);
+    RUN_TEST(encode_publish_clamps_payload_to_buffer_len);
     RUN_TEST(encode_publish_qos1_retain_flags_in_header);
     RUN_TEST(encode_publish_qos2_duplicate_flags_in_header);
     RUN_TEST(encode_publish_qos0_no_flags_in_header);
@@ -4601,7 +4904,13 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_wildcard_plus_topic_rejected);
     RUN_TEST(decode_publish_topic_contains_u0000_rejected);
 #ifdef WOLFMQTT_V5
-    RUN_TEST(decode_publish_v5_empty_topic_accepted);
+    RUN_TEST(decode_publish_v5_empty_topic_with_alias_accepted);
+    RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
+    RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
+    RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
+    RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
+    RUN_TEST(decode_publish_v5_property_count_capped);
+    RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
@@ -4710,6 +5019,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_empty_payload_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_empty_payload_rejected);
+    RUN_TEST(decode_subscribe_v5_props_freed_on_bad_filter);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_options_byte_qos_extracted);
@@ -4726,6 +5036,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsubscribe_bad_plus_placement_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_unsubscribe_v5_empty_payload_rejected);
+    RUN_TEST(decode_unsubscribe_v5_props_freed_on_bad_filter);
 #endif
 #endif
 
@@ -4760,6 +5071,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_puback_null_resp_extra_payload_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_puback_v5_with_reason_code_accepted);
+    RUN_TEST(decode_puback_v5_reason_code_past_buf_rejected);
 #endif
 
     /* MqttEncode_PublishResp fixed-header QoS bits */
@@ -4772,6 +5084,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_valid);
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
+    RUN_TEST(decode_unsuback_truncated_remain_len_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_unsuback_v5_reason_codes);
+    RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
+#endif
 
     /* MqttDecode_Ping (PINGRESP) length validation */
     RUN_TEST(decode_pingresp_valid);
@@ -4786,6 +5103,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected);
     RUN_TEST(decode_disconnect_v5_with_reason_code_accepted);
+    RUN_TEST(decode_disconnect_v5_reason_code_past_buf_rejected);
 #endif
 
     /* Fixed-header reserved-flag validation [MQTT-2.2.2-2] */
@@ -4814,6 +5132,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(auth_v5_reauth_decodes_without_error);
     RUN_TEST(auth_v5_success_remaining_length_zero);
     RUN_TEST(auth_v5_invalid_reason_code_rejected);
+    RUN_TEST(decode_auth_v5_reason_code_past_buf_rejected);
 #endif
 
     TEST_SUITE_END();

@@ -35,6 +35,7 @@
 #include "wiot.h"
 #include "examples/mqttexample.h"
 #include "examples/mqttnet.h"
+#include "examples/mqtt_log.h"
 
 /* Locals */
 static int mStopRead = 0;
@@ -82,6 +83,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
 
@@ -98,7 +100,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf), msg->qos, msg->total_len);
 
         /* for test mode: check if TEST_MESSAGE was received */
         if (mqttCtx->test_mode) {
@@ -117,7 +119,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     PRINTF("Payload (%d - %d) printing %d bytes:" LINE_END "%s",
-        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
+        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         PRINTF("MQTT Message: Done");

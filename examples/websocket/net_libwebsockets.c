@@ -68,8 +68,13 @@ static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
     else if (reason == LWS_CALLBACK_CLIENT_CONNECTION_ERROR) {
         net->status = -1;
     }
-    else if (reason == LWS_CALLBACK_CLOSED) {
+    else if (reason == LWS_CALLBACK_CLOSED ||
+             reason == LWS_CALLBACK_CLIENT_CLOSED) {
         net->status = 0;
+        /* libwebsockets frees the wsi after this callback returns; clear the
+         * dangling pointer so NetWebsocket_Disconnect's `if (net->wsi)` guard
+         * skips lws_close_reason() on freed memory. */
+        net->wsi = NULL;
     }
     else if (reason == LWS_CALLBACK_CLIENT_RECEIVE) {
         if (in && len > 0) {
@@ -185,8 +190,13 @@ int NetWebsocket_Connect(void *ctx, const char* host, word16 port,
     /* Set SSL options for the connection if TLS is enabled */
     if (mqttCtx && mqttCtx->use_tls) {
         conn_info.ssl_connection = LCCSCF_USE_SSL;
-        conn_info.ssl_connection |= LCCSCF_ALLOW_SELFSIGNED;
-        conn_info.ssl_connection |= LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
+        /* Only relax verification when no CA was supplied (dev/self-signed).
+         * When the operator provides a CA via -A, perform full chain and
+         * hostname verification rather than silently disabling it. */
+        if (mqttCtx->ca_file == NULL) {
+            conn_info.ssl_connection |= LCCSCF_ALLOW_SELFSIGNED;
+            conn_info.ssl_connection |= LCCSCF_SKIP_SERVER_CERT_HOSTNAME_CHECK;
+        }
     }
 #endif /* ENABLE_MQTT_TLS */
 

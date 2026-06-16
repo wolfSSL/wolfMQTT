@@ -103,7 +103,8 @@ typedef int (*MqttPublishCb)(MqttPublish* publish);
 enum MqttClientFlags {
     MQTT_CLIENT_FLAG_IS_CONNECTED = 0x01 << 0,
     MQTT_CLIENT_FLAG_IS_TLS       = 0x01 << 1,
-    MQTT_CLIENT_FLAG_IS_DTLS      = 0x01 << 2
+    MQTT_CLIENT_FLAG_IS_DTLS      = 0x01 << 2,
+    MQTT_CLIENT_FLAG_WOLFSSL_INIT = 0x01 << 3 /* this client called wolfSSL_Init */
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.

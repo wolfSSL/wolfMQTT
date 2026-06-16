@@ -832,6 +832,8 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
 {
     int rc = 0;
     int total, tmp;
+    int prop_count = 0;
+    word32 seen_lo = 0, seen_hi = 0; /* singleton-property duplicate guard */
     MqttProp* cur_prop;
     byte* buf = pbuf;
 
@@ -839,6 +841,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
 
     while (((int)prop_len > 0) && (rc >= 0))
     {
+        /* Bound the number of properties a single message may carry so a peer
+         * cannot saturate the shared property pool. */
+        if (++prop_count > MQTT_MAX_PROPS) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+            break;
+        }
         /* Allocate a structure and add to head. */
         cur_prop = MqttProps_Add(props);
         if (cur_prop == NULL) {
@@ -873,6 +881,30 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             break;
         }
 
+        /* [MQTT v5 2.2.2.2] Every property except User Property and
+         * Subscription Identifier MUST appear at most once; a duplicate is a
+         * Protocol Error. */
+        if (cur_prop->type != MQTT_PROP_USER_PROP &&
+                cur_prop->type != MQTT_PROP_SUBSCRIPTION_ID) {
+            word32 bit;
+            if (cur_prop->type < 32) {
+                bit = (word32)1 << cur_prop->type;
+                if (seen_lo & bit) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                    break;
+                }
+                seen_lo |= bit;
+            }
+            else {
+                bit = (word32)1 << (cur_prop->type - 32);
+                if (seen_hi & bit) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                    break;
+                }
+                seen_hi |= bit;
+            }
+        }
+
         switch (gPropMatrix[cur_prop->type].data)
         {
             case MQTT_DATA_TYPE_BYTE:
@@ -902,6 +934,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 buf += tmp;
                 total += tmp;
                 prop_len -= (word32)tmp;
+                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_TOPIC_ALIAS &&
+                        cur_prop->data_short == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_INT:
@@ -942,6 +979,14 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     buf += tmp;
                     total += tmp;
                     prop_len -= (word32)tmp;
+                    /* [MQTT-3.3.2-14] A Response Topic is a Topic Name and
+                     * MUST NOT contain wildcard characters. */
+                    if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
+                            !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                                cur_prop->data_str.len,
+                                MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    }
                 }
                 else {
                     /* Invalid length */
@@ -964,6 +1009,12 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 buf += tmp;
                 total += tmp;
                 prop_len -= (word32)tmp;
+                /* [MQTT-3.8.2.1.2] A Subscription Identifier of 0 is
+                 * reserved and a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_SUBSCRIPTION_ID &&
+                        cur_prop->data_int == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_BINARY:
@@ -1896,6 +1947,14 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
         if (payload_len > (tx_buf_len - (header_len + variable_len))) {
             payload_len = (tx_buf_len - (header_len + variable_len));
         }
+        /* Never copy more than the bytes actually present in publish->buffer.
+         * total_len carries the wire-declared size, which can exceed the
+         * decoded buffer_len; clamping here prevents an OOB read past the
+         * source buffer during fan-out. */
+        if (publish->buffer_len > 0 &&
+                publish->buffer_len < (word32)payload_len) {
+            payload_len = (int)publish->buffer_len;
+        }
         if (tx_payload != NULL) {
             XMEMCPY(tx_payload, publish->buffer, payload_len);
         }
@@ -1990,6 +2049,8 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
     if (publish->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         word32 props_len = 0;
         int tmp;
+        MqttProp* prop_iter;
+        byte has_topic_alias = 0;
 
         /* Decode Length of Properties */
         if (rx_buf_len < (rx_payload - rx_buf)) {
@@ -2014,6 +2075,23 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
         }
         else {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
+
+        /* [MQTT-3.3.2-8] v5 section 3.3.2.3.4: a zero-length Topic Name is
+         * only valid when a Topic Alias property supplies the topic. */
+        if (publish->topic_name_len == 0) {
+            for (prop_iter = publish->props; prop_iter != NULL;
+                    prop_iter = prop_iter->next) {
+                if (prop_iter->type == MQTT_PROP_TOPIC_ALIAS) {
+                    has_topic_alias = 1;
+                    break;
+                }
+            }
+            if (!has_topic_alias) {
+                MqttProps_Free(publish->props);
+                publish->props = NULL;
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
         }
     }
 #endif
@@ -2192,6 +2270,11 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         publish_resp->props = NULL;
         if (publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             if (remain_len > MQTT_DATA_LEN_SIZE) {
+                /* remain_len is attacker-controlled; confirm the reason-code
+                 * byte was received before reading past the buffer */
+                if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
                 /* Decode the Reason Code */
                 publish_resp->reason_code = *rx_payload++;
             }
@@ -2425,26 +2508,30 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             byte options;
             word16 filter_len = 0;
             if (subscribe->topic_count >= MAX_MQTT_TOPICS) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                break;
             }
             topic = &subscribe->topics[subscribe->topic_count];
             tmp = MqttDecode_String(rx_payload, &topic->topic_filter,
                     &filter_len, (word32)(rx_end - rx_payload));
             if (tmp < 0) {
-                return tmp;
+                break;
             }
             if (rx_payload + tmp > rx_end) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                break;
             }
             /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3] Reject
              * empty filters and malformed wildcard placement. */
             if (!MqttPacket_TopicFilterValid(topic->topic_filter,
                                              filter_len)) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                break;
             }
             rx_payload += tmp;
             if (rx_payload >= rx_end) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                break;
             }
             options = *rx_payload++;
             /* MQTT 3.1.1 section 3.8.3.1: bits 2-7 of the SUBSCRIBE options byte
@@ -2461,7 +2548,8 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
                 if ((options & 0xC0) != 0 ||
                     (options & 0x03) > MQTT_QOS_2 ||
                     ((options >> 4) & 0x03) == 0x03) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
                 }
             }
             else
@@ -2469,7 +2557,8 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             {
                 if ((options & 0xFC) != 0 ||
                     (options & 0x03) > MQTT_QOS_2) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
                 }
             }
             topic->qos = (MqttQoS)(options & 0x03);
@@ -2479,8 +2568,18 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
         /* [MQTT-3.8.3-3] The payload of a SUBSCRIBE packet MUST contain at
          * least one Topic Filter / QoS pair. v5 section 3.8.3 carries the same
          * minimum-cardinality requirement. */
-        if (subscribe->topic_count == 0) {
-            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        if (tmp >= 0 && subscribe->topic_count == 0) {
+            tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+        if (tmp < 0) {
+        #ifdef WOLFMQTT_V5
+            /* Free any v5 properties decoded above so a malformed topic
+             * filter cannot leak the property list; the broker caller only
+             * frees props on the success path. */
+            MqttProps_Free(subscribe->props);
+            subscribe->props = NULL;
+        #endif
+            return tmp;
         }
     }
 
@@ -2783,23 +2882,26 @@ int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubs
             MqttTopic *topic;
             word16 filter_len = 0;
             if (unsubscribe->topic_count >= MAX_MQTT_TOPICS) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                break;
             }
             topic = &unsubscribe->topics[unsubscribe->topic_count];
             tmp = MqttDecode_String(rx_payload, &topic->topic_filter,
                     &filter_len, (word32)(rx_end - rx_payload));
             if (tmp < 0) {
-                return tmp;
+                break;
             }
             if (rx_payload + tmp > rx_end) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                break;
             }
             /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3]: an
              * UNSUBSCRIBE Topic Filter must obey the same syntax rules
              * as a SUBSCRIBE Topic Filter. */
             if (!MqttPacket_TopicFilterValid(topic->topic_filter,
                                              filter_len)) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                break;
             }
             rx_payload += tmp;
             unsubscribe->topic_count++;
@@ -2808,8 +2910,18 @@ int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubs
         /* [MQTT-3.10.3-2] The Payload of an UNSUBSCRIBE packet MUST
          * contain at least one Topic Filter. v5 section 3.10.3 carries the same
          * minimum-cardinality requirement. */
-        if (unsubscribe->topic_count == 0) {
-            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        if (tmp >= 0 && unsubscribe->topic_count == 0) {
+            tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+        if (tmp < 0) {
+        #ifdef WOLFMQTT_V5
+            /* Free any v5 properties decoded above so a malformed topic
+             * filter cannot leak the property list; the broker caller only
+             * frees props on the success path. */
+            MqttProps_Free(unsubscribe->props);
+            unsubscribe->props = NULL;
+        #endif
+            return tmp;
         }
     }
 
@@ -2838,6 +2950,14 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         return header_len;
     }
 
+    /* Reject a truncated read: a broker advertising a Remaining Length larger
+     * than the bytes actually received would otherwise make reason_code_count
+     * (derived from remain_len) point past the buffer, so the caller's
+     * rejection scan reads out of bounds. */
+    if (rx_buf_len < header_len + remain_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+
     /* Validate remain_len (need at least packet_id) */
     if (remain_len < MQTT_DATA_LEN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
@@ -2857,26 +2977,29 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 #ifdef WOLFMQTT_V5
         unsubscribe_ack->props = NULL;
         if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Bound properties by the packet end, not rx_buf_len: a caller
+             * buffer may hold bytes from the next packet, and consuming them
+             * here would push rx_payload past this packet and underflow
+             * reason_code_count to a huge word16. */
+            byte* packet_end = &rx_buf[header_len + remain_len];
+
             if (remain_len > MQTT_DATA_LEN_SIZE) {
                 word32 props_len = 0;
                 int props_tmp;
 
                 /* Decode Length of Properties */
-                if (rx_buf_len < (rx_payload - rx_buf)) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-                }
                 props_tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                        (word32)(rx_buf_len - (rx_payload - rx_buf)));
+                        (word32)(packet_end - rx_payload));
                 if (props_tmp < 0)
                     return props_tmp;
 
-                if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
+                if (props_len <= (word32)(packet_end - (rx_payload + props_tmp))) {
                     rx_payload += props_tmp;
                     if (props_len > 0) {
                         /* Decode the Properties */
                         props_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK,
                                 &unsubscribe_ack->props, rx_payload,
-                                (word32)(rx_buf_len - (rx_payload - rx_buf)),
+                                (word32)(packet_end - rx_payload),
                                 props_len);
                         if (props_tmp < 0)
                             return props_tmp;
@@ -2888,8 +3011,13 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                 }
             }
 
-            /* Reason codes are stored in the payload */
+            /* Reason codes are stored in the payload, one per topic filter */
+            if (rx_payload > packet_end) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             unsubscribe_ack->reason_codes = rx_payload;
+            unsubscribe_ack->reason_code_count =
+                (word16)(packet_end - rx_payload);
         }
 #endif
     }
@@ -3190,6 +3318,11 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
     disc->props = NULL;
     if (remain_len > 0) {
+        /* remain_len is attacker-controlled; confirm the reason-code byte
+         * was received before reading past the buffer */
+        if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         /* Decode variable header */
         disc->reason_code = *rx_payload++;
 
@@ -3324,6 +3457,11 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 
     auth->props = NULL;
     if (remain_len > 0) {
+        /* remain_len is attacker-controlled; confirm the reason-code byte
+         * was received before reading past the buffer */
+        if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         /* Decode variable header */
         auth->reason_code = *rx_payload++;
         if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
@@ -3538,8 +3676,11 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 {
     int rc;
 #ifdef WOLFMQTT_V5
-    if ((client->packet_sz_max > 0) && (tx_buf_len >
-        (int)client->packet_sz_max))
+    /* Compare unsigned: packet_sz_max is word32 and a malicious CONNACK can
+     * set it above INT_MAX, where the old (int) cast turned it negative and
+     * wedged every write. */
+    if ((client->packet_sz_max > 0) && (tx_buf_len > 0) &&
+        ((word32)tx_buf_len > client->packet_sz_max))
     {
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }

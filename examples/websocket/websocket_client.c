@@ -27,6 +27,7 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttnet.h"
 #include "examples/mqttexample.h"
+#include "examples/mqtt_log.h"
 #include "examples/websocket/net_libwebsockets.h"
 #include <signal.h>
 #include <time.h>
@@ -46,6 +47,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
         byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
 
     (void)client;
@@ -61,7 +63,8 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print topic */
         printf("MQTT Message: Topic %s, Qos %d, Len %u",
-                buf, msg->qos, msg->total_len);
+                mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf),
+                msg->qos, msg->total_len);
     }
 
     /* Print message payload */
@@ -73,7 +76,8 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     buf[len] = '\0'; /* Make sure it's null terminated */
 
     printf("Payload (%d - %d): %s\n",
-            msg->buffer_pos, msg->buffer_pos + msg->buffer_len, buf);
+            msg->buffer_pos, msg->buffer_pos + msg->buffer_len,
+            mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         printf("MQTT Message: Done\n");

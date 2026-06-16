@@ -28,6 +28,7 @@
 
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttport.h"
+#include "examples/mqtt_log.h"
 #include "mqttsimple.h"
 
 /* Requires BSD Style Socket */
@@ -84,6 +85,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     byte msg_new, byte msg_done)
 {
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
 
     (void)client;
@@ -99,7 +101,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf), msg->qos, msg->total_len);
     }
 
     /* Print message payload */
@@ -110,7 +112,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     PRINTF("Payload (%d - %d) printing %d bytes:" LINE_END "%s",
-        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
+        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         PRINTF("MQTT Message: Done");
@@ -295,13 +297,18 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
             wolfSSL_ERR_error_string(store->error, buffer) : "none");
     PRINTF("  Subject's domain name is %s", store->domain);
 
+#ifdef WOLFMQTT_ALLOW_INSECURE_TLS
+    /* Development/testing override only: accept any certificate. MUST NOT be
+     * defined in production builds - it disables server authentication. */
     if (store->error != 0) {
-        /* Allowing to continue */
-        /* Should check certificate and return 0 if not okay */
-        PRINTF("  Allowing cert anyways");
+        PRINTF("  Allowing cert anyways (WOLFMQTT_ALLOW_INSECURE_TLS)");
     }
-
     return 1;
+#else
+    /* Propagate wolfSSL's chain-validation result so a bad certificate
+     * (self-signed, expired, wrong host, untrusted CA) fails the handshake. */
+    return preverify;
+#endif
 }
 
 /* Use this callback to setup TLS certificates and verify callbacks */

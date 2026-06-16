@@ -51,6 +51,7 @@
 #include "awsiot.h"
 #include "examples/mqttexample.h"
 #include "examples/mqttnet.h"
+#include "examples/mqtt_log.h"
 #include <wolfmqtt/version.h>
 
 /* Locals */
@@ -291,11 +292,18 @@ static int mqtt_aws_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
         PRINTF("  Rejecting cert: verification must succeed under"
                " WOLFSSL_NO_ASN_STRICT");
         return 0;
+#elif defined(WOLFMQTT_ALLOW_INSECURE_TLS)
+        /* Development/testing override only: strict ASN parsing drops
+         * Starfield Services Root CA G2 (serialNumber=0), so the chain can
+         * legitimately fail here. Accept anyway to keep the demo running.
+         * MUST NOT be defined in production - it disables authentication. */
+        PRINTF("  Allowing cert anyways (WOLFMQTT_ALLOW_INSECURE_TLS)");
 #else
-        /* Strict ASN parsing drops Starfield Services Root CA G2
-         * (serialNumber=0), so chain verification can legitimately
-         * fail here. Keep the demo running. */
-        PRINTF("  Allowing cert anyways");
+        /* Reject on any verification error by default. To run the AWS IoT
+         * demo against the live endpoint, build with WOLFSSL_NO_ASN_STRICT
+         * (loads the full trust bundle) or supply a trusted chain. */
+        PRINTF("  Rejecting cert: verification failed");
+        return 0;
 #endif
     }
 
@@ -352,6 +360,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 {
     MQTTCtx* mqttCtx = (MQTTCtx*)client->ctx;
     byte buf[PRINT_BUFFER_SIZE+1];
+    char safebuf[PRINT_BUFFER_SIZE+1];
     word32 len;
 
     (void)mqttCtx;
@@ -367,7 +376,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 
         /* Print incoming message */
         PRINTF("MQTT Message: Topic %s, Qos %d, Len %u",
-            buf, msg->qos, msg->total_len);
+            mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf), msg->qos, msg->total_len);
     }
 
     /* Print message payload */
@@ -378,7 +387,7 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
     XMEMCPY(buf, msg->buffer, len);
     buf[len] = '\0'; /* Make sure its null terminated */
     PRINTF("Payload (%d - %d) printing %d bytes:" LINE_END "%s",
-        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, buf);
+        msg->buffer_pos, msg->buffer_pos + msg->buffer_len, len, mqtt_log_sanitize(safebuf, (word32)sizeof(safebuf), (char*)buf));
 
     if (msg_done) {
         PRINTF("MQTT Message: Done");
@@ -395,11 +404,30 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 /* The property callback is called after decoding a packet that contains at
    least one property. The property list is deallocated after returning from
    the callback. */
+/* Copy a length-delimited, broker-controlled property string into dst and
+ * sanitize it for safe logging. */
+static const char* awsiot_log_prop(char* dst, word32 dstLen,
+    const char* src, word32 srcLen)
+{
+    char tmp[PRINT_BUFFER_SIZE + 1];
+    word32 n = srcLen;
+    if (n > PRINT_BUFFER_SIZE) {
+        n = PRINT_BUFFER_SIZE;
+    }
+    if (src != NULL && n > 0) {
+        XMEMCPY(tmp, src, n);
+    }
+    tmp[n] = '\0';
+    return mqtt_log_sanitize(dst, dstLen, tmp);
+}
+
 static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
 {
     MqttProp *prop = head;
     int rc = 0;
     MQTTCtx* mqttCtx;
+    char safebuf[PRINT_BUFFER_SIZE + 1];
+    char safebuf2[PRINT_BUFFER_SIZE + 1];
 
     if ((client == NULL) || (client->ctx == NULL)) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -447,14 +475,17 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                 break;
 
             case MQTT_PROP_REASON_STR:
-                PRINTF("Reason String: %.*s",
-                        prop->data_str.len, prop->data_str.str);
+                PRINTF("Reason String: %s",
+                        awsiot_log_prop(safebuf, (word32)sizeof(safebuf),
+                            prop->data_str.str, prop->data_str.len));
                 break;
 
             case MQTT_PROP_USER_PROP:
-                PRINTF("User property: key=\"%.*s\", value=\"%.*s\"",
-                        prop->data_str.len, prop->data_str.str,
-                        prop->data_str2.len, prop->data_str2.str);
+                PRINTF("User property: key=\"%s\", value=\"%s\"",
+                        awsiot_log_prop(safebuf, (word32)sizeof(safebuf),
+                            prop->data_str.str, prop->data_str.len),
+                        awsiot_log_prop(safebuf2, (word32)sizeof(safebuf2),
+                            prop->data_str2.str, prop->data_str2.len));
                 break;
 
             case MQTT_PROP_ASSIGNED_CLIENT_ID:

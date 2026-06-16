@@ -116,6 +116,72 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
     #define WBLOG_DBG(b, ...)   WBLOG(b, BROKER_LOG_DEBUG, __VA_ARGS__)
 #endif
 
+#ifndef WOLFMQTT_BROKER_NO_LOG
+#define BROKER_LOG_SAN_SZ   128 /* per-string scratch size */
+#define BROKER_LOG_SAN_POOL 4   /* distinct buffers per log statement */
+
+/* Sanitize a peer-controlled string (topic, filter, client_id, cert CN, ...)
+ * before it reaches a PRINTF log sink. Control bytes (< 0x20 and
+ * DEL 0x7f) become printable escapes so a remote peer cannot inject forged log
+ * lines (CR/LF) or hijack the operator terminal (ANSI ESC). The result is
+ * returned from a small rotating pool of static buffers so several sanitized
+ * arguments can appear in one log statement; the broker log path is single
+ * threaded (as is PRINTF itself). Output is NUL-terminated and truncated to
+ * fit. NULL src yields "(null)". */
+static const char* BrokerLog_Sanitize(const char* src)
+{
+    static const char hex_digits[] = "0123456789abcdef";
+    static char pool[BROKER_LOG_SAN_POOL][BROKER_LOG_SAN_SZ];
+    static int pool_idx = 0;
+    char* dst = pool[pool_idx];
+    word32 di = 0;
+
+    pool_idx = (pool_idx + 1) % BROKER_LOG_SAN_POOL;
+
+    if (src == NULL) {
+        src = "(null)";
+    }
+
+    while (*src != '\0') {
+        byte c = (byte)*src++;
+        char rep[4];
+        word32 repLen = 0;
+        word32 j;
+
+        switch (c) {
+            case '\r': rep[0] = '\\'; rep[1] = 'r'; repLen = 2; break;
+            case '\n': rep[0] = '\\'; rep[1] = 'n'; repLen = 2; break;
+            case '\t': rep[0] = '\\'; rep[1] = 't'; repLen = 2; break;
+            case '\v': rep[0] = '\\'; rep[1] = 'v'; repLen = 2; break;
+            case 0x1b: rep[0] = '\\'; rep[1] = 'e'; repLen = 2; break;
+            default:
+                if (c < 0x20 || c == 0x7f) {
+                    rep[0] = '\\';
+                    rep[1] = 'x';
+                    rep[2] = hex_digits[(c >> 4) & 0x0f];
+                    rep[3] = hex_digits[c & 0x0f];
+                    repLen = 4;
+                }
+                else {
+                    rep[0] = (char)c;
+                    repLen = 1;
+                }
+                break;
+        }
+
+        if (di + repLen + 1 > BROKER_LOG_SAN_SZ) {
+            break;
+        }
+        for (j = 0; j < repLen; j++) {
+            dst[di++] = rep[j];
+        }
+    }
+
+    dst[di] = '\0';
+    return dst;
+}
+#endif /* !WOLFMQTT_BROKER_NO_LOG */
+
 /* Buffer size accessors - unify static/dynamic code paths */
 #ifdef WOLFMQTT_STATIC_MEMORY
     #define BROKER_CLIENT_TX_SZ(bc) BROKER_TX_BUF_SZ
@@ -941,7 +1007,24 @@ static int callback_broker_mqtt(struct lws *wsi,
 
     (void)user;
 
-    if (reason == LWS_CALLBACK_ESTABLISHED) {
+    if (reason == LWS_CALLBACK_FILTER_PROTOCOL_CONNECTION) {
+        /* CSWSH defense: when an Origin allowlist is configured, reject a
+         * browser-supplied Origin that does not match exactly. Requests with
+         * no Origin header (native clients) are not browser-originated and are
+         * allowed through. */
+        if (broker != NULL && broker->ws_allowed_origin != NULL) {
+            char origin[256];
+            int olen = lws_hdr_copy(wsi, origin, (int)sizeof(origin),
+                WSI_TOKEN_ORIGIN);
+            if (olen > 0 &&
+                    XSTRCMP(origin, broker->ws_allowed_origin) != 0) {
+                WBLOG_ERR(broker, "broker: ws origin rejected: %s",
+                    BrokerLog_Sanitize(origin));
+                return -1;
+            }
+        }
+    }
+    else if (reason == LWS_CALLBACK_ESTABLISHED) {
         bc = BrokerClient_AddWs(broker, wsi);
         if (bc == NULL) {
             WBLOG_ERR(broker, "broker: ws accept rejected (alloc)");
@@ -1091,8 +1174,13 @@ static int BrokerWsNetRead(void* context, byte* buf, int buf_len,
     if (ret < (int)ws->rx_len) {
         XMEMMOVE(ws->rx_buffer, ws->rx_buffer + ret, ws->rx_len - ret);
         ws->rx_len -= ret;
+        /* Scrub the vacated tail so consumed CONNECT credentials do not
+         * linger in the WS staging buffer. */
+        BROKER_FORCE_ZERO(ws->rx_buffer + ws->rx_len, (word32)ret);
     }
     else {
+        /* Scrub the whole consumed buffer (may hold username/password). */
+        BROKER_FORCE_ZERO(ws->rx_buffer, (word32)ws->rx_len);
         ws->rx_len = 0;
     }
 
@@ -1105,6 +1193,7 @@ static int BrokerWsNetWrite(void* context, const byte* buf, int buf_len,
     BrokerClient* bc = (BrokerClient*)context;
     BrokerWsCtx* ws;
     int attempts = 0;
+    int prev_processing;
 
     (void)timeout_ms;
 
@@ -1132,12 +1221,19 @@ static int BrokerWsNetWrite(void* context, const byte* buf, int buf_len,
     XMEMCPY(ws->tx_pending + LWS_PRE, buf, buf_len);
     ws->tx_len = (size_t)buf_len;
 
-    /* Request writable callback and service until data is flushed */
+    /* Request writable callback and service until data is flushed. Mark this
+     * context busy across the spin so a peer-initiated LWS_CALLBACK_CLOSED for
+     * this wsi (e.g. a subscriber whose peer closes during publish fan-out)
+     * takes the deferred-remove path instead of freeing ws and bc out from
+     * under this function. Mirrors the publisher guard in BrokerClient_Process. */
     lws_callback_on_writable((struct lws*)ws->wsi);
+    prev_processing = ws->processing;
+    ws->processing = 1;
     while (ws->tx_pending != NULL && ws->status > 0 && attempts < 100) {
         lws_service(lws_get_context((struct lws*)ws->wsi), 0);
         attempts++;
     }
+    ws->processing = prev_processing;
 
     if (ws->tx_pending != NULL) {
         /* Data was not flushed - connection may be in bad state */
@@ -1208,6 +1304,8 @@ static int BrokerWsNetDisconnect(void* context)
         ws->tx_pending = NULL;
     }
     ws->tx_len = 0;
+    /* Scrub any unconsumed staged bytes (may hold credentials) before free. */
+    BROKER_FORCE_ZERO(ws->rx_buffer, (word32)sizeof(ws->rx_buffer));
     ws->rx_len = 0;
     ws->status = 0;
 
@@ -1679,7 +1777,7 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
         if (enc_rc <= 0) {
             WBLOG_ERR(bc->broker,
                 "broker: drain encode failed sock=%d topic=%s rc=%d",
-                (int)bc->sock, cur->topic, enc_rc);
+                (int)bc->sock, BrokerLog_Sanitize(cur->topic), enc_rc);
             /* Drop just this entry and continue. Encoding failure for
              * a single message is not fatal to the connection. */
             if (prev == NULL) {
@@ -1725,13 +1823,13 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
                  * stop the drain here. */
                 WBLOG_ERR(bc->broker,
                     "broker: drain write failed sock=%d topic=%s rc=%d",
-                    (int)bc->sock, cur->topic, wr_rc);
+                    (int)bc->sock, BrokerLog_Sanitize(cur->topic), wr_rc);
                 return;
             }
         }
         WBLOG_DBG(bc->broker,
             "broker: drain send sock=%d topic=%s qos=%d packet_id=%u dup=%d",
-            (int)bc->sock, cur->topic, (int)cur->qos,
+            (int)bc->sock, BrokerLog_Sanitize(cur->topic), (int)cur->qos,
             (unsigned)cur->packet_id, (int)cur->retransmit_dup);
         cur->retransmit_dup = 0;
 
@@ -2085,6 +2183,7 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
 #ifndef WOLFMQTT_STATIC_MEMORY
     BrokerClient* cur;
     BrokerClient* prev = NULL;
+    int found = 0;
 #endif
 
     if (broker == NULL || bc == NULL) {
@@ -2101,13 +2200,21 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc)
             else {
                 broker->clients = cur->next;
             }
+            found = 1;
             break;
         }
         prev = cur;
         cur = cur->next;
     }
-#endif
+    /* Only free when bc was actually unlinked. A re-entrant close callback
+     * (e.g. WebSocket LWS_CALLBACK_CLOSED during a takeover fan-out) can have
+     * already removed and freed bc; freeing again here would double-free. */
+    if (found) {
+        BrokerClient_Free(bc);
+    }
+#else
     BrokerClient_Free(bc);
+#endif
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2215,8 +2322,8 @@ static int BrokerOrphan_EvictOldest(MqttBroker* broker)
     }
     WBLOG_INFO(broker,
         "broker: evicting oldest orphan client_id=%s (cap reached)",
-        BROKER_STR_VALID(oldest->client_id) ? oldest->client_id
-            : "(null)");
+        BrokerLog_Sanitize(BROKER_STR_VALID(oldest->client_id)
+            ? oldest->client_id : "(null)"));
     BrokerOrphan_DropFull(broker, oldest);
     return 1;
 }
@@ -2343,7 +2450,7 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
     broker->orphan_session_count++;
     WBLOG_INFO(broker,
         "broker: orphan session created client_id=%s queued=%d",
-        o->client_id, o->out_q_count);
+        BrokerLog_Sanitize(o->client_id), o->out_q_count);
 
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Re-persist the session record stamped with the orphan time so the v5
@@ -2423,12 +2530,12 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
         if (retx > 0) {
             WBLOG_INFO(broker,
                 "broker: orphan reclaim queued retransmit=%d client_id=%s",
-                retx, new_bc->client_id);
+                retx, BrokerLog_Sanitize(new_bc->client_id));
         }
     }
     WBLOG_INFO(broker,
         "broker: orphan reclaimed client_id=%s queued=%d",
-        new_bc->client_id, new_bc->out_q_count);
+        BrokerLog_Sanitize(new_bc->client_id), new_bc->out_q_count);
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* The reclaimed queue is now in a LIVE BrokerClient. Persisted
      * records for this client_id are no longer authoritative - the
@@ -2489,7 +2596,8 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     if (e == NULL) {
         WBLOG_ERR(broker,
             "broker: orphan enqueue alloc failed client_id=%s",
-            BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)");
+            BrokerLog_Sanitize(
+                BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
         return;
     }
     e->qos = qos;
@@ -2512,8 +2620,9 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
 #endif
     WBLOG_DBG(broker,
         "broker: orphan enqueue client_id=%s topic=%s qos=%d count=%d",
-        BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)",
-        topic, (int)qos, o->out_q_count);
+        BrokerLog_Sanitize(
+            BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"),
+        BrokerLog_Sanitize(topic), (int)qos, o->out_q_count);
 }
 
 /* Free every orphan (used by MqttBroker_Free and by wipe paths). */
@@ -2585,7 +2694,8 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
     if (BrokerOrphan_Take(broker, bc) == NULL) {
         WBLOG_ERR(broker,
             "broker: orphan take failed client_id=%s - removing %d subs",
-            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)",
+            BrokerLog_Sanitize(
+                BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"),
             count);
         BrokerSubs_RemoveClient(broker, bc);
         return;
@@ -2612,7 +2722,8 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
 #endif
     WBLOG_INFO(broker,
         "broker: orphaned %d subs for client_id=%s (session persist)",
-        count, BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+        count, BrokerLog_Sanitize(
+            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"));
 }
 
 static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
@@ -2654,6 +2765,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
         cur = next;
     }
 #endif
+    bc->sub_count = 0;
 
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Clean-session disconnect drops the persistent record. For
@@ -2690,7 +2802,7 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             XMEMCMP(broker->subs[i].filter, filter, filter_len) == 0) {
             broker->subs[i].qos = qos;
             WBLOG_INFO(broker, "broker: sub update sock=%d filter=%s qos=%d",
-                (int)bc->sock, broker->subs[i].filter, qos);
+                (int)bc->sock, BrokerLog_Sanitize(broker->subs[i].filter), qos);
             return MQTT_CODE_SUCCESS;
         }
     }
@@ -2701,12 +2813,20 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             XMEMCMP(cur->filter, filter, filter_len) == 0) {
             cur->qos = qos;
             WBLOG_INFO(broker, "broker: sub update sock=%d filter=%s qos=%d",
-                (int)bc->sock, cur->filter, qos);
+                (int)bc->sock, BrokerLog_Sanitize(cur->filter), qos);
             return MQTT_CODE_SUCCESS;
         }
         cur = cur->next;
     }
 #endif
+
+    /* Per-client cap: prevent a single client from occupying the whole shared
+     * subscription table and denying SUBSCRIBE to other clients. */
+    if (bc->sub_count >= BROKER_MAX_SUBS_PER_CLIENT) {
+        WBLOG_ERR(broker, "broker: sub cap reached sock=%d (max %d)",
+            (int)bc->sock, BROKER_MAX_SUBS_PER_CLIENT);
+        return MQTT_CODE_ERROR_MEMORY;
+    }
 
 #ifdef WOLFMQTT_STATIC_MEMORY
     for (i = 0; i < BROKER_MAX_SUBS; i++) {
@@ -2774,8 +2894,9 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
             }
         }
 #endif
+        bc->sub_count++;
         WBLOG_INFO(broker, "broker: sub add sock=%d filter=%s qos=%d",
-            (int)bc->sock, sub->filter, qos);
+            (int)bc->sock, BrokerLog_Sanitize(sub->filter), qos);
     }
     return rc;
 }
@@ -2798,8 +2919,11 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             (word16)XSTRLEN(s->filter) == filter_len &&
             XMEMCMP(s->filter, filter, filter_len) == 0) {
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
-                (int)bc->sock, s->filter);
+                (int)bc->sock, BrokerLog_Sanitize(s->filter));
             XMEMSET(s, 0, sizeof(BrokerSub));
+            if (bc->sub_count > 0) {
+                bc->sub_count--;
+            }
             return;
         }
     }
@@ -2818,12 +2942,15 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
                 broker->subs = next;
             }
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
-                (int)bc->sock, cur->filter);
+                (int)bc->sock, BrokerLog_Sanitize(cur->filter));
             WOLFMQTT_FREE(cur->filter);
             if (cur->client_id) {
                 WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
+            if (bc->sub_count > 0) {
+                bc->sub_count--;
+            }
             return;
         }
         prev = cur;
@@ -3008,8 +3135,11 @@ static int BrokerSubs_ReassociateClient(MqttBroker* broker,
     }
 #endif
     if (count > 0) {
+        /* The new client now owns these subs; reflect them in its cap count
+         * so a reconnect cannot be used to exceed BROKER_MAX_SUBS_PER_CLIENT. */
+        new_bc->sub_count += count;
         WBLOG_INFO(broker, "broker: reassociated %d subs for client_id=%s",
-            count, client_id);
+            count, BrokerLog_Sanitize(client_id));
     }
     return count;
 }
@@ -3018,6 +3148,64 @@ static int BrokerSubs_ReassociateClient(MqttBroker* broker,
 /* Retained message management                                                 */
 /* -------------------------------------------------------------------------- */
 #ifdef WOLFMQTT_BROKER_RETAINED
+/* Free retained messages whose v5 Message Expiry Interval has elapsed so they
+ * stop occupying a slot / the retained_count cap. Delivery also reaps expired
+ * entries, but a publisher can hit the cap with only-expired entries before any
+ * subscription triggers that path. */
+static void BrokerRetained_ReapExpired(MqttBroker* broker,
+    WOLFMQTT_BROKER_TIME_T now)
+{
+#ifdef WOLFMQTT_STATIC_MEMORY
+    int i;
+    for (i = 0; i < BROKER_MAX_RETAINED; i++) {
+        BrokerRetainedMsg* rm = &broker->retained[i];
+        /* now >= store_time guards the unsigned subtraction so a backward
+         * clock step reads as "not expired" instead of wrapping huge. */
+        if (rm->in_use && rm->expiry_sec > 0 &&
+            now >= rm->store_time &&
+            (now - rm->store_time) >= rm->expiry_sec) {
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(rm->topic));
+            XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
+        }
+    }
+#else
+    BrokerRetainedMsg* cur;
+    BrokerRetainedMsg* prev = NULL;
+
+    /* A delivery loop may hold node pointers; defer to its post-loop reap. */
+    if (broker->retained_delivering > 0) {
+        return;
+    }
+    cur = broker->retained;
+    while (cur != NULL) {
+        BrokerRetainedMsg* next = cur->next;
+        if (cur->expiry_sec > 0 &&
+            now >= cur->store_time &&
+            (now - cur->store_time) >= cur->expiry_sec) {
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(cur->topic));
+            if (prev != NULL) {
+                prev->next = next;
+            }
+            else {
+                broker->retained = next;
+            }
+            if (cur->topic != NULL) WOLFMQTT_FREE(cur->topic);
+            if (cur->payload != NULL) WOLFMQTT_FREE(cur->payload);
+            WOLFMQTT_FREE(cur);
+            if (broker->retained_count > 0) {
+                broker->retained_count--;
+            }
+        }
+        else {
+            prev = cur;
+        }
+        cur = next;
+    }
+#endif
+}
+
 static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     const byte* payload, word32 payload_len, MqttQoS qos, word32 expiry_sec)
 {
@@ -3034,6 +3222,10 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     if (broker == NULL || topic == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+    /* Drop expired entries first so they do not hold the cap against a new
+     * retained message. */
+    BrokerRetained_ReapExpired(broker, WOLFMQTT_BROKER_GET_TIME_S());
 #ifndef WOLFMQTT_STATIC_MEMORY
     cur = broker->retained;
 #endif
@@ -3082,6 +3274,9 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     while (cur) {
         if (cur->topic != NULL && XSTRCMP(cur->topic, topic) == 0) {
             msg = cur;
+            /* Re-publishing this topic cancels a deferred delete, otherwise a
+             * later delivery would reap the freshly stored message. */
+            msg->pending_delete = 0;
             break;
         }
         cur = cur->next;
@@ -3089,10 +3284,18 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     if (msg == NULL) {
         /* Allocate new node + topic */
         int tlen = (int)XSTRLEN(topic);
-        msg = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(
-            sizeof(BrokerRetainedMsg));
-        if (msg == NULL) {
+        /* Cap the dynamic retained list so a client publishing RETAIN=1 to
+         * many distinct topics cannot grow it without bound and exhaust the
+         * heap; the static path is already bounded by BROKER_MAX_RETAINED. */
+        if (broker->retained_count >= BROKER_MAX_RETAINED) {
             rc = MQTT_CODE_ERROR_MEMORY;
+        }
+        if (rc == MQTT_CODE_SUCCESS) {
+            msg = (BrokerRetainedMsg*)WOLFMQTT_MALLOC(
+                sizeof(BrokerRetainedMsg));
+            if (msg == NULL) {
+                rc = MQTT_CODE_ERROR_MEMORY;
+            }
         }
         if (rc == MQTT_CODE_SUCCESS) {
             XMEMSET(msg, 0, sizeof(*msg));
@@ -3129,6 +3332,7 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         if (is_new) {
             msg->next = broker->retained;
             broker->retained = msg;
+            broker->retained_count++;
         }
     }
     else if (is_new && msg != NULL) {
@@ -3145,7 +3349,8 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
         msg->qos = qos;
         WBLOG_DBG(broker, "broker: retained store topic=%s len=%u qos=%d "
             "expiry=%u",
-            topic, (unsigned)payload_len, (int)qos, (unsigned)expiry_sec);
+            BrokerLog_Sanitize(topic), (unsigned)payload_len, (int)qos,
+            (unsigned)expiry_sec);
 #ifdef WOLFMQTT_BROKER_PERSIST
         (void)BrokerPersist_PutRetained(broker, msg);
 #endif
@@ -3170,7 +3375,8 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
     for (i = 0; i < BROKER_MAX_RETAINED; i++) {
         if (broker->retained[i].in_use &&
             XSTRCMP(broker->retained[i].topic, topic) == 0) {
-            WBLOG_DBG(broker, "broker: retained delete topic=%s", topic);
+            WBLOG_DBG(broker, "broker: retained delete topic=%s",
+                BrokerLog_Sanitize(topic));
             XMEMSET(&broker->retained[i], 0, sizeof(BrokerRetainedMsg));
             found = 1;
             break;
@@ -3181,7 +3387,17 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
     while (cur) {
         BrokerRetainedMsg* next = cur->next;
         if (cur->topic != NULL && XSTRCMP(cur->topic, topic) == 0) {
-            WBLOG_DBG(broker, "broker: retained delete topic=%s", topic);
+            WBLOG_DBG(broker, "broker: retained delete topic=%s",
+                BrokerLog_Sanitize(topic));
+            if (broker->retained_delivering > 0) {
+                /* A delivery loop is iterating this list (possibly re-entered
+                 * via a WebSocket fan-out). Freeing now would invalidate that
+                 * loop's saved next pointer; flag for deferred reap
+                 * by the delivery loop instead. */
+                cur->pending_delete = 1;
+                found = 1;
+                break;
+            }
             if (prev) {
                 prev->next = next;
             }
@@ -3193,6 +3409,9 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
                 WOLFMQTT_FREE(cur->payload);
             }
             WOLFMQTT_FREE(cur);
+            if (broker->retained_count > 0) {
+                broker->retained_count--;
+            }
             found = 1;
             break;
         }
@@ -3235,6 +3454,7 @@ static void BrokerRetained_FreeAll(MqttBroker* broker)
         cur = next;
     }
     broker->retained = NULL;
+    broker->retained_count = 0;
 #endif
 }
 #endif /* WOLFMQTT_BROKER_RETAINED */
@@ -3385,7 +3605,8 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
         pw->retain = bc->will_retain;
         pw->publish_time = now + (WOLFMQTT_BROKER_TIME_T)bc->will_delay_sec;
         WBLOG_DBG(broker, "broker: will deferred sock=%d client_id=%s delay=%u",
-            (int)bc->sock, bc->client_id, (unsigned)bc->will_delay_sec);
+            (int)bc->sock, BrokerLog_Sanitize(bc->client_id),
+            (unsigned)bc->will_delay_sec);
     }
     return rc;
 }
@@ -3408,7 +3629,8 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
     for (i = 0; i < BROKER_MAX_PENDING_WILLS; i++) {
         if (broker->pending_wills[i].in_use &&
             XSTRCMP(broker->pending_wills[i].client_id, client_id) == 0) {
-            WBLOG_DBG(broker, "broker: will cancelled client_id=%s", client_id);
+            WBLOG_DBG(broker, "broker: will cancelled client_id=%s",
+                BrokerLog_Sanitize(client_id));
             XMEMSET(&broker->pending_wills[i], 0,
                 sizeof(BrokerPendingWill));
             return;
@@ -3420,7 +3642,8 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
         BrokerPendingWill* next = pw->next;
         if (pw->client_id != NULL &&
             XSTRCMP(pw->client_id, client_id) == 0) {
-            WBLOG_DBG(broker, "broker: will cancelled client_id=%s", client_id);
+            WBLOG_DBG(broker, "broker: will cancelled client_id=%s",
+                BrokerLog_Sanitize(client_id));
             if (prev) {
                 prev->next = next;
             }
@@ -3504,7 +3727,8 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
         }
         if (now >= pw->publish_time) {
             WBLOG_DBG(broker, "broker: LWT deferred publish client_id=%s topic=%s "
-                "len=%u", pw->client_id, pw->topic,
+                "len=%u", BrokerLog_Sanitize(pw->client_id),
+                BrokerLog_Sanitize(pw->topic),
                 (unsigned)pw->payload_len);
             BrokerClient_PublishWillImmediate(broker, pw->topic,
                 pw->payload, pw->payload_len, pw->qos, pw->retain);
@@ -3518,15 +3742,29 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
         BrokerPendingWill* next = pw->next;
         if (now >= pw->publish_time) {
             WBLOG_DBG(broker, "broker: LWT deferred publish client_id=%s topic=%s "
-                "len=%u", pw->client_id, pw->topic,
+                "len=%u", BrokerLog_Sanitize(pw->client_id),
+                BrokerLog_Sanitize(pw->topic),
                 (unsigned)pw->payload_len);
             BrokerClient_PublishWillImmediate(broker, pw->topic,
                 pw->payload, pw->payload_len, pw->qos, pw->retain);
             if (prev) {
                 prev->next = next;
             }
-            else {
+            else if (broker->pending_wills == pw) {
                 broker->pending_wills = next;
+            }
+            else {
+                /* The fan-out above re-entered BrokerPendingWill_Add (a WS
+                 * close), prepending a node, so pw is no longer the head.
+                 * Unlink pw via its real predecessor instead of clobbering the
+                 * new head with the stale saved next. */
+                BrokerPendingWill* p = broker->pending_wills;
+                while (p != NULL && p->next != pw) {
+                    p = p->next;
+                }
+                if (p != NULL) {
+                    p->next = next;
+                }
             }
             if (pw->client_id) WOLFMQTT_FREE(pw->client_id);
             if (pw->topic) {
@@ -3568,16 +3806,25 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     }
     now = WOLFMQTT_BROKER_GET_TIME_S();
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Mark a delivery in progress so a re-entrant BrokerRetained_Delete (via a
+     * WebSocket fan-out close) defers its free instead of invalidating the
+     * loop's saved next pointer. */
+    broker->retained_delivering++;
+#endif
+
 #ifdef WOLFMQTT_STATIC_MEMORY
     for (i = 0; i < BROKER_MAX_RETAINED; i++) {
         BrokerRetainedMsg* rm = &broker->retained[i];
         if (!rm->in_use || rm->topic[0] == '\0') {
             continue;
         }
-        /* Skip expired messages */
+        /* Skip expired messages (now >= store_time guards clock rollback) */
         if (rm->expiry_sec > 0 &&
+            now >= rm->store_time &&
             (now - rm->store_time) >= rm->expiry_sec) {
-            WBLOG_DBG(broker, "broker: retained expired topic=%s", rm->topic);
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(rm->topic));
             XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
             continue;
         }
@@ -3602,7 +3849,8 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
             if (enc_rc > 0) {
                 WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                    "len=%u qos=%d", (int)bc->sock, rm->topic,
+                    "len=%u qos=%d", (int)bc->sock,
+                    BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
                 (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
             }
@@ -3612,10 +3860,22 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     rm = broker->retained;
     while (rm) {
         BrokerRetainedMsg* rm_next = rm->next;
-        /* Skip and remove expired messages */
-        if (rm->expiry_sec > 0 &&
-            (now - rm->store_time) >= rm->expiry_sec) {
-            WBLOG_DBG(broker, "broker: retained expired topic=%s", rm->topic);
+        /* Reap deferred-delete and expired nodes. Freeing is only safe at the
+         * outermost delivery depth; a nested re-entrant (WS fan-out) delivery
+         * may hold rm in an enclosing loop's saved rm_next, so at deeper depths
+         * mark the node and defer to the retained_delivering==0 post-loop reap. */
+        if (rm->pending_delete ||
+            (rm->expiry_sec > 0 &&
+            now >= rm->store_time &&
+            (now - rm->store_time) >= rm->expiry_sec)) {
+            if (broker->retained_delivering > 1) {
+                rm->pending_delete = 1;
+                rm_prev = rm;
+                rm = rm_next;
+                continue;
+            }
+            WBLOG_DBG(broker, "broker: retained expired topic=%s",
+                BrokerLog_Sanitize(rm->topic));
             if (rm_prev) {
                 rm_prev->next = rm_next;
             }
@@ -3625,6 +3885,9 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             if (rm->topic) WOLFMQTT_FREE(rm->topic);
             if (rm->payload) WOLFMQTT_FREE(rm->payload);
             WOLFMQTT_FREE(rm);
+            if (broker->retained_count > 0) {
+                broker->retained_count--;
+            }
             rm = rm_next;
             continue;
         }
@@ -3649,13 +3912,48 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
             if (enc_rc > 0) {
                 WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                    "len=%u qos=%d", (int)bc->sock, rm->topic,
+                    "len=%u qos=%d", (int)bc->sock,
+                    BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
                 (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
             }
         }
         rm_prev = rm;
         rm = rm_next;
+    }
+#endif
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    if (broker->retained_delivering > 0) {
+        broker->retained_delivering--;
+    }
+    /* When the outermost delivery finishes, reap nodes a re-entrant delete
+     * marked after this loop had already passed them, so they stop counting
+     * against BROKER_MAX_RETAINED. Safe now: no delivery loop holds pointers. */
+    if (broker->retained_delivering == 0) {
+        BrokerRetainedMsg* p = broker->retained;
+        BrokerRetainedMsg* pprev = NULL;
+        while (p != NULL) {
+            BrokerRetainedMsg* pnext = p->next;
+            if (p->pending_delete) {
+                if (pprev) {
+                    pprev->next = pnext;
+                }
+                else {
+                    broker->retained = pnext;
+                }
+                if (p->topic) WOLFMQTT_FREE(p->topic);
+                if (p->payload) WOLFMQTT_FREE(p->payload);
+                WOLFMQTT_FREE(p);
+                if (broker->retained_count > 0) {
+                    broker->retained_count--;
+                }
+            }
+            else {
+                pprev = p;
+            }
+            p = pnext;
+        }
     }
 #endif
 }
@@ -3677,11 +3975,18 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
             BrokerClient_ClearWill(bc);
             return; /* will deferred, not published now */
         }
-        /* If add failed (out of slots), publish immediately as fallback */
+        /* Out of pending-will slots: fall back to immediate publication, but
+         * surface it - a silent fallback lets slot exhaustion erase the Will
+         * Delay grace window invisibly to the operator. */
+        WBLOG_ERR(broker,
+            "broker: pending-will pool full, publishing LWT immediately "
+            "(delay=%u lost) sock=%d", (unsigned)bc->will_delay_sec,
+            (int)bc->sock);
     }
 
     WBLOG_DBG(broker, "broker: LWT publish sock=%d topic=%s len=%u",
-        (int)bc->sock, bc->will_topic, (unsigned)bc->will_payload_len);
+        (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
+        (unsigned)bc->will_payload_len);
 
     BrokerClient_PublishWillImmediate(broker, bc->will_topic,
         bc->will_payload, bc->will_payload_len, bc->will_qos,
@@ -3698,6 +4003,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     int i;
 #else
     BrokerSub* sub;
+    BrokerSub* next_sub = NULL;
 #endif
 
     if (broker == NULL || topic == NULL) {
@@ -3727,6 +4033,11 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
 #else
     sub = broker->subs;
     while (sub) {
+        /* Snapshot the successor before any MqttPacket_Write: a WS fan-out
+         * write can drive an lws_service spin whose re-entrant CLOSED frees
+         * this client's BrokerSub nodes, so reading sub->next afterwards
+         * would dereference a freed node. */
+        next_sub = sub->next;
 #endif
         if (sub->client != NULL && sub->client->protocol_level != 0 &&
             BROKER_STR_VALID(sub->filter) &&
@@ -3756,7 +4067,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             }
         }
 #ifndef WOLFMQTT_STATIC_MEMORY
-        sub = sub->next;
+        sub = next_sub;
 #endif
     }
 }
@@ -4196,10 +4507,127 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 
     WBLOG_INFO(broker, "broker: CONNECT proto=%u clean=%d will=%d client_id=%s",
         mc.protocol_level, mc.clean_session, mc.enable_lwt,
-        BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)");
+        BrokerLog_Sanitize(
+            BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"));
 
     /* Client ID uniqueness and clean session handling */
     bc->clean_session = mc.clean_session;
+
+    /* Validate credentials BEFORE any session-state mutation. Storing the
+     * username/password and running the credential gate here ensures an
+     * unauthenticated peer that guesses a client_id cannot disconnect the
+     * victim, fire its LWT, or hijack/destroy its persisted subscriptions:
+     * the duplicate-takeover and orphan-reassociation logic below only runs
+     * once auth has passed. */
+#ifdef WOLFMQTT_BROKER_AUTH
+#ifdef WOLFMQTT_STATIC_MEMORY
+    bc->username[0] = '\0';
+    bc->password[0] = '\0';
+#endif
+    bc->password_len = 0;
+    if (mc.username) {
+        word16 ulen = 0;
+        if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
+                &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (ulen >= BROKER_MAX_USERNAME_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: username too long (%u >= %d) sock=%d",
+                    (unsigned)ulen, BROKER_MAX_USERNAME_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
+            BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
+                BROKER_MAX_USERNAME_LEN);
+        }
+    }
+    if (mc.password) {
+        word16 plen = 0;
+        if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
+                &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
+        #ifdef WOLFMQTT_STATIC_MEMORY
+            if (plen >= BROKER_MAX_PASSWORD_LEN) {
+                WBLOG_ERR(broker,
+                    "broker: password too long (%u >= %d) sock=%d",
+                    (unsigned)plen, BROKER_MAX_PASSWORD_LEN,
+                    (int)bc->sock);
+            #ifdef WOLFMQTT_V5
+                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+                }
+                else
+            #endif
+                {
+                    ack.return_code =
+                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+                }
+                goto send_connack;
+            }
+        #endif
+            /* [MQTT-3.1.3.5] Password is Binary Data and may legally
+             * contain 0x00. The binary-sensitive store records the
+             * actual length in bc->password_len so wipe and compare
+             * paths don't fall back to XSTRLEN truncation. */
+            BROKER_STORE_BIN_SENSITIVE(bc->password, bc->password_len,
+                mc.password, plen, BROKER_MAX_PASSWORD_LEN);
+        }
+    }
+    if (broker->auth_user || broker->auth_pass) {
+        int auth_ok = 1;
+        if (broker->auth_user && (
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            bc->username == NULL ||
+        #endif
+            bc->username[0] == '\0' ||
+            BrokerStrCompare(broker->auth_user, bc->username,
+                BROKER_MAX_USERNAME_LEN) != 0)) {
+            auth_ok = 0;
+        }
+        if (broker->auth_pass && (
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            bc->password == NULL ||
+        #endif
+            bc->password_len == 0 ||
+            BrokerBufCompare((const byte*)broker->auth_pass,
+                (int)XSTRLEN(broker->auth_pass),
+                (const byte*)bc->password, (int)bc->password_len,
+                BROKER_MAX_PASSWORD_LEN) != 0)) {
+            auth_ok = 0;
+        }
+        if (!auth_ok) {
+            WBLOG_ERR(broker, "broker: auth failed sock=%d user=%s",
+                (int)bc->sock,
+            #ifdef WOLFMQTT_STATIC_MEMORY
+                BrokerLog_Sanitize(bc->username[0] ? bc->username : "(null)"));
+            #else
+                BrokerLog_Sanitize((bc->username && bc->username[0])
+                    ? bc->username : "(null)"));
+            #endif
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
+            }
+            else
+        #endif
+            {
+                ack.return_code =
+                    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
+            }
+            goto send_connack;
+        }
+    }
+#endif /* WOLFMQTT_BROKER_AUTH */
 
     if (BROKER_STR_VALID(bc->client_id)) {
         BrokerClient* old;
@@ -4210,7 +4638,17 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         old = BrokerClient_FindByClientId(broker, bc->client_id, bc);
         if (old != NULL) {
             WBLOG_INFO(broker, "broker: duplicate client_id=%s, disconnecting "
-                "old sock=%d", bc->client_id, (int)old->sock);
+                "old sock=%d", BrokerLog_Sanitize(bc->client_id),
+                (int)old->sock);
+#ifdef ENABLE_MQTT_WEBSOCKET
+            /* Guard old across its takeover fan-out: a re-entrant
+             * LWS_CALLBACK_CLOSED for old's dropped socket must take the
+             * deferred-remove path instead of freeing old mid-takeover, which
+             * would UAF (BrokerSubs_RemoveClient) and double-free below. */
+            if (old->ws_ctx != NULL) {
+                ((BrokerWsCtx*)old->ws_ctx)->processing = 1;
+            }
+#endif
             /* Publish old client's will on takeover */
 #ifdef WOLFMQTT_V5
             if (old->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
@@ -4223,6 +4661,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             }
 #else
             BrokerClient_PublishWill(broker, old);
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+            if (old->ws_ctx != NULL) {
+                ((BrokerWsCtx*)old->ws_ctx)->processing = 0;
+            }
 #endif
             if (!mc.clean_session) {
                 /* Reassociate old client's subs to new client */
@@ -4328,141 +4771,38 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             MqttProp* prop = BrokerProps_Find(mc.lwt_msg->props,
                 MQTT_PROP_WILL_DELAY_INTERVAL);
             if (prop != NULL) {
-                bc->will_delay_sec = prop->data_int;
+                /* Clamp to a sane maximum so a client advertising a huge
+                 * delay (e.g. UINT32_MAX) cannot monopolize a pending-will
+                 * slot indefinitely. */
+                if (prop->data_int > BROKER_MAX_WILL_DELAY_SEC) {
+                    bc->will_delay_sec = BROKER_MAX_WILL_DELAY_SEC;
+                }
+                else {
+                    bc->will_delay_sec = prop->data_int;
+                }
             }
         }
 #endif
         bc->has_will = 1;
         WBLOG_DBG(broker, "broker: LWT stored sock=%d topic=%s qos=%d retain=%d "
-            "len=%u delay=%u", (int)bc->sock, bc->will_topic,
+            "len=%u delay=%u", (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
             bc->will_qos, bc->will_retain,
             (unsigned)bc->will_payload_len,
             (unsigned)bc->will_delay_sec);
     }
 #endif /* WOLFMQTT_BROKER_WILL */
 
-    /* Store credentials */
-#ifdef WOLFMQTT_BROKER_AUTH
-#ifdef WOLFMQTT_STATIC_MEMORY
-    bc->username[0] = '\0';
-    bc->password[0] = '\0';
-#endif
-    bc->password_len = 0;
-    if (mc.username) {
-        word16 ulen = 0;
-        if (MqttDecode_Num((byte*)mc.username - MQTT_DATA_LEN_SIZE,
-                &ulen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-        #ifdef WOLFMQTT_STATIC_MEMORY
-            if (ulen >= BROKER_MAX_USERNAME_LEN) {
-                WBLOG_ERR(broker,
-                    "broker: username too long (%u >= %d) sock=%d",
-                    (unsigned)ulen, BROKER_MAX_USERNAME_LEN,
-                    (int)bc->sock);
-            #ifdef WOLFMQTT_V5
-                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
-                }
-                else
-            #endif
-                {
-                    ack.return_code =
-                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-                }
-                goto send_connack;
-            }
-        #endif
-            BROKER_STORE_STR_SENSITIVE(bc->username, mc.username, ulen,
-                BROKER_MAX_USERNAME_LEN);
-        }
-    }
-    if (mc.password) {
-        word16 plen = 0;
-        if (MqttDecode_Num((byte*)mc.password - MQTT_DATA_LEN_SIZE,
-                &plen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-        #ifdef WOLFMQTT_STATIC_MEMORY
-            if (plen >= BROKER_MAX_PASSWORD_LEN) {
-                WBLOG_ERR(broker,
-                    "broker: password too long (%u >= %d) sock=%d",
-                    (unsigned)plen, BROKER_MAX_PASSWORD_LEN,
-                    (int)bc->sock);
-            #ifdef WOLFMQTT_V5
-                if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                    ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
-                }
-                else
-            #endif
-                {
-                    ack.return_code =
-                        MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-                }
-                goto send_connack;
-            }
-        #endif
-            /* [MQTT-3.1.3.5] Password is Binary Data and may legally
-             * contain 0x00. The binary-sensitive store records the
-             * actual length in bc->password_len so wipe and compare
-             * paths don't fall back to XSTRLEN truncation. */
-            BROKER_STORE_BIN_SENSITIVE(bc->password, bc->password_len,
-                mc.password, plen, BROKER_MAX_PASSWORD_LEN);
-        }
-    }
-#endif /* WOLFMQTT_BROKER_AUTH */
-
-    /* Check auth before sending CONNACK. [MQTT-3.2.2-2]: when the
-     * accepted CleanSession=0 connection finds stored session state,
-     * Session Present MUST be 1; otherwise it MUST be 0. The flag is
-     * cleared again below for any path that overrides return_code to a
-     * non-zero refusal - [MQTT-3.2.2-4] requires Session Present=0 on a
-     * refused CONNACK. */
+    /* Credentials were already validated above, before any session-state
+     * mutation. [MQTT-3.2.2-2]: when the accepted CleanSession=0 connection
+     * finds stored session state, Session Present MUST be 1; otherwise it
+     * MUST be 0. The flag is cleared again below for any path that overrides
+     * return_code to a non-zero refusal - [MQTT-3.2.2-4] requires Session
+     * Present=0 on a refused CONNACK. */
     ack.flags = session_present ? MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT : 0;
     ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
 #ifdef WOLFMQTT_V5
     ack.props = NULL;
 #endif
-
-#ifdef WOLFMQTT_BROKER_AUTH
-    if (broker->auth_user || broker->auth_pass) {
-        int auth_ok = 1;
-        if (broker->auth_user && (
-        #ifndef WOLFMQTT_STATIC_MEMORY
-            bc->username == NULL ||
-        #endif
-            bc->username[0] == '\0' ||
-            BrokerStrCompare(broker->auth_user, bc->username,
-                BROKER_MAX_USERNAME_LEN) != 0)) {
-            auth_ok = 0;
-        }
-        if (broker->auth_pass && (
-        #ifndef WOLFMQTT_STATIC_MEMORY
-            bc->password == NULL ||
-        #endif
-            bc->password_len == 0 ||
-            BrokerBufCompare((const byte*)broker->auth_pass,
-                (int)XSTRLEN(broker->auth_pass),
-                (const byte*)bc->password, (int)bc->password_len,
-                BROKER_MAX_PASSWORD_LEN) != 0)) {
-            auth_ok = 0;
-        }
-        if (!auth_ok) {
-            WBLOG_ERR(broker, "broker: auth failed sock=%d user=%s", (int)bc->sock,
-            #ifdef WOLFMQTT_STATIC_MEMORY
-                bc->username[0] ? bc->username : "(null)");
-            #else
-                (bc->username && bc->username[0]) ? bc->username : "(null)");
-            #endif
-        #ifdef WOLFMQTT_V5
-            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-                ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
-            }
-            else
-        #endif
-            {
-                ack.return_code =
-                    MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD;
-            }
-        }
-    }
-#endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
     if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
@@ -4659,6 +4999,14 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
             }
             if (sub_rc != MQTT_CODE_SUCCESS) {
                 granted_qos = (MqttQoS)fail_code;
+            #ifdef WOLFMQTT_V5
+                /* A capacity rejection (per-client cap or full table) maps to
+                 * the v5 Quota Exceeded reason so the client sees why. */
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                    sub_rc == MQTT_CODE_ERROR_MEMORY) {
+                    granted_qos = (MqttQoS)MQTT_REASON_QUOTA_EXCEEDED;
+                }
+            #endif
             }
 #ifdef WOLFMQTT_BROKER_RETAINED
             else {
@@ -4783,6 +5131,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     MqttPublishResp resp;
     byte* payload = NULL;
     char* topic = NULL;
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+    int retain_rc = MQTT_CODE_SUCCESS;
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
 #endif
@@ -4799,6 +5150,33 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     if (rc < 0) {
         WBLOG_ERR(broker, "broker: PUBLISH decode failed rc=%d", rc);
         return rc;
+    }
+
+#ifdef WOLFMQTT_V5
+    /* [MQTT-3.3.4-6] A PUBLISH sent from a client to the server MUST NOT carry
+     * a Subscription Identifier; reject as a Protocol Error instead of
+     * forwarding the foreign id to subscribers. */
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            pub.props != NULL &&
+            BrokerProps_Find(pub.props, MQTT_PROP_SUBSCRIPTION_ID) != NULL) {
+        WBLOG_ERR(broker, "broker: client PUBLISH carried SUBSCRIPTION_ID "
+            "sock=%d", (int)bc->sock);
+        (void)BrokerSend_Disconnect(bc, MQTT_REASON_PROTOCOL_ERR);
+        rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+        goto publish_cleanup;
+    }
+#endif
+
+    /* The decoder only captured pub.buffer_len bytes of the payload; if that is
+     * short of the declared pub.total_len the message exceeded the broker
+     * receive buffer. Reject it rather than fanning out a packet whose
+     * Remaining Length overstates the bytes we actually hold. */
+    if (pub.total_len > 0 && pub.buffer_len < pub.total_len) {
+        WBLOG_ERR(broker,
+            "broker: PUBLISH payload exceeds buffer (have %u of %u) sock=%d",
+            (unsigned)pub.buffer_len, (unsigned)pub.total_len, (int)bc->sock);
+        rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
+        goto publish_cleanup;
     }
 
     /* [MQTT-3.3.2-2] PUBLISH topic name wildcard / [MQTT-4.7.3-1]
@@ -4872,17 +5250,32 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_STATIC_MEMORY
         word16 tlen = pub.topic_name_len;
         if (tlen >= BROKER_MAX_TOPIC_LEN) {
-            tlen = BROKER_MAX_TOPIC_LEN - 1;
+            /* Reject rather than truncate: a truncated topic can match a
+             * different subscriber filter than the wire topic (filter/auth
+             * bypass) and collide retained-message keys. */
+            WBLOG_ERR(broker,
+                "broker: PUBLISH topic too long len=%u max=%d sock=%d",
+                (unsigned)tlen, BROKER_MAX_TOPIC_LEN, (int)bc->sock);
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            goto publish_cleanup;
         }
         XMEMCPY(topic_buf, pub.topic_name, tlen);
         topic_buf[tlen] = '\0';
         topic = topic_buf;
 #else
         topic = (char*)WOLFMQTT_MALLOC(pub.topic_name_len + 1);
-        if (topic != NULL) {
-            XMEMCPY(topic, pub.topic_name, pub.topic_name_len);
-            topic[pub.topic_name_len] = '\0';
+        if (topic == NULL) {
+            /* Without the topic copy, retained-store and fan-out are skipped;
+             * returning here prevents the QoS 1/2 ACK encoder below from
+             * falsely reporting SUCCESS for a message that was never
+             * delivered. */
+            WBLOG_ERR(broker, "broker: PUBLISH topic alloc failed sock=%d",
+                (int)bc->sock);
+            rc = MQTT_CODE_ERROR_MEMORY;
+            goto publish_cleanup;
         }
+        XMEMCPY(topic, pub.topic_name, pub.topic_name_len);
+        topic[pub.topic_name_len] = '\0';
 #endif
     }
     /* Use payload pointer directly from decoded packet - rx_buf is not
@@ -4919,6 +5312,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     WBLOG_ERR(broker, "Retained store failed: %s",
                         MqttClient_ReturnCodeToString(ret_rc));
                 }
+#ifdef WOLFMQTT_V5
+                retain_rc = ret_rc;
+#endif
             }
         }
     }
@@ -4935,6 +5331,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         int i;
 #else
         BrokerSub* sub = broker->subs;
+        BrokerSub* next_sub = NULL;
 #endif
         /* Fan out to matching subscribers */
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -4943,9 +5340,15 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             if (!sub->in_use) continue;
 #else
         while (sub) {
+            /* Snapshot the successor before any MqttPacket_Write: a fan-out
+             * write can drive an lws_service spin that frees this client's
+             * BrokerSub nodes re-entrantly (LWS_CALLBACK_CLOSED), so reading
+             * sub->next afterwards would dereference a freed node. */
+            next_sub = sub->next;
 #endif
             if (sub->client != NULL &&
                 sub->client->protocol_level != 0 &&
+                sub->client->connected &&
                 BROKER_STR_VALID(sub->filter) &&
                 BrokerTopicMatch(sub->filter, topic)) {
                 MqttQoS eff_qos;
@@ -4956,6 +5359,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                  * Sub-encoder failure is logged but not propagated. */
                 {
                     int sub_rc;
+                    int wr;
                     MqttPublish out_pub;
                     XMEMSET(&out_pub, 0, sizeof(out_pub));
                     out_pub.topic_name = topic;
@@ -4967,6 +5371,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     out_pub.duplicate = 0;
                     out_pub.buffer = payload;
                     out_pub.total_len = pub.total_len;
+                    out_pub.buffer_len = pub.buffer_len;
                 #ifdef WOLFMQTT_V5
                     out_pub.protocol_level = sub->client->protocol_level;
                     if (sub->client->protocol_level >=
@@ -4981,9 +5386,23 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             "broker: PUBLISH fwd sock=%d -> sock=%d "
                             "topic=%s qos=%d len=%u",
                             (int)bc->sock, (int)sub->client->sock,
-                            topic, eff_qos, (unsigned)pub.total_len);
-                        (void)MqttPacket_Write(&sub->client->client,
+                            BrokerLog_Sanitize(topic), eff_qos,
+                            (unsigned)pub.total_len);
+                        wr = MqttPacket_Write(&sub->client->client,
                             sub->client->tx_buf, sub_rc);
+                        /* Static fan-out has no per-subscriber resume queue, so
+                         * a partial write leaves this subscriber's stream
+                         * desynced and unrecoverable. Tear down its socket and
+                         * clear connected; the main loop reaps it on the next
+                         * read error, and the match guard above then skips this
+                         * client's other matching subscriptions. */
+                        if (wr != sub_rc &&
+                            sub->client->sock != BROKER_SOCKET_INVALID) {
+                            broker->net.close(broker->net.ctx,
+                                sub->client->sock);
+                            sub->client->sock = BROKER_SOCKET_INVALID;
+                            sub->client->connected = 0;
+                        }
                     }
                     else {
                         WBLOG_ERR(broker,
@@ -5026,7 +5445,8 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             "broker: PUBLISH enq sock=%d -> sock=%d "
                             "topic=%s qos=%d len=%u",
                             (int)bc->sock, (int)sub->client->sock,
-                            topic, eff_qos, (unsigned)pub.total_len);
+                            BrokerLog_Sanitize(topic), eff_qos,
+                            (unsigned)pub.total_len);
                         BrokerClient_DrainOutQueue(sub->client);
                     }
                 }
@@ -5056,7 +5476,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     }
                 }
             }
-            sub = sub->next;
+            sub = next_sub;
 #endif
         }
     }
@@ -5066,7 +5486,14 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         resp.packet_id = pub.packet_id;
 #ifdef WOLFMQTT_V5
         resp.protocol_level = bc->protocol_level;
+        /* A retained-store failure (cap reached / OOM) must not be ACKed as
+         * success: tell the publisher the quota was exceeded [MQTT-3.4.2]. */
+#ifdef WOLFMQTT_BROKER_RETAINED
+        resp.reason_code = (retain_rc != MQTT_CODE_SUCCESS)
+            ? MQTT_REASON_QUOTA_EXCEEDED : MQTT_REASON_SUCCESS;
+#else
         resp.reason_code = MQTT_REASON_SUCCESS;
+#endif
         resp.props = NULL;
 #endif
         rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
@@ -5204,12 +5631,16 @@ static void BrokerClient_AbnormalClose(MqttBroker* broker, BrokerClient* bc)
  *     [MQTT-4.13]/[MQTT-4.8.0-1] mandate connection close on malformed
  *     packets.
  *   - Server-side resource exhaustion (allocator failure, per-client cap
- *     reached) - the connection must be torn down so resources release. */
+ *     reached) - the connection must be torn down so resources release.
+ *   - v5 property protocol errors (too many properties, duplicate singleton)
+ *     are malformed packets [MQTT-4.13.1]; the client must be disconnected. */
 static int BrokerRcIsFatal(int rc)
 {
     return (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
             rc == MQTT_CODE_ERROR_PACKET_TYPE ||
             rc == MQTT_CODE_ERROR_PACKET_ID ||
+            rc == MQTT_CODE_ERROR_PROPERTY ||
+            rc == MQTT_CODE_ERROR_PROPERTY_MISMATCH ||
             rc == MQTT_CODE_ERROR_MEMORY ||
             rc == MQTT_CODE_ERROR_OUT_OF_BUFFER);
 }
@@ -5221,6 +5652,19 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
 {
     int rc;
     int activity = 0;
+
+#ifdef ENABLE_MQTT_WEBSOCKET
+    /* A peer-initiated WS close during another client's fan-out write defers
+     * this client's removal via pending_remove, but no end-of-dispatch
+     * consumer runs on its own stack. Reap it here before any read so it is
+     * not re-closed by BrokerClient_AbnormalClose, which would publish its
+     * Will a second time. Will and subscriptions were handled at close. */
+    if (bc->ws_ctx != NULL &&
+        ((BrokerWsCtx*)bc->ws_ctx)->pending_remove) {
+        BrokerClient_Remove(broker, bc);
+        return 0;
+    }
+#endif
 
 #ifdef ENABLE_MQTT_TLS
     /* Complete TLS handshake before processing MQTT packets */
@@ -5244,7 +5688,8 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     char* cn = wolfSSL_X509_get_subjectCN(peer);
                     (void)cn; /* may be unused if logging disabled */
                     WBLOG_INFO(broker, "broker: TLS client cert sock=%d CN=%s",
-                        (int)bc->sock, cn ? cn : "(unknown)");
+                        (int)bc->sock,
+                        BrokerLog_Sanitize(cn ? cn : "(unknown)"));
                     wolfSSL_X509_free(peer);
                 }
             }
@@ -5460,6 +5905,30 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
+            #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
+                /* [MQTT-3.14.4-3] A v5 DISCONNECT with Reason Code 0x04
+                 * (Disconnect with Will Message) asks the broker to publish
+                 * the Will rather than discard it. */
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                        bc->client.packet.remain_len > 0) {
+                    MqttDisconnect disc;
+                    XMEMSET(&disc, 0, sizeof(disc));
+                    disc.protocol_level = bc->protocol_level;
+                    if (MqttDecode_Disconnect(bc->rx_buf, rc, &disc) >= 0 &&
+                            disc.reason_code ==
+                                MQTT_REASON_DISCONNECT_W_WILL_MSG) {
+                        BrokerClient_PublishWill(broker, bc);
+                    }
+                    else {
+                        BrokerClient_ClearWill(bc);
+                    }
+                    /* Free any decoded v5 DISCONNECT properties. */
+                    if (disc.props != NULL) {
+                        (void)MqttProps_Free(disc.props);
+                    }
+                }
+                else
+            #endif
                 BrokerClient_ClearWill(bc); /* normal disconnect */
                 /* Session persistence: keep subs if clean_session=0 */
                 if (bc->clean_session) {
@@ -5502,7 +5971,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     /* Check keepalive timeout (MQTT spec 3.1.2.10: 1.5x keep alive) */
     if (bc->keep_alive_sec > 0) {
         WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
-        if ((now - bc->last_rx) >
+        if (now >= bc->last_rx && (now - bc->last_rx) >
             (WOLFMQTT_BROKER_TIME_T)(bc->keep_alive_sec * 3 / 2)) {
             WBLOG_ERR(broker, "broker: keepalive timeout sock=%d", (int)bc->sock);
         #ifdef WOLFMQTT_V5
@@ -5516,6 +5985,22 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             else {
                 BrokerSubs_OrphanClient(broker, bc);
             }
+            BrokerClient_Remove(broker, bc);
+            return 0;
+        }
+    }
+    else if (!bc->connected) {
+        /* Pre-CONNECT idle timeout. A freshly accepted client has
+         * keep_alive_sec == 0 until CONNECT completes, so it is not covered by
+         * the keepalive check above; evict it once it has been idle past the
+         * deadline (last_rx is the accept time until the first full packet)
+         * so half-open sockets cannot squat the client table. */
+        WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
+        if (now >= bc->last_rx && (now - bc->last_rx) >
+                (WOLFMQTT_BROKER_TIME_T)BROKER_CONNECT_TIMEOUT_SEC) {
+            WBLOG_ERR(broker, "broker: pre-CONNECT idle timeout sock=%d",
+                (int)bc->sock);
+            BrokerSubs_RemoveClient(broker, bc);
             BrokerClient_Remove(broker, bc);
             return 0;
         }
@@ -5843,6 +6328,16 @@ int MqttBroker_Start(MqttBroker* broker)
 
 #ifdef ENABLE_MQTT_WEBSOCKET
     if (broker->use_websocket) {
+    #ifdef WOLFMQTT_BROKER_NO_INSECURE
+        /* TLS-only build: a plaintext WebSocket listener would silently bypass
+         * the policy the plain-TCP listener enforces. Require WSS. */
+        if (broker->ws_tls_cert == NULL) {
+            WBLOG_ERR(broker, "broker: plaintext WebSocket listener refused in "
+                "TLS-only build (WOLFMQTT_BROKER_NO_INSECURE); set ws_tls_cert "
+                "for WSS");
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
+    #endif
         rc = BrokerWs_Init(broker);
         if (rc != MQTT_CODE_SUCCESS) {
             WBLOG_ERR(broker, "broker: WebSocket init failed rc=%d", rc);

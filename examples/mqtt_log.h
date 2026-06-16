@@ -40,7 +40,7 @@ extern "C" {
     #define MQTT_LOG_MAYBE_UNUSED
 #endif
 
-/* Sanitize an untrusted string for safe logging (CWE-117 defense).
+/* Sanitize an untrusted string for safe logging.
  *
  * MQTT/MQTT-SN strings such as a REGISTER topic name are controlled by the
  * remote peer. For MQTT-SN this peer is reachable over UDP, so an attacker who

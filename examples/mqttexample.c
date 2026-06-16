@@ -632,13 +632,24 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
                     wolfSSL_ERR_error_string(store->error, buffer) : "none");
     PRINTF("  Subject's domain name is %s", store->domain);
 
+#ifdef WOLFMQTT_ALLOW_INSECURE_TLS
+    /* Development/testing override only: accept any certificate. MUST NOT be
+     * defined in production builds - it disables server authentication. */
     if (store->error != 0) {
-        /* Allowing to continue */
-        /* Should check certificate and return 0 if not okay */
-        PRINTF("  Allowing cert anyways");
+        PRINTF("  Allowing cert anyways (WOLFMQTT_ALLOW_INSECURE_TLS)");
     }
-
     return 1;
+#else
+    /* With no CA configured there is no trust anchor to validate against
+     * (getting-started/demo mode), so accept and warn. When a CA is provided
+     * the chain-validation result is enforced so a bad certificate
+     * (self-signed, expired, wrong host, untrusted CA) fails the handshake. */
+    if (mqttCtx != NULL && mqttCtx->ca_file == NULL) {
+        PRINTF("  Warning: no CA configured, skipping server authentication");
+        return 1;
+    }
+    return preverify;
+#endif
 }
 
 /* Use this callback to setup TLS certificates and verify callbacks */

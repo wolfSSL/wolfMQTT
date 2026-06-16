@@ -93,6 +93,21 @@
 #ifndef BROKER_MAX_SUBS
     #define BROKER_MAX_SUBS          32
 #endif
+/* Per-client subscription cap so one client cannot occupy the whole shared
+ * subscription table and deny other clients. */
+#ifndef BROKER_MAX_SUBS_PER_CLIENT
+    /* Fair share of the shared table, but floored at 8 (and never above the
+     * table size) so the default does not silently reject a client that
+     * subscribes to a normal handful of topics. Override to tighten the
+     * anti-DoS cap or to raise it for subscription-heavy clients. */
+    #if (BROKER_MAX_SUBS / BROKER_MAX_CLIENTS) >= 8
+        #define BROKER_MAX_SUBS_PER_CLIENT (BROKER_MAX_SUBS / BROKER_MAX_CLIENTS)
+    #elif BROKER_MAX_SUBS < 8
+        #define BROKER_MAX_SUBS_PER_CLIENT BROKER_MAX_SUBS
+    #else
+        #define BROKER_MAX_SUBS_PER_CLIENT 8
+    #endif
+#endif
 #ifndef BROKER_MAX_CLIENT_ID_LEN
     #define BROKER_MAX_CLIENT_ID_LEN 64
 #endif
@@ -119,6 +134,18 @@
 #endif
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
+#endif
+/* Upper bound (seconds) the broker accepts for a v5 Will Delay Interval.
+ * Caps how long a deferred-will slot can be monopolized so a few clients
+ * advertising near-UINT32_MAX delays cannot permanently exhaust the pool. */
+#ifndef BROKER_MAX_WILL_DELAY_SEC
+    #define BROKER_MAX_WILL_DELAY_SEC 3600
+#endif
+/* Seconds a freshly accepted client has to complete a CONNECT before the
+ * broker evicts it, so half-open pre-CONNECT sockets cannot exhaust the client
+ * table (Slowloris / slot exhaustion). */
+#ifndef BROKER_CONNECT_TIMEOUT_SEC
+    #define BROKER_CONNECT_TIMEOUT_SEC 10
 #endif
 /* Maximum concurrent inbound QoS 2 packet IDs awaiting PUBREL per client.
  * Used to dedup duplicate PUBLISHes per [MQTT-4.3.3] (Method B). 16 covers
@@ -468,6 +495,7 @@ typedef struct BrokerClient {
     WOLFMQTT_BROKER_TIME_T last_rx;
     byte    clean_session;
     byte    connected;       /* set after successful CONNECT handshake */
+    int     sub_count;       /* active subscriptions owned by this client */
 #ifdef WOLFMQTT_BROKER_WILL
     byte    has_will;
     word16  will_payload_len;
@@ -564,6 +592,7 @@ typedef struct BrokerRetainedMsg {
     WOLFMQTT_BROKER_TIME_T store_time;  /* when stored (seconds) */
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
     MqttQoS qos;                        /* [MQTT-3.3.1-5] stored QoS */
+    byte    pending_delete;             /* deferred free during delivery */
 } BrokerRetainedMsg;
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
@@ -631,6 +660,8 @@ typedef struct MqttBroker {
     BrokerSub*    subs;
 #ifdef WOLFMQTT_BROKER_RETAINED
     BrokerRetainedMsg* retained;
+    int                retained_count;
+    int                retained_delivering; /* re-entrancy guard for delete */
 #endif
 #ifdef WOLFMQTT_BROKER_WILL
     BrokerPendingWill* pending_wills;
@@ -643,6 +674,10 @@ typedef struct MqttBroker {
     const char *ws_tls_cert;
     const char *ws_tls_key;
     const char *ws_tls_ca;
+    /* Optional exact Origin allowlist for browser WebSocket connections. When
+     * non-NULL, a request whose HTTP Origin header is present and does not
+     * match is rejected (CSWSH defense). NULL = no Origin enforcement. */
+    const char *ws_allowed_origin;
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Pointer (not embedded struct) so the broker stays small when no

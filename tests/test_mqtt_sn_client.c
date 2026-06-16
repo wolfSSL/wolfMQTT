@@ -649,7 +649,7 @@ TEST(sn_willmsgupd_payload_scrubbed_on_write_error)
 }
 
 /* ============================================================================
- * SN subscribe pending-response lifecycle tests (CWE-416 regression, #5864)
+ * SN subscribe pending-response lifecycle tests
  *
  * SN_Client_Subscribe registers &subscribe->pendResp in client->firstPendResp
  * (MULTITHREAD) and must remove it exactly once the SUBACK arrives. Under
@@ -717,7 +717,7 @@ TEST(sn_subscribe_rejected)
 }
 
 /* ============================================================================
- * SN publish pending-response lifecycle tests (CWE-416 regression, #5146)
+ * SN publish pending-response lifecycle tests
  *
  * For QoS 1/2 SN_Client_Publish registers &publish->pendResp in
  * client->firstPendResp (MULTITHREAD) and must remove it exactly once the
@@ -922,7 +922,7 @@ TEST(sn_willmsgupd_payload_scrubbed_nonblock)
     sn_will_msg_update_scrub_check(1 /* one CONTINUE per frame */);
 }
 
-/* The headline #5864 regression. With a CONTINUE armed before the SUBACK the
+/* The headline regression. With a CONTINUE armed before the SUBACK the
  * subscribe must converge to SUCCESS and remove its pending response exactly
  * once. Under MULTITHREAD it also pins the dangling-pointer contract directly:
  * after the first in-flight CONTINUE the entry IS linked and points back into
@@ -1024,7 +1024,7 @@ TEST(sn_subscribe_rejected_nonblock)
     ASSERT_NO_PENDRESP();
 }
 
-/* The headline #5146 regression. With a CONTINUE armed before the PUBACK the
+/* The headline regression. With a CONTINUE armed before the PUBACK the
  * QoS 1 publish must converge to SUCCESS and remove its pending response exactly
  * once. Under MULTITHREAD it also pins the dangling-pointer contract directly:
  * after the first in-flight CONTINUE the entry IS linked and points back into
