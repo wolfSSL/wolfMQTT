@@ -5131,6 +5131,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     MqttPublishResp resp;
     byte* payload = NULL;
     char* topic = NULL;
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+    int retain_rc = MQTT_CODE_SUCCESS;
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
 #endif
@@ -5309,6 +5312,9 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     WBLOG_ERR(broker, "Retained store failed: %s",
                         MqttClient_ReturnCodeToString(ret_rc));
                 }
+#ifdef WOLFMQTT_V5
+                retain_rc = ret_rc;
+#endif
             }
         }
     }
@@ -5480,7 +5486,14 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         resp.packet_id = pub.packet_id;
 #ifdef WOLFMQTT_V5
         resp.protocol_level = bc->protocol_level;
+        /* A retained-store failure (cap reached / OOM) must not be ACKed as
+         * success: tell the publisher the quota was exceeded [MQTT-3.4.2]. */
+#ifdef WOLFMQTT_BROKER_RETAINED
+        resp.reason_code = (retain_rc != MQTT_CODE_SUCCESS)
+            ? MQTT_REASON_QUOTA_EXCEEDED : MQTT_REASON_SUCCESS;
+#else
         resp.reason_code = MQTT_REASON_SUCCESS;
+#endif
         resp.props = NULL;
 #endif
         rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
@@ -5618,12 +5631,16 @@ static void BrokerClient_AbnormalClose(MqttBroker* broker, BrokerClient* bc)
  *     [MQTT-4.13]/[MQTT-4.8.0-1] mandate connection close on malformed
  *     packets.
  *   - Server-side resource exhaustion (allocator failure, per-client cap
- *     reached) - the connection must be torn down so resources release. */
+ *     reached) - the connection must be torn down so resources release.
+ *   - v5 property protocol errors (too many properties, duplicate singleton)
+ *     are malformed packets [MQTT-4.13.1]; the client must be disconnected. */
 static int BrokerRcIsFatal(int rc)
 {
     return (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
             rc == MQTT_CODE_ERROR_PACKET_TYPE ||
             rc == MQTT_CODE_ERROR_PACKET_ID ||
+            rc == MQTT_CODE_ERROR_PROPERTY ||
+            rc == MQTT_CODE_ERROR_PROPERTY_MISMATCH ||
             rc == MQTT_CODE_ERROR_MEMORY ||
             rc == MQTT_CODE_ERROR_OUT_OF_BUFFER);
 }
