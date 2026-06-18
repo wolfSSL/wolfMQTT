@@ -29,6 +29,26 @@
       because [MQTT-3.1.3.5] defines Password as Binary Data, not a UTF-8
       string. A binary password containing bytes that are not valid UTF-8
       (e.g., `0xC0`, `0xFF`) would otherwise be incorrectly rejected.
+    - `MqttClient_Publish` / `MqttClient_Publish_ex` now return the new
+      `MQTT_CODE_ERROR_PUBLISH_REJECTED` (-21) when a v5 broker rejects a
+      QoS>0 PUBLISH via a PUBACK (QoS 1), PUBREC, or PUBCOMP (QoS 2) reason
+      code >= 0x80 (e.g. Not authorized, Quota exceeded, Topic Name invalid,
+      Payload format invalid). Previously these were reported as
+      `MQTT_CODE_SUCCESS`, so the application proceeded as if the broker had
+      accepted the message. The specific reason is available in
+      `MqttPublish.resp.reason_code`. For QoS 2, a PUBREC reason code >= 0x80
+      now ends the exchange without sending PUBREL per [MQTT-4.3.3] instead of
+      timing out. v3.1.1 publishes are unaffected, as is the return value of
+      the fire-and-forget `MqttClient_Publish_WriteOnly` call itself. Callers
+      that treat any non-success return as fatal may need to handle this code.
+      In `WOLFMQTT_MULTITHREAD` builds where a dedicated thread drives reads,
+      that reading thread now returns `MQTT_CODE_ERROR_PUBLISH_REJECTED` when it
+      processes a QoS 2 PUBREC rejection (instead of advancing the handshake
+      with an illegal PUBREL); the originating write-only publish's pending
+      response is not auto-completed in that case, so it blocks until
+      `cmd_timeout_ms`. A QoS 1 PUBACK or QoS 2 PUBCOMP rejection is NOT
+      detected on the write-only path (the publish appears successful), matching
+      prior behavior; use `MqttClient_Publish`/`_ex` for reliable detection.
 
 ### v2.0.0 (03/20/2026)
 Release 2.0.0 has been developed according to wolfSSL's development and QA

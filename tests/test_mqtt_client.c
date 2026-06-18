@@ -298,6 +298,10 @@ TEST(connect_with_mock_network)
 static int connect_mock_xfer;
 static byte connect_mock_sent[TEST_TX_BUF_SIZE];
 
+/* Set when a PUBREL (fixed header type 6) is written, so tests can assert the
+ * QoS 2 handshake either did or did not emit one. */
+static int g_pubrel_written;
+
 static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
@@ -306,6 +310,10 @@ static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
         buf_len <= (int)sizeof(connect_mock_sent)) {
         XMEMCPY(connect_mock_sent, buf, (size_t)buf_len);
         connect_mock_xfer = buf_len;
+    }
+    if (buf != NULL && buf_len > 0 &&
+        (buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_REL << 4)) {
+        g_pubrel_written = 1;
     }
     /* Pretend the full packet was sent so MqttClient_Connect reaches the
      * CLIENT_FORCE_ZERO step. */
@@ -634,6 +642,313 @@ TEST(publish_null_publish)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+#ifdef WOLFMQTT_V5
+/* Drives one QoS>0 publish to completion against the canned-response mock and
+ * returns the final MqttClient_Publish result. The caller stages the broker's
+ * PUBACK/PUBCOMP (plus any intermediate PUBREC for QoS 2) in g_canned_buf. */
+static int run_publish_with_canned_resp(MqttPublish* publish,
+    const byte* resp, int resp_len, byte proto_level)
+{
+    int rc;
+    int i;
+
+    rc = test_init_client();
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    test_client.protocol_level = proto_level;
+
+    g_pubrel_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, resp, (size_t)resp_len);
+    g_canned_len = resp_len;
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, publish);
+    }
+    return rc;
+}
+
+/* A v5 broker can ACK a QoS 1 PUBLISH at the protocol layer yet still reject
+ * the message with a PUBACK reason code >= 0x80 (ACL deny, quota, invalid
+ * topic/payload). MqttClient_Publish must surface that as
+ * MQTT_CODE_ERROR_PUBLISH_REJECTED rather than MQTT_CODE_SUCCESS, else the
+ * application proceeds as if the message was delivered. This pins the
+ * detection that the publish path previously lacked (known issue 3626). */
+TEST(publish_qos1_v5_broker_rejection_returns_publish_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBACK: type=0x40, remain=3, packet_id=7, reason=0x87 NOT_AUTHORIZED */
+    static const byte puback[] = { 0x40, 0x03, 0x00, 0x07, 0x87 };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 7;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = run_publish_with_canned_resp(&publish, puback, (int)sizeof(puback),
+        MQTT_CONNECT_PROTOCOL_LEVEL_5);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PUBLISH_REJECTED, rc);
+    ASSERT_EQ(MQTT_REASON_NOT_AUTHORIZED, publish.resp.reason_code);
+}
+
+/* A v5 PUBACK with reason code Success (0x00) means the broker accepted the
+ * message; MqttClient_Publish must still return success and not false-trip the
+ * new rejection check. */
+TEST(publish_qos1_v5_success_returns_success)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBACK: type=0x40, remain=3, packet_id=8, reason=0x00 Success */
+    static const byte puback[] = { 0x40, 0x03, 0x00, 0x08, 0x00 };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 8;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = run_publish_with_canned_resp(&publish, puback, (int)sizeof(puback),
+        MQTT_CONNECT_PROTOCOL_LEVEL_5);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, publish.resp.reason_code);
+}
+
+/* Not every non-zero v5 reason code is a rejection: the high bit distinguishes
+ * error (>= 0x80) from success-class codes. A broker legitimately returns
+ * 0x10 No matching subscribers for a QoS 1 PUBLISH that matched no
+ * subscriptions, and the message WAS accepted. The check uses
+ * (reason_code & 0x80) precisely so 0x10 stays a success; this pins that
+ * boundary against a regression to e.g. (reason_code != 0). */
+TEST(publish_qos1_v5_no_matching_subscribers_returns_success)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBACK: type=0x40, remain=3, packet_id=12, reason=0x10 No match sub */
+    static const byte puback[] = { 0x40, 0x03, 0x00, 0x0C, 0x10 };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 12;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = run_publish_with_canned_resp(&publish, puback, (int)sizeof(puback),
+        MQTT_CONNECT_PROTOCOL_LEVEL_5);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_REASON_NO_MATCH_SUB, publish.resp.reason_code);
+}
+
+/* QoS 2 completes the PUBLISH -> PUBREC -> PUBREL -> PUBCOMP handshake. A v5
+ * broker can reject at the PUBCOMP with a reason code >= 0x80 (e.g. 0x92
+ * Packet Identifier not found); MqttClient_Publish must surface that as
+ * MQTT_CODE_ERROR_PUBLISH_REJECTED. The mock serves a success PUBREC followed
+ * by the failing PUBCOMP, and accepts the client's PUBREL. */
+TEST(publish_qos2_v5_broker_rejection_returns_publish_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* PUBREC (success, no reason byte): type=0x50, remain=2, packet_id=9.
+     * PUBCOMP (reject): type=0x70, remain=3, packet_id=9, reason=0x92. */
+    static const byte resp[] = {
+        0x50, 0x02, 0x00, 0x09,
+        0x70, 0x03, 0x00, 0x09, 0x92
+    };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_2;
+    publish.packet_id = 9;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = run_publish_with_canned_resp(&publish, resp, (int)sizeof(resp),
+        MQTT_CONNECT_PROTOCOL_LEVEL_5);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PUBLISH_REJECTED, rc);
+    ASSERT_EQ(MQTT_REASON_PACKET_ID_NOT_FOUND, publish.resp.reason_code);
+    /* The PUBREC succeeded, so the handshake must have advanced to PUBREL
+     * before the PUBCOMP rejection arrived. */
+    ASSERT_TRUE(g_pubrel_written);
+}
+
+/* QoS 2 full happy path: success PUBREC -> PUBREL -> success PUBCOMP must
+ * return MQTT_CODE_SUCCESS. The post-wait rejection check now runs for every
+ * v5 QoS 2 publish, so this pins that a terminal success PUBCOMP is not
+ * false-tripped and that the handshake emits a PUBREL. */
+TEST(publish_qos2_v5_success_returns_success)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* PUBREC success (no reason byte): type=0x50, remain=2, packet_id=14.
+     * PUBCOMP success (no reason byte): type=0x70, remain=2, packet_id=14. */
+    static const byte resp[] = {
+        0x50, 0x02, 0x00, 0x0E,
+        0x70, 0x02, 0x00, 0x0E
+    };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_2;
+    publish.packet_id = 14;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = run_publish_with_canned_resp(&publish, resp, (int)sizeof(resp),
+        MQTT_CONNECT_PROTOCOL_LEVEL_5);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, publish.resp.reason_code);
+    ASSERT_TRUE(g_pubrel_written);
+}
+
+/* The primary QoS 2 rejection point is the PUBREC: a v5 broker reports
+ * authorization/quota/topic/payload failures there with a reason code >= 0x80.
+ * Per [MQTT-4.3.3] the sender must not send PUBREL and the exchange is
+ * complete, so MqttClient_Publish must return MQTT_CODE_ERROR_PUBLISH_REJECTED
+ * directly from the PUBREC rather than emitting an illegal PUBREL and blocking
+ * for a PUBCOMP that never arrives. The mock serves only the failing PUBREC. */
+TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBREC: type=0x50, remain=3, packet_id=11, reason=0x87 NOT_AUTHORIZED */
+    static const byte pubrec[] = { 0x50, 0x03, 0x00, 0x0B, 0x87 };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_2;
+    publish.packet_id = 11;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = run_publish_with_canned_resp(&publish, pubrec, (int)sizeof(pubrec),
+        MQTT_CONNECT_PROTOCOL_LEVEL_5);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PUBLISH_REJECTED, rc);
+    ASSERT_EQ(MQTT_REASON_NOT_AUTHORIZED, publish.resp.reason_code);
+    /* Per [MQTT-4.3.3] a PUBREC reason code >= 0x80 ends the exchange: the
+     * client must NOT emit a PUBREL. Directly pin that no PUBREL was written. */
+    ASSERT_FALSE(g_pubrel_written);
+}
+
+/* A v3.1.1 PUBACK carries no reason code, so the rejection check must not run
+ * for protocol level < 5. Pre-seed resp.reason_code with a failure byte to
+ * prove the protocol_level guard prevents a stale value from being misread as
+ * a broker rejection. */
+TEST(publish_v311_ack_not_misread_as_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v3.1.1 PUBACK: type=0x40, remain=2, packet_id=10 (no reason code). */
+    static const byte puback[] = { 0x40, 0x02, 0x00, 0x0A };
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 10;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+    /* Stale failure byte that must be ignored for a v3.1.1 ACK. */
+    publish.resp.reason_code = MQTT_REASON_NOT_AUTHORIZED;
+
+    rc = run_publish_with_canned_resp(&publish, puback, (int)sizeof(puback),
+        MQTT_CONNECT_PROTOCOL_LEVEL_4);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+}
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+/* Pins the documented WOLFMQTT_MULTITHREAD divergence for a QoS 2 PUBREC
+ * rejection. A write-only publish registers a pending response for the PUBCOMP
+ * and returns without reading; a separate "reading thread" (simulated here by
+ * MqttClient_WaitMessage) then processes the rejecting PUBREC. Expected, per
+ * the code comment in MqttClient_HandlePacket and the ChangeLog:
+ *   - the reading thread receives MQTT_CODE_ERROR_PUBLISH_REJECTED directly;
+ *   - no PUBREL is emitted ([MQTT-4.3.3]);
+ *   - the PUBREC reason code is decoded into the shared client->msg object, not
+ *     the publisher's MqttPublish, because RespList_Find matches PUBREC against
+ *     the PUBCOMP-keyed pendResp and finds nothing — so the publisher's
+ *     publish.resp is left untouched and it must rely on the reader to observe
+ *     the rejection. This test locks that behavior so a future change can't
+ *     silently alter it. */
+TEST(publish_qos2_v5_pubrec_rejection_multithread_reader)
+{
+    int rc;
+    int i;
+    /* static so the registered pendResp does not point into freed stack after
+     * the call returns (the client is zeroed by setup() before the next test;
+     * MqttClient_DeInit does not walk the pending-response list). */
+    static MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBREC: type=0x50, remain=3, packet_id=13, reason=0x87 NOT_AUTHORIZED */
+    static const byte pubrec[] = { 0x50, 0x03, 0x00, 0x0D, 0x87 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    g_pubrel_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+
+    /* Write-only QoS 2 publish: sends PUBLISH, registers the PUBCOMP pending
+     * response, returns CONTINUE without reading (response is another thread's
+     * job). */
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_2;
+    publish.packet_id = 13;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* Reading thread processes the rejecting PUBREC. */
+    XMEMCPY(g_canned_buf, pubrec, sizeof(pubrec));
+    g_canned_len = (int)sizeof(pubrec);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PUBLISH_REJECTED, rc);
+    ASSERT_FALSE(g_pubrel_written);
+    /* The publisher's own struct is NOT updated on this path. */
+    ASSERT_EQ(MQTT_REASON_SUCCESS, publish.resp.reason_code);
+}
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
+#endif /* WOLFMQTT_V5 */
+
 /* Regression test for MQTT Packet Identifier in-use collision check. The
  * MQTT spec (3.1.1 section 2.3.1, 5.0 section 2.2.1) requires that a new QoS-related
  * Control Packet use a Packet Identifier that is not currently in use;
@@ -906,6 +1221,18 @@ void run_mqtt_client_tests(void)
     /* MqttClient_Publish tests */
     RUN_TEST(publish_null_client);
     RUN_TEST(publish_null_publish);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(publish_qos1_v5_broker_rejection_returns_publish_rejected);
+    RUN_TEST(publish_qos1_v5_success_returns_success);
+    RUN_TEST(publish_qos1_v5_no_matching_subscribers_returns_success);
+    RUN_TEST(publish_qos2_v5_broker_rejection_returns_publish_rejected);
+    RUN_TEST(publish_qos2_v5_success_returns_success);
+    RUN_TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected);
+    RUN_TEST(publish_v311_ack_not_misread_as_rejected);
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+    RUN_TEST(publish_qos2_v5_pubrec_rejection_multithread_reader);
+#endif
+#endif
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(publish_writeonly_rejects_duplicate_in_flight_packet_id);
     RUN_TEST(subscribe_in_flight_blocks_publish_with_same_packet_id);

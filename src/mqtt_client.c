@@ -1030,6 +1030,28 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 break;
             }
 
+        #ifdef WOLFMQTT_V5
+            /* A v5 broker rejects a QoS 2 PUBLISH at the PUBREC stage with a
+             * reason code >= 0x80 (e.g. not authorized, quota exceeded, topic
+             * name invalid, payload format invalid). Per [MQTT-4.3.3] the
+             * exchange is then complete and the sender MUST NOT send a PUBREL.
+             * Surface the rejection instead of advancing the handshake, which
+             * would emit an illegal PUBREL and then block waiting for a PUBCOMP
+             * the broker will never send. The QoS 1 PUBACK and the QoS 2
+             * PUBCOMP reason codes are checked by the caller after the wait.
+             * Note (WOLFMQTT_MULTITHREAD): when a separate thread drives reads
+             * and processes this PUBREC, it receives this error directly and
+             * the publishing thread's PUBCOMP pending response is not marked
+             * done, so that publish blocks until cmd_timeout_ms. This matches
+             * the pre-existing behavior (which left the publisher waiting on a
+             * PUBCOMP after an illegal PUBREL) and is not made worse here. */
+            if (packet_type == MQTT_PACKET_TYPE_PUBLISH_REC &&
+                client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                (((MqttPublishResp*)packet_obj)->reason_code & 0x80)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PUBLISH_REJECTED);
+            }
+        #endif
+
             /* Populate information needed for ack */
             resp->packet_type = packet_type+1; /* next ack */
             resp->packet_id = packet_id;
@@ -2324,6 +2346,26 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     /* Wait for publish response packet */
                     rc = MqttClient_WaitType(client, &publish->resp, resp_type,
                         publish->packet_id, client->cmd_timeout_ms);
+
+                #ifdef WOLFMQTT_V5
+                    /* A v5 broker can acknowledge a QoS>0 PUBLISH at the
+                     * protocol layer yet still reject the message via a
+                     * PUBACK/PUBCOMP reason code >= 0x80 (e.g. not authorized,
+                     * quota exceeded, topic name invalid, payload format
+                     * invalid). Surface that as an error so the caller does not
+                     * treat a rejected message as delivered. Mirrors the
+                     * CONNECT/SUBSCRIBE/UNSUBSCRIBE rejection handling. The
+                     * protocol_level guard avoids misreading a stale byte for
+                     * v3.1.1 ACKs, which carry no reason code (same guard the
+                     * PUBREC check in MqttClient_HandlePacket uses). */
+                    if (rc == MQTT_CODE_SUCCESS &&
+                        client->protocol_level >=
+                            MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                        (publish->resp.reason_code & 0x80)) {
+                        rc = MQTT_TRACE_ERROR(
+                            MQTT_CODE_ERROR_PUBLISH_REJECTED);
+                    }
+                #endif
                 }
 
             #if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
@@ -3202,6 +3244,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Broker rejected subscription)";
         case MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED:
             return "Error (Broker rejected unsubscribe)";
+        case MQTT_CODE_ERROR_PUBLISH_REJECTED:
+            return "Error (Broker rejected publish)";
 #if defined(ENABLE_MQTT_CURL)
         case MQTT_CODE_ERROR_CURL:
             return "Error (libcurl)";
