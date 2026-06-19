@@ -1016,10 +1016,17 @@ static int callback_broker_mqtt(struct lws *wsi,
             char origin[256];
             int olen = lws_hdr_copy(wsi, origin, (int)sizeof(origin),
                 WSI_TOKEN_ORIGIN);
-            if (olen > 0 &&
-                    XSTRCMP(origin, broker->ws_allowed_origin) != 0) {
+            /* lws_hdr_copy returns <= 0 both when no Origin header is sent
+             * (native client, allowed) and when a present Origin is too long
+             * for the buffer. Deciding on olen alone lets an attacker-chosen
+             * Origin longer than the buffer be treated as absent and slip past
+             * the allowlist. Use the header's real length to tell the two
+             * apart and reject a present-but-unverifiable Origin. */
+            if (lws_hdr_total_length(wsi, WSI_TOKEN_ORIGIN) > 0 &&
+                    (olen <= 0 ||
+                     XSTRCMP(origin, broker->ws_allowed_origin) != 0)) {
                 WBLOG_ERR(broker, "broker: ws origin rejected: %s",
-                    BrokerLog_Sanitize(origin));
+                    BrokerLog_Sanitize(olen > 0 ? origin : "(oversized)"));
                 return -1;
             }
         }
