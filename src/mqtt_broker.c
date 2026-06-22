@@ -5421,7 +5421,36 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                  * PUBLISH is fully received and decoded before we
                  * reach the fan-out); BrokerOutPub_Alloc deep-copies
                  * pub.total_len from that buffer. */
-                {
+                if (sub->client->out_q_count >=
+                        BROKER_MAX_QUEUED_MSGS_PER_SUB) {
+                    /* DoS guard: bound the connected subscriber's outbound
+                     * queue depth. The inflight cap above only limits bytes on
+                     * the wire; a subscriber that stops acking lets QUEUED
+                     * entries accumulate one heap-copied PUBLISH at a time
+                     * until the broker exhausts memory. Disconnect the slow /
+                     * abusive subscriber rather than growing out_q or silently
+                     * dropping accepted QoS 1/2 messages. A persistent session
+                     * is reclaimable on reconnect via the (capped) offline
+                     * queue. Mirrors the static partial-write teardown: tear
+                     * the socket down and clear connected so the match guard
+                     * above skips this client's remaining subscriptions; the
+                     * main loop reaps it on the next read error. */
+                    WBLOG_ERR(broker,
+                        "broker: out_q full (%d) -> disconnect sock=%d "
+                        "(from sock=%d)", sub->client->out_q_count,
+                        (int)sub->client->sock, (int)bc->sock);
+                #ifdef WOLFMQTT_V5
+                    (void)BrokerSend_Disconnect(sub->client,
+                        MQTT_REASON_QUOTA_EXCEEDED);
+                #endif
+                    if (sub->client->sock != BROKER_SOCKET_INVALID) {
+                        broker->net.close(broker->net.ctx,
+                            sub->client->sock);
+                        sub->client->sock = BROKER_SOCKET_INVALID;
+                    }
+                    sub->client->connected = 0;
+                }
+                else {
                     BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,
                                           pub.total_len);
                     if (e == NULL) {

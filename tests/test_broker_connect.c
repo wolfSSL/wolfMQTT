@@ -782,6 +782,68 @@ static int count_packets_of_type(const byte* buf, size_t len, byte target)
     return count;
 }
 
+/* find_broker_client / the out_q-cap tests below inspect dynamic-mode-only
+ * BrokerClient state (the linked client list, out_q_count); guard the whole
+ * group so static-memory broker builds (where MqttBroker.clients is an array
+ * and BrokerClient has no next/out_q_count) still compile. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Find the broker-side BrokerClient with the given client_id, walking the
+ * dynamic-mode client list. Returns NULL if absent. Used to inspect internal
+ * per-subscriber queue state (out_q_count) that has no wire-visible signal. */
+static BrokerClient* find_broker_client(MqttBroker* broker, const char* id)
+{
+    BrokerClient* c = broker->clients;
+    while (c != NULL) {
+        if (c->client_id != NULL && XSTRCMP(c->client_id, id) == 0) {
+            return c;
+        }
+        c = c->next;
+    }
+    return NULL;
+}
+
+#ifdef WOLFMQTT_V5
+/* Return the Reason Code byte of the first DISCONNECT packet in a captured
+ * stream, or -1 if none carries a reason code. A v5 DISCONNECT with a
+ * non-success reason and no properties encodes as 0xE0 <remain> <reason>;
+ * the reason is the first byte of the variable header. Only referenced by the
+ * v5 cap test, so it lives under WOLFMQTT_V5 to avoid an unused-function
+ * warning (the build runs with -Werror -Wunused). */
+static int first_disconnect_reason(const byte* buf, size_t len)
+{
+    size_t pos = 0;
+    while (pos < len) {
+        byte type = (byte)((buf[pos] >> 4) & 0x0F);
+        size_t remain = 0;
+        size_t mult = 1;
+        size_t hdr_len = 1;
+        int vbi_complete = 0;
+        while (pos + hdr_len < len && hdr_len <= 5) {
+            byte b = buf[pos + hdr_len];
+            remain += (size_t)(b & 0x7F) * mult;
+            hdr_len++;
+            if ((b & 0x80) == 0) { vbi_complete = 1; break; }
+            mult *= 128;
+        }
+        if (!vbi_complete) {
+            break;
+        }
+        if (type == MQTT_PACKET_TYPE_DISCONNECT) {
+            if (remain >= 1 && pos + hdr_len < len) {
+                return buf[pos + hdr_len];
+            }
+            return -1;
+        }
+        if (remain > len - pos - hdr_len) {
+            break;
+        }
+        pos += hdr_len + remain;
+    }
+    return -1;
+}
+#endif /* WOLFMQTT_V5 */
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 /* [MQTT-4.3.3] / Method B: when the broker receives a duplicate QoS 2
  * PUBLISH carrying a packet ID that's still awaiting PUBREL, it MUST send
  * another PUBREC to the publisher but MUST NOT re-deliver the application
@@ -1028,6 +1090,26 @@ static size_t build_qos2_pub(byte* out, word16 packet_id)
     out[7] = 'p';
     return 8;
 }
+
+/* Build a v3.1.1 QoS 1 PUBLISH to topic "x" (payload "p") with the given
+ * packet_id. Used to flood a slow subscriber's outbound queue. The v3.1.1
+ * wire form has no property field, so the encoding is identical to the QoS 2
+ * helper except for the QoS bits in the fixed header. Returns length (8).
+ * Only used by the dynamic-mode out_q-cap tests, so guarded to avoid an
+ * unused-function warning under -Werror in static-memory builds. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+static size_t build_qos1_pub(byte* out, word16 packet_id)
+{
+    /* remain = topic_len(2) + topic(1) + packet_id(2) + payload(1) = 6 */
+    out[0] = 0x32; /* PUBLISH, QoS 1 */
+    out[1] = 0x06;
+    out[2] = 0x00; out[3] = 0x01; out[4] = 'x';
+    out[5] = (byte)(packet_id >> 8);
+    out[6] = (byte)(packet_id & 0xFF);
+    out[7] = 'p';
+    return 8;
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 
 /* The per-client cap on in-flight QoS 2 packet IDs (BROKER_MAX_INBOUND_QOS2,
  * default 16) MUST disconnect a client that exceeds it. Without the cap, a
@@ -1349,6 +1431,257 @@ TEST(qos2_publish_then_abrupt_close_offline_subscriber)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* The out_q-cap tests are dynamic-memory-only (they inspect out_q_count and
+ * the linked client list); the v5 variant additionally uses the v5-only
+ * MQTT_REASON_QUOTA_EXCEEDED. Guard accordingly so the non-V5 and
+ * static-memory broker CI matrix entries compile. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_V5
+/* Issue 6222: a connected QoS>=1 subscriber that stops acking must NOT be able
+ * to grow its outbound queue without bound. The inflight cap only limits
+ * PUBLISHes on the wire; entries beyond it sit QUEUED and, pre-fix, were
+ * appended to out_q with no depth limit - one heap-copied PUBLISH (topic +
+ * attacker-sized payload) per matching message, until the broker OOMs.
+ *
+ * Repro: subscriber subscribes to "x" at QoS 1 and then never PUBACKs; a
+ * publisher floods more than BROKER_MAX_QUEUED_MSGS_PER_SUB matching QoS 1
+ * PUBLISHes. The fix bounds out_q_count at the cap and disconnects the slow
+ * subscriber (v5: DISCONNECT reason 0x97 Quota Exceeded). We assert the queue
+ * stopped growing at the cap, the subscriber's socket was torn down, and at
+ * most the inflight window ever reached the wire. */
+TEST(online_qos1_flood_disconnects_slow_v5_subscriber)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int flood = BROKER_MAX_QUEUED_MSGS_PER_SUB + 8;
+    int sub_pubs;
+    int sub_disconnects;
+    BrokerClient* sub_bc;
+
+    /* Subscriber CONNECT: v5, ClientId "S", clean_session=1. */
+    static const byte connect_sub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,                   /* properties length = 0 */
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE (v5): packet_id=1, props_len=0, filter "x", QoS 1. */
+    static const byte subscribe_x[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,                   /* properties length = 0 */
+        0x00, 0x01, 'x',
+        0x01
+    };
+    /* Publisher CONNECT: v3.1.1, ClientId "P", clean_session=1. */
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    byte pub_buf[8];
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+
+    /* Phase 1: subscriber connects and subscribes (and stays connected).
+     * Establish the subscription before the flood so every published message
+     * matches and is fanned out to this subscriber. */
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_TRUE(sub_bc != NULL);
+    ASSERT_TRUE(sub_bc->connected);
+
+    /* Phase 2: publisher connects and floods QoS 1 PUBLISHes to "x". The
+     * subscriber never PUBACKs, so the inflight window saturates and every
+     * further message is queued (pre-fix: forever). */
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < flood; i++) {
+        size_t n = build_qos1_pub(pub_buf, (word16)(i + 1));
+        mock_client_input_append(1, pub_buf, n);
+    }
+    for (i = 0; i < flood + 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The subscriber's queue must have stopped growing at the cap rather than
+     * tracking the flood size, and the broker must have torn the socket down. */
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_TRUE(sub_bc != NULL);
+    ASSERT_EQ(BROKER_MAX_QUEUED_MSGS_PER_SUB, sub_bc->out_q_count);
+    ASSERT_FALSE(sub_bc->connected);
+    ASSERT_TRUE(g_clients[0].closed);
+
+    /* Only the inflight window ever reached the wire - far fewer than the
+     * flood, proving the cap bounds wire traffic too. */
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    ASSERT_TRUE(sub_pubs >= 1);
+    ASSERT_TRUE(sub_pubs <= BROKER_MAX_INFLIGHT_PER_SUB);
+
+    /* v5 subscriber gets a DISCONNECT with reason 0x97 Quota Exceeded. */
+    sub_disconnects = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_DISCONNECT);
+    ASSERT_EQ(1, sub_disconnects);
+    ASSERT_EQ(MQTT_REASON_QUOTA_EXCEEDED,
+        first_disconnect_reason(g_clients[0].out_buf, g_clients[0].out_len));
+
+    /* The publisher is a separate, well-behaved client and must be untouched. */
+    ASSERT_FALSE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#endif /* WOLFMQTT_V5 */
+
+/* Same overflow scenario with a v3.1.1 subscriber. v3.1.1 has no
+ * DISCONNECT-with-reason path, so the broker simply closes the socket; the
+ * queue must still be bounded at the cap. */
+TEST(online_qos1_flood_disconnects_slow_v311_subscriber)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int flood = BROKER_MAX_QUEUED_MSGS_PER_SUB + 8;
+    int sub_disconnects;
+    BrokerClient* sub_bc;
+
+    /* Subscriber CONNECT: v3.1.1, ClientId "S", clean_session=1. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE (v3.1.1): packet_id=1, filter "x", QoS 1. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x01
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    byte pub_buf[8];
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_TRUE(sub_bc != NULL);
+    ASSERT_TRUE(sub_bc->connected);
+
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < flood; i++) {
+        size_t n = build_qos1_pub(pub_buf, (word16)(i + 1));
+        mock_client_input_append(1, pub_buf, n);
+    }
+    for (i = 0; i < flood + 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_TRUE(sub_bc != NULL);
+    ASSERT_EQ(BROKER_MAX_QUEUED_MSGS_PER_SUB, sub_bc->out_q_count);
+    ASSERT_FALSE(sub_bc->connected);
+    ASSERT_TRUE(g_clients[0].closed);
+
+    /* v3.1.1 has no DISCONNECT reason code: the broker closes silently. */
+    sub_disconnects = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_DISCONNECT);
+    ASSERT_EQ(0, sub_disconnects);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Boundary check: a slow subscriber that reaches but does not exceed the cap
+ * stays connected. Publishing exactly BROKER_MAX_QUEUED_MSGS_PER_SUB messages
+ * fills out_q to the cap; only the (cap+1)th would trip the disconnect. Guards
+ * the >= comparison against an off-by-one that would evict at the cap. */
+TEST(online_qos1_at_cap_keeps_subscriber)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int at_cap = BROKER_MAX_QUEUED_MSGS_PER_SUB;
+    BrokerClient* sub_bc;
+
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    byte pub_buf[8];
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_TRUE(sub_bc != NULL);
+
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < at_cap; i++) {
+        size_t n = build_qos1_pub(pub_buf, (word16)(i + 1));
+        mock_client_input_append(1, pub_buf, n);
+    }
+    for (i = 0; i < at_cap + 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_TRUE(sub_bc != NULL);
+    ASSERT_EQ(BROKER_MAX_QUEUED_MSGS_PER_SUB, sub_bc->out_q_count);
+    ASSERT_TRUE(sub_bc->connected);
+    ASSERT_FALSE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #ifdef WOLFMQTT_V5
 /* v5 variant: same orphan-then-publish-then-disconnect pattern but the
@@ -2756,6 +3089,13 @@ int main(int argc, char** argv)
     RUN_TEST(qos2_pubrel_unknown_id_still_pubcomps);
     RUN_TEST(qos2_publish_with_offline_durable_subscriber);
     RUN_TEST(qos2_publish_then_abrupt_close_offline_subscriber);
+#ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_V5
+    RUN_TEST(online_qos1_flood_disconnects_slow_v5_subscriber);
+#endif /* WOLFMQTT_V5 */
+    RUN_TEST(online_qos1_flood_disconnects_slow_v311_subscriber);
+    RUN_TEST(online_qos1_at_cap_keeps_subscriber);
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 #ifdef WOLFMQTT_V5
     RUN_TEST(qos2_publish_v5_props_with_offline_durable_subscriber);
 #endif
