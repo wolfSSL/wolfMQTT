@@ -344,7 +344,7 @@ WOLFMQTT_API int MqttClient_Publish(
  *                          Note: MqttPublish and MqttMessage are same
                             structure.
 *   \param      pubCb       Function pointer to callback routine
- *  \return     MQTT_CODE_SUCCESS,
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
                 MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
                 QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
                 reason code >= 0x80 (see MqttPublish.resp.reason_code), or
