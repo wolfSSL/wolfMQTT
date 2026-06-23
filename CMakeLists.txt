@@ -418,3 +418,116 @@ message("\tMultithread:         ${ENABLE_MULTITHREAD}")
 message("\tCurl:                ${ENABLE_CURL}")
 message("\tBroker:              ${WOLFMQTT_BROKER}")
 message("-----------------------------------------------")
+
+# ── SBOM generation target ────────────────────────────────────────────────────
+#
+# Usage:
+#   cmake -B build -DWOLFSSL_DIR=/path/to/wolfssl/source .
+#   cmake --build build
+#   cmake --build build --target sbom
+#
+# WOLFSSL_DIR must point to a wolfssl source tree containing scripts/gen-sbom
+# (feat/sbom-embedded branch). wolfSSL is NOT required to be installed for
+# SBOM generation — only the source tree is needed to locate gen-sbom.
+#
+# Outputs in build directory:
+#   wolfmqtt-<version>.cdx.json
+#   wolfmqtt-<version>.spdx.json
+#   wolfmqtt-<version>.spdx
+#
+# This mirrors the autotools `make sbom` target so both build systems emit
+# byte-comparable SBOMs for the same source tree.
+
+# Location of the wolfssl source tree that ships scripts/gen-sbom. A cache PATH
+# (not a plain var) so it can be set on the command line with -DWOLFSSL_DIR=...
+# and persists across reconfigures.
+set(WOLFSSL_DIR "" CACHE PATH
+    "Path to wolfssl source tree containing scripts/gen-sbom (for the sbom target)")
+
+# Derive the SBOM version from wolfmqtt/version.h, NOT from PROJECT_VERSION.
+# version.h is the single source of truth shared with the autotools build
+# (PACKAGE_VERSION is generated from it); project(VERSION ...) is hand-maintained
+# and can drift, which would make the cmake SBOM disagree with the autotools one.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/wolfmqtt/version.h" WOLFMQTT_VERSION_LINE
+     REGEX "^#define[ \t]+LIBWOLFMQTT_VERSION_STRING[ \t]+\"")
+string(REGEX REPLACE "^.*\"([^\"]+)\".*$" "\\1"
+       WOLFMQTT_SBOM_VERSION "${WOLFMQTT_VERSION_LINE}")
+
+set(SBOM_CDX     "wolfmqtt-${WOLFMQTT_SBOM_VERSION}.cdx.json")
+set(SBOM_SPDX    "wolfmqtt-${WOLFMQTT_SBOM_VERSION}.spdx.json")
+set(SBOM_SPDX_TV "wolfmqtt-${WOLFMQTT_SBOM_VERSION}.spdx")
+
+# gen-sbom runs under python3; pyspdxtools validates the SPDX tag-value output.
+# Both are required — fail at configure time so the user fixes their environment
+# before building rather than hitting a confusing failure mid-`--target sbom`.
+find_program(PYTHON3_EXECUTABLE python3)
+find_program(PYSPDXTOOLS_EXECUTABLE pyspdxtools)
+
+# Configure-time guards. These fire during `cmake -B build ...` so the operator
+# gets immediate, actionable feedback instead of a build-time error after a
+# long compile. An empty WOLFSSL_DIR is the common first-run mistake.
+if(WOLFSSL_DIR STREQUAL "")
+    message(FATAL_ERROR
+        "WOLFSSL_DIR is not set. Cannot locate gen-sbom.\n"
+        "  Set it to your wolfssl source checkout, e.g.:\n"
+        "  cmake -B build -DWOLFSSL_DIR=/path/to/wolfssl .")
+endif()
+if(NOT EXISTS "${WOLFSSL_DIR}/scripts/gen-sbom")
+    message(FATAL_ERROR
+        "gen-sbom not found at ${WOLFSSL_DIR}/scripts/gen-sbom.\n"
+        "  WOLFSSL_DIR must point to a wolfssl source tree (feat/sbom-embedded).")
+endif()
+if(NOT PYTHON3_EXECUTABLE)
+    message(FATAL_ERROR "python3 not found in PATH. Cannot generate SBOM.")
+endif()
+if(NOT PYSPDXTOOLS_EXECUTABLE)
+    message(FATAL_ERROR
+        "pyspdxtools not found in PATH. Cannot validate SBOM.\n"
+        "  Install with: pip install spdx-tools")
+endif()
+
+# Staging dir for `cmake --install` so gen-sbom hashes the as-installed
+# libwolfmqtt.so without polluting the system or requiring root.
+set(SBOM_STAGING "${CMAKE_BINARY_DIR}/_sbom_staging")
+# Pre-processed macro dump fed to gen-sbom via --options-h. `cc -dM -E` on the
+# generated options.h captures the exact compile-time option fingerprint of this
+# build, equivalent to the autotools build passing wolfmqtt/options.h directly.
+set(SBOM_DEFINES "${CMAKE_BINARY_DIR}/_sbom_defines.h")
+
+add_custom_target(sbom
+    # Install into the staging dir so the SBOM hashes the real installed
+    # artifact (libwolfmqtt.so) rather than a build-tree intermediate.
+    COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR}
+            --prefix ${SBOM_STAGING}/usr/local
+
+    # Capture the compile-time options fingerprint. -dM -E emits the full set of
+    # macros defined after preprocessing options.h; gen-sbom reads this as a flat
+    # list of #define directives, same as it reads autotools' options.h.
+    COMMAND ${CMAKE_C_COMPILER} -dM -E
+            ${WOLFMQTT_OUTPUT_BASE}/wolfmqtt/options.h > ${SBOM_DEFINES}
+
+    COMMAND ${PYTHON3_EXECUTABLE} ${WOLFSSL_DIR}/scripts/gen-sbom
+            --name wolfmqtt
+            --version ${WOLFMQTT_SBOM_VERSION}
+            --supplier "wolfSSL Inc."
+            --license-file ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+            --options-h ${SBOM_DEFINES}
+            --lib ${SBOM_STAGING}/usr/local/lib/libwolfmqtt.so
+            --cdx-out ${CMAKE_BINARY_DIR}/${SBOM_CDX}
+            --spdx-out ${CMAKE_BINARY_DIR}/${SBOM_SPDX}
+
+    # Validate the SPDX output and emit the tag-value (.spdx) rendering.
+    COMMAND ${PYSPDXTOOLS_EXECUTABLE}
+            --infile ${CMAKE_BINARY_DIR}/${SBOM_SPDX}
+            --outfile ${CMAKE_BINARY_DIR}/${SBOM_SPDX_TV}
+
+    # Remove transient artifacts; keep only the three SBOM files.
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${SBOM_STAGING}
+    COMMAND ${CMAKE_COMMAND} -E rm -f ${SBOM_DEFINES}
+
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "Generating SBOM for wolfMQTT ${WOLFMQTT_SBOM_VERSION}"
+    VERBATIM)
+
+# The library must exist before we install/hash it.
+add_dependencies(sbom wolfmqtt)
