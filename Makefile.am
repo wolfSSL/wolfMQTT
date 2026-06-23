@@ -57,6 +57,65 @@ test: check
 
 DISTCLEANFILES+= wolfmqtt-config
 
+# SBOM generation (CRA compliance)
+SBOM_CDX     = wolfmqtt-$(PACKAGE_VERSION).cdx.json
+SBOM_SPDX    = wolfmqtt-$(PACKAGE_VERSION).spdx.json
+SBOM_SPDX_TV = wolfmqtt-$(PACKAGE_VERSION).spdx
+sbomdir      = $(datadir)/doc/$(PACKAGE)
+
+.PHONY: sbom install-sbom uninstall-sbom
+
+sbom:
+	@if test -z "$(WOLFSSL_DIR)"; then \
+	    echo ""; \
+	    echo "ERROR: WOLFSSL_DIR is not set. Cannot locate gen-sbom."; \
+	    echo "       Set WOLFSSL_DIR to your wolfssl checkout."; \
+	    echo "       Example: make sbom WOLFSSL_DIR=/path/to/wolfssl"; \
+	    echo ""; \
+	    exit 1; \
+	fi
+	@if test -z "$(PYTHON3)"; then \
+	    echo ""; \
+	    echo "ERROR: 'python3' not found in PATH. Cannot generate SBOM."; \
+	    echo ""; \
+	    exit 1; \
+	fi
+	@if test -z "$(PYSPDXTOOLS)"; then \
+	    echo ""; \
+	    echo "ERROR: 'pyspdxtools' not found in PATH. Cannot validate SBOM."; \
+	    echo "       Install: pip install spdx-tools"; \
+	    echo ""; \
+	    exit 1; \
+	fi
+	rm -rf $(abs_builddir)/_sbom_staging
+	$(MAKE) install DESTDIR=$(abs_builddir)/_sbom_staging
+	$(PYTHON3) $(WOLFSSL_DIR)/scripts/gen-sbom \
+	    --name wolfmqtt \
+	    --version $(PACKAGE_VERSION) \
+	    --supplier 'wolfSSL Inc.' \
+	    --license-file $(srcdir)/LICENSE \
+	    --options-h $(abs_builddir)/wolfmqtt/options.h \
+	    --lib $(abs_builddir)/_sbom_staging$(libdir)/libwolfmqtt.so.$(WOLFMQTT_LIBRARY_VERSION_FIRST).$(WOLFMQTT_LIBRARY_VERSION_SECOND).$(WOLFMQTT_LIBRARY_VERSION_THIRD) \
+	    --git '$(GIT)' \
+	    --cdx-out $(abs_builddir)/$(SBOM_CDX) \
+	    --spdx-out $(abs_builddir)/$(SBOM_SPDX)
+	rm -rf $(abs_builddir)/_sbom_staging
+	$(PYSPDXTOOLS) --infile $(abs_builddir)/$(SBOM_SPDX) \
+	    --outfile $(abs_builddir)/$(SBOM_SPDX_TV)
+
+install-sbom: sbom
+	$(MKDIR_P) $(DESTDIR)$(sbomdir)
+	$(INSTALL_DATA) $(SBOM_CDX) $(DESTDIR)$(sbomdir)/
+	$(INSTALL_DATA) $(SBOM_SPDX) $(DESTDIR)$(sbomdir)/
+	$(INSTALL_DATA) $(SBOM_SPDX_TV) $(DESTDIR)$(sbomdir)/
+
+uninstall-sbom:
+	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_CDX)
+	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_SPDX)
+	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_SPDX_TV)
+
+CLEANFILES += $(SBOM_CDX) $(SBOM_SPDX) $(SBOM_SPDX_TV)
+
 clean-local:
 	-rm -rf tests/fuzz/corpus
 
