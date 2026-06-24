@@ -571,3 +571,25 @@ You can test the wolfMQTT client against public brokers supporting websockets:
 * HiveMQ secure websockets
 
     `./examples/websocket/websocket_client -h broker.hivemq.com -p8884 -t`
+
+## SBOM / EU CRA Compliance
+
+wolfMQTT generates a Software Bill of Materials (SBOM) in CycloneDX 1.6 and
+SPDX 2.3 formats to support compliance with the EU Cyber Resilience Act (CRA).
+
+```sh
+make sbom WOLFSSL_DIR=/path/to/wolfssl
+```
+
+Requires `python3` and `pyspdxtools` (`pip install spdx-tools`). `WOLFSSL_DIR`
+must point to a wolfssl source tree containing `scripts/gen-sbom` (branch
+`feat/sbom-embedded`, or `master` once wolfSSL/wolfssl#10343 merges).
+
+Output: `wolfmqtt-<version>.cdx.json`, `wolfmqtt-<version>.spdx.json`, `wolfmqtt-<version>.spdx`
+
+```sh
+make install-sbom    # installs to $(datadir)/doc/wolfmqtt/
+make uninstall-sbom
+```
+
+For further CRA guidance see [wolfssl/doc/CRA.md](https://github.com/wolfSSL/wolfssl/blob/master/doc/CRA.md).

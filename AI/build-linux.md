@@ -15,6 +15,7 @@ Then build and test:
 make
 make check      # runs all tests — do this before submitting any PR
 sudo make install
+make sbom WOLFSSL_DIR=/path/to/wolfssl   # generate SBOM for EU CRA compliance
 ```
 
 ### Common configure flags
