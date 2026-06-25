@@ -306,23 +306,50 @@ static int g_pubrel_written;
  * that an incoming QoS>0 PUBLISH was (or was not) acknowledged to the broker. */
 static int g_pubresp_written;
 
+/* Records the fixed-header packet type (4..7) of the most recent PUBLISH
+ * response frame written to the wire, or MQTT_PACKET_TYPE_RESERVED when none was
+ * written. Lets a test assert exactly which QoS acknowledgement (if any)
+ * MqttClient_HandlePacket emitted for an incoming PUBLISH response. */
+static int g_last_ack_written;
+
+/* Counts every frame the client writes to the wire, of any type. A "no ack"
+ * test asserts this stayed zero, which is stronger than only checking that no
+ * known ack type was recorded: it also catches a frame whose type falls outside
+ * the 4..7 range that g_last_ack_written tracks. */
+static int g_frames_written;
+
 static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
+    byte ack_type;
     (void)context; (void)timeout_ms;
-    if (buf != NULL && buf_len > 0 &&
-        buf_len <= (int)sizeof(connect_mock_sent)) {
-        XMEMCPY(connect_mock_sent, buf, (size_t)buf_len);
-        connect_mock_xfer = buf_len;
-    }
-    if (buf != NULL && buf_len > 0 &&
-        (buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_REL << 4)) {
-        g_pubrel_written = 1;
-    }
-    if (buf != NULL && buf_len > 0 &&
-        ((buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_ACK << 4) ||
-         (buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_REC << 4))) {
-        g_pubresp_written = 1;
+    if (buf != NULL && buf_len > 0) {
+        ack_type = (byte)((buf[0] & 0xF0) >> 4);
+
+        if (buf_len <= (int)sizeof(connect_mock_sent)) {
+            XMEMCPY(connect_mock_sent, buf, (size_t)buf_len);
+            connect_mock_xfer = buf_len;
+        }
+
+        /* Count the frame regardless of type. */
+        g_frames_written++;
+
+        if (ack_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
+            g_pubrel_written = 1;
+        }
+        if (ack_type == MQTT_PACKET_TYPE_PUBLISH_ACK ||
+            ack_type == MQTT_PACKET_TYPE_PUBLISH_REC) {
+            g_pubresp_written = 1;
+        }
+        /* Record which QoS acknowledgement reached the wire. The PUBREC/PUBREL
+         * filter in MqttClient_HandlePacket decides this, so a test can read
+         * back the exact ack type and catch a spurious or wrong-type frame. */
+        if (ack_type == MQTT_PACKET_TYPE_PUBLISH_ACK ||
+            ack_type == MQTT_PACKET_TYPE_PUBLISH_REC ||
+            ack_type == MQTT_PACKET_TYPE_PUBLISH_REL ||
+            ack_type == MQTT_PACKET_TYPE_PUBLISH_COMP) {
+            g_last_ack_written = ack_type;
+        }
     }
     /* Pretend the full packet was sent so MqttClient_Connect reaches the
      * CLIENT_FORCE_ZERO step. */
@@ -1135,6 +1162,8 @@ static int run_wait_message_with_frame(const byte* frame, int frame_len)
 #endif
 
     g_pubresp_written = 0;
+    g_last_ack_written = MQTT_PACKET_TYPE_RESERVED;
+    g_frames_written = 0;
     test_net.write = mock_net_write_accept;
     test_net.read = mock_net_read_canned;
     XMEMCPY(g_canned_buf, frame, (size_t)frame_len);
@@ -1308,6 +1337,84 @@ TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
     ASSERT_TRUE(g_pubresp_written);
 }
 
+/* The four PUBLISH-response packet types (PUBACK 4, PUBREC 5, PUBREL 6,
+ * PUBCOMP 7) all decode through the same branch of MqttClient_HandlePacket, but
+ * only PUBREC and PUBREL may advance the QoS handshake. The branch gates this
+ * with `if (type != PUBREC && type != PUBREL) break;` before the
+ * `resp->packet_type = type + 1` next-ack arithmetic, so an incoming:
+ *   - PUBREC  (5) must emit a PUBREL  (6),
+ *   - PUBREL  (6) must emit a PUBCOMP (7),
+ *   - PUBACK  (4) must emit nothing (a QoS 1 transaction is already complete;
+ *     advancing would put a spurious PUBREC on the wire), and
+ *   - PUBCOMP (7) must emit nothing (a QoS 2 transaction is complete).
+ * Each test drives one response type through MqttClient_WaitMessage and checks
+ * the exact ack the client wrote. The mutations these catch:
+ *   - Deleting the filter is caught by the PUBACK case: type 4 then advances to
+ *     type 5 PUBREC, a valid pub-resp frame, which is written to the wire.
+ *   - Widening the filter (&& -> ||, or == in place of one !=) is caught by the
+ *     PUBREC and PUBREL cases: the handshake stops advancing and no PUBREL or
+ *     PUBCOMP is emitted.
+ * The PUBCOMP case cannot detect filter deletion on its own: a deleted filter
+ * computes type 8 SUBSCRIBE, which the MqttIsPubRespPacket gate in
+ * MqttClient_WaitType (src/mqtt_client.c) refuses to write, so nothing reaches
+ * the wire either way. It still pins the correct terminal no-ack behavior and,
+ * via g_frames_written, would catch any change that turned a PUBCOMP into an
+ * outbound frame. The shared helper forces protocol level 4 so these v3.1.1
+ * frames carry no reason code or properties. */
+TEST(wait_message_pubrec_emits_pubrel)
+{
+    int rc;
+    /* PUBREC v3.1.1: type=0x50, remain=2, packet_id=5. */
+    static const byte pubrec[] = { 0x50, 0x02, 0x00, 0x05 };
+
+    rc = run_wait_message_with_frame(pubrec, (int)sizeof(pubrec));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_REL, g_last_ack_written);
+}
+
+TEST(wait_message_pubrel_emits_pubcomp)
+{
+    int rc;
+    /* PUBREL v3.1.1: type=0x62 (reserved flags 0x2 are required for PUBREL),
+     * remain=2, packet_id=6. */
+    static const byte pubrel[] = { 0x62, 0x02, 0x00, 0x06 };
+
+    rc = run_wait_message_with_frame(pubrel, (int)sizeof(pubrel));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_COMP, g_last_ack_written);
+}
+
+TEST(wait_message_puback_emits_no_ack)
+{
+    int rc;
+    /* PUBACK v3.1.1: type=0x40, remain=2, packet_id=4. */
+    static const byte puback[] = { 0x40, 0x02, 0x00, 0x04 };
+
+    rc = run_wait_message_with_frame(puback, (int)sizeof(puback));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_PACKET_TYPE_RESERVED, g_last_ack_written);
+    /* Nothing of any type may reach the wire. Pre-fix (filter deleted) a
+     * spurious PUBREC was emitted here. */
+    ASSERT_EQ(0, g_frames_written);
+}
+
+TEST(wait_message_pubcomp_emits_no_ack)
+{
+    int rc;
+    /* PUBCOMP v3.1.1: type=0x70, remain=2, packet_id=7. */
+    static const byte pubcomp[] = { 0x70, 0x02, 0x00, 0x07 };
+
+    rc = run_wait_message_with_frame(pubcomp, (int)sizeof(pubcomp));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_PACKET_TYPE_RESERVED, g_last_ack_written);
+    /* A completed QoS 2 transaction emits no further frame of any type. */
+    ASSERT_EQ(0, g_frames_written);
+}
+
 /* ============================================================================
  * MqttClient_ReturnCodeToString Tests
  * ============================================================================ */
@@ -1447,6 +1554,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_props_null_msg_cb_frees_props);
 #endif
     RUN_TEST(wait_message_qos1_with_msg_cb_delivers_and_acks);
+    RUN_TEST(wait_message_pubrec_emits_pubrel);
+    RUN_TEST(wait_message_pubrel_emits_pubcomp);
+    RUN_TEST(wait_message_puback_emits_no_ack);
+    RUN_TEST(wait_message_pubcomp_emits_no_ack);
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
     /* MqttClient_ReturnCodeToString tests */
