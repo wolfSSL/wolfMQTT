@@ -1837,7 +1837,8 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
             /* inform other threads of expected response */
             rc = MqttClient_RespList_Add(client,
                     (MqttPacketType)SN_MSG_TYPE_UNSUBACK,
-                    0, &unsubscribe->pendResp, &unsubscribe->ack);
+                    unsubscribe->packet_id, &unsubscribe->pendResp,
+                    &unsubscribe->ack);
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {

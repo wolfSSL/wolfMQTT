@@ -59,6 +59,16 @@
       detected on the write-only path (the publish appears successful), matching
       prior behavior; use `MqttClient_Publish`/`_ex` for reliable detection.
 
+* Fixes
+    - `SN_Client_Unsubscribe` now registers its pending UNSUBACK response under
+      the real Packet Identifier instead of a hard-coded `0`. In
+      `WOLFMQTT_MULTITHREAD` builds where a dedicated reader thread processes the
+      UNSUBACK first, `MqttClient_RespList_Find` matches on the decoded packet
+      id, so the id-0 entry never matched and the response was consumed into the
+      generic object, leaving the unsubscribing thread blocked until
+      `cmd_timeout_ms`. The registration now matches `SN_Client_Subscribe`,
+      `SN_Client_Register`, and `SN_Client_Publish`.
+
 ### v2.0.0 (03/20/2026)
 Release 2.0.0 has been developed according to wolfSSL's development and QA
 process (see link below) and successfully passed the quality criteria.

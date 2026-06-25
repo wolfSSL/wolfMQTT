@@ -249,6 +249,11 @@ static const byte PUBREC_FRAME[]  = { 0x04, SN_MSG_TYPE_PUBREC,
 static const byte PUBCOMP_FRAME[] = { 0x04, SN_MSG_TYPE_PUBCOMP,
                                       0x00, SN_TEST_PUB_PACKET_ID };
 
+/* Scripted UNSUBACK echoing packet_id 1: total_len=4, type, packet_id(2). */
+#define SN_TEST_UNSUB_PACKET_ID 1
+static const byte UNSUBACK_FRAME[] = { 0x04, SN_MSG_TYPE_UNSUBACK,
+                                       0x00, SN_TEST_UNSUB_PACKET_ID };
+
 /* ============================================================================
  * Test fixtures
  * ============================================================================ */
@@ -384,6 +389,36 @@ static int sn_publish_pump(SN_Publish* p, int* iters)
     const int max_iters = 50;
     for (i = 0; i < max_iters; i++) {
         rc = SN_Client_Publish(&g_client, p);
+        if (rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    if (iters) {
+        *iters = i + 1;
+    }
+    return rc;
+}
+
+static void sn_unsubscribe_setup(SN_Unsubscribe* u)
+{
+    XMEMSET(u, 0, sizeof(*u));
+    u->duplicate = 0;
+    u->qos = MQTT_QOS_0;
+    u->topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    u->topicNameId = "wolf/topic";
+    u->packet_id = SN_TEST_UNSUB_PACKET_ID;
+}
+
+/* Drive SN_Client_Unsubscribe until it returns something other than CONTINUE,
+ * or until we exceed a sane iteration cap. Returns the terminal code and the
+ * number of iterations through *iters. */
+static int sn_unsubscribe_pump(SN_Unsubscribe* u, int* iters)
+{
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    const int max_iters = 50;
+    for (i = 0; i < max_iters; i++) {
+        rc = SN_Client_Unsubscribe(&g_client, u);
         if (rc != MQTT_CODE_CONTINUE) {
             break;
         }
@@ -808,6 +843,46 @@ TEST(sn_publish_qos0_no_pendresp)
     ASSERT_NO_PENDRESP();
 }
 
+/* ============================================================================
+ * SN unsubscribe pending-response lifecycle tests (#6047)
+ *
+ * SN_Client_Unsubscribe registers &unsubscribe->pendResp in
+ * client->firstPendResp (MULTITHREAD) so a reader thread can route the UNSUBACK
+ * back to the unsubscribing thread. The entry must be keyed by the real Packet
+ * Identifier: MqttClient_RespList_Find matches on (packet_type, packet_id), and
+ * an UNSUBACK echoes the MsgId that SN_Decode_UnsubscribeAck recovers as the
+ * non-zero packet_id. Pre-fix the entry was added with a hard-coded id of 0, so
+ * a reader thread's RespList_Find(UNSUBACK, real_id) never matched and the
+ * UNSUBACK was swallowed into the generic object, leaving the unsubscribing
+ * thread blocked until cmd_timeout_ms. The same-thread case was masked because
+ * SN_Client_WaitType also matches directly on wait_packet_id, so the
+ * cross-thread test below is the one that pins the fix.
+ * ============================================================================ */
+
+/* Happy path: UNSUBACK is immediately available and read by the unsubscribing
+ * call itself. Runs in every SN build and guards that the pending response is
+ * removed once the unsubscribe completes. */
+TEST(sn_unsubscribe_no_continue)
+{
+    SN_Unsubscribe unsub;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, UNSUBACK_FRAME, (int)sizeof(UNSUBACK_FRAME));
+
+    sn_unsubscribe_setup(&unsub);
+
+    rc = sn_unsubscribe_pump(&unsub, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_TEST_UNSUB_PACKET_ID, unsub.ack.packet_id);
+    /* The client sent UNSUBSCRIBE. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* No pending response may be left dangling once unsubscribe completes. */
+    ASSERT_NO_PENDRESP();
+}
+
 /* The non-blocking retry behavior is the actual regression and only applies
  * when WOLFMQTT_NONBLOCK is built (otherwise SN_Client_WaitType blocks and
  * never returns MQTT_CODE_CONTINUE). */
@@ -1096,6 +1171,65 @@ TEST(sn_publish_qos1_many_continues)
     ASSERT_NO_PENDRESP();
 }
 
+/* #6047 headline regression: cross-thread UNSUBACK routing. The unsubscribing
+ * thread arms a pending response and returns in-flight (CONTINUE) before the
+ * UNSUBACK arrives, then a separate reader thread (modeled by
+ * SN_Client_WaitMessage) consumes it. The fix registers the pending response
+ * under the real packet_id, so the reader's RespList_Find(UNSUBACK, real_id)
+ * matches and routes the UNSUBACK back to the unsubscribing thread; pre-fix the
+ * entry was keyed by id 0, so the match failed and the unsubscribe never
+ * resolved. Needs MULTITHREAD (the respList routing and firstPendResp only exist
+ * there) on top of NONBLOCK (to interleave the reader between the unsubscribing
+ * thread's send and wait within a single test thread). */
+#ifdef WOLFMQTT_MULTITHREAD
+TEST(sn_unsubscribe_crossthread_unsuback_routing)
+{
+    SN_Unsubscribe unsub;
+    int rc, iters = 0;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
+
+    mock_net_push(&g_mock, UNSUBACK_FRAME, (int)sizeof(UNSUBACK_FRAME));
+
+    sn_unsubscribe_setup(&unsub);
+
+    /* First call sends UNSUBSCRIBE and registers the pending UNSUBACK response.
+     * The armed CONTINUE forces an in-flight return before the UNSUBACK is read,
+     * so the unsubscribing thread leaves without consuming it. */
+    rc = SN_Client_Unsubscribe(&g_client, &unsub);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* The pending response must be keyed by the real packet_id so a reader
+     * thread can route the UNSUBACK to it. Pre-fix it was added under id 0. */
+    ASSERT_NOT_NULL(g_client.firstPendResp);
+    ASSERT_EQ(SN_TEST_UNSUB_PACKET_ID, g_client.firstPendResp->packet_id);
+
+    /* Model a separate reader thread (waitMessage_task) consuming the UNSUBACK
+     * via the generic wait path. With the fix the UNSUBACK is matched by type+id
+     * to the registered pending response, handled into the unsubscribing
+     * thread's ack object, and the entry is marked done; the read therefore
+     * belongs to another thread and returns CONTINUE here. Pre-fix the id-0
+     * entry never matched the real id, so the UNSUBACK was swallowed into the
+     * reader's generic object and the entry was left pending. */
+    rc = SN_Client_WaitMessage(&g_client, 1000);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* The unsubscribing thread resumes. With the fix CheckPendResp finds the
+     * entry already marked done and returns SUCCESS without another read.
+     * Pre-fix the entry is still pending (the UNSUBACK was swallowed), so this
+     * would spin on CONTINUE and never resolve. */
+    rc = sn_unsubscribe_pump(&unsub, &iters);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_TEST_UNSUB_PACKET_ID, unsub.ack.packet_id);
+
+    /* The reader consumed the only UNSUBACK frame and no pending response is
+     * left dangling once the unsubscribe completes. */
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    ASSERT_NO_PENDRESP();
+}
+#endif /* WOLFMQTT_MULTITHREAD */
+
 #endif /* WOLFMQTT_NONBLOCK */
 
 /* ============================================================================
@@ -1260,6 +1394,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_qos1_no_continue);
     RUN_TEST(sn_publish_qos2_no_continue);
     RUN_TEST(sn_publish_qos0_no_pendresp);
+    RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);
 
@@ -1275,6 +1410,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_subscribe_rejected_nonblock);
     RUN_TEST(sn_publish_qos1_nonblock_pendresp_lifecycle);
     RUN_TEST(sn_publish_qos1_many_continues);
+#ifdef WOLFMQTT_MULTITHREAD
+    RUN_TEST(sn_unsubscribe_crossthread_unsuback_routing);
+#endif
     RUN_TEST(sn_ping_null_nonblock_no_dangling_pendresp);
     RUN_TEST(sn_ping_nonblock_pendresp_lifecycle);
 #endif
