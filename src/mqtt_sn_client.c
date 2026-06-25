@@ -205,6 +205,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                     return rc;
                 };
             }
+            else {
+                /* No callback registered to deliver this PUBLISH. Return a
+                 * distinct error instead of reporting success: for QoS 0 this
+                 * replaces a silent discard, and for QoS>0 it also avoids
+                 * falsely ACKing a message the application never saw. */
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CALLBACK);
+            }
 
             /* Handle Qos */
             if (p_pub->qos > MQTT_QOS_0) {

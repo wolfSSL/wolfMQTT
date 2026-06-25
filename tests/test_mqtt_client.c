@@ -302,6 +302,10 @@ static byte connect_mock_sent[TEST_TX_BUF_SIZE];
  * QoS 2 handshake either did or did not emit one. */
 static int g_pubrel_written;
 
+/* Set when a PUBACK (type 4) or PUBREC (type 5) is written, so tests can assert
+ * that an incoming QoS>0 PUBLISH was (or was not) acknowledged to the broker. */
+static int g_pubresp_written;
+
 static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
@@ -314,6 +318,11 @@ static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
     if (buf != NULL && buf_len > 0 &&
         (buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_REL << 4)) {
         g_pubrel_written = 1;
+    }
+    if (buf != NULL && buf_len > 0 &&
+        ((buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_ACK << 4) ||
+         (buf[0] & 0xF0) == (MQTT_PACKET_TYPE_PUBLISH_REC << 4))) {
+        g_pubresp_written = 1;
     }
     /* Pretend the full packet was sent so MqttClient_Connect reaches the
      * CLIENT_FORCE_ZERO step. */
@@ -1108,6 +1117,197 @@ TEST(wait_message_null_client)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+/* Stage `frame` as a server-pushed packet and drive MqttClient_WaitMessage to
+ * completion against the canned-response mock. The client is initialized with a
+ * NULL msg_cb (test_init_client passes NULL). Returns the terminal result. */
+static int run_wait_message_with_frame(const byte* frame, int frame_len)
+{
+    int rc;
+    int i;
+
+    rc = test_init_client();
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#ifdef WOLFMQTT_V5
+    /* Decode the v3.1.1-format frame below without expecting v5 properties. */
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    g_pubresp_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, frame, (size_t)frame_len);
+    g_canned_len = frame_len;
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    return rc;
+}
+
+/* #6217: a client initialized with a NULL msg_cb that receives a QoS 1 PUBLISH
+ * used to silently drain and discard the payload, return MQTT_CODE_SUCCESS, and
+ * then send a PUBACK telling the broker the message was delivered. The
+ * application never saw the message yet the broker considered it acknowledged.
+ * MqttClient_Publish_ReadPayload now returns MQTT_CODE_ERROR_CALLBACK when no
+ * callback is registered, so MqttClient_HandlePacket does not populate an ACK
+ * and no PUBACK is sent. */
+TEST(wait_message_qos1_null_msg_cb_errors_no_ack)
+{
+    int rc;
+    /* v3.1.1 QoS1 PUBLISH: type|qos1=0x32, remain=7, topic "a" (0x0001 'a'),
+     * packet_id=7 (0x0007), payload "hi". */
+    static const byte publish_qos1[] = { 0x32, 0x07, 0x00, 0x01, 'a',
+                                         0x00, 0x07, 'h', 'i' };
+
+    rc = run_wait_message_with_frame(publish_qos1, (int)sizeof(publish_qos1));
+
+    /* Pre-fix this returned MQTT_CODE_SUCCESS. */
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    /* The broker must NOT be told the message was delivered. Pre-fix a PUBACK
+     * was emitted here, falsely confirming delivery of a dropped message. */
+    ASSERT_FALSE(g_pubresp_written);
+}
+
+/* #6217 (QoS 0 half): a QoS 0 PUBLISH carries no acknowledgement, so the false
+ * ACK does not apply, but with a NULL msg_cb the message was still silently
+ * dropped with MQTT_CODE_SUCCESS. The caller now receives a distinct error
+ * instead of believing nothing arrived. */
+TEST(wait_message_qos0_null_msg_cb_errors)
+{
+    int rc;
+    /* v3.1.1 QoS0 PUBLISH: type=0x30, remain=5, topic "a" (0x0001 'a'),
+     * payload "hi" (no packet id for QoS 0). */
+    static const byte publish_qos0[] = { 0x30, 0x05, 0x00, 0x01, 'a', 'h', 'i' };
+
+    rc = run_wait_message_with_frame(publish_qos0, (int)sizeof(publish_qos0));
+
+    /* Pre-fix this returned MQTT_CODE_SUCCESS while discarding the message. */
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    /* QoS 0 never acknowledges, with or without the fix. */
+    ASSERT_FALSE(g_pubresp_written);
+}
+
+/* #6217 (QoS 2): a QoS 2 incoming PUBLISH with no msg_cb must error without
+ * sending the PUBREC. QoS 2 is where the suppressed acknowledgement matters
+ * most: a false PUBREC starts a delivery handshake the broker then completes
+ * for a message the application never received. */
+TEST(wait_message_qos2_null_msg_cb_errors_no_ack)
+{
+    int rc;
+    /* v3.1.1 QoS2 PUBLISH: type|qos2=0x34, remain=7, topic "a" (0x0001 'a'),
+     * packet_id=9 (0x0009), payload "hi". */
+    static const byte publish_qos2[] = { 0x34, 0x07, 0x00, 0x01, 'a',
+                                         0x00, 0x09, 'h', 'i' };
+
+    rc = run_wait_message_with_frame(publish_qos2, (int)sizeof(publish_qos2));
+
+    /* Pre-fix this returned MQTT_CODE_SUCCESS. */
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    /* No PUBREC may be sent: pre-fix one was, falsely starting a QoS 2
+     * handshake for a dropped message. */
+    ASSERT_FALSE(g_pubresp_written);
+}
+
+#ifdef WOLFMQTT_V5
+/* #6217 property-leak regression: a v5 incoming PUBLISH carrying properties must
+ * not leak its retained property list when there is no msg_cb. The decoder keeps
+ * the property list to be freed after the callback; on the no-callback error
+ * path MqttClient_HandlePacket must still free it (skipping the free leaked the
+ * static property pool, or the heap under WOLFMQTT_DYN_PROP). Asserts the error
+ * is returned, no PUBACK is sent, and the retained property list was released.
+ * Uses protocol level 5 so the property bytes are actually parsed (the shared
+ * helper forces level 4 to keep its frames v3.1.1). */
+TEST(wait_message_v5_props_null_msg_cb_frees_props)
+{
+    int rc;
+    int i;
+    /* v5 QoS1 PUBLISH: type|qos1=0x32, remain=0x0A, topic "a" (0x0001 'a'),
+     * packet_id=9 (0x0009), prop_len=2, Payload Format Indicator (0x01)=0,
+     * payload "hi". */
+    static const byte publish_v5[] = { 0x32, 0x0A, 0x00, 0x01, 'a',
+                                       0x00, 0x09, 0x02, 0x01, 0x00,
+                                       'h', 'i' };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    g_pubresp_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_v5, sizeof(publish_v5));
+    g_canned_len = (int)sizeof(publish_v5);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    ASSERT_FALSE(g_pubresp_written);
+    /* The retained v5 property list must have been freed on the error path;
+     * pre-fix it leaked, leaving publish->props non-NULL. */
+    ASSERT_NULL(test_client.msg.publish.props);
+}
+#endif /* WOLFMQTT_V5 */
+
+/* Counts deliveries for the positive-control test below. */
+static int g_msg_cb_calls;
+static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client; (void)msg; (void)msg_new; (void)msg_done;
+    g_msg_cb_calls++;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* Positive control for #6217: with a real msg_cb registered, an incoming QoS 1
+ * PUBLISH must still be delivered to the callback AND acknowledged with a
+ * PUBACK. The no-callback error is gated on msg_cb == NULL, so the normal
+ * acknowledge path must be unchanged. Without this, every new test runs with a
+ * NULL callback and only asserts the FALSE direction of g_pubresp_written, so a
+ * regression that suppressed ACKs outright would go unnoticed. */
+TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
+{
+    int rc;
+    int i;
+    /* v3.1.1 QoS1 PUBLISH: type|qos1=0x32, remain=7, topic "a" (0x0001 'a'),
+     * packet_id=7 (0x0007), payload "hi". */
+    static const byte publish_qos1[] = { 0x32, 0x07, 0x00, 0x01, 'a',
+                                         0x00, 0x07, 'h', 'i' };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    /* Register a real callback so the normal deliver-and-ACK path is taken. */
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+
+    g_pubresp_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_qos1, sizeof(publish_qos1));
+    g_canned_len = (int)sizeof(publish_qos1);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    /* The message was delivered to the callback and the PUBACK was sent. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_msg_cb_calls > 0);
+    ASSERT_TRUE(g_pubresp_written);
+}
+
 /* ============================================================================
  * MqttClient_ReturnCodeToString Tests
  * ============================================================================ */
@@ -1240,6 +1440,13 @@ void run_mqtt_client_tests(void)
 
     /* MqttClient_WaitMessage tests */
     RUN_TEST(wait_message_null_client);
+    RUN_TEST(wait_message_qos1_null_msg_cb_errors_no_ack);
+    RUN_TEST(wait_message_qos0_null_msg_cb_errors);
+    RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(wait_message_v5_props_null_msg_cb_frees_props);
+#endif
+    RUN_TEST(wait_message_qos1_with_msg_cb_delivers_and_acks);
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
     /* MqttClient_ReturnCodeToString tests */

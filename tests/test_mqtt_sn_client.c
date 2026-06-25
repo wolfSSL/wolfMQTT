@@ -254,6 +254,12 @@ static const byte PUBCOMP_FRAME[] = { 0x04, SN_MSG_TYPE_PUBCOMP,
 static const byte UNSUBACK_FRAME[] = { 0x04, SN_MSG_TYPE_UNSUBACK,
                                        0x00, SN_TEST_UNSUB_PACKET_ID };
 
+/* Server-pushed QoS1 PUBLISH: total_len=9, type, flags=QoS1|NORMAL (0x20),
+ * topicId=0x000A, packet_id=0x0007, payload(2). */
+static const byte SN_PUBLISH_QOS1_FRAME[] = { 0x09, SN_MSG_TYPE_PUBLISH,
+                                              0x20, 0x00, 0x0A,
+                                              0x00, 0x07, 0x01, 0x02 };
+
 /* ============================================================================
  * Test fixtures
  * ============================================================================ */
@@ -883,6 +889,37 @@ TEST(sn_unsubscribe_no_continue)
     ASSERT_NO_PENDRESP();
 }
 
+/* ============================================================================
+ * SN incoming-PUBLISH with no message callback (#6217)
+ *
+ * The SN test harness initializes the client with a NULL msg_cb. An SN client
+ * that receives a PUBLISH used to decode and discard it, return success, and
+ * (for QoS>0) send a PUBACK/PUBREC falsely confirming delivery to the gateway.
+ * SN_Client_HandlePacket now returns MQTT_CODE_ERROR_CALLBACK when no callback
+ * is registered, so the message is reported as undeliverable and not ACKed.
+ * Runs in every SN build (the fix is independent of NONBLOCK/MULTITHREAD).
+ * ============================================================================ */
+TEST(sn_publish_incoming_null_msg_cb_errors_no_ack)
+{
+    int rc, i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, SN_PUBLISH_QOS1_FRAME,
+            (int)sizeof(SN_PUBLISH_QOS1_FRAME));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+
+    /* Pre-fix this returned MQTT_CODE_SUCCESS. */
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    /* The gateway must NOT be told the QoS1 message was delivered: pre-fix a
+     * PUBACK was written here, falsely confirming a dropped message. */
+    ASSERT_EQ(0, g_mock.write_calls);
+}
+
 /* The non-blocking retry behavior is the actual regression and only applies
  * when WOLFMQTT_NONBLOCK is built (otherwise SN_Client_WaitType blocks and
  * never returns MQTT_CODE_CONTINUE). */
@@ -1395,6 +1432,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_qos2_no_continue);
     RUN_TEST(sn_publish_qos0_no_pendresp);
     RUN_TEST(sn_unsubscribe_no_continue);
+    RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);
 

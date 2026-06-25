@@ -58,6 +58,22 @@
       `cmd_timeout_ms`. A QoS 1 PUBACK or QoS 2 PUBCOMP rejection is NOT
       detected on the write-only path (the publish appears successful), matching
       prior behavior; use `MqttClient_Publish`/`_ex` for reliable detection.
+    - An incoming PUBLISH received by a client with no message callback
+      registered (`msg_cb == NULL`) now returns `MQTT_CODE_ERROR_CALLBACK`
+      (-13) instead of `MQTT_CODE_SUCCESS`. Previously the payload was silently
+      read and discarded, and for QoS 1/2 a PUBACK/PUBREC was still sent,
+      falsely telling the broker the message was delivered while the application
+      never saw it. `MqttClient_HandlePacket` no longer populates an ACK in this
+      case, so no false acknowledgement is sent. This affects standard MQTT
+      (`MqttClient_Publish_ReadPayload`) and MQTT-SN (`SN_Client_HandlePacket`).
+      A registered `msg_cb` is now required to receive a PUBLISH; this includes
+      the receive-into-object pattern via `MqttClient_WaitMessage_ex` /
+      `SN_Client_WaitMessage_ex`, which previously returned success after
+      decoding into the caller-supplied object without a callback. A NULL
+      callback is still valid for a publish-only client that never receives
+      messages; the error surfaces only if such a client is actually pushed a
+      PUBLISH. The built-in broker is unaffected (it handles incoming PUBLISH
+      through its own path, not this one).
 
 * Fixes
     - `SN_Client_Unsubscribe` now registers its pending UNSUBACK response under

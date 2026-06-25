@@ -972,17 +972,33 @@ static int MqttClient_HandlePacket(MqttClient* client,
             }
 
             rc = MqttClient_Publish_ReadPayload(client, publish, timeout_ms);
-            if (rc < 0) {
+
+            /* MQTT_CODE_CONTINUE means the payload is not fully read yet. Return
+             * to the caller and keep publish->props and the read state intact so
+             * the non-blocking re-entry can resume. */
+            if (rc == MQTT_CODE_CONTINUE) {
                 break;
             }
-            /* Note: Getting here means the Publish Read is done */
-            publish->stat.read = MQTT_MSG_BEGIN; /* reset state */
 
+            /* The publish read is terminal here, whether it succeeded or failed
+             * to deliver (e.g. no msg_cb, or the callback returned an error).
+             * Reset the read state and free the retained V5 property list for
+             * every terminal result: the properties are intentionally kept
+             * through decode/callback and were previously freed only on the
+             * success path, so an error return would leak the property pool
+             * (or heap, under WOLFMQTT_DYN_PROP). Also resetting the read state
+             * keeps a caller that logs the error and retries from re-entering on
+             * stale MQTT_MSG_PAYLOAD2 state. */
+            publish->stat.read = MQTT_MSG_BEGIN; /* reset state */
         #ifdef WOLFMQTT_V5
             /* Free the properties */
             MqttProps_Free(publish->props);
             publish->props = NULL;
         #endif
+
+            if (rc < 0) {
+                break;
+            }
 
             /* Handle QoS */
             if (packet_qos == MQTT_QOS_0) {
@@ -2042,6 +2058,15 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             }
         }
     } while (!msg_done);
+
+    /* No message callback registered to deliver this incoming PUBLISH. The
+     * payload was drained above to keep the stream in sync, but the application
+     * never saw it. Return a distinct error instead of success so the caller is
+     * notified and, for QoS 1/2, MqttClient_HandlePacket does not falsely ACK
+     * the message as delivered. */
+    if (rc == MQTT_CODE_SUCCESS && client->msg_cb == NULL) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CALLBACK);
+    }
 
     return rc;
 }
