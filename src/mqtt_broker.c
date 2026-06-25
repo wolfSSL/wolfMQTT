@@ -4585,6 +4585,14 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
     if (broker->auth_user || broker->auth_pass) {
         int auth_ok = 1;
+        /* Defense in depth: MqttBroker_Start rejects a partial credential
+         * config, but MqttBroker struct fields are public and a caller may
+         * set them after start or ignore the start error. If only one of the
+         * pair is configured, fail closed rather than authenticating on the
+         * configured half and accepting any value for the missing one. */
+        if (broker->auth_user == NULL || broker->auth_pass == NULL) {
+            auth_ok = 0;
+        }
         if (broker->auth_user && (
         #ifndef WOLFMQTT_STATIC_MEMORY
             bc->username == NULL ||
@@ -6309,6 +6317,19 @@ int MqttBroker_Start(MqttBroker* broker)
 
 #ifdef WOLFMQTT_BROKER_AUTH
     if (broker->auth_user || broker->auth_pass) {
+        /* Username and password are a credential pair: configuring only one
+         * silently downgrades to single-factor auth, because the unconfigured
+         * side is never checked and any client-supplied value for it is
+         * accepted. Reject the partial config at startup so the operator sees
+         * the mistake instead of shipping a bypassable broker. */
+        if (broker->auth_user == NULL || broker->auth_pass == NULL) {
+            WBLOG_ERR(broker,
+                "broker: auth requires both auth_user and auth_pass "
+                "(user=%s pass=%s)",
+                broker->auth_user ? "set" : "(null)",
+                broker->auth_pass ? "set" : "(null)");
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
         /* Reject configured credentials that would be silently rejected
          * by BrokerStrCompare's cmp_len guard. Catching this at startup
          * avoids a confusing state where every client auth fails. */
@@ -6328,8 +6349,8 @@ int MqttBroker_Start(MqttBroker* broker)
                 BROKER_MAX_PASSWORD_LEN);
             return MQTT_CODE_ERROR_BAD_ARG;
         }
-        WBLOG_INFO(broker, "broker: auth enabled user=%s",
-            broker->auth_user ? broker->auth_user : "(null)");
+        WBLOG_INFO(broker, "broker: auth enabled (user+password) user=%s",
+            broker->auth_user);
     #ifdef ENABLE_MQTT_TLS
     #ifndef WOLFMQTT_BROKER_NO_INSECURE
         if (broker->use_tls &&

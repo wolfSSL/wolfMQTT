@@ -647,6 +647,132 @@ TEST(connect_unauth_client_id_does_not_take_over_victim)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* Regression (issue 3393): configuring only auth_user leaves the password
+ * side unchecked, so any (or no) password authenticates as long as the
+ * username matches. MqttBroker_Start must reject the partial config instead
+ * of silently enabling single-factor auth. */
+TEST(connect_auth_user_only_start_rejected)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "user";
+    broker.auth_pass = NULL;
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, MqttBroker_Start(&broker));
+
+    MqttBroker_Free(&broker);
+}
+
+/* Symmetric case: only auth_pass configured must also be rejected at start. */
+TEST(connect_auth_pass_only_start_rejected)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = NULL;
+    broker.auth_pass = "pass";
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, MqttBroker_Start(&broker));
+
+    MqttBroker_Free(&broker);
+}
+
+/* Defense in depth: the MqttBroker struct is public, so a caller can set
+ * auth_user after a successful no-auth start (or ignore the start error),
+ * bypassing the MqttBroker_Start pairing check. The connect-time gate must
+ * still fail closed when only one credential is configured. A CONNECT whose
+ * username matches but carries no password must be refused, not accepted on
+ * the username alone. */
+TEST(connect_auth_partial_config_fails_closed)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT v3.1.1, ClientId "id", Username "user", no password.
+     * connect_flags 0x82 = username + clean session. */
+    static const byte connect[] = {
+        0x10, 20,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0x82,
+        0x00, 0x3C,
+        0x00, 0x02, 'i', 'd',
+        0x00, 0x04, 'u', 's', 'e', 'r'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    /* Start with auth disabled, then enable only the username post-start. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    broker.auth_user = "user";
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Pre-fix the username matched and the absent password was never
+     * checked, so the broker accepted (return code 0x00). The gate must now
+     * refuse with 0x05 (Bad user/pass) and close the connection. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Symmetric defense-in-depth case: only auth_pass set post-start. Without the
+ * gate, any username with a matching password authenticates (the username side
+ * is never checked). A CONNECT carrying the matching password under an
+ * arbitrary username must be refused, not accepted on the password alone. */
+TEST(connect_auth_partial_pass_only_fails_closed)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT v3.1.1, ClientId "id", Username "anyone", Password "pass".
+     * connect_flags 0xC2 = username + password + clean session. */
+    static const byte connect[] = {
+        0x10, 28,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0xC2,
+        0x00, 0x3C,
+        0x00, 0x02, 'i', 'd',
+        0x00, 0x06, 'a', 'n', 'y', 'o', 'n', 'e',
+        0x00, 0x04, 'p', 'a', 's', 's'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    /* Start with auth disabled, then enable only the password post-start. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    broker.auth_pass = "pass";
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Pre-fix the password matched and the username was never checked, so the
+     * broker accepted (return code 0x00). The gate must now refuse with 0x05
+     * (Bad user/pass) and close the connection. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
@@ -3076,6 +3202,10 @@ int main(int argc, char** argv)
     RUN_TEST(connect_v311_binary_password_with_embedded_nul_refused);
     RUN_TEST(connect_v311_binary_password_exact_match_accepted);
     RUN_TEST(connect_unauth_client_id_does_not_take_over_victim);
+    RUN_TEST(connect_auth_user_only_start_rejected);
+    RUN_TEST(connect_auth_pass_only_start_rejected);
+    RUN_TEST(connect_auth_partial_config_fails_closed);
+    RUN_TEST(connect_auth_partial_pass_only_fails_closed);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);

@@ -653,6 +653,11 @@ typedef struct MqttBroker {
     int     running;
     byte    log_level;
 #ifdef WOLFMQTT_BROKER_AUTH
+    /* Broker authentication credentials. auth_user and auth_pass MUST be set
+     * together: configuring only one is rejected by MqttBroker_Start, since a
+     * partial config would check only the configured half and accept any value
+     * for the other (single-factor downgrade). Leave both NULL to disable
+     * authentication. */
     const char* auth_user;
     const char* auth_pass;
 #endif

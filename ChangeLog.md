@@ -10,6 +10,15 @@
       connection on malformed packets, which the broker's existing decode-
       error path enforces. The check covers ClientId, Will Topic, Topic Name,
       Topic Filter, Username, and v5 STRING/STRING_PAIR property values.
+    - The broker now requires `auth_user` and `auth_pass` to be configured as
+      a pair. Previously, setting only one (e.g. the `-u` CLI flag without
+      `-P`) silently enabled single-factor authentication: the unconfigured
+      side was never checked, so any password authenticated against a matching
+      username (or any username against a matching password). `MqttBroker_Start`
+      now rejects a partial credential configuration with
+      `MQTT_CODE_ERROR_BAD_ARG`, and the connect-time gate fails closed as a
+      defense in depth if only one credential is set. Leaving both NULL still
+      disables authentication.
 
 * API / Behavior Changes
     - `MqttDecode_String` may now return `MQTT_CODE_ERROR_MALFORMED_DATA`
