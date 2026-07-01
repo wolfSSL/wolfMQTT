@@ -5443,20 +5443,30 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                      * the socket down and clear connected so the match guard
                      * above skips this client's remaining subscriptions; the
                      * main loop reaps it on the next read error. */
+                    /* Cache the client before BrokerSend_Disconnect below: that
+                     * write can drive an lws_service spin whose
+                     * LWS_CALLBACK_CLOSED frees this subscriber's BrokerSub
+                     * nodes re-entrantly (the same hazard the next_sub snapshot
+                     * guards against), leaving `sub` dangling. The BrokerClient
+                     * itself survives the write - its free is deferred while the
+                     * WS context is marked processing - so the post-write socket
+                     * teardown must reach it through this cached pointer, never
+                     * through the freed sub node. */
+                    BrokerClient* c = sub->client;
                     WBLOG_ERR(broker,
                         "broker: out_q full (%d) -> disconnect sock=%d "
-                        "(from sock=%d)", sub->client->out_q_count,
-                        (int)sub->client->sock, (int)bc->sock);
+                        "(from sock=%d)", c->out_q_count,
+                        (int)c->sock, (int)bc->sock);
                 #ifdef WOLFMQTT_V5
-                    (void)BrokerSend_Disconnect(sub->client,
+                    (void)BrokerSend_Disconnect(c,
                         MQTT_REASON_QUOTA_EXCEEDED);
                 #endif
-                    if (sub->client->sock != BROKER_SOCKET_INVALID) {
+                    if (c->sock != BROKER_SOCKET_INVALID) {
                         broker->net.close(broker->net.ctx,
-                            sub->client->sock);
-                        sub->client->sock = BROKER_SOCKET_INVALID;
+                            c->sock);
+                        c->sock = BROKER_SOCKET_INVALID;
                     }
-                    sub->client->connected = 0;
+                    c->connected = 0;
                 }
                 else {
                     BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,

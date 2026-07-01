@@ -313,7 +313,10 @@ static int sn_connect_pump(SN_Connect* mc, int* iters)
         }
     }
     if (iters) {
-        *iters = i + 1;
+        /* On an early break i is the 0-based index of the terminating call, so
+         * the count is i + 1; if the cap was hit (rc still CONTINUE) exactly
+         * max_iters calls ran and i already equals that count. */
+        *iters = (rc == MQTT_CODE_CONTINUE) ? i : (i + 1);
     }
     return rc;
 }
@@ -343,7 +346,10 @@ static int sn_subscribe_pump(SN_Subscribe* s, int* iters)
         }
     }
     if (iters) {
-        *iters = i + 1;
+        /* On an early break i is the 0-based index of the terminating call, so
+         * the count is i + 1; if the cap was hit (rc still CONTINUE) exactly
+         * max_iters calls ran and i already equals that count. */
+        *iters = (rc == MQTT_CODE_CONTINUE) ? i : (i + 1);
     }
     return rc;
 }
@@ -363,7 +369,10 @@ static int sn_ping_pump(SN_PingReq* ping, int* iters)
         }
     }
     if (iters) {
-        *iters = i + 1;
+        /* On an early break i is the 0-based index of the terminating call, so
+         * the count is i + 1; if the cap was hit (rc still CONTINUE) exactly
+         * max_iters calls ran and i already equals that count. */
+        *iters = (rc == MQTT_CODE_CONTINUE) ? i : (i + 1);
     }
     return rc;
 }
@@ -400,7 +409,10 @@ static int sn_publish_pump(SN_Publish* p, int* iters)
         }
     }
     if (iters) {
-        *iters = i + 1;
+        /* On an early break i is the 0-based index of the terminating call, so
+         * the count is i + 1; if the cap was hit (rc still CONTINUE) exactly
+         * max_iters calls ran and i already equals that count. */
+        *iters = (rc == MQTT_CODE_CONTINUE) ? i : (i + 1);
     }
     return rc;
 }
@@ -430,7 +442,10 @@ static int sn_unsubscribe_pump(SN_Unsubscribe* u, int* iters)
         }
     }
     if (iters) {
-        *iters = i + 1;
+        /* On an early break i is the 0-based index of the terminating call, so
+         * the count is i + 1; if the cap was hit (rc still CONTINUE) exactly
+         * max_iters calls ran and i already equals that count. */
+        *iters = (rc == MQTT_CODE_CONTINUE) ? i : (i + 1);
     }
     return rc;
 }

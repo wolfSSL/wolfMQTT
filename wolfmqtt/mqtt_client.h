@@ -360,11 +360,10 @@ WOLFMQTT_API int MqttClient_Publish_ex(
 /*! \brief      Same as MqttClient_Publish_ex, however this API will only
                 perform writes and requires another thread to handle the read
                 ACK processing using MqttClient_WaitMessage_ex
- *  \note       This function that will wait for MqttNet.read to complete,
-                timeout or MQTT_CODE_CONTINUE if non-blocking.
-                    If QoS level = 1 then will wait for PUBLISH_ACK.
-                    If QoS level = 2 then will wait for PUBLISH_REC then send
-                        PUBLISH_REL and wait for PUBLISH_COMP.
+ *  \note       This function does not wait for MqttNet.read or any ACK; it only
+                writes the PUBLISH (and, for QoS 2, the PUBREL once the reading
+                thread has processed the PUBREC). The reading thread handles all
+                ACK processing via MqttClient_WaitMessage_ex.
  *  \param      client      Pointer to MqttClient structure
  *  \param      publish     Pointer to MqttPublish structure initialized
                             with message data
