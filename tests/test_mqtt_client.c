@@ -459,6 +459,85 @@ static int mock_net_read_canned(void *context, byte* buf, int buf_len,
     return n;
 }
 
+/* A broker that accepts the connection returns a CONNACK whose return code is
+ * MQTT_CONNECT_ACK_CODE_ACCEPTED (0). MqttClient_Connect must surface this as
+ * MQTT_CODE_SUCCESS. Paired with the refusal test below so a boundary mutation
+ * of the return-code check cannot pass both cases. */
+TEST(connect_accepted_connack_returns_success)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v3.1.1: type=0x20, remain=2, flags=0x00, return_code=0x00. */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+}
+
+/* A broker that refuses the connection returns a CONNACK whose return code is
+ * non-zero (0x05 = not authorized here). MqttClient_Connect must surface this
+ * as MQTT_CODE_ERROR_CONNECT_REFUSED rather than MQTT_CODE_SUCCESS, else an
+ * application using the connect result as its authentication gate would treat a
+ * rejected login as a live session. This pins detection that previously had no
+ * round-trip test. */
+TEST(connect_refused_connack_returns_connect_refused)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v3.1.1: type=0x20, remain=2, flags=0x00, return_code=0x05
+     * (not authorized). */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x05 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_CONNECT_REFUSED, rc);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH, connect.ack.return_code);
+}
+
 /* A broker that rejects a subscription returns a SUBACK whose
  * per-topic return code has the high bit set (0x80 in v3.1.1, any reason
  * code >= 0x80 in v5). MqttClient_Subscribe must surface this as
@@ -1617,6 +1696,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_both_null);
     RUN_TEST(connect_with_mock_network);
     RUN_TEST(connect_clears_tx_buf_credentials);
+    RUN_TEST(connect_accepted_connack_returns_success);
+    RUN_TEST(connect_refused_connack_returns_connect_refused);
 
     /* MqttClient_Disconnect tests */
     RUN_TEST(disconnect_null_client);
