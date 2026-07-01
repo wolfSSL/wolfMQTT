@@ -538,6 +538,153 @@ TEST(connect_refused_connack_returns_connect_refused)
     ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH, connect.ack.return_code);
 }
 
+#if defined(WOLFMQTT_V5)
+/* MQTT v5: an accepted CONNACK (return code 0) that advertises server
+ * properties must latch them into long-lived client state so the publish and
+ * packet-size guards stay meaningful without a registered property callback.
+ * Feeds Maximum QoS=1, Retain Available=0 and Maximum Packet Size=1024 and
+ * asserts each field was updated. Paired with the refusal test below so the
+ * accept-only gate that guards this mutation is exercised from both sides. */
+TEST(connect_accepted_connack_latches_v5_props)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5: type=0x20, remain=0x0C, flags=0x00, return_code=0x00,
+     * prop_len=0x09, [0x24 0x01]=Max QoS 1, [0x25 0x00]=Retain Avail 0,
+     * [0x27 00 00 04 00]=Max Packet Size 1024. */
+    static const byte connack[] = {
+        0x20, 0x0C, 0x00, 0x00, 0x09,
+        0x24, 0x01,
+        0x25, 0x00,
+        0x27, 0x00, 0x00, 0x04, 0x00
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    /* Advertised Max QoS 1 is narrowed against this build's WOLFMQTT_MAX_QOS,
+     * so a QoS-capped (WOLFMQTT_MAX_QOS=0) build latches 0 rather than 1. */
+    ASSERT_EQ((WOLFMQTT_MAX_QOS < MQTT_QOS_1) ? (byte)WOLFMQTT_MAX_QOS :
+              MQTT_QOS_1, test_client.max_qos);
+    ASSERT_EQ(0, test_client.retain_avail);
+    ASSERT_EQ(1024, test_client.packet_sz_max);
+}
+
+/* MQTT v5: a refused CONNACK (non-zero return code) must NOT mutate long-lived
+ * client state even when it carries server properties, otherwise a rejected or
+ * malicious broker could shrink the client's packet-size cap or lower its QoS
+ * ceiling and have those corrupted limits persist onto a later reconnect on the
+ * same client struct. Feeds the same properties as the acceptance test but with
+ * a not-authorized return code and asserts every field keeps its pre-CONNACK
+ * default. Deleting the accept-only gate, or flipping its equality test, would
+ * latch these values and fail this test. */
+TEST(connect_refused_connack_preserves_v5_defaults)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* Same properties as the acceptance test, but return_code=0x05
+     * (not authorized). */
+    static const byte connack[] = {
+        0x20, 0x0C, 0x00, 0x05, 0x09,
+        0x24, 0x01,
+        0x25, 0x00,
+        0x27, 0x00, 0x00, 0x04, 0x00
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_CONNECT_REFUSED, rc);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH, connect.ack.return_code);
+    /* Pre-CONNACK defaults established by MqttClient_Connect must be intact. */
+    ASSERT_EQ((byte)WOLFMQTT_MAX_QOS, test_client.max_qos);
+    ASSERT_EQ(1, test_client.retain_avail);
+    ASSERT_EQ(0, test_client.packet_sz_max);
+}
+
+/* MQTT v5 [3.1.2.11.6]: only Max QoS 0 or 1 are legal. A non-conforming or
+ * malicious broker that advertises a larger value (2 here) must be clamped to
+ * MQTT_QOS_1 before being narrowed against this build's WOLFMQTT_MAX_QOS, so the
+ * client-side publish guard cannot be tricked into permitting QoS 2. Exercises
+ * the clamp branch that the in-spec acceptance test above does not reach. */
+TEST(connect_accepted_connack_clamps_illegal_max_qos)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5 with an out-of-spec Max QoS of 2: type=0x20, remain=0x05,
+     * flags=0x00, return_code=0x00, prop_len=0x02, [0x24 0x02]=Max QoS 2. */
+    static const byte connack[] = {
+        0x20, 0x05, 0x00, 0x00, 0x02,
+        0x24, 0x02
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    /* Illegal QoS 2 is clamped to 1, then narrowed against WOLFMQTT_MAX_QOS. */
+    ASSERT_EQ((WOLFMQTT_MAX_QOS < MQTT_QOS_1) ? (byte)WOLFMQTT_MAX_QOS :
+              MQTT_QOS_1, test_client.max_qos);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* A broker that rejects a subscription returns a SUBACK whose
  * per-topic return code has the high bit set (0x80 in v3.1.1, any reason
  * code >= 0x80 in v5). MqttClient_Subscribe must surface this as
@@ -1698,6 +1845,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_clears_tx_buf_credentials);
     RUN_TEST(connect_accepted_connack_returns_success);
     RUN_TEST(connect_refused_connack_returns_connect_refused);
+#if defined(WOLFMQTT_V5)
+    RUN_TEST(connect_accepted_connack_latches_v5_props);
+    RUN_TEST(connect_refused_connack_preserves_v5_defaults);
+    RUN_TEST(connect_accepted_connack_clamps_illegal_max_qos);
+#endif
 
     /* MqttClient_Disconnect tests */
     RUN_TEST(disconnect_null_client);
