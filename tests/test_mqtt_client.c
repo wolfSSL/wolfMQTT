@@ -318,6 +318,11 @@ static int g_last_ack_written;
  * the 4..7 range that g_last_ack_written tracks. */
 static int g_frames_written;
 
+/* Packet id carried by the most recent PUBLISH-response frame written to the
+ * wire. For a v3.1.1 ack the two-byte id sits right after the fixed header, so a
+ * test can confirm the client echoed the id of the PUBLISH it is acknowledging. */
+static int g_last_ack_id;
+
 static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
@@ -349,6 +354,9 @@ static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
             ack_type == MQTT_PACKET_TYPE_PUBLISH_REL ||
             ack_type == MQTT_PACKET_TYPE_PUBLISH_COMP) {
             g_last_ack_written = ack_type;
+            if (buf_len >= 4) {
+                g_last_ack_id = (buf[2] << 8) | buf[3];
+            }
         }
     }
     /* Pretend the full packet was sent so MqttClient_Connect reaches the
@@ -1337,6 +1345,113 @@ TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
     ASSERT_TRUE(g_pubresp_written);
 }
 
+/* Stage `frame` as a server-pushed PUBLISH and drive MqttClient_WaitMessage
+ * with a real msg_cb registered, so the message is delivered and the QoS
+ * acknowledgement (if any) reaches the wire. The shared run_wait_message_with_
+ * frame helper leaves msg_cb NULL, which now short-circuits with an error before
+ * the ack selector runs, so it cannot observe which ack a received PUBLISH
+ * produces; this variant can. Returns the terminal result. */
+static int run_wait_publish_delivered(const byte* frame, int frame_len)
+{
+    int rc;
+    int i;
+
+    rc = test_init_client();
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#ifdef WOLFMQTT_V5
+    /* Decode the v3.1.1-format frames below without expecting v5 properties. */
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+
+    g_pubresp_written = 0;
+    g_last_ack_written = MQTT_PACKET_TYPE_RESERVED;
+    g_last_ack_id = 0;
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, frame, (size_t)frame_len);
+    g_canned_len = frame_len;
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    return rc;
+}
+
+/* An incoming PUBLISH is acknowledged, and with which packet type, purely by its
+ * QoS. MqttClient_HandlePacket decides this in two steps: it short-circuits with
+ * `if (packet_qos == MQTT_QOS_0) break;` before any ack, then selects the ack
+ * type with `resp->packet_type = (packet_qos == MQTT_QOS_1) ? PUBACK : PUBREC`.
+ * The three tests below pin one QoS each and assert the exact ack the client put
+ * on the wire. The mutations they catch:
+ *   - `== MQTT_QOS_0` -> `!= MQTT_QOS_0`: a QoS 1/2 PUBLISH takes the no-ack
+ *     break and is never acknowledged (caught by the QoS 1 and QoS 2 cases),
+ *     while a QoS 0 PUBLISH falls through to emit a spurious PUBREC (caught by
+ *     the QoS 0 case).
+ *   - `== MQTT_QOS_1` -> `== MQTT_QOS_2`: a QoS 1 PUBLISH is acknowledged with a
+ *     PUBREC, breaking the QoS 1 handshake (caught by the QoS 1 case).
+ *   - Swapping the selector branches: QoS 1 emits PUBREC and QoS 2 emits PUBACK
+ *     (caught by both the QoS 1 and QoS 2 cases).
+ * The QoS 1 positive control above only checks g_pubresp_written, which both
+ * PUBACK and PUBREC set, so it cannot tell the two ack types apart; these read
+ * back the exact type and the echoed packet id. */
+TEST(wait_message_qos0_publish_no_ack)
+{
+    int rc;
+    /* v3.1.1 QoS0 PUBLISH: type=0x30, remain=5, topic "a" (0x0001 'a'),
+     * payload "hi" (no packet id for QoS 0). */
+    static const byte publish_qos0[] = { 0x30, 0x05, 0x00, 0x01, 'a', 'h', 'i' };
+
+    rc = run_wait_publish_delivered(publish_qos0, (int)sizeof(publish_qos0));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_msg_cb_calls > 0);
+    /* QoS 0 carries no acknowledgement. Nothing of any type may reach the
+     * wire; inverting the QoS 0 guard would emit a spurious PUBREC here. */
+    ASSERT_EQ(MQTT_PACKET_TYPE_RESERVED, g_last_ack_written);
+    ASSERT_EQ(0, g_frames_written);
+}
+
+TEST(wait_message_qos1_publish_acks_puback)
+{
+    int rc;
+    /* v3.1.1 QoS1 PUBLISH: type|qos1=0x32, remain=7, topic "a" (0x0001 'a'),
+     * packet_id=7 (0x0007), payload "hi". */
+    static const byte publish_qos1[] = { 0x32, 0x07, 0x00, 0x01, 'a',
+                                         0x00, 0x07, 'h', 'i' };
+
+    rc = run_wait_publish_delivered(publish_qos1, (int)sizeof(publish_qos1));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_msg_cb_calls > 0);
+    /* QoS 1 completes in one step: a PUBACK echoing the PUBLISH packet id. */
+    ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_ACK, g_last_ack_written);
+    ASSERT_EQ(7, g_last_ack_id);
+}
+
+TEST(wait_message_qos2_publish_acks_pubrec)
+{
+    int rc;
+    /* v3.1.1 QoS2 PUBLISH: type|qos2=0x34, remain=7, topic "a" (0x0001 'a'),
+     * packet_id=9 (0x0009), payload "hi". */
+    static const byte publish_qos2[] = { 0x34, 0x07, 0x00, 0x01, 'a',
+                                         0x00, 0x09, 'h', 'i' };
+
+    rc = run_wait_publish_delivered(publish_qos2, (int)sizeof(publish_qos2));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_msg_cb_calls > 0);
+    /* QoS 2 opens the handshake with a PUBREC echoing the PUBLISH packet id. */
+    ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_REC, g_last_ack_written);
+    ASSERT_EQ(9, g_last_ack_id);
+}
+
 /* The four PUBLISH-response packet types (PUBACK 4, PUBREC 5, PUBREL 6,
  * PUBCOMP 7) all decode through the same branch of MqttClient_HandlePacket, but
  * only PUBREC and PUBREL may advance the QoS handshake. The branch gates this
@@ -1554,6 +1669,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_props_null_msg_cb_frees_props);
 #endif
     RUN_TEST(wait_message_qos1_with_msg_cb_delivers_and_acks);
+    RUN_TEST(wait_message_qos0_publish_no_ack);
+    RUN_TEST(wait_message_qos1_publish_acks_puback);
+    RUN_TEST(wait_message_qos2_publish_acks_pubrec);
     RUN_TEST(wait_message_pubrec_emits_pubrel);
     RUN_TEST(wait_message_pubrel_emits_pubcomp);
     RUN_TEST(wait_message_puback_emits_no_ack);
