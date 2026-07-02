@@ -215,6 +215,12 @@ enum MqttPacketResponseCodes {
                                                    topic filters in an
                                                    UNSUBSCRIBE; see each reason
                                                    code in MqttUnsubscribeAck. */
+    MQTT_CODE_ERROR_PUBLISH_REJECTED = -21, /* v5 broker rejected a QoS>0
+                                               PUBLISH via a PUBACK (QoS 1) or
+                                               PUBREC/PUBCOMP (QoS 2) reason
+                                               code >= 0x80; see
+                                               MqttPublish.resp.reason_code for
+                                               the specific reason. */
 
     MQTT_CODE_CONTINUE = -101,
     MQTT_CODE_STDIN_WAKE = -102,

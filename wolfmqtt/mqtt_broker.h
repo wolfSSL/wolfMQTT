@@ -198,6 +198,31 @@
     #define BROKER_MAX_OFFLINE_MSGS_PER_SUB 32
 #endif
 
+/* BROKER_MAX_QUEUED_MSGS_PER_SUB bounds the total depth of a *connected*
+ * subscriber's outbound queue (out_q_count) in dynamic-memory mode.
+ *
+ * BROKER_MAX_INFLIGHT_PER_SUB (above) only bounds how many QoS>0 PUBLISHes
+ * are on the wire awaiting an ack - i.e. bytes in flight. It does NOT bound
+ * how many entries may sit QUEUED behind the inflight window. A subscriber
+ * that stops sending PUBACK/PUBREC (a slow consumer, or an attacker keeping
+ * the session alive with PINGREQ) saturates the inflight window and then
+ * every subsequent matching PUBLISH still allocates a fresh BrokerOutPub plus
+ * heap copies of the topic and payload onto out_q. Without a depth cap that
+ * queue grows without limit until the broker exhausts memory.
+ *
+ * When a fan-out would exceed this depth the broker disconnects that
+ * subscriber (v5: DISCONNECT reason 0x97 Quota Exceeded) rather than growing
+ * the heap or silently dropping accepted QoS 1/2 messages; a persistent
+ * session is then reclaimable on reconnect via the (separately capped)
+ * offline queue. The default leaves room for a full inflight window plus an
+ * offline-sized backlog of not-yet-sent entries. Override with
+ *   -DBROKER_MAX_QUEUED_MSGS_PER_SUB=N
+ * Only used in dynamic-memory mode. */
+#ifndef BROKER_MAX_QUEUED_MSGS_PER_SUB
+    #define BROKER_MAX_QUEUED_MSGS_PER_SUB \
+        (BROKER_MAX_INFLIGHT_PER_SUB + BROKER_MAX_OFFLINE_MSGS_PER_SUB)
+#endif
+
 /* Schema version stamped on every persisted record. Bump when the
  * encoding of any namespace changes incompatibly; a startup with stored
  * records carrying a different version logs a warning, wipes all
@@ -628,6 +653,11 @@ typedef struct MqttBroker {
     int     running;
     byte    log_level;
 #ifdef WOLFMQTT_BROKER_AUTH
+    /* Broker authentication credentials. auth_user and auth_pass MUST be set
+     * together: configuring only one is rejected by MqttBroker_Start, since a
+     * partial config would check only the configured half and accept any value
+     * for the other (single-factor downgrade). Leave both NULL to disable
+     * authentication. */
     const char* auth_user;
     const char* auth_pass;
 #endif

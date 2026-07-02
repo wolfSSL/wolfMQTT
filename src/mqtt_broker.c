@@ -4585,6 +4585,14 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
     if (broker->auth_user || broker->auth_pass) {
         int auth_ok = 1;
+        /* Defense in depth: MqttBroker_Start rejects a partial credential
+         * config, but MqttBroker struct fields are public and a caller may
+         * set them after start or ignore the start error. If only one of the
+         * pair is configured, fail closed rather than authenticating on the
+         * configured half and accepting any value for the missing one. */
+        if (broker->auth_user == NULL || broker->auth_pass == NULL) {
+            auth_ok = 0;
+        }
         if (broker->auth_user && (
         #ifndef WOLFMQTT_STATIC_MEMORY
             bc->username == NULL ||
@@ -5421,7 +5429,46 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                  * PUBLISH is fully received and decoded before we
                  * reach the fan-out); BrokerOutPub_Alloc deep-copies
                  * pub.total_len from that buffer. */
-                {
+                if (sub->client->out_q_count >=
+                        BROKER_MAX_QUEUED_MSGS_PER_SUB) {
+                    /* DoS guard: bound the connected subscriber's outbound
+                     * queue depth. The inflight cap above only limits bytes on
+                     * the wire; a subscriber that stops acking lets QUEUED
+                     * entries accumulate one heap-copied PUBLISH at a time
+                     * until the broker exhausts memory. Disconnect the slow /
+                     * abusive subscriber rather than growing out_q or silently
+                     * dropping accepted QoS 1/2 messages. A persistent session
+                     * is reclaimable on reconnect via the (capped) offline
+                     * queue. Mirrors the static partial-write teardown: tear
+                     * the socket down and clear connected so the match guard
+                     * above skips this client's remaining subscriptions; the
+                     * main loop reaps it on the next read error. */
+                    /* Cache the client before BrokerSend_Disconnect below: that
+                     * write can drive an lws_service spin whose
+                     * LWS_CALLBACK_CLOSED frees this subscriber's BrokerSub
+                     * nodes re-entrantly (the same hazard the next_sub snapshot
+                     * guards against), leaving `sub` dangling. The BrokerClient
+                     * itself survives the write - its free is deferred while the
+                     * WS context is marked processing - so the post-write socket
+                     * teardown must reach it through this cached pointer, never
+                     * through the freed sub node. */
+                    BrokerClient* c = sub->client;
+                    WBLOG_ERR(broker,
+                        "broker: out_q full (%d) -> disconnect sock=%d "
+                        "(from sock=%d)", c->out_q_count,
+                        (int)c->sock, (int)bc->sock);
+                #ifdef WOLFMQTT_V5
+                    (void)BrokerSend_Disconnect(c,
+                        MQTT_REASON_QUOTA_EXCEEDED);
+                #endif
+                    if (c->sock != BROKER_SOCKET_INVALID) {
+                        broker->net.close(broker->net.ctx,
+                            c->sock);
+                        c->sock = BROKER_SOCKET_INVALID;
+                    }
+                    c->connected = 0;
+                }
+                else {
                     BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,
                                           pub.total_len);
                     if (e == NULL) {
@@ -6280,6 +6327,19 @@ int MqttBroker_Start(MqttBroker* broker)
 
 #ifdef WOLFMQTT_BROKER_AUTH
     if (broker->auth_user || broker->auth_pass) {
+        /* Username and password are a credential pair: configuring only one
+         * silently downgrades to single-factor auth, because the unconfigured
+         * side is never checked and any client-supplied value for it is
+         * accepted. Reject the partial config at startup so the operator sees
+         * the mistake instead of shipping a bypassable broker. */
+        if (broker->auth_user == NULL || broker->auth_pass == NULL) {
+            WBLOG_ERR(broker,
+                "broker: auth requires both auth_user and auth_pass "
+                "(user=%s pass=%s)",
+                broker->auth_user ? "set" : "(null)",
+                broker->auth_pass ? "set" : "(null)");
+            return MQTT_CODE_ERROR_BAD_ARG;
+        }
         /* Reject configured credentials that would be silently rejected
          * by BrokerStrCompare's cmp_len guard. Catching this at startup
          * avoids a confusing state where every client auth fails. */
@@ -6299,8 +6359,8 @@ int MqttBroker_Start(MqttBroker* broker)
                 BROKER_MAX_PASSWORD_LEN);
             return MQTT_CODE_ERROR_BAD_ARG;
         }
-        WBLOG_INFO(broker, "broker: auth enabled user=%s",
-            broker->auth_user ? broker->auth_user : "(null)");
+        WBLOG_INFO(broker, "broker: auth enabled (user+password) user=%s",
+            broker->auth_user);
     #ifdef ENABLE_MQTT_TLS
     #ifndef WOLFMQTT_BROKER_NO_INSECURE
         if (broker->use_tls &&

@@ -205,6 +205,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                     return rc;
                 };
             }
+            else {
+                /* No callback registered to deliver this PUBLISH. Return a
+                 * distinct error instead of reporting success: for QoS 0 this
+                 * replaces a silent discard, and for QoS>0 it also avoids
+                 * falsely ACKing a message the application never saw. */
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CALLBACK);
+            }
 
             /* Handle Qos */
             if (p_pub->qos > MQTT_QOS_0) {
@@ -1837,7 +1844,8 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
             /* inform other threads of expected response */
             rc = MqttClient_RespList_Add(client,
                     (MqttPacketType)SN_MSG_TYPE_UNSUBACK,
-                    0, &unsubscribe->pendResp, &unsubscribe->ack);
+                    unsubscribe->packet_id, &unsubscribe->pendResp,
+                    &unsubscribe->ack);
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {

@@ -972,17 +972,33 @@ static int MqttClient_HandlePacket(MqttClient* client,
             }
 
             rc = MqttClient_Publish_ReadPayload(client, publish, timeout_ms);
-            if (rc < 0) {
+
+            /* MQTT_CODE_CONTINUE means the payload is not fully read yet. Return
+             * to the caller and keep publish->props and the read state intact so
+             * the non-blocking re-entry can resume. */
+            if (rc == MQTT_CODE_CONTINUE) {
                 break;
             }
-            /* Note: Getting here means the Publish Read is done */
-            publish->stat.read = MQTT_MSG_BEGIN; /* reset state */
 
+            /* The publish read is terminal here, whether it succeeded or failed
+             * to deliver (e.g. no msg_cb, or the callback returned an error).
+             * Reset the read state and free the retained V5 property list for
+             * every terminal result: the properties are intentionally kept
+             * through decode/callback and were previously freed only on the
+             * success path, so an error return would leak the property pool
+             * (or heap, under WOLFMQTT_DYN_PROP). Also resetting the read state
+             * keeps a caller that logs the error and retries from re-entering on
+             * stale MQTT_MSG_PAYLOAD2 state. */
+            publish->stat.read = MQTT_MSG_BEGIN; /* reset state */
         #ifdef WOLFMQTT_V5
             /* Free the properties */
             MqttProps_Free(publish->props);
             publish->props = NULL;
         #endif
+
+            if (rc < 0) {
+                break;
+            }
 
             /* Handle QoS */
             if (packet_qos == MQTT_QOS_0) {
@@ -1029,6 +1045,28 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 packet_type != MQTT_PACKET_TYPE_PUBLISH_REL) {
                 break;
             }
+
+        #ifdef WOLFMQTT_V5
+            /* A v5 broker rejects a QoS 2 PUBLISH at the PUBREC stage with a
+             * reason code >= 0x80 (e.g. not authorized, quota exceeded, topic
+             * name invalid, payload format invalid). Per [MQTT-4.3.3] the
+             * exchange is then complete and the sender MUST NOT send a PUBREL.
+             * Surface the rejection instead of advancing the handshake, which
+             * would emit an illegal PUBREL and then block waiting for a PUBCOMP
+             * the broker will never send. The QoS 1 PUBACK and the QoS 2
+             * PUBCOMP reason codes are checked by the caller after the wait.
+             * Note (WOLFMQTT_MULTITHREAD): when a separate thread drives reads
+             * and processes this PUBREC, it receives this error directly and
+             * the publishing thread's PUBCOMP pending response is not marked
+             * done, so that publish blocks until cmd_timeout_ms. This matches
+             * the pre-existing behavior (which left the publisher waiting on a
+             * PUBCOMP after an illegal PUBREL) and is not made worse here. */
+            if (packet_type == MQTT_PACKET_TYPE_PUBLISH_REC &&
+                client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                (((MqttPublishResp*)packet_obj)->reason_code & 0x80)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PUBLISH_REJECTED);
+            }
+        #endif
 
             /* Populate information needed for ack */
             resp->packet_type = packet_type+1; /* next ack */
@@ -2021,6 +2059,15 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
         }
     } while (!msg_done);
 
+    /* No message callback registered to deliver this incoming PUBLISH. The
+     * payload was drained above to keep the stream in sync, but the application
+     * never saw it. Return a distinct error instead of success so the caller is
+     * notified and, for QoS 1/2, MqttClient_HandlePacket does not falsely ACK
+     * the message as delivered. */
+    if (rc == MQTT_CODE_SUCCESS && client->msg_cb == NULL) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CALLBACK);
+    }
+
     return rc;
 }
 
@@ -2324,6 +2371,26 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     /* Wait for publish response packet */
                     rc = MqttClient_WaitType(client, &publish->resp, resp_type,
                         publish->packet_id, client->cmd_timeout_ms);
+
+                #ifdef WOLFMQTT_V5
+                    /* A v5 broker can acknowledge a QoS>0 PUBLISH at the
+                     * protocol layer yet still reject the message via a
+                     * PUBACK/PUBCOMP reason code >= 0x80 (e.g. not authorized,
+                     * quota exceeded, topic name invalid, payload format
+                     * invalid). Surface that as an error so the caller does not
+                     * treat a rejected message as delivered. Mirrors the
+                     * CONNECT/SUBSCRIBE/UNSUBSCRIBE rejection handling. The
+                     * protocol_level guard avoids misreading a stale byte for
+                     * v3.1.1 ACKs, which carry no reason code (same guard the
+                     * PUBREC check in MqttClient_HandlePacket uses). */
+                    if (rc == MQTT_CODE_SUCCESS &&
+                        client->protocol_level >=
+                            MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                        (publish->resp.reason_code & 0x80)) {
+                        rc = MQTT_TRACE_ERROR(
+                            MQTT_CODE_ERROR_PUBLISH_REJECTED);
+                    }
+                #endif
                 }
 
             #if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
@@ -3202,6 +3269,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Broker rejected subscription)";
         case MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED:
             return "Error (Broker rejected unsubscribe)";
+        case MQTT_CODE_ERROR_PUBLISH_REJECTED:
+            return "Error (Broker rejected publish)";
 #if defined(ENABLE_MQTT_CURL)
         case MQTT_CODE_ERROR_CURL:
             return "Error (libcurl)";

@@ -317,7 +317,10 @@ WOLFMQTT_API int MqttClient_Connect(
                             with message data
  *                          Note: MqttPublish and MqttMessage are same
                             structure.
- *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking) or
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
+                MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
+                QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
+                reason code >= 0x80 (see MqttPublish.resp.reason_code), or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish_WriteOnly
     \sa         MqttClient_Publish_ex
@@ -341,8 +344,11 @@ WOLFMQTT_API int MqttClient_Publish(
  *                          Note: MqttPublish and MqttMessage are same
                             structure.
 *   \param      pubCb       Function pointer to callback routine
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
+                MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
+                QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
+                reason code >= 0x80 (see MqttPublish.resp.reason_code), or
+                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Publish_ex(
     MqttClient *client,
@@ -354,17 +360,24 @@ WOLFMQTT_API int MqttClient_Publish_ex(
 /*! \brief      Same as MqttClient_Publish_ex, however this API will only
                 perform writes and requires another thread to handle the read
                 ACK processing using MqttClient_WaitMessage_ex
- *  \note       This function that will wait for MqttNet.read to complete,
-                timeout or MQTT_CODE_CONTINUE if non-blocking.
-                    If QoS level = 1 then will wait for PUBLISH_ACK.
-                    If QoS level = 2 then will wait for PUBLISH_REC then send
-                        PUBLISH_REL and wait for PUBLISH_COMP.
+ *  \note       This function does not wait for MqttNet.read or any ACK; it only
+                writes the PUBLISH (and, for QoS 2, the PUBREL once the reading
+                thread has processed the PUBREC). The reading thread handles all
+                ACK processing via MqttClient_WaitMessage_ex.
  *  \param      client      Pointer to MqttClient structure
  *  \param      publish     Pointer to MqttPublish structure initialized
                             with message data
  *                          Note: MqttPublish and MqttMessage are same
                             structure.
  *  \param      pubCb       Function pointer to callback routine
+ *  \note       Because this call only writes and another thread processes the
+                ACK, it never returns MQTT_CODE_ERROR_PUBLISH_REJECTED. On the
+                reading thread only a QoS 2 PUBREC rejection is surfaced (as
+                MQTT_CODE_ERROR_PUBLISH_REJECTED, returned in order to suppress
+                an illegal PUBREL per [MQTT-4.3.3]); a QoS 1 PUBACK or QoS 2
+                PUBCOMP reason code >= 0x80 is NOT detected on this path and the
+                publish appears successful. Use MqttClient_Publish/_ex when
+                reliable v5 broker-rejection detection for QoS>0 is required.
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking) or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish

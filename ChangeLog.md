@@ -10,6 +10,15 @@
       connection on malformed packets, which the broker's existing decode-
       error path enforces. The check covers ClientId, Will Topic, Topic Name,
       Topic Filter, Username, and v5 STRING/STRING_PAIR property values.
+    - The broker now requires `auth_user` and `auth_pass` to be configured as
+      a pair. Previously, setting only one (e.g. the `-u` CLI flag without
+      `-P`) silently enabled single-factor authentication: the unconfigured
+      side was never checked, so any password authenticated against a matching
+      username (or any username against a matching password). `MqttBroker_Start`
+      now rejects a partial credential configuration with
+      `MQTT_CODE_ERROR_BAD_ARG`, and the connect-time gate fails closed as a
+      defense in depth if only one credential is set. Leaving both NULL still
+      disables authentication.
 
 * API / Behavior Changes
     - `MqttDecode_String` may now return `MQTT_CODE_ERROR_MALFORMED_DATA`
@@ -29,6 +38,52 @@
       because [MQTT-3.1.3.5] defines Password as Binary Data, not a UTF-8
       string. A binary password containing bytes that are not valid UTF-8
       (e.g., `0xC0`, `0xFF`) would otherwise be incorrectly rejected.
+    - `MqttClient_Publish` / `MqttClient_Publish_ex` now return the new
+      `MQTT_CODE_ERROR_PUBLISH_REJECTED` (-21) when a v5 broker rejects a
+      QoS>0 PUBLISH via a PUBACK (QoS 1), PUBREC, or PUBCOMP (QoS 2) reason
+      code >= 0x80 (e.g. Not authorized, Quota exceeded, Topic Name invalid,
+      Payload format invalid). Previously these were reported as
+      `MQTT_CODE_SUCCESS`, so the application proceeded as if the broker had
+      accepted the message. The specific reason is available in
+      `MqttPublish.resp.reason_code`. For QoS 2, a PUBREC reason code >= 0x80
+      now ends the exchange without sending PUBREL per [MQTT-4.3.3] instead of
+      timing out. v3.1.1 publishes are unaffected, as is the return value of
+      the fire-and-forget `MqttClient_Publish_WriteOnly` call itself. Callers
+      that treat any non-success return as fatal may need to handle this code.
+      In `WOLFMQTT_MULTITHREAD` builds where a dedicated thread drives reads,
+      that reading thread now returns `MQTT_CODE_ERROR_PUBLISH_REJECTED` when it
+      processes a QoS 2 PUBREC rejection (instead of advancing the handshake
+      with an illegal PUBREL); the originating write-only publish's pending
+      response is not auto-completed in that case, so it blocks until
+      `cmd_timeout_ms`. A QoS 1 PUBACK or QoS 2 PUBCOMP rejection is NOT
+      detected on the write-only path (the publish appears successful), matching
+      prior behavior; use `MqttClient_Publish`/`_ex` for reliable detection.
+    - An incoming PUBLISH received by a client with no message callback
+      registered (`msg_cb == NULL`) now returns `MQTT_CODE_ERROR_CALLBACK`
+      (-13) instead of `MQTT_CODE_SUCCESS`. Previously the payload was silently
+      read and discarded, and for QoS 1/2 a PUBACK/PUBREC was still sent,
+      falsely telling the broker the message was delivered while the application
+      never saw it. `MqttClient_HandlePacket` no longer populates an ACK in this
+      case, so no false acknowledgement is sent. This affects standard MQTT
+      (`MqttClient_Publish_ReadPayload`) and MQTT-SN (`SN_Client_HandlePacket`).
+      A registered `msg_cb` is now required to receive a PUBLISH; this includes
+      the receive-into-object pattern via `MqttClient_WaitMessage_ex` /
+      `SN_Client_WaitMessage_ex`, which previously returned success after
+      decoding into the caller-supplied object without a callback. A NULL
+      callback is still valid for a publish-only client that never receives
+      messages; the error surfaces only if such a client is actually pushed a
+      PUBLISH. The built-in broker is unaffected (it handles incoming PUBLISH
+      through its own path, not this one).
+
+* Fixes
+    - `SN_Client_Unsubscribe` now registers its pending UNSUBACK response under
+      the real Packet Identifier instead of a hard-coded `0`. In
+      `WOLFMQTT_MULTITHREAD` builds where a dedicated reader thread processes the
+      UNSUBACK first, `MqttClient_RespList_Find` matches on the decoded packet
+      id, so the id-0 entry never matched and the response was consumed into the
+      generic object, leaving the unsubscribing thread blocked until
+      `cmd_timeout_ms`. The registration now matches `SN_Client_Subscribe`,
+      `SN_Client_Register`, and `SN_Client_Publish`.
 
 ### v2.0.0 (03/20/2026)
 Release 2.0.0 has been developed according to wolfSSL's development and QA
