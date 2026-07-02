@@ -1,6 +1,22 @@
 ## Release Notes
 
-### v2.0.1 (Pending)
+### v2.1.0 (07/02/2026)
+Release 2.1.0 has been developed according to wolfSSL's development and QA
+process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
+
+* New Features
+    - wolfMQTT Broker session persistence: pluggable persistence hooks via
+      `MqttBroker_SetPersistHooks` with a POSIX backend
+      (`MqttBrokerNet_PersistPosix_Init` / `MqttBrokerNet_PersistPosix_Free`),
+      message ordering, an offline message queue, and AES-GCM encryption of
+      persisted state at rest (#538)
+    - New packet-validation helpers: `MqttPacket_TopicNameValid`,
+      `MqttPacket_TopicFilterValid`, `MqttPacket_TopicFilterIsWildcard`,
+      `MqttPacket_FixedHeaderFlagsValid`, and `MqttPacket_SubAckReturnCodeValid`
+      (#552)
+    - `WOLFMQTT_MAX_QOS` build cap to compile out the QoS 2 state machine and
+      advertise v5 `MAX_QOS` in CONNACK (#537)
 
 * Security Hardening
     - Reject ill-formed UTF-8 in MQTT UTF-8 string fields per [MQTT-1.5.3-1].
@@ -84,6 +100,31 @@
       generic object, leaving the unsubscribing thread blocked until
       `cmd_timeout_ms`. The registration now matches `SN_Client_Subscribe`,
       `SN_Client_Register`, and `SN_Client_Publish`.
+
+* What's Changed
+    - Fix BrokerHandle_Connect null check (#477)
+    - Fenrir fixes (#478)
+    - Add testing validation and fixes for wolfMQTT (#480)
+    - Replace deprecated VeriSign CA with Amazon Root CA 1 + Starfield G2 (#481)
+    - Update testing with a more flexible framework (#482)
+    - Fix new Fenrir reports (#483)
+    - Always check MqttDecode_Num's return code (#479)
+    - Add Fenrir suggested test cases (#484)
+    - Reject null chars in strings (#503)
+    - Fix various spec compliance gaps (#504)
+    - Fix MQTTv5 QoS 2 CONNACK interop and add WOLFMQTT_MAX_QOS build cap (#537)
+    - Fix Coverity nightly: inline action, drop broken md5 hash lookup (#547)
+    - Harden param checks in MqttDecode_FixedHeader and MqttDecode_ConnectAck (#546)
+    - Harden Coverity tool download: curl -L --fail + gzip sanity check (#549)
+    - Fix broker disconnect to better handle SIGPIPE (#548)
+    - wolfMQTT broker: ordering, persistence, offline queue, AES-GCM at rest (#538)
+    - Speed up CI and stabilize aws-ca-regression (#551)
+    - MQTT-SN fixes (#550)
+    - Broker, client, and MQTT v5 packet validation and reliability fixes (#552)
+    - Fenrir fixes (#554)
+
+* New Contributors
+    - @night1rider made their first contribution (#481)
 
 ### v2.0.0 (03/20/2026)
 Release 2.0.0 has been developed according to wolfSSL's development and QA

@@ -53,12 +53,38 @@ TESTS += $(check_PROGRAMS)
 check_SCRIPTS+= $(dist_noinst_SCRIPTS)
 TESTS += $(check_SCRIPTS)
 
+# Some test data is distributed under $(srcdir) but referenced by the test
+# scripts (and by mosquitto.conf) via paths relative to the build directory:
+# the broker test data (mosquitto.conf and its certificates) and the firmware
+# example payload (examples/publish.dat). In an out-of-tree build -- notably
+# "make distcheck" -- $(srcdir) != $(builddir), so stage a copy into the build
+# tree before the tests run. In-tree builds are a no-op.
+AM_TESTS_ENVIRONMENT = \
+	if test "$(abs_srcdir)" != "$(abs_builddir)"; then \
+		$(MKDIR_P) scripts/broker_test examples; \
+		cp -f $(srcdir)/scripts/broker_test/mosquitto.conf \
+			$(srcdir)/scripts/broker_test/ca-cert.pem \
+			$(srcdir)/scripts/broker_test/server-cert.pem \
+			$(srcdir)/scripts/broker_test/server-key.pem \
+			scripts/broker_test/; \
+		cp -f $(srcdir)/examples/publish.dat examples/; \
+	fi;
+
 test: check
 
 DISTCLEANFILES+= wolfmqtt-config
 
 clean-local:
 	-rm -rf tests/fuzz/corpus
+	@if test "$(abs_srcdir)" != "$(abs_builddir)"; then \
+		rm -f scripts/broker_test/mosquitto.conf \
+			scripts/broker_test/ca-cert.pem \
+			scripts/broker_test/server-cert.pem \
+			scripts/broker_test/server-key.pem \
+			examples/publish.dat; \
+		rmdir scripts/broker_test 2>/dev/null || true; \
+		rmdir scripts 2>/dev/null || true; \
+	fi
 
 maintainer-clean-local:
 	-rm Makefile.in
