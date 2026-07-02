@@ -41,7 +41,10 @@ else
     generate_port
     broker_args="-p $port"
 fi
-mosquitto $broker_args &
+# Close the descriptors make passes to recipe commands (notably the "make -j"
+# jobserver pipe) so a broker that outlives the test cannot stall a parallel
+# make that is waiting on them.
+mosquitto $broker_args 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 broker_pid=$!
 echo "Broker PID is $broker_pid"
 sleep 0.1

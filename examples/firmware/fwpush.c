@@ -150,7 +150,20 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
     ecc_key eccKey;
     WC_RNG rng;
 
-    wc_InitRng(&rng);
+    /* Initialize the RNG and ECC key up front so the cleanup path at exit can
+     * always free them safely, even when an early error (such as a firmware
+     * file load failure) jumps to exit before the key is generated. */
+    rc = wc_InitRng(&rng);
+    if (rc != 0) {
+        PRINTF("Init RNG Failed! %d", rc);
+        return rc;
+    }
+    rc = wc_ecc_init(&eccKey);
+    if (rc != 0) {
+        PRINTF("Init ECC Key Failed! %d", rc);
+        wc_FreeRng(&rng);
+        return rc;
+    }
 #endif
 
     /* Verify file can be loaded */
@@ -165,7 +178,6 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
 #ifdef ENABLE_FIRMWARE_SIG
     /* Generate Key */
     /* Note: Real implementation would use previously exchanged/signed key */
-    wc_ecc_init(&eccKey);
     rc = wc_ecc_make_key(&rng, 32, &eccKey);
     if (rc != 0) {
         PRINTF("Make ECC Key Failed! %d", rc);
