@@ -986,6 +986,90 @@ static BrokerClient* find_broker_client(MqttBroker* broker, const char* id)
     return NULL;
 }
 
+#ifdef WOLFMQTT_BROKER_AUTH
+/* Return 1 if the byte sequence `needle` (length nlen) appears anywhere in
+ * the first hlen bytes of `hay`, else 0. Used to prove credential plaintext
+ * has been scrubbed from a buffer. */
+static int region_contains(const byte* hay, int hlen,
+    const char* needle, int nlen)
+{
+    int i;
+    if (hay == NULL || nlen <= 0 || hlen < nlen) {
+        return 0;
+    }
+    for (i = 0; i + nlen <= hlen; i++) {
+        if (XMEMCMP(hay + i, needle, (size_t)nlen) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* f-3394: after an accepted CONNECT the plaintext credentials must not
+ * linger for the connection's lifetime. The decoder leaves mc.username /
+ * mc.password as in-place pointers into bc->rx_buf, and the broker copies the
+ * password into bc->password only for the one-time auth compare. Neither is
+ * read again (the broker has no re-auth path), so BrokerHandle_Connect scrubs
+ * bc->rx_buf and bc->password before returning on the accepted path. Verify
+ * the password plaintext is gone from rx_buf and bc->password_len is cleared
+ * after a successful auth. Dynamic-memory only (uses find_broker_client). */
+TEST(connect_credentials_scrubbed_after_accept)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* bc;
+    /* CONNECT v3.1.1, ClientId "id", Username "alice", Password "s3cr3tPW".
+     * connect_flags 0xC2 = username + password + clean session. */
+    static const byte connect[] = {
+        0x10, 31,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0xC2,
+        0x00, 0x3C,
+        0x00, 0x02, 'i', 'd',
+        0x00, 0x05, 'a', 'l', 'i', 'c', 'e',
+        0x00, 0x08, 's', '3', 'c', 'r', '3', 't', 'P', 'W'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "alice";
+    broker.auth_pass = "s3cr3tPW";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Auth accepted (0x00) and the client is retained. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_out_buf[3]);
+    ASSERT_FALSE(g_client_closed);
+
+    bc = find_broker_client(&broker, "id");
+    ASSERT_TRUE(bc != NULL);
+
+    /* Password copy wiped: verify the length is cleared AND the buffer bytes
+     * are zeroed as independent checks - a regression that dropped only the
+     * buffer wipe while keeping password_len = 0 must still be caught. The
+     * dynamic store allocates password_len+1 bytes, so scanning the 8-byte
+     * plaintext stays within the allocation. */
+    ASSERT_EQ(0, (int)bc->password_len);
+    ASSERT_EQ(0, region_contains((const byte*)bc->password, 8, "s3cr3tPW", 8));
+    /* Both credential fields lived in the decoded CONNECT; neither plaintext
+     * may remain in the receive buffer. Scan only the received packet region
+     * (== the scrubbed rx_len); rx_buf is malloc'd without zeroing, so the
+     * bytes past the packet are uninitialized and must not be read. */
+    ASSERT_EQ(0, region_contains(bc->rx_buf, (int)sizeof(connect),
+        "s3cr3tPW", 8));
+    ASSERT_EQ(0, region_contains(bc->rx_buf, (int)sizeof(connect),
+        "alice", 5));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_AUTH */
+
 #ifdef WOLFMQTT_V5
 /* Return the Reason Code byte of the first DISCONNECT packet in a captured
  * stream, or -1 if none carries a reason code. A v5 DISCONNECT with a
@@ -3265,6 +3349,9 @@ int main(int argc, char** argv)
     RUN_TEST(connect_auth_pass_only_start_rejected);
     RUN_TEST(connect_auth_partial_config_fails_closed);
     RUN_TEST(connect_auth_partial_pass_only_fails_closed);
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_credentials_scrubbed_after_accept);
+#endif
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);

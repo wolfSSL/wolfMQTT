@@ -4967,6 +4967,26 @@ send_connack:
     }
 #endif
 
+    /* CONNECT accepted. Authentication is complete, and neither the plaintext
+     * CONNECT still in bc->rx_buf (mc.username/mc.password were in-place
+     * pointers into it) nor the dedicated bc->password copy is read again for
+     * the life of this connection - the broker has no re-auth path. Scrub both
+     * now so credentials reside in memory only for the duration of CONNECT
+     * processing rather than the whole session. Refused/failed CONNECTs return
+     * earlier and are wiped when the caller frees the client. Mirrors the
+     * client-side CLIENT_FORCE_ZERO hardening in mqtt_client.c. */
+    BROKER_FORCE_ZERO(bc->rx_buf, (word32)rx_len);
+#ifdef WOLFMQTT_BROKER_AUTH
+#ifdef WOLFMQTT_STATIC_MEMORY
+    BROKER_FORCE_ZERO(bc->password, BROKER_MAX_PASSWORD_LEN);
+#else
+    if (bc->password != NULL) {
+        BROKER_FORCE_ZERO(bc->password, (size_t)bc->password_len + 1);
+    }
+#endif
+    bc->password_len = 0;
+#endif
+
     return rc;
 }
 
