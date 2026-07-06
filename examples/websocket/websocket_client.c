@@ -181,6 +181,7 @@ int main(int argc, char *argv[])
     MqttSubscribe subscribe;
     MqttTopic topics[1];
     XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(topics, 0, sizeof(topics));
     topics[0].topic_filter = "test/topic";
     topics[0].qos = MQTT_QOS_0;
     subscribe.packet_id = mqtt_get_packetid();

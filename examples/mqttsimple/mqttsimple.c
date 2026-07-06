@@ -411,6 +411,7 @@ int mqttsimple_test(void)
 
     /* Subscribe and wait for Ack */
     XMEMSET(&mqttObj, 0, sizeof(mqttObj));
+    XMEMSET(topics, 0, sizeof(topics));
     topics[0].topic_filter = MQTT_TOPIC_NAME;
     topics[0].qos = MQTT_QOS;
     mqttObj.subscribe.packet_id = mqtt_get_packetid();
