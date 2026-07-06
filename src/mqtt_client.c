@@ -1968,6 +1968,28 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     }
 #endif
 
+#ifdef WOLFMQTT_V5
+    /* Scrub the decoded v5 CONNACK from rx_buf. Its properties (e.g. the
+     * MQTT_PROP_AUTH_DATA SASL server-final blob used by enhanced
+     * authentication) decode as pointers into rx_buf and would otherwise
+     * linger until the next read overwrites them - for an idle or QoS-0-only
+     * client, potentially the process lifetime. MqttClient_WaitType already
+     * delivered and freed the property list above, so the bytes are consumed
+     * and no live pointer into rx_buf remains. Same hardening as
+     * MqttClient_Auth; v3.1.1 CONNACK carries no properties so gate on v5. */
+    if (mc_connect->protocol_level > MQTT_CONNECT_PROTOCOL_LEVEL_4) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        /* Hold lockRecv so the scrub cannot race a concurrent rx_buf read. */
+        if (wm_SemLock(&client->lockRecv) == 0) {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+            wm_SemUnlock(&client->lockRecv);
+        }
+    #else
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+    #endif
+    }
+#endif
+
     /* reset state */
     mc_connect->stat.write = MQTT_MSG_BEGIN;
 

@@ -590,6 +590,61 @@ TEST(connect_accepted_connack_latches_v5_props)
     ASSERT_EQ(1024, test_client.packet_sz_max);
 }
 
+/* f-6656: an accepted v5 CONNACK can carry MQTT_PROP_AUTH_DATA - the final
+ * SASL server signature for enhanced authentication - which decodes as a
+ * pointer into rx_buf (no copy). After MqttClient_Connect returns, that
+ * plaintext must not linger in rx_buf, where for an idle or QoS-0-only client
+ * it could persist for the process lifetime. Feed a CONNACK with a distinctive
+ * AUTH_DATA blob and assert it is gone from rx_buf afterward. Mirrors the
+ * MqttClient_Auth scrub (issue 4059); deleting the CLIENT_FORCE_ZERO in
+ * MqttClient_Connect (or turning it into a length-0 no-op) fails this test. */
+TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5: type=0x20, remain=0x14, flags=0x00, return_code=0x00,
+     * prop_len=0x11, then AUTH_DATA (0x16) binary length 14 =
+     * "SASLfinalPROOF". */
+    static const byte connack[] = {
+        0x20, 0x14, 0x00, 0x00, 0x11,
+        0x16, 0x00, 0x0E,
+        'S', 'A', 'S', 'L', 'f', 'i', 'n', 'a', 'l', 'P', 'R', 'O', 'O', 'F'
+    };
+    static const char blob[] = "SASLfinalPROOF";
+    const int blob_len = (int)sizeof(blob) - 1;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    /* Success + accepted proves the AUTH_DATA CONNACK was decoded (and thus
+     * was resident in rx_buf). */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    /* The AUTH_DATA plaintext must not remain anywhere in rx_buf. rx_buf was
+     * zero-initialized at setup, so scanning the full length reads only
+     * initialized bytes. */
+    ASSERT_FALSE(buf_contains(test_client.rx_buf, test_client.rx_buf_len,
+                             blob, blob_len));
+}
+
 /* MQTT v5: a refused CONNACK (non-zero return code) must NOT mutate long-lived
  * client state even when it carries server properties, otherwise a rejected or
  * malicious broker could shrink the client's packet-size cap or lower its QoS
@@ -1847,6 +1902,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_refused_connack_returns_connect_refused);
 #if defined(WOLFMQTT_V5)
     RUN_TEST(connect_accepted_connack_latches_v5_props);
+    RUN_TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_clamps_illegal_max_qos);
 #endif
