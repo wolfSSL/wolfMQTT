@@ -539,7 +539,7 @@ TEST(connect_v311_binary_password_with_embedded_nul_refused)
     reset_mock_state(connect, sizeof(connect));
     run_broker_one_connect(&broker);
 
-    /* Auth must fail - CONNACK return code 0x05 (Not Authorized) and the
+    /* Auth must fail - CONNACK return code 0x04 (Bad user/pass) and the
      * connection is closed. Pre-fix, XSTRLEN truncation would let this
      * authenticate and emit return code 0x00. */
     ASSERT_TRUE(g_out_len >= 4);
@@ -585,6 +585,64 @@ TEST(connect_v311_binary_password_exact_match_accepted)
     ASSERT_TRUE(g_out_len >= 4);
     ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_out_buf[3]);
     ASSERT_FALSE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Mutation guard for the length-fold backstop in BrokerBufCompare (the
+ * final "result |= (len_a ^ len_b)"). The per-byte constant-time loop
+ * clamps an out-of-range index to position 0, so it is blind to a length
+ * mismatch whenever the shorter input's bytes repeat through the longer
+ * one: comparing configured "aaaaa" against a supplied "a" sees only
+ * 'a' ^ 'a' == 0 at every clamped position, and only the length fold
+ * rejects it. Every other negative auth test differs in actual byte
+ * content within range, so the byte loop alone rejects those and none of
+ * them exercise this line; deleting the fold would let a configured user
+ * "aaaaa" be authenticated by the username "a".
+ *
+ * The username here is the repeating-byte length case while the password
+ * matches auth_pass exactly, so the password compare is neutral and the
+ * username length fold alone decides the outcome. Auth must fail (CONNACK
+ * 0x04 Bad user/pass, connection closed). With the fold deleted this would
+ * accept (return code 0x00) - the mutation-detecting assertion. */
+TEST(connect_auth_username_length_fold_repeating_byte_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT v3.1.1, ClientId "id", Username "a" (len 1), Password
+     * "aaaaa" (len 5, exact match for auth_pass). connect_flags 0xC2 =
+     * username + password + clean session. */
+    static const byte connect[] = {
+        0x10, 24,                                  /* fixed header, rl 24 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',            /* protocol name */
+        0x04,                                      /* level 4 (v3.1.1) */
+        0xC2,                                      /* flags: user+pass+clean */
+        0x00, 0x3C,                                /* keep-alive 60 */
+        0x00, 0x02, 'i', 'd',                      /* ClientId "id" */
+        0x00, 0x01, 'a',                           /* Username "a" */
+        0x00, 0x05, 'a', 'a', 'a', 'a', 'a'        /* Password "aaaaa" */
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "aaaaa";
+    broker.auth_pass = "aaaaa";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Auth must fail - CONNACK return code 0x04 (Bad user/pass) and the
+     * connection closed. Deleting the length fold would authenticate the
+     * shorter repeating-byte username and emit return code 0x00. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -717,7 +775,7 @@ TEST(connect_auth_partial_config_fails_closed)
 
     /* Pre-fix the username matched and the absent password was never
      * checked, so the broker accepted (return code 0x00). The gate must now
-     * refuse with 0x05 (Bad user/pass) and close the connection. */
+     * refuse with 0x04 (Bad user/pass) and close the connection. */
     ASSERT_TRUE(g_out_len >= 4);
     ASSERT_EQ(0x20, g_out_buf[0]);
     ASSERT_EQ(0x02, g_out_buf[1]);
@@ -761,7 +819,7 @@ TEST(connect_auth_partial_pass_only_fails_closed)
     run_broker_one_connect(&broker);
 
     /* Pre-fix the password matched and the username was never checked, so the
-     * broker accepted (return code 0x00). The gate must now refuse with 0x05
+     * broker accepted (return code 0x00). The gate must now refuse with 0x04
      * (Bad user/pass) and close the connection. */
     ASSERT_TRUE(g_out_len >= 4);
     ASSERT_EQ(0x20, g_out_buf[0]);
@@ -3201,6 +3259,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_BROKER_AUTH
     RUN_TEST(connect_v311_binary_password_with_embedded_nul_refused);
     RUN_TEST(connect_v311_binary_password_exact_match_accepted);
+    RUN_TEST(connect_auth_username_length_fold_repeating_byte_refused);
     RUN_TEST(connect_unauth_client_id_does_not_take_over_victim);
     RUN_TEST(connect_auth_user_only_start_rejected);
     RUN_TEST(connect_auth_pass_only_start_rejected);
