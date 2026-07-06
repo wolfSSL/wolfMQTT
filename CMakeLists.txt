@@ -463,15 +463,25 @@ set(SBOM_SPDX_TV "wolfmqtt-${WOLFMQTT_SBOM_VERSION}.spdx")
 find_program(PYTHON3_EXECUTABLE python3)
 find_program(PYSPDXTOOLS_EXECUTABLE pyspdxtools)
 
-# Configure-time guards. These fire during `cmake -B build ...` so the operator
-# gets immediate, actionable feedback instead of a build-time error after a
-# long compile. An empty WOLFSSL_DIR is the common first-run mistake.
+# WOLFSSL_DIR (a wolfssl source tree with scripts/gen-sbom) is required only to
+# actually build the sbom target. CI and default builds never set it, so checking
+# it at configure time would abort every build. Mirror the autotools `make sbom`
+# recipe: configure always succeeds; if WOLFSSL_DIR is unset, define a stub sbom
+# target that fails clearly at BUILD time. An empty WOLFSSL_DIR is the common
+# first-run mistake.
 if(WOLFSSL_DIR STREQUAL "")
-    message(FATAL_ERROR
-        "WOLFSSL_DIR is not set. Cannot locate gen-sbom.\n"
-        "  Set it to your wolfssl source checkout, e.g.:\n"
-        "  cmake -B build -DWOLFSSL_DIR=/path/to/wolfssl .")
+    add_custom_target(sbom
+        COMMAND ${CMAKE_COMMAND} -E echo
+                "ERROR: WOLFSSL_DIR is not set. Cannot locate gen-sbom."
+        COMMAND ${CMAKE_COMMAND} -E echo
+                "       Reconfigure with: cmake -B build -DWOLFSSL_DIR=/path/to/wolfssl ."
+        COMMAND ${CMAKE_COMMAND} -E false
+        COMMENT "SBOM target requires -DWOLFSSL_DIR")
+    return()
 endif()
+
+# WOLFSSL_DIR is set: the operator opted into SBOM generation. Validate the rest
+# of the environment now so they get immediate, actionable feedback.
 if(NOT EXISTS "${WOLFSSL_DIR}/scripts/gen-sbom")
     message(FATAL_ERROR
         "gen-sbom not found at ${WOLFSSL_DIR}/scripts/gen-sbom.\n"
