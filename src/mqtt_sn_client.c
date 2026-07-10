@@ -672,7 +672,7 @@ wait_again:
             }
 
             /* Clear shared union for next call */
-            MqttSNClient_PacketReset(packet_type, &client->msg);
+            MqttSNClient_PacketReset(packet_type, &client->msgSN);
 
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Read Packet: Len %d, Type %d, ID %d",
