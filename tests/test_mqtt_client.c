@@ -590,14 +590,10 @@ TEST(connect_accepted_connack_latches_v5_props)
     ASSERT_EQ(1024, test_client.packet_sz_max);
 }
 
-/* f-6656: an accepted v5 CONNACK can carry MQTT_PROP_AUTH_DATA - the final
- * SASL server signature for enhanced authentication - which decodes as a
- * pointer into rx_buf (no copy). After MqttClient_Connect returns, that
- * plaintext must not linger in rx_buf, where for an idle or QoS-0-only client
- * it could persist for the process lifetime. Feed a CONNACK with a distinctive
- * AUTH_DATA blob and assert it is gone from rx_buf afterward. Mirrors the
- * MqttClient_Auth scrub (issue 4059); deleting the CLIENT_FORCE_ZERO in
- * MqttClient_Connect (or turning it into a length-0 no-op) fails this test. */
+/* An accepted v5 CONNACK can carry MQTT_PROP_AUTH_DATA, which decodes as a
+ * pointer into rx_buf with no copy. After MqttClient_Connect returns that
+ * plaintext must not linger in rx_buf. Feed a CONNACK with a distinctive
+ * AUTH_DATA blob and assert it is scrubbed. */
 TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf)
 {
     int rc;

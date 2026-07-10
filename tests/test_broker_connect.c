@@ -590,22 +590,11 @@ TEST(connect_v311_binary_password_exact_match_accepted)
     MqttBroker_Free(&broker);
 }
 
-/* Mutation guard for the length-fold backstop in BrokerBufCompare (the
- * final "result |= (len_a ^ len_b)"). The per-byte constant-time loop
- * clamps an out-of-range index to position 0, so it is blind to a length
- * mismatch whenever the shorter input's bytes repeat through the longer
- * one: comparing configured "aaaaa" against a supplied "a" sees only
- * 'a' ^ 'a' == 0 at every clamped position, and only the length fold
- * rejects it. Every other negative auth test differs in actual byte
- * content within range, so the byte loop alone rejects those and none of
- * them exercise this line; deleting the fold would let a configured user
- * "aaaaa" be authenticated by the username "a".
- *
- * The username here is the repeating-byte length case while the password
- * matches auth_pass exactly, so the password compare is neutral and the
- * username length fold alone decides the outcome. Auth must fail (CONNACK
- * 0x04 Bad user/pass, connection closed). With the fold deleted this would
- * accept (return code 0x00) - the mutation-detecting assertion. */
+/* Guard the length-fold backstop in BrokerBufCompare. The constant-time
+ * byte loop clamps an out-of-range index to position 0, so it cannot see a
+ * length mismatch when the shorter input's bytes repeat through the longer
+ * one. Username "a" against configured "aaaaa" must be refused by the length
+ * fold alone; deleting the fold would authenticate it. */
 TEST(connect_auth_username_length_fold_repeating_byte_refused)
 {
     MqttBroker broker;
@@ -1005,14 +994,10 @@ static int region_contains(const byte* hay, int hlen,
     return 0;
 }
 
-/* f-3394: after an accepted CONNECT the plaintext credentials must not
- * linger for the connection's lifetime. The decoder leaves mc.username /
- * mc.password as in-place pointers into bc->rx_buf, and the broker copies the
- * password into bc->password only for the one-time auth compare. Neither is
- * read again (the broker has no re-auth path), so BrokerHandle_Connect scrubs
- * bc->rx_buf and bc->password before returning on the accepted path. Verify
- * the password plaintext is gone from rx_buf and bc->password_len is cleared
- * after a successful auth. Dynamic-memory only (uses find_broker_client). */
+/* After an accepted CONNECT the plaintext credentials must not linger for
+ * the connection lifetime. BrokerHandle_Connect scrubs bc->rx_buf and
+ * bc->password on the accepted path; verify the password is gone from rx_buf
+ * and bc->password_len is cleared. Dynamic-memory only. */
 TEST(connect_credentials_scrubbed_after_accept)
 {
     MqttBroker broker;

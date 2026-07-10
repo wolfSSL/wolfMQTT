@@ -2576,6 +2576,13 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
          * Handling (bits 2-5). These bits are reserved (MUST be 0) in
          * v3.1.1, so only fold them in for a v5 SUBSCRIBE. */
         if (subscribe->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Reject options the decoder would treat as malformed: bits
+             * outside 2-5 must be 0 and Retain Handling (bits 4-5) = 3 is
+             * reserved, so the encoder cannot emit an undecodable SUBSCRIBE. */
+            if ((topic->sub_options & ~MQTT_SUBSCRIBE_OPTIONS_MASK) != 0 ||
+                ((topic->sub_options >> 4) & 0x03) == 0x03) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
             options |= (byte)(topic->sub_options & MQTT_SUBSCRIBE_OPTIONS_MASK);
         }
     #endif
@@ -2727,7 +2734,8 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             /* Preserve v5 No Local / Retain As Published / Retain Handling
              * (bits 2-5) so the full options byte round-trips. Reserved and
              * QoS bits were validated above; for a valid v3.1.1 packet these
-             * bits are 0. */
+             * bits are 0. The broker stores these but does not yet enforce
+             * them on delivery. */
             topic->sub_options = (byte)(options & MQTT_SUBSCRIBE_OPTIONS_MASK);
         #endif
             subscribe->topic_count++;

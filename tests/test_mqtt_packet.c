@@ -1850,12 +1850,9 @@ TEST(encode_subscribe_options_byte_qos2)
 }
 
 #ifdef WOLFMQTT_V5
-/* f-2359: the v5 option bits (No Local / Retain As Published / Retain
- * Handling) MUST NOT appear on a v3.1.1 SUBSCRIBE, where bits 2-7 of the
- * options byte are reserved and MUST be 0. With protocol_level < 5 the
- * encoder must ignore sub_options and emit a QoS-only options byte. Locks
- * the protocol_level guard so a refactor that always folded sub_options
- * (emitting reserved bits on a 3.1.1 wire) can't pass CI. */
+/* The v5 option bits (bits 2-5) are reserved on a v3.1.1 SUBSCRIBE and MUST
+ * be 0. With protocol_level < 5 the encoder must ignore sub_options and emit
+ * a QoS-only options byte. */
 TEST(encode_subscribe_v311_ignores_sub_options)
 {
     byte tx_buf[256];
@@ -1879,6 +1876,53 @@ TEST(encode_subscribe_v311_ignores_sub_options)
     ASSERT_TRUE(rc > 0);
     /* Options byte is the last byte: QoS 1 only, no v5 option bits. */
     ASSERT_EQ(0x01, tx_buf[rc - 1]);
+}
+
+/* Retain Handling = 3 is reserved [MQTT v5 3.8.3.1] and the decoder rejects
+ * it, so the encoder must refuse it too rather than emit a packet its own
+ * decoder would reject. */
+TEST(encode_subscribe_v5_retain_handling_3_rejected)
+{
+    byte tx_buf[256];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "a";
+    topic.qos = MQTT_QOS_1;
+    /* Bits 4-5 both set is Retain Handling = 3 (reserved). */
+    topic.sub_options = MQTT_SUBSCRIBE_RETAIN_HANDLING_1 |
+                        MQTT_SUBSCRIBE_RETAIN_HANDLING_2;
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Bits 6-7 are reserved [MQTT v5 3.8.3.1]; sub_options should only hold bits
+ * 2-5, so any bit outside that mask must be refused by the encoder. */
+TEST(encode_subscribe_v5_reserved_sub_options_bit_rejected)
+{
+    byte tx_buf[256];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "a";
+    topic.qos = MQTT_QOS_1;
+    topic.sub_options = 0x40; /* reserved bit 6 */
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -3519,11 +3563,10 @@ TEST(decode_subscribe_v5_options_reserved_bits_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* f-2359: the v5 SUBSCRIBE options byte carries No Local (bit 2), Retain As
- * Published (bit 3) and Retain Handling (bits 4-5) alongside QoS (bits 0-1).
- * Encode then decode must preserve the full options byte via
- * MqttTopic.sub_options, not just QoS. Exhaustively covers every valid
- * combination: QoS 0-2 x No Local x RAP x Retain Handling 0-2 (36 cases). */
+/* The v5 SUBSCRIBE options byte carries No Local, Retain As Published and
+ * Retain Handling (bits 2-5) alongside QoS (bits 0-1). Encode then decode
+ * must preserve the full options byte via MqttTopic.sub_options. Covers
+ * every valid combination: QoS 0-2 x NL x RAP x Retain Handling 0-2. */
 TEST(subscribe_v5_options_roundtrip_all_combos)
 {
     static const byte rh_vals[] = {
@@ -5069,6 +5112,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_subscribe_options_byte_qos2);
 #ifdef WOLFMQTT_V5
     RUN_TEST(encode_subscribe_v311_ignores_sub_options);
+    RUN_TEST(encode_subscribe_v5_retain_handling_3_rejected);
+    RUN_TEST(encode_subscribe_v5_reserved_sub_options_bit_rejected);
 #endif
     RUN_TEST(encode_subscribe_topic_filter_oversized_rejected);
     RUN_TEST(encode_subscribe_topic_filter_oversized_second_rejected);

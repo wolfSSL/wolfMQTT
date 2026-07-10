@@ -1979,10 +1979,15 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
      * MqttClient_Auth; v3.1.1 CONNACK carries no properties so gate on v5. */
     if (mc_connect->protocol_level > MQTT_CONNECT_PROTOCOL_LEVEL_4) {
     #ifdef WOLFMQTT_MULTITHREAD
-        /* Hold lockRecv so the scrub cannot race a concurrent rx_buf read. */
+        /* Hold lockRecv so the scrub cannot race a concurrent rx_buf read. If
+         * the lock cannot be taken, still scrub: leaving the AUTH_DATA
+         * plaintext behind is worse than an unsynchronized wipe. */
         if (wm_SemLock(&client->lockRecv) == 0) {
             CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
             wm_SemUnlock(&client->lockRecv);
+        }
+        else {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
         }
     #else
         CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
@@ -3026,10 +3031,15 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
      * already delivered and freed auth->props, so the bytes are consumed
      * before this scrub and the caller has no live pointer into rx_buf. */
 #ifdef WOLFMQTT_MULTITHREAD
-    /* Hold lockRecv so the scrub cannot race a concurrent read into rx_buf. */
+    /* Hold lockRecv so the scrub cannot race a concurrent read into rx_buf. If
+     * the lock cannot be taken, still scrub: leaving the AUTH_DATA plaintext
+     * behind is worse than an unsynchronized wipe. */
     if (wm_SemLock(&client->lockRecv) == 0) {
         CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
         wm_SemUnlock(&client->lockRecv);
+    }
+    else {
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
     }
 #else
     CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
