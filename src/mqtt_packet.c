@@ -1830,6 +1830,9 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     if (tx_buf == NULL || publish == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+    if (publish->qos > MQTT_QOS_2) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
     /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3]. Check here
      * before writing the fixed header so a later MqttEncode_String failure
      * cannot corrupt tx_payload via `tx_payload += -1`. NULL topic_name
