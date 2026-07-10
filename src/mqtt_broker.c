@@ -3632,7 +3632,7 @@ static void BrokerPendingWill_Cancel(MqttBroker* broker,
             XSTRCMP(broker->pending_wills[i].client_id, client_id) == 0) {
             WBLOG_DBG(broker, "broker: will cancelled client_id=%s",
                 BrokerLog_Sanitize(client_id));
-            XMEMSET(&broker->pending_wills[i], 0,
+            BROKER_FORCE_ZERO(&broker->pending_wills[i],
                 sizeof(BrokerPendingWill));
             return;
         }
@@ -3679,7 +3679,7 @@ static void BrokerPendingWill_FreeAll(MqttBroker* broker)
         return;
     }
 #ifdef WOLFMQTT_STATIC_MEMORY
-    XMEMSET(broker->pending_wills, 0, sizeof(broker->pending_wills));
+    BROKER_FORCE_ZERO(broker->pending_wills, sizeof(broker->pending_wills));
 #else
     pw = broker->pending_wills;
     while (pw) {
@@ -3733,7 +3733,7 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
                 (unsigned)pw->payload_len);
             BrokerClient_PublishWillImmediate(broker, pw->topic,
                 pw->payload, pw->payload_len, pw->qos, pw->retain);
-            XMEMSET(pw, 0, sizeof(BrokerPendingWill));
+            BROKER_FORCE_ZERO(pw, sizeof(BrokerPendingWill));
             activity = 1;
         }
     }
