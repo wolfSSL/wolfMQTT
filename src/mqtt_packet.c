@@ -877,6 +877,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     int total, tmp;
     int prop_count = 0;
     word32 seen_lo = 0, seen_hi = 0; /* singleton-property duplicate guard */
+    word32 prop_type;
     MqttProp* cur_prop;
     byte* buf = pbuf;
 
@@ -903,11 +904,13 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             break;
         }
         /* Decode the Identifier */
-        rc = MqttDecode_Vbi(buf, (word32*)&cur_prop->type,
+        prop_type = 0;
+        rc = MqttDecode_Vbi(buf, &prop_type,
                 (word32)(buf_len - (buf - pbuf)));
         if (rc < 0) {
             break;
         }
+        cur_prop->type = (MqttPropertyType)prop_type;
         tmp = rc;
         buf += tmp;
         total += tmp;
