@@ -3600,8 +3600,10 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     }
     tx_payload = &tx_buf[header_len];
 
-    /* Encode variable header */
-    if ((auth->reason_code == MQTT_REASON_CONT_AUTH) ||
+    /* Encode variable header. [MQTT-3.15.2.1] Success (0x00) is valid too and
+     * is accepted by MqttDecode_Auth, so encode it to keep the roundtrip. */
+    if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
+        (auth->reason_code == MQTT_REASON_CONT_AUTH) ||
         (auth->reason_code == MQTT_REASON_REAUTH)) {
 
         *tx_payload++ = auth->reason_code;
