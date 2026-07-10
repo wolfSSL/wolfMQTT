@@ -3412,10 +3412,24 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     int header_len, remain_len = 0;
     byte* tx_payload;
     int props_len = 0;
+    MqttProp* auth_prop;
 
     /* Validate required arguments */
     if ((tx_buf == NULL) || (tx_buf_len <= 0) || (auth == NULL)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
+    /* [MQTT-4.12] AUTH (REAUTH/CONT_AUTH) must carry an Authentication Method
+     * property; reject if the list is empty or lacks it. */
+    if ((auth->reason_code == MQTT_REASON_CONT_AUTH) ||
+        (auth->reason_code == MQTT_REASON_REAUTH)) {
+        auth_prop = auth->props;
+        while (auth_prop != NULL && auth_prop->type != MQTT_PROP_AUTH_METHOD) {
+            auth_prop = auth_prop->next;
+        }
+        if (auth_prop == NULL) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
     }
 
     /* Length of Reason Code */
