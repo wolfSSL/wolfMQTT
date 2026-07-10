@@ -2235,7 +2235,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
 
     /* Validate publish request against server properties */
     if ((publish->qos > client->max_qos) ||
-        ((publish->retain == 1) && (client->retain_avail == 0)))
+        ((publish->retain != 0) && (client->retain_avail == 0)))
     {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }
