@@ -5604,6 +5604,9 @@ static int BrokerHandle_PublishRel(BrokerClient* bc, int rx_len)
 {
     int rc;
     MqttPublishResp resp;
+#ifdef WOLFMQTT_V5
+    int was_tracked;
+#endif
 
     XMEMSET(&resp, 0, sizeof(resp));
 #ifdef WOLFMQTT_V5
@@ -5617,6 +5620,9 @@ static int BrokerHandle_PublishRel(BrokerClient* bc, int rx_len)
         return rc;
     }
 
+#ifdef WOLFMQTT_V5
+    was_tracked = BrokerInboundQos2_Contains(bc, resp.packet_id);
+#endif
     /* [MQTT-4.3.3] QoS 2 step 3: discard the stored Packet Identifier so a
      * later PUBLISH with the same ID is treated as a fresh delivery. PUBREL
      * for an unknown ID is idempotent - we still PUBCOMP it. */
@@ -5626,7 +5632,9 @@ static int BrokerHandle_PublishRel(BrokerClient* bc, int rx_len)
     if (resp.props) {
         (void)MqttProps_Free(resp.props);
     }
-    resp.reason_code = MQTT_REASON_SUCCESS;
+    /* [MQTT-3.7.2.1] Report 0x92 when the broker had no record of this ID. */
+    resp.reason_code = was_tracked ?
+        MQTT_REASON_SUCCESS : MQTT_REASON_PACKET_ID_NOT_FOUND;
     resp.props = NULL;
 #endif
     rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
