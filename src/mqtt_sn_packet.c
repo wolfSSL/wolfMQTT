@@ -1659,7 +1659,11 @@ int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping, byte type)
 
     if ((type == SN_MSG_TYPE_PING_REQ) && (ping != NULL) &&
         (ping->clientId != NULL)) {
-        total_len += clientId_len = (int)XSTRLEN(ping->clientId);
+        clientId_len = (int)XSTRLEN(ping->clientId);
+        if (clientId_len > SN_CLIENTID_MAX_LEN) {
+            clientId_len = SN_CLIENTID_MAX_LEN;
+        }
+        total_len += clientId_len;
     }
 
     if (total_len > tx_buf_len) {
