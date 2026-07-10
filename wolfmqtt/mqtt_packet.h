@@ -547,6 +547,7 @@ typedef struct _MqttSubscribeAck {
 
     word16      packet_id;
     byte        return_codes[MAX_MQTT_TOPICS];
+    word16      return_code_count; /* number of return codes the broker sent */
 #ifdef WOLFMQTT_V5
     MqttProp* props;
     byte protocol_level;

@@ -2553,15 +2553,22 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
      * that filter. */
     if (rc == MQTT_CODE_SUCCESS) {
         byte any_rejected = 0;
-        for (i = 0; i < subscribe->topic_count && i < MAX_MQTT_TOPICS; i++) {
-            topic = &subscribe->topics[i];
-            topic->return_code = subscribe->ack.return_codes[i];
-            if (topic->return_code & MQTT_SUBSCRIBE_ACK_CODE_FAILURE) {
-                any_rejected = 1;
-            }
+        /* [MQTT-3.9.3-1] a SUBACK carries exactly one reason code per
+         * requested topic; too few would be read as granted QoS 0 (fail-open). */
+        if (subscribe->ack.return_code_count != subscribe->topic_count) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
-        if (any_rejected) {
-            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED);
+        else {
+            for (i = 0; i < subscribe->topic_count && i < MAX_MQTT_TOPICS; i++) {
+                topic = &subscribe->topics[i];
+                topic->return_code = subscribe->ack.return_codes[i];
+                if (topic->return_code & MQTT_SUBSCRIBE_ACK_CODE_FAILURE) {
+                    any_rejected = 1;
+                }
+            }
+            if (any_rejected) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED);
+            }
         }
     }
 

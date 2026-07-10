@@ -3700,6 +3700,7 @@ TEST(decode_suback_multiple_return_codes)
     ASSERT_EQ(MQTT_QOS_1, ack.return_codes[0]);
     ASSERT_EQ(MQTT_QOS_2, ack.return_codes[1]);
     ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_FAILURE, ack.return_codes[2]);
+    ASSERT_EQ(3, ack.return_code_count);
 }
 
 TEST(decode_suback_malformed_remain_len_zero)

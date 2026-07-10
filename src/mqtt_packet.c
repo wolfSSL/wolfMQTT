@@ -2815,6 +2815,8 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             if (payload_len > buf_remain) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
+            subscribe_ack->return_code_count =
+                (word16)((payload_len > 0xFFFF) ? 0xFFFF : payload_len);
             if (payload_len > MAX_MQTT_TOPICS)
                 payload_len = MAX_MQTT_TOPICS;
         #ifdef WOLFMQTT_V5
