@@ -2009,6 +2009,15 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     }
 #endif
 
+    /* Reject inconsistent length fields: a non-empty payload buffer paired
+     * with a zero total_len would silently emit an empty PUBLISH (which on a
+     * retained topic deletes the stored message). An intentional empty
+     * publish leaves buffer NULL or buffer_len 0. */
+    if ((publish->buffer != NULL) && (publish->buffer_len > 0) &&
+        (publish->total_len == 0)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
     if (((publish->buffer != NULL) || (use_cb == 1)) &&
         (publish->total_len > 0)) {
         payload_len = publish->total_len;
