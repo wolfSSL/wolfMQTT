@@ -242,6 +242,19 @@ static int wmqb_get_key(MqttBroker* broker)
  * rekeying only when persist_key_cache changes would amortize the AES
  * key schedule. Requires deciding the threading model first - today
  * the broker is single-threaded so a single shared context is safe. */
+/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
+static void wmqb_force_zero(void* mem, word32 len)
+{
+    volatile byte* p = (volatile byte*)mem;
+    if (p == NULL) {
+        return;
+    }
+    while (len > 0) {
+        *p++ = 0;
+        len--;
+    }
+}
+
 static int wmqb_encrypt_blob(MqttBroker* broker,
     const byte* plain, word32 plain_len, byte** ct_out, word32* ct_out_len)
 {
@@ -445,6 +458,7 @@ static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
         return d->inner_cb(key, key_len, blob, 0, d->inner_ctx);
     }
     stop = d->inner_cb(key, key_len, plain, plain_len, d->inner_ctx);
+    wmqb_force_zero(plain, plain_len);
     WOLFMQTT_FREE(plain);
     return stop;
 }
@@ -508,11 +522,13 @@ static int wmqb_kv_get_decrypt_meta(MqttBroker* broker, byte ns,
         return rc;
     }
     if (plain_len > *inout_len) {
+        wmqb_force_zero(plain, plain_len);
         WOLFMQTT_FREE(plain);
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
     XMEMCPY(out, plain, plain_len);
     *inout_len = plain_len;
+    wmqb_force_zero(plain, plain_len);
     WOLFMQTT_FREE(plain);
     return 0;
 }
