@@ -1674,7 +1674,8 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     /* Check arguments */
     if (client == NULL ||
         tx_buf == NULL || tx_buf_len <= 0 ||
-        rx_buf == NULL || rx_buf_len <= 0) {
+        rx_buf == NULL || rx_buf_len <= 0 ||
+        cmd_timeout_ms < 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
