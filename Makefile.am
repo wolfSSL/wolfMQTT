@@ -57,64 +57,29 @@ test: check
 
 DISTCLEANFILES+= wolfmqtt-config
 
-# SBOM generation (CRA compliance)
-SBOM_CDX     = wolfmqtt-$(PACKAGE_VERSION).cdx.json
-SBOM_SPDX    = wolfmqtt-$(PACKAGE_VERSION).spdx.json
-SBOM_SPDX_TV = wolfmqtt-$(PACKAGE_VERSION).spdx
-sbomdir      = $(datadir)/doc/$(PACKAGE)
+# SBOM generation (CRA compliance).  The recipe is shared across the wolfSSL
+# stack's autotools products in scripts/sbom.am; wolfMQTT just declares what it
+# is (a libwolfmqtt library that links wolfSSL for TLS) and includes it.
+# WOLFSSL_DIR must point to a wolfssl source tree containing scripts/gen-sbom.
+SBOM_PKGNAME      = wolfmqtt
+SBOM_LICENSE_FILE = $(srcdir)/LICENSE
+SBOM_DEP_WOLFSSL  = yes
 
-.PHONY: sbom install-sbom uninstall-sbom
+# wolfMQTT records its feature macros in its own generated options header (it
+# uses no AC_DEFINE / config.h defines), so point gen-sbom at that header rather
+# than at the compiler-derived defaults.
+SBOM_OPTIONS_H    = $(abs_builddir)/wolfmqtt/options.h
 
-sbom:
-	@if test -z "$(WOLFSSL_DIR)"; then \
-	    echo ""; \
-	    echo "ERROR: WOLFSSL_DIR is not set. Cannot locate gen-sbom."; \
-	    echo "       Set WOLFSSL_DIR to your wolfssl checkout."; \
-	    echo "       Example: make sbom WOLFSSL_DIR=/path/to/wolfssl"; \
-	    echo ""; \
-	    exit 1; \
-	fi
-	@if test -z "$(PYTHON3)"; then \
-	    echo ""; \
-	    echo "ERROR: 'python3' not found in PATH. Cannot generate SBOM."; \
-	    echo ""; \
-	    exit 1; \
-	fi
-	@if test -z "$(PYSPDXTOOLS)"; then \
-	    echo ""; \
-	    echo "ERROR: 'pyspdxtools' not found in PATH. Cannot validate SBOM."; \
-	    echo "       Install: pip install spdx-tools"; \
-	    echo ""; \
-	    exit 1; \
-	fi
-	rm -rf $(abs_builddir)/_sbom_staging
-	$(MAKE) install DESTDIR=$(abs_builddir)/_sbom_staging
-	$(PYTHON3) $(WOLFSSL_DIR)/scripts/gen-sbom \
-	    --name wolfmqtt \
-	    --version $(PACKAGE_VERSION) \
-	    --supplier 'wolfSSL Inc.' \
-	    --license-file $(srcdir)/LICENSE \
-	    --options-h $(abs_builddir)/wolfmqtt/options.h \
-	    --lib $(abs_builddir)/_sbom_staging$(libdir)/libwolfmqtt.so.$(WOLFMQTT_LIBRARY_VERSION_FIRST).$(WOLFMQTT_LIBRARY_VERSION_SECOND).$(WOLFMQTT_LIBRARY_VERSION_THIRD) \
-	    --git '$(GIT)' \
-	    --cdx-out $(abs_builddir)/$(SBOM_CDX) \
-	    --spdx-out $(abs_builddir)/$(SBOM_SPDX)
-	rm -rf $(abs_builddir)/_sbom_staging
-	$(PYSPDXTOOLS) --infile $(abs_builddir)/$(SBOM_SPDX) \
-	    --outfile $(abs_builddir)/$(SBOM_SPDX_TV)
+# wolfMQTT is GPLv3-or-later (per the per-file source headers: "either version 3
+# of the License, or (at your option) any later version") or commercial.  Pin
+# the header-accurate SPDX id here so the SBOM is correct regardless of the
+# gen-sbom version's licence detection; commercial licensees can override it
+# (e.g. LicenseRef-wolfSSL-Commercial).
+SBOM_LICENSE_OVERRIDE ?= GPL-3.0-or-later
 
-install-sbom: sbom
-	$(MKDIR_P) $(DESTDIR)$(sbomdir)
-	$(INSTALL_DATA) $(SBOM_CDX) $(DESTDIR)$(sbomdir)/
-	$(INSTALL_DATA) $(SBOM_SPDX) $(DESTDIR)$(sbomdir)/
-	$(INSTALL_DATA) $(SBOM_SPDX_TV) $(DESTDIR)$(sbomdir)/
+EXTRA_DIST += scripts/sbom.am
 
-uninstall-sbom:
-	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_CDX)
-	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_SPDX)
-	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_SPDX_TV)
-
-CLEANFILES += $(SBOM_CDX) $(SBOM_SPDX) $(SBOM_SPDX_TV)
+include scripts/sbom.am
 
 clean-local:
 	-rm -rf tests/fuzz/corpus

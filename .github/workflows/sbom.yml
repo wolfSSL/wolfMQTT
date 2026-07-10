@@ -1,0 +1,175 @@
+name: SBOM Test
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+  workflow_dispatch:
+    inputs:
+      wolfssl_ref:
+        description: 'wolfssl git ref that provides scripts/gen-sbom'
+        # TODO: switch back to 'master' once wolfSSL/wolfssl#10343 merges.
+        default: 'refs/pull/10343/head'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# This workflow only reads the repo and uploads artefacts; no API writes.
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: wolfMQTT SBOM generation (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout wolfmqtt
+        uses: actions/checkout@v4
+        with:
+          path: wolfmqtt
+
+      # wolfMQTT links wolfSSL for TLS, so its SBOM records wolfSSL as a
+      # dependency.  wolfSSL is built + installed here so wolfMQTT has a library
+      # to link, and the same source tree (scripts/gen-sbom + wolfssl/version.h)
+      # is passed to `make sbom` via WOLFSSL_DIR -- so the recorded wolfSSL
+      # dependency version matches the linked one.  gen-sbom is not yet on
+      # wolfssl master, so default to the open PR head that carries it
+      # (wolfSSL/wolfssl#10343) so CI actually exercises `make sbom` instead of
+      # silently skipping.  TODO: switch the fallback back to 'master' once
+      # #10343 merges.
+      - name: Checkout wolfssl (gen-sbom + library source)
+        uses: actions/checkout@v4
+        with:
+          repository: wolfSSL/wolfssl
+          ref: ${{ github.event.inputs.wolfssl_ref || 'refs/pull/10343/head' }}
+          path: wolfssl
+
+      - name: Install build tooling and SBOM validator (pyspdxtools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool \
+              pkg-config
+          python3 -m pip install --user 'spdx-tools==0.8.*'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build and install wolfssl
+        working-directory: wolfssl
+        run: |
+          autoreconf -ivf
+          ./configure --enable-all \
+              --prefix="$GITHUB_WORKSPACE/wolfssl-install"
+          make -j"$(nproc)"
+          make install
+
+      # gen-sbom lives in wolfssl and may not be on the checked-out ref yet (the
+      # wolfSSL SBOM change can land separately).  Gate on its presence and on
+      # --dep-wolfssl so this workflow is safe against a gen-sbom that predates
+      # it.
+      - name: Detect gen-sbom availability and capabilities
+        id: gate
+        run: |
+          GS="$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom"
+          if [ ! -f "$GS" ]; then
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping SBOM generation."
+            exit 0
+          fi
+          echo "have=yes" >> "$GITHUB_OUTPUT"
+          if python3 "$GS" --help 2>/dev/null | grep -q -- '--dep-wolfssl'; then
+            echo "dep_wolfssl=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "dep_wolfssl=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::gen-sbom on this ref has no --dep-wolfssl; the wolfssl dependency + name-derived identity assertions will be skipped."
+          fi
+
+      - name: Configure and build wolfmqtt
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: |
+          autoreconf -ivf
+          ./configure --enable-tls \
+              --with-libwolfssl-prefix="$GITHUB_WORKSPACE/wolfssl-install"
+          make -j"$(nproc)"
+
+      - name: Generate SBOM
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: make sbom WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+
+      - name: Outputs exist and SPDX validates
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: |
+          ls wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
+          pyspdxtools --infile wolfmqtt-*.spdx.json
+
+      - name: CycloneDX identity, licence, and captured options
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          cdx = json.load(open(glob.glob('wolfmqtt-*.cdx.json')[0]))
+          assert cdx['bomFormat'] == 'CycloneDX', cdx.get('bomFormat')
+          assert cdx['specVersion'] == '1.6', cdx.get('specVersion')
+          m = cdx['metadata']['component']
+          assert m['name'] == 'wolfmqtt', m['name']
+          assert m['purl'].startswith('pkg:github/wolfSSL/wolfmqtt@'), m['purl']
+          # Default override must land as GPL-3.0-or-later (matches source headers).
+          ids = [l.get('license', {}).get('id') for l in m.get('licenses', [])]
+          assert 'GPL-3.0-or-later' in ids, ids
+          # Identity is the hashed library artifact.
+          assert {h['alg'] for h in m.get('hashes', [])}, 'no component hash'
+          # SBOM_OPTIONS_H must have been parsed: wolfMQTT stores its feature
+          # macros in wolfmqtt/options.h (no config.h AC_DEFINE), so the SBOM's
+          # build properties must be populated.
+          props = [p for p in m.get('properties', [])
+                   if p.get('name', '').startswith('wolfssl:build:')]
+          assert props, 'no wolfssl:build:* properties captured from options.h'
+          print('CDX ok:', m['name'], m['purl'], ids, f'{len(props)} build props')
+          PY
+
+      - name: Reproducible across two runs (SOURCE_DATE_EPOCH)
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: |
+          rm -f wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
+          SOURCE_DATE_EPOCH=1700000000 make sbom \
+              WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+          sha256sum wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json > /tmp/a.sums
+          rm -f wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
+          SOURCE_DATE_EPOCH=1700000000 make sbom \
+              WOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+          sha256sum wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json > /tmp/b.sums
+          diff /tmp/a.sums /tmp/b.sums
+
+      - name: wolfssl recorded as a dependency
+        if: steps.gate.outputs.have == 'yes' && steps.gate.outputs.dep_wolfssl == 'yes'
+        working-directory: wolfmqtt
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          d = json.load(open(glob.glob('wolfmqtt-*.spdx.json')[0]))
+          assert 'wolfssl' in {p['name'] for p in d['packages']}, \
+              [p['name'] for p in d['packages']]
+          rels = [(r['spdxElementId'], r['relationshipType'],
+                   r['relatedSpdxElement']) for r in d['relationships']]
+          assert ('SPDXRef-Package-wolfmqtt', 'DEPENDS_ON',
+                  'SPDXRef-Package-wolfssl') in rels, rels
+          print('wolfssl dependency ok')
+          PY
+
+      - name: Upload SBOM artefacts
+        if: always() && steps.gate.outputs.have == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wolfmqtt-sbom-${{ github.sha }}
+          path: |
+            wolfmqtt/wolfmqtt-*.cdx.json
+            wolfmqtt/wolfmqtt-*.spdx.json
+            wolfmqtt/wolfmqtt-*.spdx
+          if-no-files-found: warn
+          retention-days: 90

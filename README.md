@@ -576,6 +576,13 @@ You can test the wolfMQTT client against public brokers supporting websockets:
 
 wolfMQTT generates a Software Bill of Materials (SBOM) in CycloneDX 1.6 and
 SPDX 2.3 formats to support compliance with the EU Cyber Resilience Act (CRA).
+The SBOM records the configured build options (from `wolfmqtt/options.h`),
+hashes the built `libwolfmqtt` library artifact (shared or static; ELF, Mach-O,
+or PE), and (with a sufficiently new `gen-sbom`) lists wolfSSL as a dependency
+so vulnerability scanners can associate wolfSSL advisories with a TLS-enabled
+wolfMQTT deployment. Output is reproducible: set `SOURCE_DATE_EPOCH` (or build
+from a git checkout, which uses the last commit time) and repeated runs are
+byte-identical.
 
 ```sh
 make sbom WOLFSSL_DIR=/path/to/wolfssl
@@ -587,9 +594,25 @@ must point to a wolfssl source tree containing `scripts/gen-sbom` (branch
 
 Output: `wolfmqtt-<version>.cdx.json`, `wolfmqtt-<version>.spdx.json`, `wolfmqtt-<version>.spdx`
 
+Optional overrides:
+
+- `SBOM_LICENSE_OVERRIDE` - SPDX expression to use instead of the licence
+  parsed from `LICENSE` (e.g. `LicenseRef-wolfSSL-Commercial` for commercial
+  licensees). Defaults to `GPL-3.0-or-later` (the per-file header licence).
+- `SBOM_LICENSE_TEXT` - path to the licence text for any `LicenseRef-*` used in
+  `SBOM_LICENSE_OVERRIDE` (required by SPDX 2.3).
+- `SBOM_WOLFSSL_VERSION` - version recorded for the wolfSSL dependency;
+  auto-detected from `WOLFSSL_DIR/wolfssl/version.h` (or wolfSSL's `pkg-config`
+  entry) when unset.
+
 ```sh
 make install-sbom    # installs to $(datadir)/doc/wolfmqtt/
 make uninstall-sbom
 ```
+
+Note: recording wolfSSL as a dependency and emitting wolfMQTT-specific project
+URLs require the `gen-sbom` from wolfSSL/wolfssl#10343. Against an older
+`gen-sbom`, `make sbom` still succeeds and produces a valid SBOM, but omits the
+wolfSSL dependency entry and inherits wolfSSL's project URLs.
 
 For further CRA guidance see [wolfssl/doc/CRA.md](https://github.com/wolfSSL/wolfssl/blob/master/doc/CRA.md).
