@@ -3907,6 +3907,7 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
         case MQTT_PK_READ_HEAD:
         {
             int i;
+            word32 remain_len_u32 = 0;
             client->packet.stat = MQTT_PK_READ_HEAD;
 
             for (i = (client->packet.header_len - MQTT_PACKET_HEADER_MIN_SIZE);
@@ -3950,13 +3951,18 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             rc = MqttDecode_Vbi(header->len,
-                    (word32*)&client->packet.remain_len,
+                    &remain_len_u32,
                     rx_buf_len - (client->packet.header_len - (i + 1)));
             if (rc < 0) { /* Indicates error */
                 return MqttPacket_HandleNetError(client, rc);
             }
             /* Indicates decode success and rc is len of header */
             else {
+                if (remain_len_u32 > MQTT_PACKET_MAX_REMAIN_LEN) {
+                    return MqttPacket_HandleNetError(client,
+                        MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA));
+                }
+                client->packet.remain_len = (int)remain_len_u32;
                 /* Add size of type and flags */
                 rc += sizeof(header->type_flags);
                 client->packet.header_len = rc;
