@@ -4065,6 +4065,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             if (enc_rc > 0) {
                 (void)MqttPacket_Write(&sub->client->client,
                     sub->client->tx_buf, enc_rc);
+                BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);
             }
         }
 #ifndef WOLFMQTT_STATIC_MEMORY
