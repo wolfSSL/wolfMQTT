@@ -1595,10 +1595,12 @@ static void BrokerOutPub_Free(BrokerOutPub* e)
         return;
     }
     if (e->topic != NULL) {
+        BROKER_FORCE_ZERO(e->topic, XSTRLEN(e->topic) + 1);
         WOLFMQTT_FREE(e->topic);
         e->topic = NULL;
     }
     if (e->payload != NULL) {
+        BROKER_FORCE_ZERO(e->payload, e->payload_len);
         WOLFMQTT_FREE(e->payload);
         e->payload = NULL;
     }
