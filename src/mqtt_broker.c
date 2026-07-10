@@ -3439,7 +3439,7 @@ static void BrokerRetained_FreeAll(MqttBroker* broker)
 
 #ifdef WOLFMQTT_STATIC_MEMORY
     for (i = 0; i < BROKER_MAX_RETAINED; i++) {
-        XMEMSET(&broker->retained[i], 0, sizeof(BrokerRetainedMsg));
+        BROKER_FORCE_ZERO(&broker->retained[i], sizeof(BrokerRetainedMsg));
     }
 #else
     while (cur) {
