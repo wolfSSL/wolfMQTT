@@ -2141,6 +2141,11 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
+    /* [MQTT-2.3.1-1] PUBACK/PUBREC/PUBREL/PUBCOMP require a non-zero packet id */
+    if (publish_resp->packet_id == 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+    }
+
     /* Determine packet length */
     remain_len = MQTT_DATA_LEN_SIZE; /* For packet_id */
 
