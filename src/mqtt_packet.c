@@ -1186,6 +1186,11 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+        /* [MQTT-3.1.3.3] Will Topic is a Topic Name: no wildcards */
+        if (!MqttPacket_TopicNameValid(mc_connect->lwt_msg->topic_name,
+                (word16)str_len, mc_connect->protocol_level)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         remain_len += (int)str_len;
         remain_len += MQTT_DATA_LEN_SIZE;
