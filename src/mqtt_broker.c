@@ -3377,7 +3377,7 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
             XSTRCMP(broker->retained[i].topic, topic) == 0) {
             WBLOG_DBG(broker, "broker: retained delete topic=%s",
                 BrokerLog_Sanitize(topic));
-            XMEMSET(&broker->retained[i], 0, sizeof(BrokerRetainedMsg));
+            BROKER_FORCE_ZERO(&broker->retained[i], sizeof(BrokerRetainedMsg));
             found = 1;
             break;
         }
