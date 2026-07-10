@@ -976,6 +976,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     rc = tmp;
                     break;
                 }
+                if ((word32)tmp > prop_len) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
                 buf += tmp;
                 total += tmp;
                 prop_len -= (word32)tmp;
@@ -1021,6 +1025,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     rc = tmp;
                 }
                 else if ((word32)tmp <= (buf_len - (buf - pbuf))) {
+                    if ((word32)tmp > prop_len) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                        break;
+                    }
                     buf += tmp;
                     total += tmp;
                     prop_len -= (word32)tmp;
@@ -1051,6 +1059,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     rc = tmp;
                     break;
                 }
+                if ((word32)tmp > prop_len) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
                 buf += tmp;
                 total += tmp;
                 prop_len -= (word32)tmp;
@@ -1072,11 +1084,19 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     rc = tmp;
                     break;
                 }
+                if ((word32)tmp > prop_len) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
                 buf += tmp;
                 total += tmp;
                 prop_len -= tmp;
 
                 if (cur_prop->data_bin.len <= (buf_len - (buf - pbuf))) {
+                    if (cur_prop->data_bin.len > prop_len) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                        break;
+                    }
                     cur_prop->data_bin.data = buf;
                     buf += cur_prop->data_bin.len;
                     total += (int)cur_prop->data_bin.len;
@@ -1100,6 +1120,10 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     rc = tmp;
                 }
                 else if ((word32)tmp <= (buf_len - (buf - pbuf))) {
+                    if ((word32)tmp > prop_len) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                        break;
+                    }
                     buf += tmp;
                     total += tmp;
                     prop_len -= (word32)tmp;
@@ -1113,6 +1137,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                         }
                         else if ((word32)tmp <=
                                  (buf_len - (buf - pbuf))) {
+                            if ((word32)tmp > prop_len) {
+                                rc = MQTT_TRACE_ERROR(
+                                        MQTT_CODE_ERROR_MALFORMED_DATA);
+                                break;
+                            }
                             buf += tmp;
                             total += tmp;
                             prop_len -= (word32)tmp;
