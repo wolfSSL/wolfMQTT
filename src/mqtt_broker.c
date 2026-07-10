@@ -3476,8 +3476,9 @@ static void BrokerClient_ClearWill(BrokerClient* bc)
     bc->will_retain = 0;
     bc->will_delay_sec = 0;
 #ifdef WOLFMQTT_STATIC_MEMORY
+    BROKER_FORCE_ZERO(bc->will_topic, sizeof(bc->will_topic));
+    BROKER_FORCE_ZERO(bc->will_payload, sizeof(bc->will_payload));
     bc->will_payload_len = 0;
-    bc->will_topic[0] = '\0';
 #else
     if (bc->will_topic) {
         BROKER_FORCE_ZERO(bc->will_topic, XSTRLEN(bc->will_topic) + 1);
