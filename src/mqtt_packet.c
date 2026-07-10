@@ -1191,6 +1191,9 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
                 (word16)str_len, mc_connect->protocol_level)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
+        if (mc_connect->lwt_msg->qos > MQTT_QOS_2) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
 
         remain_len += (int)str_len;
         remain_len += MQTT_DATA_LEN_SIZE;
