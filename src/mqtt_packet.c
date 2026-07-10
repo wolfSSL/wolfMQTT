@@ -3400,6 +3400,10 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
             }
         }
     }
+    else {
+        /* [MQTT-3.14.2.1] Remaining Length < 1 means Normal Disconnection */
+        disc->reason_code = MQTT_REASON_SUCCESS;
+    }
 
     (void)rx_payload;
 
