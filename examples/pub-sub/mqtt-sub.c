@@ -145,11 +145,15 @@ static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
                 /* Store client ID in global */
                 mqttCtx->client_id = &gClientId[0];
 
-                /* Store assigned client ID from CONNACK*/
-                XSTRNCPY((char*)mqttCtx->client_id, prop->data_str.str,
-                         MAX_CLIENT_ID_LEN - 1);
-                /* should use strlcpy() semantics, but non-portable */
-                ((char*)mqttCtx->client_id)[MAX_CLIENT_ID_LEN - 1] = '\0';
+                /* copy bounded by decoded len; data_str.str is not NUL-terminated */
+                {
+                    word16 idLen = prop->data_str.len;
+                    if (idLen >= MAX_CLIENT_ID_LEN) {
+                        idLen = MAX_CLIENT_ID_LEN - 1;
+                    }
+                    XMEMCPY((char*)mqttCtx->client_id, prop->data_str.str, idLen);
+                    ((char*)mqttCtx->client_id)[idLen] = '\0';
+                }
                 break;
 
             case MQTT_PROP_SUBSCRIPTION_ID_AVAIL:
