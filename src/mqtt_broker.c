@@ -245,13 +245,36 @@ static int BrokerBufCompare(const byte* a, int len_a,
     return result;
 }
 
+/* Length of a NUL-terminated string bounded to max_len, computed with a
+ * fixed number of iterations so an attacker cannot infer a server secret's
+ * length from timing. Never reads past the terminating NUL (the read index
+ * is clamped once NUL is seen), so it is safe on strings shorter than
+ * max_len. Returns max_len for strings that reach max_len without a NUL. */
+static int BrokerStrLenBounded(const char* s, int max_len)
+{
+    int len = 0;
+    int idx = 0;
+    int done = 0;
+    int i;
+    for (i = 0; i < max_len; i++) {
+        int atNul = ((byte)s[idx] == 0);
+        done |= atNul;
+        len += (done == 0);
+        idx += (done == 0);
+    }
+    return len;
+}
+
 /* Constant-time C-string comparison wrapper. Both inputs are assumed to
  * be NUL-terminated UTF-8 (e.g. configured username, decoded username
- * field which is rejected if it contains U+0000). */
+ * field which is rejected if it contains U+0000). Lengths are computed with
+ * BrokerStrLenBounded so the server secret's length is not leaked by a
+ * variable-time XSTRLEN. */
 static int BrokerStrCompare(const char* a, const char* b, int cmp_len)
 {
-    return BrokerBufCompare((const byte*)a, (int)XSTRLEN(a),
-                            (const byte*)b, (int)XSTRLEN(b), cmp_len);
+    return BrokerBufCompare((const byte*)a, BrokerStrLenBounded(a, cmp_len),
+                            (const byte*)b, BrokerStrLenBounded(b, cmp_len),
+                            cmp_len);
 }
 #endif /* WOLFMQTT_BROKER_AUTH */
 
@@ -4616,7 +4639,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         #endif
             bc->password_len == 0 ||
             BrokerBufCompare((const byte*)broker->auth_pass,
-                (int)XSTRLEN(broker->auth_pass),
+                BrokerStrLenBounded(broker->auth_pass, BROKER_MAX_PASSWORD_LEN),
                 (const byte*)bc->password, (int)bc->password_len,
                 BROKER_MAX_PASSWORD_LEN) != 0)) {
             auth_ok = 0;
