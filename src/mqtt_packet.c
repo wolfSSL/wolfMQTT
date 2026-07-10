@@ -250,6 +250,27 @@ int MqttPacket_SubAckReturnCodeValid(byte code, byte protocol_level)
     return 0;
 }
 
+#ifdef WOLFMQTT_V5
+/* [MQTT-4.8.0-1] Validate a v5 UNSUBACK Reason Code against the fixed set in
+ * MQTT 5.0 section 3.11.3. Returns 1 if allowed, 0 if reserved. */
+static int MqttPacket_UnsubAckReasonCodeValid(byte code)
+{
+    switch (code) {
+        case MQTT_REASON_SUCCESS:              /* 0x00 */
+        case MQTT_REASON_NO_SUB_EXIST:         /* 0x11 */
+        case MQTT_REASON_UNSPECIFIED_ERR:      /* 0x80 */
+        case MQTT_REASON_IMPL_SPECIFIC_ERR:    /* 0x83 */
+        case MQTT_REASON_NOT_AUTHORIZED:       /* 0x87 */
+        case MQTT_REASON_TOPIC_FILTER_INVALID: /* 0x8F */
+        case MQTT_REASON_PACKET_ID_IN_USE:     /* 0x91 */
+            return 1;
+        default:
+            break;
+    }
+    return 0;
+}
+#endif
+
 /* Validate an MQTT Topic Filter against the syntax rules from
  * [MQTT-4.7.3-1] (minimum length one character), [MQTT-4.7.1-2]
  * (multi-level wildcard '#' must be either the whole filter or directly
@@ -3027,6 +3048,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
              * here would push rx_payload past this packet and underflow
              * reason_code_count to a huge word16. */
             byte* packet_end = &rx_buf[header_len + remain_len];
+            word16 rc_idx;
 
             if (remain_len > MQTT_DATA_LEN_SIZE) {
                 word32 props_len = 0;
@@ -3063,6 +3085,20 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             unsubscribe_ack->reason_codes = rx_payload;
             unsubscribe_ack->reason_code_count =
                 (word16)(packet_end - rx_payload);
+
+            /* [MQTT-4.8.0-1] Reject reserved UNSUBACK reason codes, mirroring
+             * the SUBACK path; free any decoded v5 props before returning. */
+            for (rc_idx = 0; rc_idx < unsubscribe_ack->reason_code_count;
+                    rc_idx++) {
+                if (!MqttPacket_UnsubAckReasonCodeValid(
+                        unsubscribe_ack->reason_codes[rc_idx])) {
+                    if (unsubscribe_ack->props != NULL) {
+                        (void)MqttProps_Free(unsubscribe_ack->props);
+                        unsubscribe_ack->props = NULL;
+                    }
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+            }
         }
 #endif
     }
