@@ -1423,6 +1423,11 @@ int SN_Decode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
+    /* Fixed size: PUBACK is 7 bytes, PUBREC/PUBREL/PUBCOMP are 4 */
+    if (total_len != ((type == SN_MSG_TYPE_PUBACK) ? 7 : 4)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+
     /* Validate packet type */
     rec_type = *rx_payload++;
     if (rec_type != type) {
@@ -1654,7 +1659,11 @@ int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping, byte type)
 
     if ((type == SN_MSG_TYPE_PING_REQ) && (ping != NULL) &&
         (ping->clientId != NULL)) {
-        total_len += clientId_len = (int)XSTRLEN(ping->clientId);
+        clientId_len = (int)XSTRLEN(ping->clientId);
+        if (clientId_len > SN_CLIENTID_MAX_LEN) {
+            clientId_len = SN_CLIENTID_MAX_LEN;
+        }
+        total_len += clientId_len;
     }
 
     if (total_len > tx_buf_len) {

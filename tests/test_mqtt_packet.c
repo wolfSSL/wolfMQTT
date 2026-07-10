@@ -1053,6 +1053,28 @@ TEST(encode_publish_v5_empty_topic_accepted)
 {
     byte tx_buf[64];
     MqttPublish pub;
+    MqttProp prop;
+    int rc;
+
+    /* An empty v5 Topic Name is only valid when a Topic Alias is supplied;
+     * the encoder now mirrors the decoder and rejects it otherwise. */
+    XMEMSET(&pub, 0, sizeof(pub));
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_TOPIC_ALIAS;
+    prop.data_short = 1;
+    prop.next = NULL;
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    pub.topic_name = "";
+    pub.qos = MQTT_QOS_0;
+    pub.props = &prop;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+}
+
+TEST(encode_publish_v5_empty_topic_no_alias_rejected)
+{
+    byte tx_buf[64];
+    MqttPublish pub;
     int rc;
 
     XMEMSET(&pub, 0, sizeof(pub));
@@ -1060,7 +1082,7 @@ TEST(encode_publish_v5_empty_topic_accepted)
     pub.topic_name = "";
     pub.qos = MQTT_QOS_0;
     rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
-    ASSERT_TRUE(rc > 0);
+    ASSERT_TRUE(rc < 0);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -3678,6 +3700,7 @@ TEST(decode_suback_multiple_return_codes)
     ASSERT_EQ(MQTT_QOS_1, ack.return_codes[0]);
     ASSERT_EQ(MQTT_QOS_2, ack.return_codes[1]);
     ASSERT_EQ(MQTT_SUBSCRIBE_ACK_CODE_FAILURE, ack.return_codes[2]);
+    ASSERT_EQ(3, ack.return_code_count);
 }
 
 TEST(decode_suback_malformed_remain_len_zero)
@@ -4891,6 +4914,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_null_topic_returns_bad_arg);
 #ifdef WOLFMQTT_V5
     RUN_TEST(encode_publish_v5_empty_topic_accepted);
+    RUN_TEST(encode_publish_v5_empty_topic_no_alias_rejected);
 #endif
 
     /* MqttDecode_Publish */

@@ -1674,7 +1674,8 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     /* Check arguments */
     if (client == NULL ||
         tx_buf == NULL || tx_buf_len <= 0 ||
-        rx_buf == NULL || rx_buf_len <= 0) {
+        rx_buf == NULL || rx_buf_len <= 0 ||
+        cmd_timeout_ms < 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -1738,10 +1739,10 @@ void MqttClient_DeInit(MqttClient *client)
         (void)wm_SemFree(&client->lockCURL);
     #endif
 #endif
-    }
 #ifdef WOLFMQTT_V5
-    (void)MqttProps_ShutDown();
+        (void)MqttProps_ShutDown();
 #endif
+    }
 }
 
 #ifdef WOLFMQTT_DISCONNECT_CB
@@ -1782,8 +1783,8 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     }
 
     if (mc_connect->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef DEBUG_WOLFMQTT
         /* Warn if credentials are being sent without TLS */
+    #ifdef WOLFMQTT_DEBUG_CLIENT
         if ((mc_connect->username != NULL || mc_connect->password != NULL) &&
             !(MqttClient_Flags(client, 0, 0) & MQTT_CLIENT_FLAG_IS_TLS)) {
             PRINTF("Warning: MQTT credentials are being sent without TLS");
@@ -2235,7 +2236,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
 
     /* Validate publish request against server properties */
     if ((publish->qos > client->max_qos) ||
-        ((publish->retain == 1) && (client->retain_avail == 0)))
+        ((publish->retain != 0) && (client->retain_avail == 0)))
     {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }
@@ -2552,15 +2553,22 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
      * that filter. */
     if (rc == MQTT_CODE_SUCCESS) {
         byte any_rejected = 0;
-        for (i = 0; i < subscribe->topic_count && i < MAX_MQTT_TOPICS; i++) {
-            topic = &subscribe->topics[i];
-            topic->return_code = subscribe->ack.return_codes[i];
-            if (topic->return_code & MQTT_SUBSCRIBE_ACK_CODE_FAILURE) {
-                any_rejected = 1;
-            }
+        /* [MQTT-3.9.3-1] a SUBACK carries exactly one reason code per
+         * requested topic; too few would be read as granted QoS 0 (fail-open). */
+        if (subscribe->ack.return_code_count != subscribe->topic_count) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
-        if (any_rejected) {
-            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED);
+        else {
+            for (i = 0; i < subscribe->topic_count && i < MAX_MQTT_TOPICS; i++) {
+                topic = &subscribe->topics[i];
+                topic->return_code = subscribe->ack.return_codes[i];
+                if (topic->return_code & MQTT_SUBSCRIBE_ACK_CODE_FAILURE) {
+                    any_rejected = 1;
+                }
+            }
+            if (any_rejected) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SUBSCRIBE_REJECTED);
+            }
         }
     }
 
@@ -2833,6 +2841,10 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
             MQTT_PACKET_TYPE_DISCONNECT, 0, 0);
     #endif
         if (rc <= 0) {
+            /* Encode failed: tx_buf may hold partial v5 DISCONNECT property
+             * data. Zero the full buffer before MqttWriteStop releases
+             * lockSend so no other thread can see residual data. */
+            CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
             MqttWriteStop(client, &disconnect->stat);
             return rc;
         }
@@ -2851,10 +2863,15 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
         && client->write.total > 0
     #endif
     ) {
-        /* keep send locked and return early */
+        /* keep send locked and return early (tx_buf still holds property
+         * data until the write completes) */
         return rc;
     }
 #endif
+    /* Clear tx_buf to remove any v5 DISCONNECT property data BEFORE
+     * MqttWriteStop releases lockSend, so another thread cannot race in and
+     * populate tx_buf before it is scrubbed. */
+    CLIENT_FORCE_ZERO(client->tx_buf, xfer);
     MqttWriteStop(client, &disconnect->stat);
     if (rc == xfer) {
         rc = MQTT_CODE_SUCCESS;
@@ -3099,6 +3116,10 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("Cancel Write Lock");
     #endif
+        /* An abandoned write (e.g. a partial nonblocking CONNECT) leaves the
+         * encoded packet - possibly plaintext credentials - in tx_buf. Scrub
+         * it before MqttWriteStop releases lockSend. */
+        CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
         MqttWriteStop(client, mms_stat);
     }
 

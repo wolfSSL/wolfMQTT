@@ -223,6 +223,11 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                 type = (p_pub->qos == MQTT_QOS_1) ?
                         SN_MSG_TYPE_PUBACK :
                         SN_MSG_TYPE_PUBREC;
+                /* [MQTT-SN-1.2 5.4.4] The response MUST echo the received
+                 * PUBLISH TopicId; topic_name holds the 2-byte TopicId. */
+                (void)MqttDecode_Num((byte*)p_pub->topic_name,
+                        &p_pub->resp.topicId, MQTT_DATA_LEN_SIZE);
+                p_pub->resp.return_code = SN_RC_ACCEPTED;
                 p_pub->resp.packet_id = packet_id;
 
             #ifdef WOLFMQTT_MULTITHREAD
@@ -672,7 +677,7 @@ wait_again:
             }
 
             /* Clear shared union for next call */
-            MqttSNClient_PacketReset(packet_type, &client->msg);
+            MqttSNClient_PacketReset(packet_type, &client->msgSN);
 
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Read Packet: Len %d, Type %d, ID %d",
