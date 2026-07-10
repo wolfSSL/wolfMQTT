@@ -6523,12 +6523,11 @@ int MqttBroker_Free(MqttBroker* broker)
     defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
     /* Zero the cached AES key on teardown. ForceZero so the compiler
      * cannot elide the wipe (plain XMEMSET on a value that becomes
-     * dead-on-return is at the compiler's discretion). */
-    if (broker->persist_key_loaded) {
-        BROKER_FORCE_ZERO(broker->persist_key_cache,
-            sizeof(broker->persist_key_cache));
-        broker->persist_key_loaded = 0;
-    }
+     * dead-on-return is at the compiler's discretion). Unconditional: a
+     * failed/partial derive_key can leave bytes without setting the flag. */
+    BROKER_FORCE_ZERO(broker->persist_key_cache,
+        sizeof(broker->persist_key_cache));
+    broker->persist_key_loaded = 0;
 #endif
 
     return MQTT_CODE_SUCCESS;
