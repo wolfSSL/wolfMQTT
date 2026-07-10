@@ -3108,6 +3108,10 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("Cancel Write Lock");
     #endif
+        /* An abandoned write (e.g. a partial nonblocking CONNECT) leaves the
+         * encoded packet - possibly plaintext credentials - in tx_buf. Scrub
+         * it before MqttWriteStop releases lockSend. */
+        CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
         MqttWriteStop(client, mms_stat);
     }
 
