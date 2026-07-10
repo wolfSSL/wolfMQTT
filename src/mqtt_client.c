@@ -2833,6 +2833,10 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
             MQTT_PACKET_TYPE_DISCONNECT, 0, 0);
     #endif
         if (rc <= 0) {
+            /* Encode failed: tx_buf may hold partial v5 DISCONNECT property
+             * data. Zero the full buffer before MqttWriteStop releases
+             * lockSend so no other thread can see residual data. */
+            CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
             MqttWriteStop(client, &disconnect->stat);
             return rc;
         }
@@ -2851,10 +2855,15 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
         && client->write.total > 0
     #endif
     ) {
-        /* keep send locked and return early */
+        /* keep send locked and return early (tx_buf still holds property
+         * data until the write completes) */
         return rc;
     }
 #endif
+    /* Clear tx_buf to remove any v5 DISCONNECT property data BEFORE
+     * MqttWriteStop releases lockSend, so another thread cannot race in and
+     * populate tx_buf before it is scrubbed. */
+    CLIENT_FORCE_ZERO(client->tx_buf, xfer);
     MqttWriteStop(client, &disconnect->stat);
     if (rc == xfer) {
         rc = MQTT_CODE_SUCCESS;
