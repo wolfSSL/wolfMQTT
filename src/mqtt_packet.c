@@ -2361,6 +2361,9 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
             if (str_len > (size_t)0xFFFF) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
             }
+            if (topic->qos > MQTT_QOS_2) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+            }
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
             remain_len++; /* For QoS */
         }
