@@ -760,6 +760,11 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_SHORT:
             {
+                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_TOPIC_ALIAS &&
+                        cur_prop->data_short == 0) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 tmp = MqttEncode_Num(buf, cur_prop->data_short);
                 rc += tmp;
                 if (buf != NULL) {
@@ -789,6 +794,12 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_VAR_INT:
             {
+                /* [MQTT-3.8.2.1.2] A Subscription Identifier of 0 is a
+                 * Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_SUBSCRIPTION_ID &&
+                        cur_prop->data_int == 0) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 tmp = MqttEncode_Vbi(buf, cur_prop->data_int);
                 if (tmp < 0) {
                     return tmp;
