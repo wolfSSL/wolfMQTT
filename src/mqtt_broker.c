@@ -2033,8 +2033,8 @@ static void BrokerClient_Free(BrokerClient* bc)
     (void)BrokerNetDisconnect(bc);
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
-    XMEMSET(bc, 0, sizeof(*bc));
-    /* in_use is now 0 after memset */
+    BROKER_FORCE_ZERO(bc, sizeof(*bc));
+    /* in_use is now 0 after zeroization */
 #else
     if (bc->client_id) {
         WOLFMQTT_FREE(bc->client_id);
