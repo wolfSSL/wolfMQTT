@@ -3913,6 +3913,14 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                     break;
                 }
 
+                /* [MQTT-1.5.5-1] A VBI is at most 4 bytes: if the last allowed
+                 * byte still has the continuation bit set, reject without
+                 * reading a spurious 5th byte from the socket. */
+                if (i == MQTT_PACKET_MAX_LEN_BYTES - 1) {
+                    return MqttPacket_HandleNetError(client,
+                            MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA));
+                }
+
                 /* Read next byte and try decode again */
                 len = 1;
                 rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len],
