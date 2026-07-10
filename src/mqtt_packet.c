@@ -1132,6 +1132,11 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
+    /* 0 means use build default; normalize so wire level and v5 prop gating agree */
+    if (mc_connect->protocol_level == 0) {
+        mc_connect->protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL;
+    }
+
     /* [MQTT-3.1.2-22]: If the User Name Flag is set to 0, the Password Flag
      * MUST be set to 0 */
     if (mc_connect->password != NULL && mc_connect->username == NULL) {
