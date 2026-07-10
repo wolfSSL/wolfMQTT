@@ -5049,16 +5049,32 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
             }
 #ifdef WOLFMQTT_BROKER_RETAINED
             else {
-                /* Deliver retained messages matching this filter */
+                /* Deliver retained messages matching this filter. */
                 char filter_z[BROKER_MAX_FILTER_LEN];
                 word16 copy_len = flen;
-                if (copy_len >= BROKER_MAX_FILTER_LEN) {
-                    copy_len = BROKER_MAX_FILTER_LEN - 1;
+            #ifndef WOLFMQTT_STATIC_MEMORY
+                /* Dynamic builds store filters longer than the stack buffer in
+                 * full; use a heap copy so retained matching uses the same
+                 * filter as future PUBLISH fan-out instead of a truncation.
+                 * Static builds reject over-length filters at subscribe time. */
+                if (flen >= BROKER_MAX_FILTER_LEN) {
+                    char* filter_dyn = (char*)WOLFMQTT_MALLOC(flen + 1);
+                    if (filter_dyn != NULL) {
+                        XMEMCPY(filter_dyn, f, flen);
+                        filter_dyn[flen] = '\0';
+                        BrokerRetained_DeliverToClient(broker, bc, filter_dyn,
+                            topic_qos);
+                        WOLFMQTT_FREE(filter_dyn);
+                    }
                 }
-                XMEMCPY(filter_z, f, copy_len);
-                filter_z[copy_len] = '\0';
-                BrokerRetained_DeliverToClient(broker, bc, filter_z,
-                    topic_qos);
+                else
+            #endif
+                if (copy_len < BROKER_MAX_FILTER_LEN) {
+                    XMEMCPY(filter_z, f, copy_len);
+                    filter_z[copy_len] = '\0';
+                    BrokerRetained_DeliverToClient(broker, bc, filter_z,
+                        topic_qos);
+                }
             }
 #endif
         }
