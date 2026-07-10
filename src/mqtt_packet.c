@@ -1767,6 +1767,11 @@ int MqttEncode_ConnectAck(byte *tx_buf, int tx_buf_len,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
+    /* [MQTT-3.2.2-1] Connect Acknowledge Flags bits 1-7 are reserved (0) */
+    if (connect_ack->flags & 0xFE) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
     /* Determine packet length */
     remain_len = 2; /* flags + return code */
 #ifdef WOLFMQTT_V5
