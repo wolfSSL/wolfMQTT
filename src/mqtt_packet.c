@@ -1898,6 +1898,10 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
     {
         size_t str_len;
         byte level = 0;
+    #ifdef WOLFMQTT_V5
+        MqttProp* prop_iter;
+        int has_topic_alias = 0;
+    #endif
         if (publish->topic_name == NULL) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
@@ -1915,6 +1919,22 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
                                        (word16)str_len, level)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
+    #ifdef WOLFMQTT_V5
+        /* [MQTT-3.3.2-8] An empty v5 Topic Name requires a Topic Alias so the
+         * decoder (and any conformant broker) can resolve the topic. */
+        if (level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 && str_len == 0) {
+            for (prop_iter = publish->props; prop_iter != NULL;
+                    prop_iter = prop_iter->next) {
+                if (prop_iter->type == MQTT_PROP_TOPIC_ALIAS) {
+                    has_topic_alias = 1;
+                    break;
+                }
+            }
+            if (!has_topic_alias) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+            }
+        }
+    #endif
 
         /* Determine packet length */
         variable_len = (int)str_len + MQTT_DATA_LEN_SIZE;
