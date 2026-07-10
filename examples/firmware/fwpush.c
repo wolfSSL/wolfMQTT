@@ -84,51 +84,58 @@ static int mqtt_message_cb(MqttClient *client, MqttMessage *msg,
 static int mqtt_publish_cb(MqttPublish *publish) {
     int ret = -1;
 #if !defined(NO_FILESYSTEM)
-    size_t bytes_read;
     FwpushCBdata *cbData;
     FirmwareHeader *header;
     word32 headerSize;
+    int avail, chunk;
 
     /* Structure was stored in ctx pointer */
     if (publish != NULL) {
         cbData = (FwpushCBdata*)publish->ctx;
-        if (cbData != NULL) {
+        if (cbData != NULL && cbData->fwBuf != NULL) {
             header = (FirmwareHeader*)cbData->data;
+            /* Guard a corrupt offset so avail/chunk can never go negative and
+             * feed a negative length back into the publish state machine. */
+            if (cbData->fwOffset < 0 || cbData->fwOffset > cbData->fwLen) {
+                return -1;
+            }
+            avail = cbData->fwLen - cbData->fwOffset;
 
-            /* Check for first iteration of callback */
-            if (cbData->fp == NULL) {
-                /* Get FW size from FW header struct */
+            /* Stream from the in-memory signed firmware rather than reopening
+             * the file, so the bytes sent are exactly the bytes that were
+             * signed (no file-swap TOCTOU between build and send). */
+            if (!cbData->headerSent) {
                 headerSize = sizeof(FirmwareHeader) + header->sigLen +
                         header->pubKeyLen;
                 if (headerSize > publish->buffer_len) {
                     PRINTF("Error: Firmware Header %d larger than max buffer %d",
-                        headerSize, publish->buffer_len);
+                        (int)headerSize, publish->buffer_len);
                     return -1;
                 }
-
-                /* Copy header to buffer */
                 XMEMCPY(publish->buffer, header, headerSize);
-
-                /* Open file */
-                cbData->fp = fopen(cbData->filename, "rb");
-                if (cbData->fp != NULL) {
-                    /* read a buffer of data from the file */
-                    bytes_read = fread(&publish->buffer[headerSize],
-                            1, publish->buffer_len - headerSize, cbData->fp);
-                    if (bytes_read != 0) {
-                        ret = (int)bytes_read + headerSize;
-                    }
+                chunk = publish->buffer_len - (int)headerSize;
+                if (chunk > avail) {
+                    chunk = avail;
                 }
+                if (chunk > 0) {
+                    XMEMCPY(&publish->buffer[headerSize],
+                        &cbData->fwBuf[cbData->fwOffset], chunk);
+                    cbData->fwOffset += chunk;
+                }
+                cbData->headerSent = 1;
+                ret = (int)headerSize + chunk;
             }
             else {
-                /* read a buffer of data from the file */
-                bytes_read = fread(publish->buffer, 1, publish->buffer_len,
-                        cbData->fp);
-                ret = (int)bytes_read;
-            }
-            if (cbData->fp && feof(cbData->fp)) {
-                fclose(cbData->fp);
-                cbData->fp = NULL;
+                chunk = publish->buffer_len;
+                if (chunk > avail) {
+                    chunk = avail;
+                }
+                if (chunk > 0) {
+                    XMEMCPY(publish->buffer,
+                        &cbData->fwBuf[cbData->fwOffset], chunk);
+                    cbData->fwOffset += chunk;
+                }
+                ret = chunk;
             }
         }
     }
@@ -139,7 +146,7 @@ static int mqtt_publish_cb(MqttPublish *publish) {
 }
 
 static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
-    byte **p_msgBuf, int *p_msgLen)
+    byte **p_msgBuf, int *p_msgLen, byte **p_fwBuf, int *p_fwLen)
 {
     int rc;
     byte *msgBuf = NULL, *sigBuf = NULL, *keyBuf = NULL, *fwBuf = NULL;
@@ -265,6 +272,14 @@ exit:
         }
 
         if (p_msgLen) *p_msgLen = msgLen;
+
+        /* Transfer ownership of the signed firmware buffer so the callback
+         * streams the exact signed bytes instead of re-reading the file. */
+        if (p_fwBuf) {
+            *p_fwBuf = fwBuf;
+            fwBuf = NULL;
+        }
+        if (p_fwLen) *p_fwLen = fwLen;
     }
     else {
         if (msgBuf) WOLFMQTT_FREE(msgBuf);
@@ -445,7 +460,8 @@ int fwpush_test(MQTTCtx *mqttCtx)
             cbData->filename = mqttCtx->pub_file;
 
             rc = fw_message_build(mqttCtx, cbData->filename, &cbData->data,
-                    (int*)&mqttCtx->publish.total_len);
+                    (int*)&mqttCtx->publish.total_len,
+                    &cbData->fwBuf, &cbData->fwLen);
 
             /* The publish->ctx is available for use by the application to pass
              * data to the callback routine. */
@@ -539,6 +555,7 @@ exit:
         if (cbData) {
             if (cbData->fp) fclose(cbData->fp);
             if (cbData->data) WOLFMQTT_FREE(cbData->data);
+            if (cbData->fwBuf) WOLFMQTT_FREE(cbData->fwBuf);
             WOLFMQTT_FREE(cbData);
         }
         if (mqttCtx->publish.buffer) WOLFMQTT_FREE(mqttCtx->publish.buffer);

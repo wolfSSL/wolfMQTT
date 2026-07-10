@@ -33,6 +33,10 @@ typedef struct FwpushCBdata_s {
     const char *filename;
     byte *data;
     FILE *fp;
+    byte *fwBuf;   /* signed firmware held in memory, streamed by the callback */
+    int fwLen;
+    int fwOffset;
+    int headerSent;
 } FwpushCBdata;
 
 /* Exposed functions */
