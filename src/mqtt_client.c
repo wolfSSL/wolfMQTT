@@ -1738,10 +1738,10 @@ void MqttClient_DeInit(MqttClient *client)
         (void)wm_SemFree(&client->lockCURL);
     #endif
 #endif
-    }
 #ifdef WOLFMQTT_V5
-    (void)MqttProps_ShutDown();
+        (void)MqttProps_ShutDown();
 #endif
+    }
 }
 
 #ifdef WOLFMQTT_DISCONNECT_CB
