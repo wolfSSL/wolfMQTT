@@ -675,9 +675,15 @@ int MqttEncode_Data(byte *buf, const byte *data, word16 data_len)
 {
     int len = MqttEncode_Num(buf, data_len);
 
-    if ((buf != NULL) && (data != NULL)) {
+    if (buf != NULL) {
         buf += len;
-        XMEMCPY(buf, data, data_len);
+        if (data != NULL) {
+            XMEMCPY(buf, data, data_len);
+        }
+        else {
+            /* never emit stale tx_buf for a declared-length field */
+            XMEMSET(buf, 0, data_len);
+        }
     }
     return len + data_len;
 }
