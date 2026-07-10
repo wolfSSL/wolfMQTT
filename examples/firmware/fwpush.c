@@ -50,6 +50,7 @@
 #include <wolfssl/wolfcrypt/hash.h>
 #endif
 
+#include <limits.h>
 #include "fwpush.h"
 #include "firmware.h"
 #include "examples/mqttexample.h"
@@ -239,6 +240,12 @@ static int fw_message_build(MQTTCtx *mqttCtx, const char* fwFile,
 #endif
 
     /* Assemble message */
+    /* guard the int msgLen sum against overflow on huge firmware */
+    if (fwLen > INT_MAX - (int)(sizeof(FirmwareHeader) + sigLen + keyLen)) {
+        PRINTF("Firmware file too large: %d bytes", fwLen);
+        rc = EXIT_FAILURE;
+        goto exit;
+    }
     msgLen = sizeof(FirmwareHeader) + sigLen + keyLen + fwLen;
 
     /* The firmware will be copied by the callback */
