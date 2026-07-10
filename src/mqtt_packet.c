@@ -955,6 +955,13 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp++;
                 total++;
                 prop_len--;
+                /* [MQTT-3.1.2-28/29] Request Response/Problem Information
+                 * MUST be 0 or 1; any other value is a Protocol Error. */
+                if ((cur_prop->type == MQTT_PROP_REQ_RESP_INFO ||
+                        cur_prop->type == MQTT_PROP_REQ_PROB_INFO) &&
+                        cur_prop->data_byte > 1) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_SHORT:
