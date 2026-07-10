@@ -388,6 +388,7 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     byte type, MqttQoS *p_qos, byte *p_retain, byte *p_duplicate)
 {
     int header_len;
+    word32 remain_len_u32 = 0;
     MqttPacket* header = (MqttPacket*)rx_buf;
 
     /* Every MQTT packet is at least 2 bytes: the type/flags byte plus at
@@ -398,11 +399,15 @@ static int MqttDecode_FixedHeader(byte *rx_buf, int rx_buf_len, int *remain_len,
     if (rx_buf_len < 2) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
-    header_len = MqttDecode_Vbi(header->len, (word32*)remain_len,
+    header_len = MqttDecode_Vbi(header->len, &remain_len_u32,
         (word32)(rx_buf_len - 1));
     if (header_len < 0) {
         return header_len;
     }
+    if (remain_len_u32 > MQTT_PACKET_MAX_REMAIN_LEN) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+    *remain_len = (int)remain_len_u32;
 
     /* Validate packet type */
     if (MQTT_PACKET_TYPE_GET(header->type_flags) != type) {
