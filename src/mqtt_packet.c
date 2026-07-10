@@ -2351,6 +2351,11 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
     }
 
+    /* [MQTT-3.8.3-3] SUBSCRIBE must carry at least one topic filter */
+    if (subscribe->topic_count <= 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
     /* Determine packet length */
     remain_len = MQTT_DATA_LEN_SIZE; /* For packet_id */
     for (i = 0; i < subscribe->topic_count; i++) {
@@ -2734,6 +2739,11 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     /* [MQTT-2.3.1-1] UNSUBSCRIBE packets require a non-zero packet identifier */
     if (unsubscribe->packet_id == 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+    }
+
+    /* [MQTT-3.10.3-2] UNSUBSCRIBE must carry at least one topic filter */
+    if (unsubscribe->topic_count <= 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
     /* Determine packet length */
