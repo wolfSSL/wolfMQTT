@@ -615,6 +615,9 @@ static int wmqb_put_session_record(MqttBroker* broker, const char* cid,
 
     rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_SESSION,
         (const byte*)cid, cid_len, buf, total_len);
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    wmqb_force_zero(buf, total_len);
+#endif
     WOLFMQTT_FREE(buf);
     return rc;
 }
@@ -798,6 +801,9 @@ int BrokerPersist_PutSubs(MqttBroker* broker, const char* client_id)
 
     rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_SUBS,
         (const byte*)client_id, cid_len, buf, total_len);
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    wmqb_force_zero(buf, total_len);
+#endif
     WOLFMQTT_FREE(buf);
     return rc;
 }
@@ -871,6 +877,9 @@ int BrokerPersist_PutRetained(MqttBroker* broker,
 
     rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_RETAINED,
         (const byte*)topic, topic_len, buf, total_len);
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    wmqb_force_zero(buf, total_len);
+#endif
     WOLFMQTT_FREE(buf);
     return rc;
 }
@@ -991,6 +1000,9 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
 
     rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_OUTQ,
         key, key_len, buf, total_len);
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    wmqb_force_zero(buf, total_len);
+#endif
     WOLFMQTT_FREE(buf);
     return rc;
 #endif /* WOLFMQTT_STATIC_MEMORY */
