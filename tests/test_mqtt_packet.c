@@ -1849,6 +1849,83 @@ TEST(encode_subscribe_options_byte_qos2)
     ASSERT_EQ(0x02, tx_buf[rc - 1]);
 }
 
+#ifdef WOLFMQTT_V5
+/* The v5 option bits (bits 2-5) are reserved on a v3.1.1 SUBSCRIBE and MUST
+ * be 0. With protocol_level < 5 the encoder must ignore sub_options and emit
+ * a QoS-only options byte. */
+TEST(encode_subscribe_v311_ignores_sub_options)
+{
+    byte tx_buf[256];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "a";
+    topic.qos = MQTT_QOS_1;
+    /* Request every v5 option bit; a v3.1.1 encode must drop them all. */
+    topic.sub_options = MQTT_SUBSCRIBE_NO_LOCAL |
+                        MQTT_SUBSCRIBE_RETAIN_AS_PUBLISHED |
+                        MQTT_SUBSCRIBE_RETAIN_HANDLING_2;
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_TRUE(rc > 0);
+    /* Options byte is the last byte: QoS 1 only, no v5 option bits. */
+    ASSERT_EQ(0x01, tx_buf[rc - 1]);
+}
+
+/* Retain Handling = 3 is reserved [MQTT v5 3.8.3.1] and the decoder rejects
+ * it, so the encoder must refuse it too rather than emit a packet its own
+ * decoder would reject. */
+TEST(encode_subscribe_v5_retain_handling_3_rejected)
+{
+    byte tx_buf[256];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "a";
+    topic.qos = MQTT_QOS_1;
+    /* Bits 4-5 both set is Retain Handling = 3 (reserved). */
+    topic.sub_options = MQTT_SUBSCRIBE_RETAIN_HANDLING_1 |
+                        MQTT_SUBSCRIBE_RETAIN_HANDLING_2;
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Bits 6-7 are reserved [MQTT v5 3.8.3.1]; sub_options should only hold bits
+ * 2-5, so any bit outside that mask must be refused by the encoder. */
+TEST(encode_subscribe_v5_reserved_sub_options_bit_rejected)
+{
+    byte tx_buf[256];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "a";
+    topic.qos = MQTT_QOS_1;
+    topic.sub_options = 0x40; /* reserved bit 6 */
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* f-2360: topic_filter with strlen > 65535 must be rejected with a negative
  * return. Guards the unchecked tx_payload += MqttEncode_String(...) in the
  * SUBSCRIBE payload loop. */
@@ -3485,6 +3562,70 @@ TEST(decode_subscribe_v5_options_reserved_bits_rejected)
     rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
+
+/* The v5 SUBSCRIBE options byte carries No Local, Retain As Published and
+ * Retain Handling (bits 2-5) alongside QoS (bits 0-1). Encode then decode
+ * must preserve the full options byte via MqttTopic.sub_options. Covers
+ * every valid combination: QoS 0-2 x NL x RAP x Retain Handling 0-2. */
+TEST(subscribe_v5_options_roundtrip_all_combos)
+{
+    static const byte rh_vals[] = {
+        MQTT_SUBSCRIBE_RETAIN_HANDLING_0,
+        MQTT_SUBSCRIBE_RETAIN_HANDLING_1,
+        MQTT_SUBSCRIBE_RETAIN_HANDLING_2
+    };
+    byte tx_buf[64];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    MqttSubscribe dec;
+    MqttTopic dec_topic[1];
+    int qos, nl, rap, rh_i;
+    int enc_len, dec_len;
+    byte want_opts;
+
+    for (qos = MQTT_QOS_0; qos <= MQTT_QOS_2; qos++) {
+        for (nl = 0; nl <= 1; nl++) {
+            for (rap = 0; rap <= 1; rap++) {
+                for (rh_i = 0;
+                     rh_i < (int)(sizeof(rh_vals) / sizeof(rh_vals[0]));
+                     rh_i++) {
+                    want_opts = (byte)(
+                        (nl  ? MQTT_SUBSCRIBE_NO_LOCAL : 0) |
+                        (rap ? MQTT_SUBSCRIBE_RETAIN_AS_PUBLISHED : 0) |
+                        rh_vals[rh_i]);
+
+                    XMEMSET(&sub, 0, sizeof(sub));
+                    XMEMSET(&topic, 0, sizeof(topic));
+                    topic.topic_filter = "a";
+                    topic.qos = (MqttQoS)qos;
+                    topic.sub_options = want_opts;
+                    sub.topics = &topic;
+                    sub.topic_count = 1;
+                    sub.packet_id = 1;
+                    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+                    enc_len = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf),
+                        &sub);
+                    ASSERT_TRUE(enc_len > 0);
+                    /* Last byte is the options byte: QoS (bits 0-1) plus the
+                     * v5 option bits 2-5. */
+                    ASSERT_EQ((int)((byte)qos | want_opts),
+                        (int)tx_buf[enc_len - 1]);
+
+                    XMEMSET(&dec, 0, sizeof(dec));
+                    XMEMSET(dec_topic, 0, sizeof(dec_topic));
+                    dec.topics = dec_topic;
+                    dec.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+                    dec_len = MqttDecode_Subscribe(tx_buf, enc_len, &dec);
+                    ASSERT_TRUE(dec_len > 0);
+                    ASSERT_EQ(1, dec.topic_count);
+                    ASSERT_EQ((int)qos, (int)dec_topic[0].qos);
+                    ASSERT_EQ((int)want_opts, (int)dec_topic[0].sub_options);
+                }
+            }
+        }
+    }
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -4969,6 +5110,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_subscribe_options_byte_qos0);
     RUN_TEST(encode_subscribe_options_byte_qos1);
     RUN_TEST(encode_subscribe_options_byte_qos2);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(encode_subscribe_v311_ignores_sub_options);
+    RUN_TEST(encode_subscribe_v5_retain_handling_3_rejected);
+    RUN_TEST(encode_subscribe_v5_reserved_sub_options_bit_rejected);
+#endif
     RUN_TEST(encode_subscribe_topic_filter_oversized_rejected);
     RUN_TEST(encode_subscribe_topic_filter_oversized_second_rejected);
     RUN_TEST(encode_subscribe_has_qos1_flag);
@@ -5050,6 +5196,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_v5_qos3_rejected);
     RUN_TEST(decode_subscribe_v5_retain_handling_3_rejected);
     RUN_TEST(decode_subscribe_v5_options_reserved_bits_rejected);
+    RUN_TEST(subscribe_v5_options_roundtrip_all_combos);
 #endif
 
     /* MqttDecode_Unsubscribe */

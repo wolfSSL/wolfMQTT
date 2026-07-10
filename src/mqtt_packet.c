@@ -2567,11 +2567,28 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
 
     /* Encode payload */
     for (i = 0; i < subscribe->topic_count; i++) {
+        byte options;
         topic = &subscribe->topics[i];
         tx_payload += MqttEncode_String(tx_payload, topic->topic_filter);
+        options = (byte)topic->qos;
+    #ifdef WOLFMQTT_V5
+        /* [MQTT v5 3.8.3.1] merge No Local, Retain As Published and Retain
+         * Handling (bits 2-5). These bits are reserved (MUST be 0) in
+         * v3.1.1, so only fold them in for a v5 SUBSCRIBE. */
+        if (subscribe->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Reject options the decoder would treat as malformed: bits
+             * outside 2-5 must be 0 and Retain Handling (bits 4-5) = 3 is
+             * reserved, so the encoder cannot emit an undecodable SUBSCRIBE. */
+            if ((topic->sub_options & ~MQTT_SUBSCRIBE_OPTIONS_MASK) != 0 ||
+                ((topic->sub_options >> 4) & 0x03) == 0x03) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+            options |= (byte)(topic->sub_options & MQTT_SUBSCRIBE_OPTIONS_MASK);
+        }
+    #endif
         /* Sanity check for compilers */
         if (tx_payload != NULL) {
-            *tx_payload = topic->qos;
+            *tx_payload = options;
         }
         tx_payload++;
     }
@@ -2713,6 +2730,14 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
                 }
             }
             topic->qos = (MqttQoS)(options & 0x03);
+        #ifdef WOLFMQTT_V5
+            /* Preserve v5 No Local / Retain As Published / Retain Handling
+             * (bits 2-5) so the full options byte round-trips. Reserved and
+             * QoS bits were validated above; for a valid v3.1.1 packet these
+             * bits are 0. The broker stores these but does not yet enforce
+             * them on delivery. */
+            topic->sub_options = (byte)(options & MQTT_SUBSCRIBE_OPTIONS_MASK);
+        #endif
             subscribe->topic_count++;
         }
 

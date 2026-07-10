@@ -1968,6 +1968,33 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     }
 #endif
 
+#ifdef WOLFMQTT_V5
+    /* Scrub the decoded v5 CONNACK from rx_buf. Its properties (e.g. the
+     * MQTT_PROP_AUTH_DATA SASL server-final blob used by enhanced
+     * authentication) decode as pointers into rx_buf and would otherwise
+     * linger until the next read overwrites them - for an idle or QoS-0-only
+     * client, potentially the process lifetime. MqttClient_WaitType already
+     * delivered and freed the property list above, so the bytes are consumed
+     * and no live pointer into rx_buf remains. Same hardening as
+     * MqttClient_Auth; v3.1.1 CONNACK carries no properties so gate on v5. */
+    if (mc_connect->protocol_level > MQTT_CONNECT_PROTOCOL_LEVEL_4) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        /* Hold lockRecv so the scrub cannot race a concurrent rx_buf read. If
+         * the lock cannot be taken, still scrub: leaving the AUTH_DATA
+         * plaintext behind is worse than an unsynchronized wipe. */
+        if (wm_SemLock(&client->lockRecv) == 0) {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+            wm_SemUnlock(&client->lockRecv);
+        }
+        else {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+        }
+    #else
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+    #endif
+    }
+#endif
+
     /* reset state */
     mc_connect->stat.write = MQTT_MSG_BEGIN;
 
@@ -3004,10 +3031,15 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
      * already delivered and freed auth->props, so the bytes are consumed
      * before this scrub and the caller has no live pointer into rx_buf. */
 #ifdef WOLFMQTT_MULTITHREAD
-    /* Hold lockRecv so the scrub cannot race a concurrent read into rx_buf. */
+    /* Hold lockRecv so the scrub cannot race a concurrent read into rx_buf. If
+     * the lock cannot be taken, still scrub: leaving the AUTH_DATA plaintext
+     * behind is worse than an unsynchronized wipe. */
     if (wm_SemLock(&client->lockRecv) == 0) {
         CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
         wm_SemUnlock(&client->lockRecv);
+    }
+    else {
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
     }
 #else
     CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);

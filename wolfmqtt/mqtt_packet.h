@@ -208,6 +208,21 @@ typedef enum _MqttQoS {
 #endif
 
 
+#ifdef WOLFMQTT_V5
+/* MQTT v5 SUBSCRIBE options byte (section 3.8.3.1), stored in
+ * MqttTopic.sub_options in their on-the-wire bit positions. QoS (bits 0-1)
+ * is carried separately in MqttTopic.qos; bits 6-7 are reserved (MUST be 0).
+ * The v5 encoder rejects sub_options with any bit outside 2-5 set, or with
+ * Retain Handling = 3 (reserved), returning MQTT_CODE_ERROR_MALFORMED_DATA;
+ * supply only spec-valid combinations. */
+#define MQTT_SUBSCRIBE_NO_LOCAL             0x04 /* bit 2 */
+#define MQTT_SUBSCRIBE_RETAIN_AS_PUBLISHED  0x08 /* bit 3 */
+#define MQTT_SUBSCRIBE_RETAIN_HANDLING_0    0x00 /* bits 4-5: send at subscribe */
+#define MQTT_SUBSCRIBE_RETAIN_HANDLING_1    0x10 /* send at subscribe if new */
+#define MQTT_SUBSCRIBE_RETAIN_HANDLING_2    0x20 /* do not send at subscribe */
+#define MQTT_SUBSCRIBE_OPTIONS_MASK         0x3C /* bits 2-5 */
+#endif
+
 /* Topic */
 typedef struct _MqttTopic {
     const char* topic_filter;
@@ -217,6 +232,11 @@ typedef struct _MqttTopic {
     byte        return_code; /* MqttSubscribeAckReturnCodes */
 #ifdef WOLFMQTT_V5
     word16      alias;
+    byte        sub_options; /* v5 SUBSCRIBE options bits 2-5 (No Local,
+                              * Retain As Published, Retain Handling); see
+                              * MQTT_SUBSCRIBE_*. Zero-initialize MqttTopic so
+                              * unset options default to 0 - the v5 encoder now
+                              * reads this field. */
 #endif
 } MqttTopic;
 

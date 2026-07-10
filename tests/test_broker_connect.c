@@ -539,7 +539,7 @@ TEST(connect_v311_binary_password_with_embedded_nul_refused)
     reset_mock_state(connect, sizeof(connect));
     run_broker_one_connect(&broker);
 
-    /* Auth must fail - CONNACK return code 0x05 (Not Authorized) and the
+    /* Auth must fail - CONNACK return code 0x04 (Bad user/pass) and the
      * connection is closed. Pre-fix, XSTRLEN truncation would let this
      * authenticate and emit return code 0x00. */
     ASSERT_TRUE(g_out_len >= 4);
@@ -585,6 +585,53 @@ TEST(connect_v311_binary_password_exact_match_accepted)
     ASSERT_TRUE(g_out_len >= 4);
     ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_out_buf[3]);
     ASSERT_FALSE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* Guard the length-fold backstop in BrokerBufCompare. The constant-time
+ * byte loop clamps an out-of-range index to position 0, so it cannot see a
+ * length mismatch when the shorter input's bytes repeat through the longer
+ * one. Username "a" against configured "aaaaa" must be refused by the length
+ * fold alone; deleting the fold would authenticate it. */
+TEST(connect_auth_username_length_fold_repeating_byte_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT v3.1.1, ClientId "id", Username "a" (len 1), Password
+     * "aaaaa" (len 5, exact match for auth_pass). connect_flags 0xC2 =
+     * username + password + clean session. */
+    static const byte connect[] = {
+        0x10, 24,                                  /* fixed header, rl 24 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',            /* protocol name */
+        0x04,                                      /* level 4 (v3.1.1) */
+        0xC2,                                      /* flags: user+pass+clean */
+        0x00, 0x3C,                                /* keep-alive 60 */
+        0x00, 0x02, 'i', 'd',                      /* ClientId "id" */
+        0x00, 0x01, 'a',                           /* Username "a" */
+        0x00, 0x05, 'a', 'a', 'a', 'a', 'a'        /* Password "aaaaa" */
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "aaaaa";
+    broker.auth_pass = "aaaaa";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Auth must fail - CONNACK return code 0x04 (Bad user/pass) and the
+     * connection closed. Deleting the length fold would authenticate the
+     * shorter repeating-byte username and emit return code 0x00. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_BAD_USER_PWD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -717,7 +764,7 @@ TEST(connect_auth_partial_config_fails_closed)
 
     /* Pre-fix the username matched and the absent password was never
      * checked, so the broker accepted (return code 0x00). The gate must now
-     * refuse with 0x05 (Bad user/pass) and close the connection. */
+     * refuse with 0x04 (Bad user/pass) and close the connection. */
     ASSERT_TRUE(g_out_len >= 4);
     ASSERT_EQ(0x20, g_out_buf[0]);
     ASSERT_EQ(0x02, g_out_buf[1]);
@@ -761,7 +808,7 @@ TEST(connect_auth_partial_pass_only_fails_closed)
     run_broker_one_connect(&broker);
 
     /* Pre-fix the password matched and the username was never checked, so the
-     * broker accepted (return code 0x00). The gate must now refuse with 0x05
+     * broker accepted (return code 0x00). The gate must now refuse with 0x04
      * (Bad user/pass) and close the connection. */
     ASSERT_TRUE(g_out_len >= 4);
     ASSERT_EQ(0x20, g_out_buf[0]);
@@ -927,6 +974,86 @@ static BrokerClient* find_broker_client(MqttBroker* broker, const char* id)
     }
     return NULL;
 }
+
+#ifdef WOLFMQTT_BROKER_AUTH
+/* Return 1 if the byte sequence `needle` (length nlen) appears anywhere in
+ * the first hlen bytes of `hay`, else 0. Used to prove credential plaintext
+ * has been scrubbed from a buffer. */
+static int region_contains(const byte* hay, int hlen,
+    const char* needle, int nlen)
+{
+    int i;
+    if (hay == NULL || nlen <= 0 || hlen < nlen) {
+        return 0;
+    }
+    for (i = 0; i + nlen <= hlen; i++) {
+        if (XMEMCMP(hay + i, needle, (size_t)nlen) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* After an accepted CONNECT the plaintext credentials must not linger for
+ * the connection lifetime. BrokerHandle_Connect scrubs bc->rx_buf and
+ * bc->password on the accepted path; verify the password is gone from rx_buf
+ * and bc->password_len is cleared. Dynamic-memory only. */
+TEST(connect_credentials_scrubbed_after_accept)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* bc;
+    /* CONNECT v3.1.1, ClientId "id", Username "alice", Password "s3cr3tPW".
+     * connect_flags 0xC2 = username + password + clean session. */
+    static const byte connect[] = {
+        0x10, 31,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0xC2,
+        0x00, 0x3C,
+        0x00, 0x02, 'i', 'd',
+        0x00, 0x05, 'a', 'l', 'i', 'c', 'e',
+        0x00, 0x08, 's', '3', 'c', 'r', '3', 't', 'P', 'W'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "alice";
+    broker.auth_pass = "s3cr3tPW";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* Auth accepted (0x00) and the client is retained. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_out_buf[3]);
+    ASSERT_FALSE(g_client_closed);
+
+    bc = find_broker_client(&broker, "id");
+    ASSERT_TRUE(bc != NULL);
+
+    /* Password copy wiped: verify the length is cleared AND the buffer bytes
+     * are zeroed as independent checks - a regression that dropped only the
+     * buffer wipe while keeping password_len = 0 must still be caught. The
+     * dynamic store allocates password_len+1 bytes, so scanning the 8-byte
+     * plaintext stays within the allocation. */
+    ASSERT_EQ(0, (int)bc->password_len);
+    ASSERT_EQ(0, region_contains((const byte*)bc->password, 8, "s3cr3tPW", 8));
+    /* Both credential fields lived in the decoded CONNECT; neither plaintext
+     * may remain in the receive buffer. Scan only the received packet region
+     * (== the scrubbed rx_len); rx_buf is malloc'd without zeroing, so the
+     * bytes past the packet are uninitialized and must not be read. */
+    ASSERT_EQ(0, region_contains(bc->rx_buf, (int)sizeof(connect),
+        "s3cr3tPW", 8));
+    ASSERT_EQ(0, region_contains(bc->rx_buf, (int)sizeof(connect),
+        "alice", 5));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
 /* Return the Reason Code byte of the first DISCONNECT packet in a captured
@@ -3201,11 +3328,15 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_BROKER_AUTH
     RUN_TEST(connect_v311_binary_password_with_embedded_nul_refused);
     RUN_TEST(connect_v311_binary_password_exact_match_accepted);
+    RUN_TEST(connect_auth_username_length_fold_repeating_byte_refused);
     RUN_TEST(connect_unauth_client_id_does_not_take_over_victim);
     RUN_TEST(connect_auth_user_only_start_rejected);
     RUN_TEST(connect_auth_pass_only_start_rejected);
     RUN_TEST(connect_auth_partial_config_fails_closed);
     RUN_TEST(connect_auth_partial_pass_only_fails_closed);
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_credentials_scrubbed_after_accept);
+#endif
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
