@@ -3404,8 +3404,10 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
             else {
                 broker->retained = next;
             }
+            BROKER_FORCE_ZERO(cur->topic, XSTRLEN(cur->topic) + 1);
             WOLFMQTT_FREE(cur->topic);
             if (cur->payload) {
+                BROKER_FORCE_ZERO(cur->payload, cur->payload_len);
                 WOLFMQTT_FREE(cur->payload);
             }
             WOLFMQTT_FREE(cur);
@@ -3445,9 +3447,11 @@ static void BrokerRetained_FreeAll(MqttBroker* broker)
     while (cur) {
         BrokerRetainedMsg* next = cur->next;
         if (cur->topic) {
+            BROKER_FORCE_ZERO(cur->topic, XSTRLEN(cur->topic) + 1);
             WOLFMQTT_FREE(cur->topic);
         }
         if (cur->payload) {
+            BROKER_FORCE_ZERO(cur->payload, cur->payload_len);
             WOLFMQTT_FREE(cur->payload);
         }
         WOLFMQTT_FREE(cur);
