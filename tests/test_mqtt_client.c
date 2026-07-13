@@ -963,6 +963,215 @@ TEST(publish_null_publish)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+/* f-6805 streaming-publish chunk regression. The payload is larger than the
+ * client tx buffer and its length is not a multiple of it, so the callback loop
+ * must send a short final chunk. The backing buffer holds the valid payload
+ * followed by a guard region; the guard bytes must never reach the wire. */
+#define PUB_STREAM_VALID_LEN   300  /* > tx_buf (256), not a multiple of it */
+#define PUB_STREAM_GUARD_LEN   256
+#define PUB_STREAM_FILL        0xAA
+#define PUB_STREAM_GUARD       0xEE
+
+#define PUB_MULTI_TOTAL_LEN    700  /* > buffer_len: 300 + 300 + 100 fills */
+
+static byte pub_stream_backing[PUB_STREAM_VALID_LEN + PUB_STREAM_GUARD_LEN];
+static byte pub_stream_wire[1024];
+static int  pub_stream_wire_len;
+/* Length of the first write (the fixed header). Recorded so payload-byte counts
+ * can skip it and stay independent of the header's encoded byte values. */
+static int  pub_stream_hdr_len;
+
+static int mock_net_write_accum(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)timeout_ms;
+    if (pub_stream_wire_len == 0) {
+        pub_stream_hdr_len = buf_len; /* first write is the fixed header */
+    }
+    if (buf != NULL && buf_len > 0 &&
+            pub_stream_wire_len + buf_len <= (int)sizeof(pub_stream_wire)) {
+        XMEMCPY(pub_stream_wire + pub_stream_wire_len, buf, (size_t)buf_len);
+        pub_stream_wire_len += buf_len;
+    }
+    return buf_len; /* accept the whole chunk */
+}
+
+/* Fills up to buffer_len bytes per call, tracking the total already sent via
+ * publish->buffer_pos, so a payload larger than the fill buffer drives multiple
+ * callback invocations (the outer streaming loop). */
+static int pub_multifill_cb(MqttPublish* publish)
+{
+    word32 remaining = publish->total_len - publish->buffer_pos;
+    word32 n = (remaining < publish->buffer_len) ? remaining :
+                publish->buffer_len;
+    XMEMSET(publish->buffer, PUB_STREAM_FILL, (size_t)n);
+    return (int)n;
+}
+
+/* Fills only the valid region of the callback buffer, leaving the guard bytes
+ * that follow it untouched. */
+static int pub_stream_cb(MqttPublish* publish)
+{
+    XMEMSET(publish->buffer, PUB_STREAM_FILL, PUB_STREAM_VALID_LEN);
+    return PUB_STREAM_VALID_LEN;
+}
+
+/* f-6805: the streaming-publish callback loop must copy only the bytes that
+ * remain on the final chunk. Before the fix the last copy reused the clamped
+ * tx_buf_len and read past publish->buffer, leaking adjacent memory onto the
+ * wire and over-sending the payload. Drive a 300-byte payload through a 256-byte
+ * tx buffer and assert none of the guard bytes past the payload reach the wire. */
+TEST(publish_stream_cb_final_chunk_no_overrun)
+{
+    int rc, i, guard_seen = 0;
+    MqttPublish publish;
+
+    rc = test_init_client(); /* tx_buf_len = TEST_TX_BUF_SIZE (256) */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    pub_stream_wire_len = 0;
+    XMEMSET(pub_stream_wire, 0, sizeof(pub_stream_wire));
+    XMEMSET(pub_stream_backing, PUB_STREAM_GUARD, sizeof(pub_stream_backing));
+    test_net.write = mock_net_write_accum;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = pub_stream_backing;
+    publish.buffer_len = PUB_STREAM_VALID_LEN;
+    publish.total_len = PUB_STREAM_VALID_LEN;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_ex(&test_client, &publish, pub_stream_cb);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* No guard byte (past the declared payload) may have reached the wire. */
+    for (i = 0; i < pub_stream_wire_len; i++) {
+        if (pub_stream_wire[i] == PUB_STREAM_GUARD) {
+            guard_seen = 1;
+            break;
+        }
+    }
+    ASSERT_FALSE(guard_seen);
+
+    /* Exactly the declared payload was transported (the header is a handful of
+     * bytes); the buggy path over-sent a full extra tx_buf chunk. */
+    ASSERT_TRUE(pub_stream_wire_len <= PUB_STREAM_VALID_LEN + 16);
+}
+
+/* f-6805 multi-fill coverage: when total_len > buffer_len the callback is
+ * invoked repeatedly, so the outer loop must advance buffer_pos by each fill and
+ * recompute intBuf_cb_len per fill. Drive a 700-byte payload through a 300-byte
+ * callback buffer and 256-byte tx buffer; assert the whole payload is
+ * transported exactly once, with no guard bytes. */
+TEST(publish_stream_cb_multifill_full_payload)
+{
+    int rc, i, fill_seen = 0, guard_seen = 0;
+    MqttPublish publish;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    pub_stream_wire_len = 0;
+    pub_stream_hdr_len = 0;
+    XMEMSET(pub_stream_wire, 0, sizeof(pub_stream_wire));
+    XMEMSET(pub_stream_backing, PUB_STREAM_GUARD, sizeof(pub_stream_backing));
+    test_net.write = mock_net_write_accum;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = pub_stream_backing;
+    publish.buffer_len = PUB_STREAM_VALID_LEN; /* 300 bytes per callback fill */
+    publish.total_len = PUB_MULTI_TOTAL_LEN;   /* 700 total -> 3 fills */
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 40 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_ex(&test_client, &publish, pub_multifill_cb);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Skip the header bytes; count only the payload region. */
+    for (i = pub_stream_hdr_len; i < pub_stream_wire_len; i++) {
+        if (pub_stream_wire[i] == PUB_STREAM_FILL) fill_seen++;
+        if (pub_stream_wire[i] == PUB_STREAM_GUARD) guard_seen++;
+    }
+    ASSERT_EQ(PUB_MULTI_TOTAL_LEN, fill_seen);
+    ASSERT_EQ(0, guard_seen);
+}
+
+#ifdef WOLFMQTT_NONBLOCK
+/* Forces exactly one partial (short) write on the first payload-sized chunk so
+ * MqttPacket_Write returns MQTT_CODE_CONTINUE and the publish re-enters
+ * mid-chunk. Each write's accepted bytes are appended to the wire capture. */
+static int pub_resume_did_partial;
+static int mock_net_write_resume(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    int n = buf_len;
+    (void)context; (void)timeout_ms;
+    if (!pub_resume_did_partial && buf_len >= 64) {
+        n = 100; /* accept only part of the first chunk -> CONTINUE */
+        pub_resume_did_partial = 1;
+    }
+    if (pub_stream_wire_len == 0) {
+        pub_stream_hdr_len = n; /* first write is the fixed header */
+    }
+    if (buf != NULL && n > 0 &&
+            pub_stream_wire_len + n <= (int)sizeof(pub_stream_wire)) {
+        XMEMCPY(pub_stream_wire + pub_stream_wire_len, buf, (size_t)n);
+        pub_stream_wire_len += n;
+    }
+    return n;
+}
+
+/* f-6805 non-blocking resume: when the transport partially accepts a chunk the
+ * streaming publish re-enters mid-fill. The callback fill length must survive
+ * that re-entry (via publish->intBuf_cb_len); otherwise the resumed loop drops
+ * the payload tail and re-sends the head, over-sending and desyncing framing.
+ * Assert exactly the declared payload (all fill bytes, no guard bytes) reaches
+ * the wire. */
+TEST(publish_stream_cb_nonblock_resume_no_tail_drop)
+{
+    int rc, i, fill_seen = 0, guard_seen = 0;
+    MqttPublish publish;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    pub_stream_wire_len = 0;
+    pub_stream_hdr_len = 0;
+    pub_resume_did_partial = 0;
+    XMEMSET(pub_stream_wire, 0, sizeof(pub_stream_wire));
+    XMEMSET(pub_stream_backing, PUB_STREAM_GUARD, sizeof(pub_stream_backing));
+    test_net.write = mock_net_write_resume;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = pub_stream_backing;
+    publish.buffer_len = PUB_STREAM_VALID_LEN;
+    publish.total_len = PUB_STREAM_VALID_LEN;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 40 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_ex(&test_client, &publish, pub_stream_cb);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Skip the header bytes; count only the payload region. */
+    for (i = pub_stream_hdr_len; i < pub_stream_wire_len; i++) {
+        if (pub_stream_wire[i] == PUB_STREAM_FILL) fill_seen++;
+        if (pub_stream_wire[i] == PUB_STREAM_GUARD) guard_seen++;
+    }
+    /* Exactly the declared payload, transported once, with no guard bytes. */
+    ASSERT_EQ(PUB_STREAM_VALID_LEN, fill_seen);
+    ASSERT_EQ(0, guard_seen);
+}
+#endif /* WOLFMQTT_NONBLOCK */
+
 #ifdef WOLFMQTT_V5
 /* Drives one QoS>0 publish to completion against the canned-response mock and
  * returns the final MqttClient_Publish result. The caller stages the broker's
@@ -1928,6 +2137,11 @@ void run_mqtt_client_tests(void)
     /* MqttClient_Publish tests */
     RUN_TEST(publish_null_client);
     RUN_TEST(publish_null_publish);
+    RUN_TEST(publish_stream_cb_final_chunk_no_overrun);
+    RUN_TEST(publish_stream_cb_multifill_full_payload);
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(publish_stream_cb_nonblock_resume_no_tail_drop);
+#endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(publish_qos1_v5_broker_rejection_returns_publish_rejected);
     RUN_TEST(publish_qos1_v5_success_returns_success);

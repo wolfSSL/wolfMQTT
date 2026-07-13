@@ -2108,7 +2108,7 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
 
     if (pubCb) { /* use publish callback to get data */
-        word32 tmp_len = publish->buffer_len;
+        word32 tmp_len;
 
         do {
             /* use the client->write.len to handle non-blocking re-entry when
@@ -2121,15 +2121,24 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
                 #endif
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CALLBACK);
                 }
+
+                /* Record how many valid bytes this callback produced (a short
+                 * return marks the last read). Persisting it means a
+                 * non-blocking resume does not mistake the in-progress chunk
+                 * length for the fill length and drop the tail. */
+                publish->intBuf_cb_len =
+                    ((word32)client->write.len < publish->buffer_len) ?
+                        (word32)client->write.len : publish->buffer_len;
             }
 
-            if ((word32)client->write.len < publish->buffer_len) {
-                /* Last read */
-                tmp_len = (word32)client->write.len;
-            }
+            tmp_len = publish->intBuf_cb_len;
 
             /* Send payload */
             do {
+                /* Recompute the bytes remaining each pass so the final partial
+                 * chunk copies only valid data and never reads past the end of
+                 * the caller's payload buffer. */
+                client->write.len = (int)(tmp_len - publish->intBuf_pos);
                 if (client->write.len > client->tx_buf_len) {
                     client->write.len = client->tx_buf_len;
                 }

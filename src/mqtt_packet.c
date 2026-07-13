@@ -788,6 +788,16 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_STRING:
             {
+                /* [MQTT-3.3.2-14] A Response Topic is a Topic Name and MUST NOT
+                 * contain wildcards. Reject here so the encoder never emits a
+                 * property block its own decoder (or a peer) treats as
+                 * malformed. */
+                if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
+                        !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                            cur_prop->data_str.len,
+                            MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 tmp = MqttEncode_Data(buf,
                         (const byte*)cur_prop->data_str.str,
                         cur_prop->data_str.len);
