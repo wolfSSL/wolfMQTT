@@ -549,6 +549,8 @@ typedef struct _MqttMessage {
     MqttProp* props;
     byte protocol_level;
 #endif
+    word32      intBuf_cb_len; /* Valid bytes in the current publish-callback
+                                  fill; persisted across non-blocking re-entries */
 } MqttMessage;
 typedef MqttMessage MqttPublish; /* Publish is message */
 

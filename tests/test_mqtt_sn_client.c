@@ -210,6 +210,11 @@ static const byte WILLMSGREQ_FRAME[]   = { 0x02, SN_MSG_TYPE_WILLMSGREQ };
 static const byte CONNACK_FRAME[]      = { 0x03, SN_MSG_TYPE_CONNACK,
                                            SN_RC_ACCEPTED };
 
+/* CONNACK where the gateway refuses the connection: total_len=3, type,
+ * return_code=SN_RC_CONGESTION (any non-accepted code). */
+static const byte CONNACK_REJECT_FRAME[] = { 0x03, SN_MSG_TYPE_CONNACK,
+                                             SN_RC_CONGESTION };
+
 /* Gateway response to a WILLMSGUPD: total_len=3, type, return_code. */
 static const byte WILLMSGRESP_FRAME[]  = { 0x03, SN_MSG_TYPE_WILLMSGRESP,
                                            SN_RC_ACCEPTED };
@@ -620,6 +625,43 @@ TEST(sn_connect_lwt_no_continue)
     ASSERT_EQ(SN_RC_ACCEPTED, mc.ack.return_code);
     /* The client sent CONNECT, WILLTOPIC and WILLMSG. */
     ASSERT_TRUE(g_mock.write_calls >= 3);
+    ASSERT_NO_PENDRESP();
+}
+
+/* #6800: after SN_Client_WaitType decodes a CONNACK, the only thing that turns
+ * a gateway refusal into a caller-visible error is the return_code guard in
+ * SN_Client_Connect. Feed a CONNACK carrying a non-accepted return code and
+ * assert the refusal is reported as MQTT_CODE_ERROR_CONNECT_REFUSED, mirroring
+ * sn_subscribe_rejected. Without the guard this connect would report
+ * MQTT_CODE_SUCCESS over a link the gateway actually refused. Runs in every SN
+ * build. */
+TEST(sn_connect_refused)
+{
+    SN_Connect mc;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, CONNACK_REJECT_FRAME,
+            (int)sizeof(CONNACK_REJECT_FRAME));
+
+    /* No LWT, so the gateway skips the WILLTOPICREQ/WILLMSGREQ exchange and the
+     * connect waits directly on the CONNACK. */
+    XMEMSET(&mc, 0, sizeof(mc));
+    mc.keep_alive_sec = 60;
+    mc.clean_session = 1;
+    mc.client_id = "wolfMQTT-sn-test";
+    mc.protocol_level = SN_PROTOCOL_ID;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    /* Pre-fix (guard deleted) this returned MQTT_CODE_SUCCESS. */
+    ASSERT_EQ(MQTT_CODE_ERROR_CONNECT_REFUSED, rc);
+    /* The raw gateway refusal code is still surfaced for diagnosis. */
+    ASSERT_EQ(SN_RC_CONGESTION, mc.ack.return_code);
+    /* The client still sent the CONNECT before the refusal came back. */
+    ASSERT_TRUE(g_mock.write_calls >= 1);
+    /* No pending response may be left dangling on the refusal path. */
     ASSERT_NO_PENDRESP();
 }
 
@@ -1438,6 +1480,7 @@ int main(int argc, char** argv)
 
     /* Happy path runs in every SN build (blocking and non-blocking). */
     RUN_TEST(sn_connect_lwt_no_continue);
+    RUN_TEST(sn_connect_refused);
     RUN_TEST(sn_will_payload_scrubbed_after_send);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);

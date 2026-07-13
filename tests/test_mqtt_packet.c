@@ -1331,6 +1331,36 @@ TEST(decode_publish_v5_response_topic_wildcard_rejected)
     ASSERT_NULL(pub.props);
 }
 
+/* Encode-side counterpart of the test above. [MQTT-3.3.2-14] a Response Topic
+ * MUST NOT contain wildcards, so MqttEncode_Props must reject what
+ * MqttDecode_Props rejects instead of emitting a property block its own decoder
+ * (or a conformant peer) treats as malformed. MqttEncode_Publish maps any
+ * property-encode failure to the generic MQTT_CODE_ERROR_PROPERTY, so the wire
+ * packet is refused rather than serialized. */
+TEST(encode_publish_v5_response_topic_wildcard_rejected)
+{
+    byte tx_buf[64];
+    MqttPublish pub;
+    MqttProp* prop;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    pub.topic_name = "t";
+    pub.qos = MQTT_QOS_0;
+
+    prop = MqttProps_Add(&pub.props);
+    ASSERT_TRUE(prop != NULL);
+    prop->type = MQTT_PROP_RESP_TOPIC;
+    prop->data_str.str = (char*)"a/#";
+    prop->data_str.len = 3;
+
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    MqttProps_Free(pub.props);
+}
+
 /* A single message may not carry more than the internal
  * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
  * shared property pool. 40 User Property entries exceeds that cap. The cap
@@ -5074,6 +5104,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
     RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
+    RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(decode_publish_v5_property_count_capped);
     RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
 #endif

@@ -2281,13 +2281,7 @@ static void BrokerOrphan_FreeContents(BrokerOrphanSession* o)
     cur = o->out_q_head;
     while (cur != NULL) {
         BrokerOutPub* next = cur->next;
-        if (cur->topic != NULL) {
-            WOLFMQTT_FREE(cur->topic);
-        }
-        if (cur->payload != NULL) {
-            WOLFMQTT_FREE(cur->payload);
-        }
-        WOLFMQTT_FREE(cur);
+        BrokerOutPub_Free(cur);
         cur = next;
     }
     o->out_q_head = NULL;
@@ -2612,9 +2606,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
                 head->packet_id);
         }
     #endif
-        if (head->topic) WOLFMQTT_FREE(head->topic);
-        if (head->payload) WOLFMQTT_FREE(head->payload);
-        WOLFMQTT_FREE(head);
+        BrokerOutPub_Free(head);
     }
 
     e = BrokerOutPub_Alloc(topic, payload, payload_len);
@@ -3191,7 +3183,7 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
             (now - rm->store_time) >= rm->expiry_sec) {
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(rm->topic));
-            XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
+            BROKER_FORCE_ZERO(rm, sizeof(BrokerRetainedMsg));
         }
     }
 #else
@@ -3216,8 +3208,14 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
             else {
                 broker->retained = next;
             }
-            if (cur->topic != NULL) WOLFMQTT_FREE(cur->topic);
-            if (cur->payload != NULL) WOLFMQTT_FREE(cur->payload);
+            if (cur->topic != NULL) {
+                BROKER_FORCE_ZERO(cur->topic, XSTRLEN(cur->topic) + 1);
+                WOLFMQTT_FREE(cur->topic);
+            }
+            if (cur->payload != NULL) {
+                BROKER_FORCE_ZERO(cur->payload, cur->payload_len);
+                WOLFMQTT_FREE(cur->payload);
+            }
             WOLFMQTT_FREE(cur);
             if (broker->retained_count > 0) {
                 broker->retained_count--;
@@ -3855,7 +3853,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             (now - rm->store_time) >= rm->expiry_sec) {
             WBLOG_DBG(broker, "broker: retained expired topic=%s",
                 BrokerLog_Sanitize(rm->topic));
-            XMEMSET(rm, 0, sizeof(BrokerRetainedMsg));
+            BROKER_FORCE_ZERO(rm, sizeof(BrokerRetainedMsg));
             continue;
         }
         if (BrokerTopicMatch(filter, rm->topic)) {
@@ -3912,8 +3910,14 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             else {
                 broker->retained = rm_next;
             }
-            if (rm->topic) WOLFMQTT_FREE(rm->topic);
-            if (rm->payload) WOLFMQTT_FREE(rm->payload);
+            if (rm->topic) {
+                BROKER_FORCE_ZERO(rm->topic, XSTRLEN(rm->topic) + 1);
+                WOLFMQTT_FREE(rm->topic);
+            }
+            if (rm->payload) {
+                BROKER_FORCE_ZERO(rm->payload, rm->payload_len);
+                WOLFMQTT_FREE(rm->payload);
+            }
             WOLFMQTT_FREE(rm);
             if (broker->retained_count > 0) {
                 broker->retained_count--;
@@ -3972,8 +3976,14 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                 else {
                     broker->retained = pnext;
                 }
-                if (p->topic) WOLFMQTT_FREE(p->topic);
-                if (p->payload) WOLFMQTT_FREE(p->payload);
+                if (p->topic) {
+                    BROKER_FORCE_ZERO(p->topic, XSTRLEN(p->topic) + 1);
+                    WOLFMQTT_FREE(p->topic);
+                }
+                if (p->payload) {
+                    BROKER_FORCE_ZERO(p->payload, p->payload_len);
+                    WOLFMQTT_FREE(p->payload);
+                }
                 WOLFMQTT_FREE(p);
                 if (broker->retained_count > 0) {
                     broker->retained_count--;
