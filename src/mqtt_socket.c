@@ -356,6 +356,10 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         /* return length read and reset position */
         rc = client->read.pos;
         client->read.pos = 0;
+        /* Clamp to requested length so the return value cannot overflow */
+        if (rc > buf_len) {
+            rc = buf_len;
+        }
     }
 
     return rc;

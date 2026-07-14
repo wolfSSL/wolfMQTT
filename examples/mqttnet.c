@@ -173,6 +173,10 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
     else {
         rc = bytes;
+        /* Clamp to requested length so the return value cannot overflow */
+        if (rc > buf_len) {
+            rc = buf_len;
+        }
     }
 
     return rc;
@@ -1851,6 +1855,10 @@ exit:
     }
     else {
         rc = bytes;
+        /* Clamp to requested length so the return value cannot overflow */
+        if (rc > buf_len) {
+            rc = buf_len;
+        }
     }
 
     return rc;
