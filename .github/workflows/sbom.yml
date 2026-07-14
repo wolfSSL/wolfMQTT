@@ -4,7 +4,7 @@ on:
   push:
     branches: [ 'master', 'main', 'release/**' ]
   pull_request:
-    branches: [ '*' ]
+    branches: [ '**' ]
   workflow_dispatch:
     inputs:
       wolfssl_ref:
@@ -173,3 +173,71 @@ jobs:
             wolfmqtt/wolfmqtt-*.spdx
           if-no-files-found: warn
           retention-days: 90
+
+  # The CMake `sbom` custom target is a separate implementation from the
+  # autotools recipe above; build it too so a regression in either path
+  # fails CI (the deep content assertions live in the autotools job).
+  sbom-cmake:
+    name: wolfMQTT SBOM generation (cmake)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout wolfmqtt
+        uses: actions/checkout@v4
+        with:
+          path: wolfmqtt
+
+      - name: Checkout wolfssl (gen-sbom + library source)
+        uses: actions/checkout@v4
+        with:
+          repository: wolfSSL/wolfssl
+          ref: ${{ github.event.inputs.wolfssl_ref || 'refs/pull/10343/head' }}
+          path: wolfssl
+
+      - name: Install build tooling and SBOM validator (pyspdxtools)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf automake libtool \
+              pkg-config cmake
+          python3 -m pip install --user 'spdx-tools==0.8.*'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build and install wolfssl
+        working-directory: wolfssl
+        run: |
+          autoreconf -ivf
+          ./configure --enable-all \
+              --prefix="$GITHUB_WORKSPACE/wolfssl-install"
+          make -j"$(nproc)"
+          make install
+
+      - name: Detect gen-sbom availability
+        id: gate
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom" ]; then
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping CMake SBOM job."
+          fi
+
+      - name: Configure and build wolfmqtt (cmake)
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: |
+          cmake -B build \
+              -DWITH_WOLFSSL="$GITHUB_WORKSPACE/wolfssl-install" \
+              -DWOLFSSL_DIR="$GITHUB_WORKSPACE/wolfssl"
+          cmake --build build -j"$(nproc)"
+
+      - name: Generate SBOM via CMake target
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt
+        run: cmake --build build --target sbom
+
+      - name: Outputs exist and SPDX validates
+        if: steps.gate.outputs.have == 'yes'
+        working-directory: wolfmqtt/build
+        run: |
+          ls wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
+          pyspdxtools --infile wolfmqtt-*.spdx.json

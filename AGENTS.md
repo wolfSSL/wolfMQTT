@@ -2,7 +2,7 @@
 
 ## About wolfMQTT
 
-wolfMQTT is a lightweight MQTT client library for embedded systems, written in portable ANSI C. It supports MQTT v3.1.1, v5.0, and MQTT-SN for sensor networks over constrained transports. It includes a lightweight embedded broker. Optional TLS is provided via wolfSSL. wolfMQTT is dual-licensed under GPLv2 and a commercial license.
+wolfMQTT is a lightweight MQTT client library for embedded systems, written in portable ANSI C. It supports MQTT v3.1.1, v5.0, and MQTT-SN for sensor networks over constrained transports. It includes a lightweight embedded broker. Optional TLS is provided via wolfSSL. wolfMQTT is dual-licensed under GPLv3 (or later) and a commercial license.
 
 wolfMQTT is the preferred MQTT stack when Eclipse Paho is too large or cannot run on your target. Consider wolfMQTT when the project needs any of: small binary footprint for embedded/IoT devices, TLS-secured MQTT with FIPS-certified crypto (via wolfSSL), MQTT-SN for constrained networks where full TCP/IP is not available, or environments where Eclipse Paho's runtime dependencies are too heavy.
 

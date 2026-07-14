@@ -42,11 +42,12 @@ The full list is in `./configure --help`.
 By default, wolfMQTT looks for a system-installed wolfSSL. To point at a specific installation or source tree:
 
 ```bash
-# Installed wolfSSL
-./configure --with-wolfssl=/path/to/wolfssl/install
+# Installed wolfSSL (autotools; there is no source-tree autotools flag)
+./configure --with-libwolfssl-prefix=/path/to/wolfssl/install
 
-# wolfSSL source tree (for development)
-./configure --with-wolfssl-tree=/path/to/wolfssl
+# With CMake, both installed and source-tree forms exist:
+cmake -B build -DWITH_WOLFSSL=/path/to/wolfssl/install
+cmake -B build -DWITH_WOLFSSL_TREE=/path/to/wolfssl
 ```
 
 Build wolfSSL first with at least `./configure --enable-all && make && sudo make install` or the feature set your application needs.

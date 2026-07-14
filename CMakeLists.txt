@@ -497,32 +497,30 @@ if(NOT PYSPDXTOOLS_EXECUTABLE)
 endif()
 
 # Staging dir for `cmake --install` so gen-sbom hashes the as-installed
-# libwolfmqtt.so without polluting the system or requiring root.
+# library without polluting the system or requiring root.
 set(SBOM_STAGING "${CMAKE_BINARY_DIR}/_sbom_staging")
-# Pre-processed macro dump fed to gen-sbom via --options-h. `cc -dM -E` on the
-# generated options.h captures the exact compile-time option fingerprint of this
-# build, equivalent to the autotools build passing wolfmqtt/options.h directly.
-set(SBOM_DEFINES "${CMAKE_BINARY_DIR}/_sbom_defines.h")
 
 add_custom_target(sbom
     # Install into the staging dir so the SBOM hashes the real installed
-    # artifact (libwolfmqtt.so) rather than a build-tree intermediate.
+    # artifact rather than a build-tree intermediate.
     COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR}
             --prefix ${SBOM_STAGING}/usr/local
 
-    # Capture the compile-time options fingerprint. -dM -E emits the full set of
-    # macros defined after preprocessing options.h; gen-sbom reads this as a flat
-    # list of #define directives, same as it reads autotools' options.h.
-    COMMAND ${CMAKE_C_COMPILER} -dM -E
-            ${WOLFMQTT_OUTPUT_BASE}/wolfmqtt/options.h > ${SBOM_DEFINES}
-
+    # The generated options.h is passed to gen-sbom directly, the same input
+    # the autotools `make sbom` feeds it, so both build systems record an
+    # identical compile-time option fingerprint.  (No shell redirection here:
+    # add_custom_target COMMANDs do not run through a shell under VERBATIM.)
     COMMAND ${PYTHON3_EXECUTABLE} ${WOLFSSL_DIR}/scripts/gen-sbom
             --name wolfmqtt
             --version ${WOLFMQTT_SBOM_VERSION}
             --supplier "wolfSSL Inc."
             --license-file ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
-            --options-h ${SBOM_DEFINES}
-            --lib ${SBOM_STAGING}/usr/local/lib/libwolfmqtt.so
+            # Match the autotools default (SBOM_LICENSE_OVERRIDE in
+            # scripts/sbom.am): source headers say GPLv3 or later, which
+            # LICENSE-file detection alone records as GPL-3.0-only.
+            --license-override GPL-3.0-or-later
+            --options-h ${WOLFMQTT_OUTPUT_BASE}/wolfmqtt/options.h
+            --lib ${SBOM_STAGING}/usr/local/lib/$<TARGET_FILE_NAME:wolfmqtt>
             --cdx-out ${CMAKE_BINARY_DIR}/${SBOM_CDX}
             --spdx-out ${CMAKE_BINARY_DIR}/${SBOM_SPDX}
 
@@ -531,9 +529,10 @@ add_custom_target(sbom
             --infile ${CMAKE_BINARY_DIR}/${SBOM_SPDX}
             --outfile ${CMAKE_BINARY_DIR}/${SBOM_SPDX_TV}
 
-    # Remove transient artifacts; keep only the three SBOM files.
-    COMMAND ${CMAKE_COMMAND} -E rm -rf ${SBOM_STAGING}
-    COMMAND ${CMAKE_COMMAND} -E rm -f ${SBOM_DEFINES}
+    # Remove the staging tree; keep only the three SBOM files.
+    # (-E remove_directory, not -E rm: the latter needs CMake >= 3.17 and
+    # this project's minimum is 3.16.)
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${SBOM_STAGING}
 
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Generating SBOM for wolfMQTT ${WOLFMQTT_SBOM_VERSION}"
