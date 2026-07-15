@@ -172,7 +172,13 @@ static int NetRead(void *context, byte* buf, int buf_len,
         rc = MQTT_CODE_ERROR_NETWORK;
     }
     else {
-        rc = bytes;
+        /* Bound the byte count to buf_len before narrowing to int: this
+         * guards against a callback reporting more than was requested and
+         * keeps the word32->int cast within range */
+        if (bytes > (word32)buf_len) {
+            bytes = (word32)buf_len;
+        }
+        rc = (int)bytes;
     }
 
     return rc;
@@ -1851,6 +1857,11 @@ exit:
     }
     else {
         rc = bytes;
+        /* Never report more than the caller requested; guards against a
+         * read callback that returns more bytes than buf_len */
+        if (rc > buf_len) {
+            rc = buf_len;
+        }
     }
 
     return rc;

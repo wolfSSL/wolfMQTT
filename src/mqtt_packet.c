@@ -4042,6 +4042,11 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
                 }
+                /* Socket read must not return more than requested */
+                if (rc > remain_read) {
+                    return MqttPacket_HandleNetError(client,
+                        MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
+                }
                 remain_read = rc;
             }
             break;
