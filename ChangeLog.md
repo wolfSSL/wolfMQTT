@@ -1,5 +1,24 @@
 ## Release Notes
 
+### v2.1.1 (In Development)
+
+* New Features
+    - Automatic client keep-alive: the core client now sends a `PINGREQ` from
+      `MqttClient_WaitMessage` / `MqttClient_WaitMessage_ex` once the outbound
+      link has been idle for about three quarters of the negotiated keep-alive
+      interval, so the application no longer has to schedule pings itself and
+      the ping reaches the broker before the deadline. Active whenever a
+      non-zero keep-alive is set in `CONNECT`, and honors a v5 CONNACK Server
+      Keep Alive override. A keep-alive ping left unanswered surfaces from
+      `MqttClient_WaitMessage` as `MQTT_CODE_ERROR_NETWORK` rather than a
+      timeout, so a dead link is distinguishable from an idle one. The time source is the
+      compile-time macro `WOLFMQTT_GET_TIME_S()` (defaults to `time(NULL)`,
+      overridable in `user_settings.h`); define `WOLFMQTT_NO_TIME` to compile
+      the scheduler out on clock-less targets, where the explicit
+      `MqttClient_Ping` APIs still work. The `mqttclient` example now relies on
+      the automatic ping, keeping its previous manual keep-alive loop under
+      `WOLFMQTT_NO_TIME` (#501)
+
 ### v2.1.0 (07/02/2026)
 Release 2.1.0 has been developed according to wolfSSL's development and QA
 process (see link below) and successfully passed the quality criteria.

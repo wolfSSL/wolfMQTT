@@ -2017,6 +2017,354 @@ TEST(wait_message_pubcomp_emits_no_ack)
 }
 
 /* ============================================================================
+ * Automatic keep-alive (PINGREQ) scheduling Tests
+ * ============================================================================ */
+
+#ifndef WOLFMQTT_NO_TIME
+static int g_pingreq_writes;
+
+/* Counts PINGREQ frames (fixed header C0 00) written to the wire. */
+static int mock_net_write_count_ping(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    (void)context; (void)timeout_ms;
+    if (buf != NULL && buf_len >= 2 && buf[0] == 0xC0 && buf[1] == 0x00) {
+        g_pingreq_writes++;
+    }
+    return buf_len;
+}
+
+/* Read side never delivers a packet, so the wait path stays idle. */
+static int mock_net_read_timeout(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
+    return MQTT_CODE_ERROR_TIMEOUT;
+}
+
+TEST(wait_message_auto_pings_on_keepalive_deadline)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Outbound link idle well past the negotiated keep-alive: the wait path
+     * must inject a PINGREQ on its own. last_tx_time=0 with a real clock makes
+     * the elapsed interval far exceed keep_alive_sec. */
+    test_client.keep_alive_sec = 1;
+    test_client.last_tx_time = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+
+    /* The core scheduled the keep-alive PINGREQ itself. The mock never answers
+     * with a PINGRESP, so the unanswered ping is surfaced as a network error
+     * (not a plain timeout) so callers can tell a dead link from an idle one. */
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_TRUE(g_pingreq_writes >= 1);
+
+    /* With the timer now ahead of the clock (simulated fresh activity), a
+     * second call must not ping again; with no ping due the wait reports an
+     * ordinary idle timeout. This also covers the backward-clock re-baseline
+     * guard. */
+    g_pingreq_writes = 0;
+    test_client.last_tx_time = 0xFFFFFFFFUL;
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
+    ASSERT_EQ(0, g_pingreq_writes);
+}
+
+TEST(wait_message_no_autoping_when_keepalive_zero)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Keep-alive of zero disables the mechanism entirely. */
+    test_client.keep_alive_sec = 0;
+    test_client.last_tx_time = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
+    ASSERT_EQ(0, g_pingreq_writes);
+}
+
+TEST(wait_message_auto_pings_before_full_interval_with_margin)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Idle for 90s of a 100s keep-alive: past the ~3/4 (75s) margin but short
+     * of the full interval. The ping must fire early, not wait for the hard
+     * deadline. This fails if the trigger is elapsed >= keep_alive_sec. The
+     * unanswered ping surfaces as a network error. */
+    test_client.keep_alive_sec = 100;
+    test_client.last_tx_time = WOLFMQTT_GET_TIME_S() - 90;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_TRUE(g_pingreq_writes >= 1);
+}
+
+TEST(wait_message_no_autoping_when_link_recently_active)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Outbound link active within the interval: elapsed (now - last_tx_time)
+     * is small and stays below keep_alive_sec, so the elapsed >= keep_alive
+     * branch must not fire. Exercises the common steady-state no-ping path. */
+    test_client.keep_alive_sec = 3600;
+    test_client.last_tx_time = WOLFMQTT_GET_TIME_S();
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
+    ASSERT_EQ(0, g_pingreq_writes);
+}
+
+TEST(wait_message_no_autoping_during_partial_read)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Deadline is well past, but a packet read is in progress: the ping must
+     * not be injected mid-packet. Guards the partial-read check. */
+    test_client.keep_alive_sec = 1;
+    test_client.last_tx_time = 0;
+    test_client.packet.stat = MQTT_PK_READ_HEAD;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(0, g_pingreq_writes);
+    /* The guard must not swallow the wait result: it still reports the idle
+     * read timeout rather than an unexpected success or wrong error. */
+    ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
+
+    /* Restore so the state machine is clean for later assertions. */
+    test_client.packet.stat = MQTT_PK_BEGIN;
+}
+
+TEST(wait_message_resumes_inflight_ping)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Simulate a ping exchange left in progress (a WOLFMQTT_NONBLOCK ping whose
+     * PINGRESP had not yet arrived), with the interval not yet re-elapsed. The
+     * wait path must resume and complete that exchange instead of leaving the
+     * ping state machine stuck at MQTT_MSG_WAIT and later re-entering it with
+     * stale state. */
+    test_client.keep_alive_sec = 3600;
+    test_client.last_tx_time = WOLFMQTT_GET_TIME_S();
+    test_client.keep_alive_ping.stat.write = MQTT_MSG_WAIT;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+
+    /* Resume drove Ping_ex, which reset the state machine. No new PINGREQ was
+     * encoded (the original was already sent), and the unanswered wait surfaced
+     * as a network error. */
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.keep_alive_ping.stat.write);
+    ASSERT_EQ(0, g_pingreq_writes);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+}
+
+TEST(connect_arms_keepalive_and_disconnect_disarms)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v3.1.1: accepted. */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 45;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    /* Simulate a ping left mid-exchange by a prior connection on this same
+     * client object (e.g. an abnormal teardown with no MqttClient_Disconnect).
+     * A successful connect must reset it so the first wait does not resume a
+     * phantom ping. */
+    test_client.keep_alive_ping.stat.write = MQTT_MSG_WAIT;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Accepted connection arms the scheduler with the requested interval,
+     * baselines the idle timer, and clears the stale ping state. */
+    ASSERT_EQ(45, test_client.keep_alive_sec);
+    ASSERT_TRUE(test_client.last_tx_time != 0);
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.keep_alive_ping.stat.write);
+
+    /* Disconnect disarms the scheduler and resets the ping state machine. */
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Disconnect(&test_client);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, test_client.keep_alive_sec);
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.keep_alive_ping.stat.write);
+}
+
+TEST(connect_refused_leaves_keepalive_disarmed)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v3.1.1: refused (0x05 = not authorized). */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x05 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 45;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_CONNECT_REFUSED, rc);
+
+    /* A refused connection must not arm the scheduler. */
+    ASSERT_EQ(0, test_client.keep_alive_sec);
+}
+
+#if defined(WOLFMQTT_V5)
+TEST(connect_v5_server_keep_alive_overrides_requested)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5 accepted, prop_len=3, [0x13 00 1E] = Server Keep Alive 30. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x00, 0x00, 0x03,
+        0x13, 0x00, 0x1E
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* The broker's Server Keep Alive (30) must replace the requested 60. */
+    ASSERT_EQ(30, test_client.keep_alive_sec);
+}
+
+TEST(connect_v5_server_keep_alive_zero_disables)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5 accepted, prop_len=3, [0x13 00 00] = Server Keep Alive 0. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x00, 0x00, 0x03,
+        0x13, 0x00, 0x00
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* A Server Keep Alive of 0 disables keep-alive per [MQTT-3.1.2.11.2]; the
+     * client must not fall back to its requested 60. */
+    ASSERT_EQ(0, test_client.keep_alive_sec);
+}
+#endif /* WOLFMQTT_V5 */
+#endif /* !WOLFMQTT_NO_TIME */
+
+/* ============================================================================
  * MqttClient_ReturnCodeToString Tests
  * ============================================================================ */
 
@@ -2175,6 +2523,22 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_pubrel_emits_pubcomp);
     RUN_TEST(wait_message_puback_emits_no_ack);
     RUN_TEST(wait_message_pubcomp_emits_no_ack);
+
+#ifndef WOLFMQTT_NO_TIME
+    /* Automatic keep-alive (PINGREQ) scheduling tests */
+    RUN_TEST(wait_message_auto_pings_on_keepalive_deadline);
+    RUN_TEST(wait_message_auto_pings_before_full_interval_with_margin);
+    RUN_TEST(wait_message_no_autoping_when_keepalive_zero);
+    RUN_TEST(wait_message_no_autoping_when_link_recently_active);
+    RUN_TEST(wait_message_no_autoping_during_partial_read);
+    RUN_TEST(wait_message_resumes_inflight_ping);
+    RUN_TEST(connect_arms_keepalive_and_disconnect_disarms);
+    RUN_TEST(connect_refused_leaves_keepalive_disarmed);
+#if defined(WOLFMQTT_V5)
+    RUN_TEST(connect_v5_server_keep_alive_overrides_requested);
+    RUN_TEST(connect_v5_server_keep_alive_zero_disables);
+#endif
+#endif
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
     /* MqttClient_ReturnCodeToString tests */

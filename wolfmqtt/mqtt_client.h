@@ -46,6 +46,41 @@
 #include "wolfmqtt/mqtt_sn_packet.h"
 #endif
 
+/* Automatic keep-alive scheduling. When a non-zero keep-alive is negotiated in
+ * CONNECT, the core client sends a PINGREQ once the outbound link has been idle
+ * for about three quarters of that interval, so the application does not have
+ * to schedule pings itself and the ping reaches the broker before the deadline.
+ * This mirrors the broker keep-alive handling.
+ *
+ * The scheduler is evaluated at the start of each MqttClient_WaitMessage call,
+ * not during the blocking read, so the application must call it with a
+ * timeout_ms (poll cadence) shorter than the keep-alive interval. A single
+ * wait longer than the interval can let the broker deadline pass unchecked.
+ *
+ * When a ping is due, MqttClient_WaitMessage performs the PINGREQ/PINGRESP
+ * round-trip inline, so the call may take up to cmd_timeout_ms longer to
+ * return. A ping left unanswered returns MQTT_CODE_ERROR_NETWORK rather than
+ * MQTT_CODE_ERROR_TIMEOUT, so a caller can tell a dead link from an idle one.
+ *
+ * WOLFMQTT_GET_TIME_S() returns a clock in seconds; only elapsed differences
+ * are used, so a monotonic source is fine. The default is time(NULL), except
+ * on Zephyr where its minimal libc has no linkable time() and the kernel
+ * uptime is used instead. Override it in user_settings.h on targets without a
+ * suitable clock, or define WOLFMQTT_NO_TIME to compile out automatic
+ * scheduling entirely; the explicit MqttClient_Ping / MqttClient_Ping_ex APIs
+ * still work in that case. */
+#ifndef WOLFMQTT_NO_TIME
+    #ifndef WOLFMQTT_GET_TIME_S
+        #ifdef __ZEPHYR__
+            #include <zephyr/kernel.h>
+            #define WOLFMQTT_GET_TIME_S() ((word32)(k_uptime_get() / 1000))
+        #else
+            #include <time.h>
+            #define WOLFMQTT_GET_TIME_S() ((word32)time(NULL))
+        #endif
+    #endif
+#endif
+
 
 /* This macro allows the disconnect callback to be triggered when
  * MqttClient_Disconnect_ex is called. Normally the CB is only used to handle
@@ -218,6 +253,12 @@ typedef struct _MqttClient {
 #endif
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DEBUG_CLIENT)
     int lastRc;
+#endif
+#ifndef WOLFMQTT_NO_TIME
+    MqttPing keep_alive_ping; /* dedicated object for auto keep-alive PINGREQ */
+    word32   last_tx_time;    /* WOLFMQTT_GET_TIME_S() at last control-pkt TX */
+    word16   keep_alive_sec;  /* negotiated keep-alive; 0 disables auto-ping */
+    byte     keep_alive_from_server; /* v5 Server Keep Alive applied (0 valid) */
 #endif
 } MqttClient;
 
