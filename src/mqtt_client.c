@@ -1801,24 +1801,23 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         }
     #endif
 
+    #ifndef WOLFMQTT_NO_TIME
+        /* Disarm auto keep-alive for the handshake; it is armed only after
+         * CONNACK is accepted at the end of this function. Fully cancel any
+         * ping left mid-exchange by a prior connection so its held locks and
+         * pending response are released before the new write starts, rather
+         * than leaving the ping state machine to stall a later wait. Must run
+         * before MqttWriteStart so the send lock is free when it is taken. */
+        client->keep_alive_sec = 0;
+        client->keep_alive_from_server = 0;
+        MqttClient_CancelMessage(client,
+            (MqttObject*)&client->keep_alive_ping);
+    #endif
+
         /* Flag write active / lock mutex */
         if ((rc = MqttWriteStart(client, &mc_connect->stat)) != 0) {
             return rc;
         }
-
-    #ifndef WOLFMQTT_NO_TIME
-        /* Disarm auto keep-alive during the handshake and clear any stale
-         * value from a previous connection on this client. It is armed only
-         * after CONNACK is accepted, at the end of this function. Also reset
-         * the ping state machine so a ping left mid-exchange by a prior
-         * connection (e.g. a WOLFMQTT_NONBLOCK ping, or an abnormal teardown
-         * with no MqttClient_Disconnect) cannot be resumed against the new
-         * connection and stall waiting for a PINGRESP that never arrives. */
-        client->keep_alive_sec = 0;
-        client->keep_alive_from_server = 0;
-        client->keep_alive_ping.stat.write = MQTT_MSG_BEGIN;
-        client->keep_alive_ping.stat.read = MQTT_MSG_BEGIN;
-    #endif
 
     #ifdef WOLFMQTT_V5
         /* Use specified protocol version if set */
@@ -2903,13 +2902,13 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
 
     if (disconnect->stat.write == MQTT_MSG_BEGIN) {
     #ifndef WOLFMQTT_NO_TIME
-        /* Stop auto keep-alive scheduling for a client being torn down so a
-         * stale interval cannot arm a ping after disconnect. Also reset the
-         * ping state machine: a WOLFMQTT_NONBLOCK ping left mid-exchange would
-         * otherwise make a reconnect wait for a PINGRESP that was never sent. */
+        /* Stop auto keep-alive for a client being torn down, and fully cancel
+         * any ping left mid-exchange so its held locks and pending response are
+         * released before the disconnect write starts. A bare stat reset would
+         * strand client->write.isActive and livelock MqttClient_Disconnect. */
         client->keep_alive_sec = 0;
-        client->keep_alive_ping.stat.write = MQTT_MSG_BEGIN;
-        client->keep_alive_ping.stat.read = MQTT_MSG_BEGIN;
+        MqttClient_CancelMessage(client,
+            (MqttObject*)&client->keep_alive_ping);
     #endif
     #ifdef WOLFMQTT_V5
         /* Use specified protocol version if set */
@@ -3130,7 +3129,7 @@ int MqttClient_PropsFree(MqttProp *head)
  * three quarters of the negotiated keep-alive interval, so the application
  * does not have to schedule pings itself. Called from the wait path.
  * [MQTT-3.1.2-23] */
-static int MqttClient_KeepAlive(MqttClient *client)
+static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
 {
     int rc = MQTT_CODE_SUCCESS;
     word32 now, elapsed, threshold;
@@ -3157,8 +3156,12 @@ static int MqttClient_KeepAlive(MqttClient *client)
         return rc;
     }
 
-    /* Do not inject a ping into a partially read packet. */
-    if (client->packet.stat != MQTT_PK_BEGIN) {
+    /* Do not inject a ping while a message is mid-transfer: a partially read
+     * fixed header (packet.stat), or a payload read still in progress on the
+     * wait object (msg->read), which packet.stat alone does not catch once the
+     * header has been consumed but the read lock is still held. */
+    if (client->packet.stat != MQTT_PK_BEGIN ||
+            (msg != NULL && ((MqttMsgStat*)msg)->read != MQTT_MSG_BEGIN)) {
         return MQTT_CODE_SUCCESS;
     }
 
@@ -3198,8 +3201,24 @@ int MqttClient_WaitMessage_ex(MqttClient *client, MqttObject* msg,
         int timeout_ms)
 {
 #ifndef WOLFMQTT_NO_TIME
-    int rc = MqttClient_KeepAlive(client);
-    if (rc != MQTT_CODE_SUCCESS) {
+    int rc;
+#endif
+
+    if (client == NULL || msg == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
+#ifndef WOLFMQTT_NO_TIME
+    /* Send an automatic keep-alive PINGREQ if the outbound link has been idle
+     * long enough. A deferred ping (another thread holds the write lock) comes
+     * back as MQTT_CODE_CONTINUE, which is not an error, so in a blocking build
+     * fall through to the normal wait rather than returning it to the caller. */
+    rc = MqttClient_KeepAlive(client, msg);
+    if (rc != MQTT_CODE_SUCCESS
+    #ifndef WOLFMQTT_NONBLOCK
+            && rc != MQTT_CODE_CONTINUE
+    #endif
+        ) {
         return rc;
     }
 #endif

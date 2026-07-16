@@ -682,11 +682,11 @@ static void *publish_task(void *param)
 }
 
 /* Dedicated keep-alive ping thread, retained to demonstrate explicit
- * cross-thread ping coordination. When the core auto keep-alive is compiled in
- * (the default, WOLFMQTT_NO_TIME not defined) the reader thread's
- * MqttClient_WaitMessage_ex already schedules PINGREQ on its own; the two stay
- * reconciled because each PINGREQ refreshes last_tx_time, which holds off the
- * other path. Define WOLFMQTT_NO_TIME to rely solely on this thread. */
+ * cross-thread ping coordination. With the core auto keep-alive compiled in
+ * (the default) the reader thread's MqttClient_WaitMessage_ex also sends
+ * PINGREQ. last_tx_time only holds off the reader's own next ping, not this
+ * thread, so both paths can ping and the broker sees redundant PINGREQs.
+ * Define WOLFMQTT_NO_TIME to rely solely on this thread. */
 #ifdef USE_WINDOWS_API
 static DWORD WINAPI ping_task( LPVOID param )
 #else

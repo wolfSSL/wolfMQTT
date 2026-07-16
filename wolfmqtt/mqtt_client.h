@@ -58,9 +58,20 @@
  * wait longer than the interval can let the broker deadline pass unchecked.
  *
  * When a ping is due, MqttClient_WaitMessage performs the PINGREQ/PINGRESP
- * round-trip inline, so the call may take up to cmd_timeout_ms longer to
- * return. A ping left unanswered returns MQTT_CODE_ERROR_NETWORK rather than
- * MQTT_CODE_ERROR_TIMEOUT, so a caller can tell a dead link from an idle one.
+ * round-trip inline using cmd_timeout_ms, so the call may take up to
+ * cmd_timeout_ms longer to return; if other packets keep arriving the round
+ * trip can extend past a single cmd_timeout_ms before the PINGRESP is seen. A
+ * packet that arrives while waiting for the PINGRESP is delivered through the
+ * message callback, not the MqttObject passed to MqttClient_WaitMessage_ex.
+ *
+ * In a blocking build a ping left unanswered returns MQTT_CODE_ERROR_NETWORK
+ * rather than MQTT_CODE_ERROR_TIMEOUT, so a caller can tell a dead link from an
+ * idle one. Under WOLFMQTT_NONBLOCK the library cannot time the ping out, so
+ * the application stays responsible for its own liveness deadline.
+ *
+ * The keep-alive bookkeeping fields (last_tx_time, keep_alive_sec) are updated
+ * without a lock under WOLFMQTT_MULTITHREAD; a mis-scheduled or skipped ping
+ * self-corrects on the next MqttClient_WaitMessage.
  *
  * WOLFMQTT_GET_TIME_S() returns a clock in seconds; only elapsed differences
  * are used, so a monotonic source is fine. The default is time(NULL), except

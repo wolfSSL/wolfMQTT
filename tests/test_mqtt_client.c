@@ -2101,6 +2101,7 @@ TEST(wait_message_no_autoping_when_keepalive_zero)
 TEST(wait_message_auto_pings_before_full_interval_with_margin)
 {
     int rc;
+    word32 now;
 
     rc = test_init_client();
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
@@ -2111,10 +2112,12 @@ TEST(wait_message_auto_pings_before_full_interval_with_margin)
 
     /* Idle for 90s of a 100s keep-alive: past the ~3/4 (75s) margin but short
      * of the full interval. The ping must fire early, not wait for the hard
-     * deadline. This fails if the trigger is elapsed >= keep_alive_sec. The
-     * unanswered ping surfaces as a network error. */
+     * deadline. This fails if the trigger is elapsed >= keep_alive_sec. Clamp
+     * the subtraction so a monotonic clock near zero does not underflow
+     * last_tx_time and silently exercise the backward-clock guard instead. */
+    now = WOLFMQTT_GET_TIME_S();
     test_client.keep_alive_sec = 100;
-    test_client.last_tx_time = WOLFMQTT_GET_TIME_S() - 90;
+    test_client.last_tx_time = (now > 90) ? (now - 90) : 0;
 
     rc = MqttClient_WaitMessage(&test_client, 0);
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
@@ -2168,6 +2171,35 @@ TEST(wait_message_no_autoping_during_partial_read)
 
     /* Restore so the state machine is clean for later assertions. */
     test_client.packet.stat = MQTT_PK_BEGIN;
+}
+
+TEST(wait_message_no_autoping_during_partial_payload)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Deadline is well past and the fixed header has been fully read
+     * (packet.stat == MQTT_PK_BEGIN), but a payload read is still in progress
+     * on the wait object. The ping must not be injected mid-payload; the
+     * MQTT_PK_READ_HEAD guard alone does not cover this case. */
+    test_client.keep_alive_sec = 1;
+    test_client.last_tx_time = 0;
+    test_client.packet.stat = MQTT_PK_BEGIN;
+    test_client.msg.publish.stat.read = MQTT_MSG_PAYLOAD2;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    /* The guard suppressed the ping regardless of how the resumed read ends. */
+    ASSERT_EQ(0, g_pingreq_writes);
+    (void)rc;
+
+    /* Restore so the state machine is clean for later assertions. */
+    test_client.msg.publish.stat.read = MQTT_MSG_BEGIN;
 }
 
 TEST(wait_message_resumes_inflight_ping)
@@ -2231,6 +2263,11 @@ TEST(connect_arms_keepalive_and_disconnect_disarms)
      * phantom ping. */
     test_client.keep_alive_ping.stat.write = MQTT_MSG_WAIT;
 
+    /* Seed a sentinel so the arm assertion can check the idle timer was
+     * baselined without assuming the clock is ever non-zero (a monotonic
+     * source can legitimately return 0 in the first second of uptime). */
+    test_client.last_tx_time = 0x5A5A5A5AUL;
+
     rc = MQTT_CODE_CONTINUE;
     for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
         rc = MqttClient_Connect(&test_client, &connect);
@@ -2240,7 +2277,7 @@ TEST(connect_arms_keepalive_and_disconnect_disarms)
     /* Accepted connection arms the scheduler with the requested interval,
      * baselines the idle timer, and clears the stale ping state. */
     ASSERT_EQ(45, test_client.keep_alive_sec);
-    ASSERT_TRUE(test_client.last_tx_time != 0);
+    ASSERT_TRUE(test_client.last_tx_time != 0x5A5A5A5AUL);
     ASSERT_EQ(MQTT_MSG_BEGIN, test_client.keep_alive_ping.stat.write);
 
     /* Disconnect disarms the scheduler and resets the ping state machine. */
@@ -2531,6 +2568,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_no_autoping_when_keepalive_zero);
     RUN_TEST(wait_message_no_autoping_when_link_recently_active);
     RUN_TEST(wait_message_no_autoping_during_partial_read);
+    RUN_TEST(wait_message_no_autoping_during_partial_payload);
     RUN_TEST(wait_message_resumes_inflight_ping);
     RUN_TEST(connect_arms_keepalive_and_disconnect_disarms);
     RUN_TEST(connect_refused_leaves_keepalive_disarmed);

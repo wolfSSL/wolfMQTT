@@ -3930,7 +3930,7 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
     /* Record when a full control packet leaves the wire so the keep-alive
      * scheduler can measure how long the outbound link has been idle. Only
      * needed while auto-ping is armed; skip the clock read otherwise. */
-    if (rc > 0 && rc == tx_buf_len && client->keep_alive_sec != 0) {
+    if (rc == tx_buf_len && client->keep_alive_sec != 0) {
         client->last_tx_time = WOLFMQTT_GET_TIME_S();
     }
 #endif

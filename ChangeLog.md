@@ -9,9 +9,11 @@
       interval, so the application no longer has to schedule pings itself and
       the ping reaches the broker before the deadline. Active whenever a
       non-zero keep-alive is set in `CONNECT`, and honors a v5 CONNACK Server
-      Keep Alive override. A keep-alive ping left unanswered surfaces from
-      `MqttClient_WaitMessage` as `MQTT_CODE_ERROR_NETWORK` rather than a
-      timeout, so a dead link is distinguishable from an idle one. The time source is the
+      Keep Alive override. In a blocking build a keep-alive ping left
+      unanswered surfaces from `MqttClient_WaitMessage` as
+      `MQTT_CODE_ERROR_NETWORK` rather than a timeout, so a dead link is
+      distinguishable from an idle one; under `WOLFMQTT_NONBLOCK` the
+      application remains responsible for its own liveness deadline. The time source is the
       compile-time macro `WOLFMQTT_GET_TIME_S()` (defaults to `time(NULL)`,
       overridable in `user_settings.h`); define `WOLFMQTT_NO_TIME` to compile
       the scheduler out on clock-less targets, where the explicit
