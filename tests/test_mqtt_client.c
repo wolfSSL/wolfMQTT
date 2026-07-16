@@ -2045,7 +2045,7 @@ static int mock_net_read_timeout(void *context, byte* buf, int buf_len,
 #ifdef WOLFMQTT_NONBLOCK
 /* Read side reports would-block, so a non-blocking wait defers rather than
  * completing or timing out. */
-static int mock_net_read_continue(void *context, byte* buf, int buf_len,
+static int mock_net_read_wouldblock(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
     (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
@@ -2338,7 +2338,7 @@ TEST(wait_message_nonblock_returns_continue_for_deferred_ping)
 
     g_pingreq_writes = 0;
     test_net.write = mock_net_write_count_ping;
-    test_net.read = mock_net_read_continue;
+    test_net.read = mock_net_read_wouldblock;
 
     /* An auto keep-alive ping is mid-exchange (PINGREQ already sent, PINGRESP
      * not yet arrived). The read side reports would-block, so under
