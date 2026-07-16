@@ -1807,10 +1807,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * ping left mid-exchange by a prior connection so its held locks and
          * pending response are released before the new write starts, rather
          * than leaving the ping state machine to stall a later wait. Must run
-         * before MqttWriteStart so the send lock is free when it is taken. */
+         * before MqttWriteStart so the send lock is free when it is taken. The
+         * cancel is best-effort: under WOLFMQTT_MULTITHREAD a failed client
+         * lock leaves the stale pending response to be reclaimed on the next
+         * acquisition, so its return is intentionally not checked. */
         client->keep_alive_sec = 0;
         client->keep_alive_from_server = 0;
-        MqttClient_CancelMessage(client,
+        (void)MqttClient_CancelMessage(client,
             (MqttObject*)&client->keep_alive_ping);
     #endif
 
@@ -2905,9 +2908,12 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
         /* Stop auto keep-alive for a client being torn down, and fully cancel
          * any ping left mid-exchange so its held locks and pending response are
          * released before the disconnect write starts. A bare stat reset would
-         * strand client->write.isActive and livelock MqttClient_Disconnect. */
+         * strand client->write.isActive and livelock MqttClient_Disconnect. The
+         * cancel is best-effort: under WOLFMQTT_MULTITHREAD a failed client lock
+         * leaves the stale pending response to be reclaimed on the next
+         * acquisition, so its return is intentionally not checked. */
         client->keep_alive_sec = 0;
-        MqttClient_CancelMessage(client,
+        (void)MqttClient_CancelMessage(client,
             (MqttObject*)&client->keep_alive_ping);
     #endif
     #ifdef WOLFMQTT_V5
@@ -3136,6 +3142,12 @@ static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
 
     if (client == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
+    /* Disabled at runtime by the application (e.g. it schedules its own ping),
+     * independent of the keep-alive negotiated with the broker. */
+    if ((client->flags & MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE) != 0) {
+        return MQTT_CODE_SUCCESS;
     }
 
     /* Disabled until a non-zero keep-alive has been negotiated in CONNECT. */

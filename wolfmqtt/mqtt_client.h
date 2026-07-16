@@ -79,7 +79,13 @@
  * uptime is used instead. Override it in user_settings.h on targets without a
  * suitable clock, or define WOLFMQTT_NO_TIME to compile out automatic
  * scheduling entirely; the explicit MqttClient_Ping / MqttClient_Ping_ex APIs
- * still work in that case. */
+ * still work in that case.
+ *
+ * To keep the feature compiled in but turn it off for a specific client at
+ * runtime - for example an application that already schedules its own PINGREQ
+ * and must not double-ping - set MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE with
+ * MqttClient_Flags before connecting; the keep-alive negotiated with the broker
+ * in CONNECT is unaffected. */
 #ifndef WOLFMQTT_NO_TIME
     #ifndef WOLFMQTT_GET_TIME_S
         #ifdef __ZEPHYR__
@@ -150,7 +156,12 @@ enum MqttClientFlags {
     MQTT_CLIENT_FLAG_IS_CONNECTED = 0x01 << 0,
     MQTT_CLIENT_FLAG_IS_TLS       = 0x01 << 1,
     MQTT_CLIENT_FLAG_IS_DTLS      = 0x01 << 2,
-    MQTT_CLIENT_FLAG_WOLFSSL_INIT = 0x01 << 3 /* this client called wolfSSL_Init */
+    MQTT_CLIENT_FLAG_WOLFSSL_INIT = 0x01 << 3, /* this client called wolfSSL_Init */
+    /* Disable the core automatic keep-alive PINGREQ at runtime, e.g. for an
+     * application that schedules its own ping, without changing the keep-alive
+     * negotiated with the broker. Set via MqttClient_Flags before connecting.
+     * Has no effect when built with WOLFMQTT_NO_TIME. */
+    MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE = 0x01 << 4
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.

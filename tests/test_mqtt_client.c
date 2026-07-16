@@ -2042,6 +2042,17 @@ static int mock_net_read_timeout(void *context, byte* buf, int buf_len,
     return MQTT_CODE_ERROR_TIMEOUT;
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Read side reports would-block, so a non-blocking wait defers rather than
+ * completing or timing out. */
+static int mock_net_read_continue(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
+    return MQTT_CODE_CONTINUE;
+}
+#endif
+
 TEST(wait_message_auto_pings_on_keepalive_deadline)
 {
     int rc;
@@ -2098,6 +2109,38 @@ TEST(wait_message_no_autoping_when_keepalive_zero)
     ASSERT_EQ(0, g_pingreq_writes);
 }
 
+TEST(wait_message_no_autoping_when_flag_disables)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* A non-zero keep-alive is negotiated (so the broker still enforces it) and
+     * the link is idle well past the deadline, but the application disabled the
+     * core scheduler at runtime because it sends its own PINGREQ. No auto-ping
+     * must be emitted, and the idle wait reports a plain timeout rather than a
+     * keep-alive network error. */
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE);
+    test_client.keep_alive_sec = 1;
+    test_client.last_tx_time = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
+    ASSERT_EQ(0, g_pingreq_writes);
+
+    /* Clearing the flag re-enables the scheduler on the same client. */
+    (void)MqttClient_Flags(&test_client, MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE, 0);
+    g_pingreq_writes = 0;
+    rc = MqttClient_WaitMessage(&test_client, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_TRUE(g_pingreq_writes >= 1);
+}
+
 TEST(wait_message_auto_pings_before_full_interval_with_margin)
 {
     int rc;
@@ -2144,6 +2187,59 @@ TEST(wait_message_no_autoping_when_link_recently_active)
     rc = MqttClient_WaitMessage(&test_client, 0);
     ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
     ASSERT_EQ(0, g_pingreq_writes);
+}
+
+TEST(packet_write_refreshes_last_tx_time)
+{
+    int rc;
+    word32 before;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Exercise the real MqttPacket_Write idle-timer stamp instead of poking
+     * last_tx_time directly. With auto-ping armed, a full control-packet write
+     * must record the send time so later outbound traffic defers the ping. The
+     * PINGRESP never arrives, but the PINGREQ still writes through
+     * MqttPacket_Write, which stamps last_tx_time on completion. */
+    test_client.keep_alive_sec = 60;
+    test_client.last_tx_time = 0; /* stale baseline the write must overwrite */
+
+    before = WOLFMQTT_GET_TIME_S();
+    (void)MqttClient_Ping(&test_client);
+
+    /* The packet really went out, and the write path refreshed the timer to
+     * roughly now (far above the seeded zero). */
+    ASSERT_TRUE(g_pingreq_writes >= 1);
+    ASSERT_TRUE(test_client.last_tx_time >= before);
+}
+
+TEST(packet_write_skips_last_tx_time_when_keepalive_zero)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Negative guard: with keep-alive disabled the write path must skip the
+     * clock read entirely, so a full packet write leaves last_tx_time untouched
+     * even though the PINGREQ itself is sent. Guards the keep_alive_sec != 0
+     * condition on the stamp. */
+    test_client.keep_alive_sec = 0;
+    test_client.last_tx_time = 0;
+
+    (void)MqttClient_Ping(&test_client);
+
+    ASSERT_TRUE(g_pingreq_writes >= 1);
+    ASSERT_EQ(0, test_client.last_tx_time);
 }
 
 TEST(wait_message_no_autoping_during_partial_read)
@@ -2231,6 +2327,41 @@ TEST(wait_message_resumes_inflight_ping)
     ASSERT_EQ(0, g_pingreq_writes);
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
 }
+
+#ifdef WOLFMQTT_NONBLOCK
+TEST(wait_message_nonblock_returns_continue_for_deferred_ping)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_continue;
+
+    /* An auto keep-alive ping is mid-exchange (PINGREQ already sent, PINGRESP
+     * not yet arrived). The read side reports would-block, so under
+     * WOLFMQTT_NONBLOCK the resumed ping cannot complete. WaitMessage must
+     * return MQTT_CODE_CONTINUE to the caller rather than swallowing it (the
+     * "&& rc != MQTT_CODE_CONTINUE" guard is compiled out under NONBLOCK), and
+     * leave the ping in-flight so a later call resumes it. This is the caller-
+     * visible liveness handoff that the blocking build deliberately hides. */
+    test_client.keep_alive_sec = 3600;
+    test_client.last_tx_time = WOLFMQTT_GET_TIME_S();
+    test_client.keep_alive_ping.stat.write = MQTT_MSG_WAIT;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    /* Ping stays mid-exchange; no new PINGREQ was encoded. */
+    ASSERT_EQ(MQTT_MSG_WAIT, test_client.keep_alive_ping.stat.write);
+    ASSERT_EQ(0, g_pingreq_writes);
+
+    /* Restore so the state machine is clean for later assertions. */
+    test_client.keep_alive_ping.stat.write = MQTT_MSG_BEGIN;
+}
+#endif /* WOLFMQTT_NONBLOCK */
 
 TEST(connect_arms_keepalive_and_disconnect_disarms)
 {
@@ -2566,10 +2697,16 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_auto_pings_on_keepalive_deadline);
     RUN_TEST(wait_message_auto_pings_before_full_interval_with_margin);
     RUN_TEST(wait_message_no_autoping_when_keepalive_zero);
+    RUN_TEST(wait_message_no_autoping_when_flag_disables);
     RUN_TEST(wait_message_no_autoping_when_link_recently_active);
+    RUN_TEST(packet_write_refreshes_last_tx_time);
+    RUN_TEST(packet_write_skips_last_tx_time_when_keepalive_zero);
     RUN_TEST(wait_message_no_autoping_during_partial_read);
     RUN_TEST(wait_message_no_autoping_during_partial_payload);
     RUN_TEST(wait_message_resumes_inflight_ping);
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(wait_message_nonblock_returns_continue_for_deferred_ping);
+#endif
     RUN_TEST(connect_arms_keepalive_and_disconnect_disarms);
     RUN_TEST(connect_refused_leaves_keepalive_disarmed);
 #if defined(WOLFMQTT_V5)
