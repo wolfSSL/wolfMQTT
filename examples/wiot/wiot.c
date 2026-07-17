@@ -345,9 +345,12 @@ int wiot_test(MQTTCtx *mqttCtx)
             }
         #else
             /* The core client sends keep-alive PINGREQ automatically, so an
-             * idle timeout just means no message arrived. In test mode there is
-             * no inbound message and the connection is already established, so
-             * finish rather than wait forever. */
+             * idle timeout just means no message arrived; keep waiting. In test
+             * mode this example has no inbound message and previously terminated
+             * via the manual ping, so exit here instead of looping forever. This
+             * mTestDone assignment is deliberately not present in awsiot/fwclient/
+             * mqttclient: those end test mode another way (a received message, a
+             * pre-existing test-mode flag, or a top-of-loop break). */
             if (mqttCtx->test_mode) {
                 mTestDone = 1;
             }

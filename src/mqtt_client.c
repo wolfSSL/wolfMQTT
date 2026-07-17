@@ -1807,14 +1807,18 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * ping left mid-exchange by a prior connection so its held locks and
          * pending response are released before the new write starts, rather
          * than leaving the ping state machine to stall a later wait. Must run
-         * before MqttWriteStart so the send lock is free when it is taken. The
-         * cancel is best-effort: under WOLFMQTT_MULTITHREAD a failed client
-         * lock leaves the stale pending response to be reclaimed on the next
-         * acquisition, so its return is intentionally not checked. */
+         * before MqttWriteStart so the send lock is free when it is taken.
+         * Propagate a cancel failure - only reachable if wm_SemLock itself
+         * errors (e.g. on ThreadX), since it otherwise blocks until acquired -
+         * rather than starting the write with locks the abandoned ping may
+         * still hold. */
         client->keep_alive_sec = 0;
         client->keep_alive_from_server = 0;
-        (void)MqttClient_CancelMessage(client,
+        rc = MqttClient_CancelMessage(client,
             (MqttObject*)&client->keep_alive_ping);
+        if (rc != MQTT_CODE_SUCCESS) {
+            return rc;
+        }
     #endif
 
         /* Flag write active / lock mutex */
@@ -2908,13 +2912,17 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
         /* Stop auto keep-alive for a client being torn down, and fully cancel
          * any ping left mid-exchange so its held locks and pending response are
          * released before the disconnect write starts. A bare stat reset would
-         * strand client->write.isActive and livelock MqttClient_Disconnect. The
-         * cancel is best-effort: under WOLFMQTT_MULTITHREAD a failed client lock
-         * leaves the stale pending response to be reclaimed on the next
-         * acquisition, so its return is intentionally not checked. */
+         * strand client->write.isActive and livelock MqttClient_Disconnect.
+         * Propagate a cancel failure - only reachable if wm_SemLock itself
+         * errors (e.g. on ThreadX), since it otherwise blocks until acquired -
+         * rather than starting the write with locks the abandoned ping may
+         * still hold. */
         client->keep_alive_sec = 0;
-        (void)MqttClient_CancelMessage(client,
+        rc = MqttClient_CancelMessage(client,
             (MqttObject*)&client->keep_alive_ping);
+        if (rc != MQTT_CODE_SUCCESS) {
+            return rc;
+        }
     #endif
     #ifdef WOLFMQTT_V5
         /* Use specified protocol version if set */
@@ -3178,8 +3186,9 @@ static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
      * MqttReadStop also hold when they set read.isActive and reset
      * packet.stat). read.isActive - an in-progress read holding lockRecv - is
      * tested first, so packet.stat is only read when no read is active and thus
-     * cannot be concurrently advanced. If lockClient cannot be taken another
-     * thread is busy, so skip the ping this round. */
+     * cannot be concurrently advanced. wm_SemLock blocks until lockClient is
+     * available and returns an error only on a system fault (e.g. ThreadX), in
+     * which case the ping is skipped this round. */
     mid_transfer = 0;
 #ifdef WOLFMQTT_MULTITHREAD
     if (wm_SemLock(&client->lockClient) == 0) {
