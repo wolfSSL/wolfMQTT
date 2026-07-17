@@ -449,12 +449,18 @@ int mqttsimple_test(void)
         rc = MqttClient_WaitMessage_ex(&mClient, &mqttObj, MQTT_CMD_TIMEOUT_MS);
 
         if (rc == MQTT_CODE_ERROR_TIMEOUT) {
-            /* send keep-alive ping */
+        #ifdef WOLFMQTT_NO_TIME
+            /* Automatic keep-alive is compiled out, so send the ping here. */
             rc = MqttClient_Ping_ex(&mClient, &mqttObj.ping);
             if (rc != MQTT_CODE_SUCCESS) {
                 break;
             }
             PRINTF("MQTT Keep-Alive Ping");
+        #else
+            /* The core client sends keep-alive PINGREQ automatically, so an
+             * idle timeout just means no message arrived; keep waiting. */
+            rc = MQTT_CODE_SUCCESS;
+        #endif
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             break;

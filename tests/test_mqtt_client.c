@@ -2298,6 +2298,39 @@ TEST(wait_message_no_autoping_during_partial_payload)
     test_client.msg.publish.stat.read = MQTT_MSG_BEGIN;
 }
 
+#ifdef WOLFMQTT_MULTITHREAD
+TEST(wait_message_no_autoping_when_read_active)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_pingreq_writes = 0;
+    test_net.write = mock_net_write_count_ping;
+    test_net.read = mock_net_read_timeout;
+
+    /* Deadline is well past, but a read is flagged active - under
+     * WOLFMQTT_MULTITHREAD another thread would hold lockRecv and be advancing
+     * client->packet. The mid-transfer guard, evaluated under lockClient, must
+     * see read.isActive and suppress the ping (short-circuiting before it reads
+     * packet.stat). Exercises the MULTITHREAD-only branch of the guard. */
+    test_client.keep_alive_sec = 1;
+    test_client.last_tx_time = 0;
+    test_client.packet.stat = MQTT_PK_BEGIN; /* isActive alone must suppress */
+    test_client.read.isActive = 1;
+
+    rc = MqttClient_WaitMessage(&test_client, 0);
+
+    /* No auto-ping was injected while a read was active. */
+    ASSERT_EQ(0, g_pingreq_writes);
+    (void)rc;
+
+    /* Restore so the state machine is clean for later assertions. */
+    test_client.read.isActive = 0;
+}
+#endif /* WOLFMQTT_MULTITHREAD */
+
 TEST(wait_message_resumes_inflight_ping)
 {
     int rc;
@@ -2703,6 +2736,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(packet_write_skips_last_tx_time_when_keepalive_zero);
     RUN_TEST(wait_message_no_autoping_during_partial_read);
     RUN_TEST(wait_message_no_autoping_during_partial_payload);
+#ifdef WOLFMQTT_MULTITHREAD
+    RUN_TEST(wait_message_no_autoping_when_read_active);
+#endif
     RUN_TEST(wait_message_resumes_inflight_ping);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(wait_message_nonblock_returns_continue_for_deferred_ping);

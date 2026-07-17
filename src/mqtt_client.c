@@ -3138,6 +3138,7 @@ int MqttClient_PropsFree(MqttProp *head)
 static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
 {
     int rc = MQTT_CODE_SUCCESS;
+    int mid_transfer;
     word32 now, elapsed, threshold;
 
     if (client == NULL) {
@@ -3171,9 +3172,34 @@ static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
     /* Do not inject a ping while a message is mid-transfer: a partially read
      * fixed header (packet.stat), or a payload read still in progress on the
      * wait object (msg->read), which packet.stat alone does not catch once the
-     * header has been consumed but the read lock is still held. */
+     * header has been consumed but the read is not finished. Under
+     * WOLFMQTT_MULTITHREAD client->packet and client->read are protected by the
+     * read lock, so evaluate this under lockClient (which MqttReadStart and
+     * MqttReadStop also hold when they set read.isActive and reset
+     * packet.stat). read.isActive - an in-progress read holding lockRecv - is
+     * tested first, so packet.stat is only read when no read is active and thus
+     * cannot be concurrently advanced. If lockClient cannot be taken another
+     * thread is busy, so skip the ping this round. */
+    mid_transfer = 0;
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0) {
+        if (client->read.isActive ||
+                client->packet.stat != MQTT_PK_BEGIN ||
+                (msg != NULL && ((MqttMsgStat*)msg)->read != MQTT_MSG_BEGIN)) {
+            mid_transfer = 1;
+        }
+        wm_SemUnlock(&client->lockClient);
+    }
+    else {
+        mid_transfer = 1;
+    }
+#else
     if (client->packet.stat != MQTT_PK_BEGIN ||
             (msg != NULL && ((MqttMsgStat*)msg)->read != MQTT_MSG_BEGIN)) {
+        mid_transfer = 1;
+    }
+#endif
+    if (mid_transfer) {
         return MQTT_CODE_SUCCESS;
     }
 

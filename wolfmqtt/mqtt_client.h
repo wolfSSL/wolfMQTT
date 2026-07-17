@@ -280,7 +280,9 @@ typedef struct _MqttClient {
     MqttPing keep_alive_ping; /* dedicated object for auto keep-alive PINGREQ */
     word32   last_tx_time;    /* WOLFMQTT_GET_TIME_S() at last control-pkt TX */
     word16   keep_alive_sec;  /* negotiated keep-alive; 0 disables auto-ping */
-    byte     keep_alive_from_server; /* v5 Server Keep Alive applied (0 valid) */
+    /* v5 Server Keep Alive applied (0 is itself a valid keep-alive). Single-bit
+     * flag per the wolfSSL struct guidance for booleans. */
+    unsigned int keep_alive_from_server : 1;
 #endif
 } MqttClient;
 
