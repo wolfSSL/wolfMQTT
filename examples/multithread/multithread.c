@@ -79,7 +79,12 @@ static int mNumMsgsDone;
 #endif
 
 static wm_Sem mtLock; /* Protect "packetId" and "stop" */
+#ifdef WOLFMQTT_NO_TIME
+/* Only needed when the core auto keep-alive is compiled out; otherwise
+ * MqttClient_WaitMessage_ex schedules the PINGREQ and this dedicated ping
+ * thread would be a second keep-alive owner on the same connection. */
 static wm_Sem pingSignal;
+#endif
 
 static MQTTCtx gMqttCtx;
 
@@ -269,11 +274,13 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     if (rc != 0) {
         client_exit(mqttCtx);
     }
+#ifdef WOLFMQTT_NO_TIME
     rc = wm_SemInit(&pingSignal);
     if (rc != 0) {
         wm_SemFree(&mtLock);
         client_exit(mqttCtx);
     }
+#endif
 
     PRINTF("MQTT Client: QoS %d, Use TLS %d", mqttCtx->qos,
             mqttCtx->use_tls);
@@ -393,7 +400,9 @@ static int multithread_test_finish(MQTTCtx *mqttCtx)
 {
     client_disconnect(mqttCtx);
 
+#ifdef WOLFMQTT_NO_TIME
     wm_SemFree(&pingSignal);
+#endif
     wm_SemFree(&mtLock);
 
     PRINTF("MQTT Client Done: %d", mqttCtx->return_code);
@@ -518,6 +527,7 @@ static void *waitMessage_task(void *param)
     MQTTCtx *mqttCtx = (MQTTCtx*)param;
     word32 startSec;
     word32 cmd_timeout_ms = mqttCtx->cmd_timeout_ms;
+#ifdef WOLFMQTT_NO_TIME
     int    needsUnlock = 0;
 
     if (wm_SemLock(&pingSignal) != 0) { /* default to locked */
@@ -525,6 +535,7 @@ static void *waitMessage_task(void *param)
     }
 
     needsUnlock = 1;
+#endif
 
     /* Read Loop */
     PRINTF("MQTT Waiting for message...");
@@ -602,10 +613,16 @@ static void *waitMessage_task(void *param)
                 break;
             }
 
-            /* Keep Alive handled in ping thread */
-            /* Signal keep alive thread */
+        #ifdef WOLFMQTT_NO_TIME
+            /* Core auto keep-alive is compiled out: wake the dedicated ping
+             * thread to send the PINGREQ. */
             wm_SemUnlock(&pingSignal);
             needsUnlock = 0;
+        #else
+            /* Core auto keep-alive already scheduled the PINGREQ inside
+             * MqttClient_WaitMessage_ex; an idle timeout just means no message
+             * arrived, so keep waiting. */
+        #endif
         }
         else if (rc != MQTT_CODE_SUCCESS) {
             /* There was an error */
@@ -617,9 +634,11 @@ static void *waitMessage_task(void *param)
     } while (!mqtt_stop_get());
 
     mqttCtx->return_code = rc;
+#ifdef WOLFMQTT_NO_TIME
     if (needsUnlock) {
         wm_SemUnlock(&pingSignal); /* wake ping thread */
     }
+#endif
 
     THREAD_EXIT(0);
 }
@@ -681,6 +700,12 @@ static void *publish_task(void *param)
     THREAD_EXIT(0);
 }
 
+#ifdef WOLFMQTT_NO_TIME
+/* Dedicated keep-alive ping thread. Only compiled when the core auto
+ * keep-alive is disabled (WOLFMQTT_NO_TIME); otherwise
+ * MqttClient_WaitMessage_ex sends the PINGREQ and a second owner here would
+ * put redundant PINGREQs and PINGRESP waiters on the same connection. The
+ * reader thread signals this thread on an idle timeout. */
 #ifdef USE_WINDOWS_API
 static DWORD WINAPI ping_task( LPVOID param )
 #else
@@ -726,6 +751,7 @@ static void *ping_task(void *param)
 
     THREAD_EXIT(0);
 }
+#endif /* WOLFMQTT_NO_TIME */
 
 static int unsubscribe_do(MQTTCtx *mqttCtx)
 {
@@ -786,11 +812,13 @@ int multithread_test(MQTTCtx *mqttCtx)
             PRINTF("THREAD_CREATE failed: %d", errno);
             return -1;
         }
-        /* Ping */
+#ifdef WOLFMQTT_NO_TIME
+        /* Ping (only when core auto keep-alive is compiled out) */
         if (THREAD_CREATE(&threadList[threadCount++], ping_task, mqttCtx)) {
             PRINTF("THREAD_CREATE failed: %d", errno);
             return -1;
         }
+#endif
 
         /* Create threads that publish unique messages */
         for (i = 0; i < NUM_PUB_TASKS; i++) {

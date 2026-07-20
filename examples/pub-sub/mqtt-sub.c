@@ -520,6 +520,7 @@ int sub_client(MQTTCtx *mqttCtx)
         }
     #endif
         else if (rc == MQTT_CODE_ERROR_TIMEOUT) {
+        #ifdef WOLFMQTT_NO_TIME
             /* Keep Alive */
             if (mqttCtx->debug_on) {
                 PRINTF("Keep-alive timeout, sending ping");
@@ -530,6 +531,11 @@ int sub_client(MQTTCtx *mqttCtx)
                     MqttClient_ReturnCodeToString(rc), rc);
                 break;
             }
+        #else
+            /* The core client sends keep-alive PINGREQ automatically, so an
+             * idle timeout just means no message arrived. */
+            rc = MQTT_CODE_SUCCESS;
+        #endif
         }
     #ifdef WOLFMQTT_NONBLOCK
         else if (rc == MQTT_CODE_CONTINUE) {
