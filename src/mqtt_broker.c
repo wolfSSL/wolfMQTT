@@ -2976,6 +2976,29 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
 #endif
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Confirm a fan-out loop's snapshotted successor is still linked in
+ * broker->subs. A peer-initiated WS LWS_CALLBACK_CLOSED delivered during a
+ * fan-out write runs BrokerSubs_RemoveClient, which frees every BrokerSub
+ * owned by the closing subscriber - and that can include the node a loop saved
+ * as next_sub. The pending_remove deferral keeps the BrokerClient struct alive
+ * across the spin, but the sub nodes are freed regardless, so snapshotting
+ * next_sub guards only against sub->next moving, not against next_sub itself
+ * being freed. Re-check it before the next dereference, mirroring the
+ * client-list revalidation in MqttBroker_Step. */
+static int BrokerSubs_StillLinked(MqttBroker* broker, const BrokerSub* node)
+{
+    BrokerSub* cur = broker->subs;
+    while (cur != NULL) {
+        if (cur == node) {
+            return 1;
+        }
+        cur = cur->next;
+    }
+    return 0;
+}
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* Packet ID generation                                                        */
 /* -------------------------------------------------------------------------- */
@@ -4108,6 +4131,11 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             }
         }
 #ifndef WOLFMQTT_STATIC_MEMORY
+        /* The write above can drive a re-entrant WS close that frees next_sub;
+         * stop the walk if it is gone. */
+        if (next_sub != NULL && !BrokerSubs_StillLinked(broker, next_sub)) {
+            break;
+        }
         sub = next_sub;
 #endif
     }
@@ -5599,6 +5627,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             pub.total_len, eff_qos, 0);
                     }
                 }
+            }
+            /* The fan-out write above can drive a re-entrant WS close that
+             * frees next_sub; stop the walk if it is gone. */
+            if (next_sub != NULL && !BrokerSubs_StillLinked(broker, next_sub)) {
+                break;
             }
             sub = next_sub;
 #endif
