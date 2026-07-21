@@ -74,6 +74,30 @@ test: check
 
 DISTCLEANFILES+= wolfmqtt-config
 
+# SBOM generation (CRA compliance).  The recipe is shared across the wolfSSL
+# stack's autotools products in scripts/sbom.am; wolfMQTT just declares what it
+# is (a libwolfmqtt library that links wolfSSL for TLS) and includes it.
+# WOLFSSL_DIR must point to a wolfssl source tree containing scripts/gen-sbom.
+SBOM_PKGNAME      = wolfmqtt
+SBOM_LICENSE_FILE = $(srcdir)/LICENSE
+SBOM_DEP_WOLFSSL  = yes
+
+# wolfMQTT records its feature macros in its own generated options header (it
+# uses no AC_DEFINE / config.h defines), so point gen-sbom at that header rather
+# than at the compiler-derived defaults.
+SBOM_OPTIONS_H    = $(abs_builddir)/wolfmqtt/options.h
+
+# wolfMQTT is GPLv3-or-later (per the per-file source headers: "either version 3
+# of the License, or (at your option) any later version") or commercial.  Pin
+# the header-accurate SPDX id here so the SBOM is correct regardless of the
+# gen-sbom version's licence detection; commercial licensees can override it
+# (e.g. LicenseRef-wolfSSL-Commercial).
+SBOM_LICENSE_OVERRIDE ?= GPL-3.0-or-later
+
+EXTRA_DIST += scripts/sbom.am
+
+include scripts/sbom.am
+
 clean-local:
 	-rm -rf tests/fuzz/corpus
 	@if test "$(abs_srcdir)" != "$(abs_builddir)"; then \

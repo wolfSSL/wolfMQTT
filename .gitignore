@@ -132,3 +132,14 @@ tests/test_broker_connect
 tests/test_mqtt_sn
 tests/test_mqtt_sn_client
 tests/unit_tests
+
+# AI tool local files
+CLAUDE.md
+.claude/
+.beads/
+.cursorrules
+.cursor/
+.aider*
+.copilot/
+.continue/
+.windsurf/
