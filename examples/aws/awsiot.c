@@ -822,8 +822,9 @@ int awsiot_test(MQTTCtx *mqttCtx)
                     }
                 #else
                     /* The core client sends keep-alive PINGREQ automatically, so
-                     * an idle timeout just means no message arrived. */
-                    rc = MQTT_CODE_SUCCESS;
+                     * an idle timeout just means no message arrived; keep
+                     * waiting. */
+                    continue;
                 #endif
                 }
                 else if (rc != MQTT_CODE_SUCCESS) {

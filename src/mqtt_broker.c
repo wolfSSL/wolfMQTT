@@ -3881,6 +3881,10 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
                 (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+                /* Scrub the retained (possibly retained-will) payload from the
+                 * subscriber tx_buf, mirroring the will fan-out mitigation, so
+                 * a sensitive payload does not linger until the next write. */
+                BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
             }
         }
     }
@@ -3950,6 +3954,10 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
                 (void)MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+                /* Scrub the retained (possibly retained-will) payload from the
+                 * subscriber tx_buf, mirroring the will fan-out mitigation, so
+                 * a sensitive payload does not linger until the next write. */
+                BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
             }
         }
         rm_prev = rm;
