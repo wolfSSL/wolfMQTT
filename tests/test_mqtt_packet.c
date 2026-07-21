@@ -558,7 +558,7 @@ TEST(encode_publish_valid_utf8_topic_accepted)
 {
     byte buf[64];
     MqttPublish pub;
-    /* "caf" + U+00E9 (C3 A9) - well-formed 2-byte sequence. */
+    /* ASCII prefix followed by U+00E9 (C3 A9), a well-formed 2-byte sequence. */
     char topic[] = { 'c', 'a', 'f', (char)0xC3, (char)0xA9, '\0' };
     int rc;
 
