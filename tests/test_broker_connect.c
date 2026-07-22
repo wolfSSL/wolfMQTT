@@ -62,6 +62,7 @@ typedef struct MockClient {
     size_t out_len;
     int    closed;
     int    read_err; /* when set, mock_read returns a network error (peer RST) */
+    int    write_err; /* when set, mock_write returns a network error */
 } MockClient;
 
 static MockClient g_clients[MOCK_MAX_CLIENTS];
@@ -150,8 +151,14 @@ static int mock_write(void* ctx, BROKER_SOCKET_T sock,
     if (mc->out_len + (size_t)buf_len > sizeof(mc->out_buf)) {
         return MQTT_CODE_ERROR_NETWORK;
     }
+    /* Capture the bytes handed to the socket even when simulating a failure,
+     * so a test can positively assert what the broker produced (i.e. that a
+     * scrub target was actually written) before checking it was scrubbed. */
     XMEMCPY(mc->out_buf + mc->out_len, buf, (size_t)buf_len);
     mc->out_len += (size_t)buf_len;
+    if (mc->write_err) {
+        return MQTT_CODE_ERROR_NETWORK; /* simulate a hard write failure */
+    }
     return buf_len;
 }
 
@@ -2261,6 +2268,161 @@ TEST(broker_publish_before_connect_closes)
     MqttBroker_Free(&broker);
 }
 
+#if !defined(WOLFMQTT_STATIC_MEMORY) && \
+    (defined(WOLFMQTT_BROKER_RETAINED) || defined(WOLFMQTT_BROKER_WILL))
+/* Return 1 if the byte sequence `needle` (nlen bytes) occurs within the first
+ * hlen bytes of `hay`, else 0. Used to prove a delivered payload was scrubbed
+ * from a broker-side tx_buf. */
+static int scrub_region_contains(const byte* hay, int hlen,
+    const char* needle, int nlen)
+{
+    int i;
+    if (hay == NULL || nlen <= 0 || hlen < nlen) {
+        return 0;
+    }
+    for (i = 0; i + nlen <= hlen; i++) {
+        if (XMEMCMP(hay + i, needle, (size_t)nlen) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
+#if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* f-6950: after a retained message is delivered on a completed write, the
+ * plaintext payload must not linger in the subscriber's broker-side tx_buf.
+ * Deliver a distinctive retained payload, let the mock write complete, and
+ * assert the payload reached the wire but was scrubbed from tx_buf. Deleting
+ * the BROKER_FORCE_ZERO would leave the payload resident and trip this. */
+TEST(broker_retained_scrub_after_completed_write)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    int i;
+    /* v3.1.1 CONNECT, ClientId "P" / "S", clean_session=1. */
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'S'
+    };
+    /* Retained PUBLISH: topic "r/q", payload "RETAINSECRET" (QoS 0, retain). */
+    static const byte publish[] = {
+        0x31, 0x11, 0x00, 0x03, 'r', '/', 'q',
+        'R', 'E', 'T', 'A', 'I', 'N', 'S', 'E', 'C', 'R', 'E', 'T'
+    };
+    /* SUBSCRIBE to "r/q" at QoS 0. */
+    static const byte subscribe[] = {
+        0x82, 0x08, 0x00, 0x01, 0x00, 0x03, 'r', '/', 'q', 0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    /* Publisher stores the retained message before the subscriber attaches. */
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish, sizeof(publish));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe, sizeof(subscribe));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The retained PUBLISH reached the subscriber's wire... */
+    ASSERT_EQ(1, scrub_region_contains(g_clients[1].out_buf,
+        (int)g_clients[1].out_len, "RETAINSECRET", 12));
+    /* ...but the plaintext was scrubbed from the broker-side tx_buf. */
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    ASSERT_EQ(0, scrub_region_contains(sub_bc->tx_buf, sub_bc->tx_buf_len,
+        "RETAINSECRET", 12));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
+
+#if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* f-6950 / F-4524: the immediate-will fan-out must scrub the subscriber tx_buf
+ * even when the delivery write fails hard (only the in-progress
+ * MQTT_CODE_CONTINUE case is skipped). Connect and subscribe first (writes
+ * succeed), then force the subscriber's writes to fail and trigger the
+ * publisher's abnormal disconnect so the will fan-out write returns a network
+ * error. With the error-path scrub the will plaintext is gone from tx_buf;
+ * without it (a scrub gated only on wr == enc_rc) it would linger. */
+TEST(broker_will_scrub_after_failed_write)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    int i;
+    /* Subscriber v3.1.1 CONNECT "S" (clean) then SUBSCRIBE to "lwt". */
+    static const byte sub_connect[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08, 0x00, 0x01, 0x00, 0x03, 'l', 'w', 't', 0x00
+    };
+    /* Publisher v3.1.1 CONNECT "P" with LWT: flags 0x06 (will | clean),
+     * will_topic "lwt", will_payload "WILLSECRET" (10 bytes). */
+    static const byte pub_connect[] = {
+        0x10, 0x1E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C, 0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x0A, 'W', 'I', 'L', 'L', 'S', 'E', 'C', 'R', 'E', 'T'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    /* Establish both clients; the will has not fired yet. */
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+
+    /* Force the subscriber's writes to fail, then drop the publisher's socket
+     * so its will fans out to the subscriber over the failing write. */
+    g_clients[0].write_err = 1;
+    g_clients[1].read_err = 1;
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Positive control: the will was encoded and handed to the (failing) write,
+     * so the scrub path genuinely had plaintext to remove. Without this the
+     * scrub assertion below could pass vacuously if the will never reached the
+     * subscriber's tx_buf (e.g. a topic-match or fan-out regression). */
+    ASSERT_EQ(1, scrub_region_contains(g_clients[0].out_buf,
+        (int)g_clients[0].out_len, "WILLSECRET", 10));
+
+    /* The will fan-out does not tear the subscriber down on a failed write, so
+     * it is still present - and its tx_buf must not retain the will plaintext. */
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    ASSERT_EQ(0, scrub_region_contains(sub_bc->tx_buf, sub_bc->tx_buf_len,
+        "WILLSECRET", 10));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_WILL && !WOLFMQTT_STATIC_MEMORY */
+
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
 /* The dynamic retained-message list must be bounded. A client that
  * publishes RETAIN=1 to more than BROKER_MAX_RETAINED distinct topics must not
@@ -3366,11 +3528,15 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
+#if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(broker_will_scrub_after_failed_write);
+#endif
     RUN_TEST(broker_unhandled_packet_type_closes);
     RUN_TEST(broker_publish_before_connect_closes);
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_retained_list_capped);
     RUN_TEST(broker_retained_clock_rollback_not_expired);
+    RUN_TEST(broker_retained_scrub_after_completed_write);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_per_client_subscription_cap);

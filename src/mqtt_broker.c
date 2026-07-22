@@ -3859,7 +3859,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         if (BrokerTopicMatch(filter, rm->topic)) {
             MqttPublish out_pub;
             MqttQoS eff_qos = (rm->qos < sub_qos) ? rm->qos : sub_qos;
-            int enc_rc;
+            int enc_rc, wr_rc;
             XMEMSET(&out_pub, 0, sizeof(out_pub));
             out_pub.topic_name = rm->topic;
             out_pub.qos = eff_qos;
@@ -3880,13 +3880,15 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     "len=%u qos=%d", (int)bc->sock,
                     BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
-                /* Only scrub after a fully completed write: MqttPacket_Write
-                 * returns the encoded length on success, but in non-blocking /
-                 * TLS-async mode it can return MQTT_CODE_CONTINUE with the send
-                 * still referencing bc->tx_buf - zeroing then would corrupt the
-                 * in-progress write. Residue from a partial/failed write is
-                 * cleared by the next full write or by BrokerClient_Free. */
-                if (MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc) == enc_rc) {
+                wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+                /* Scrub after a completed write and after a hard failure - both
+                 * leave bc->tx_buf idle. Skip only the in-progress case: in
+                 * non-blocking / TLS-async mode MqttPacket_Write returns
+                 * MQTT_CODE_CONTINUE with the send still referencing bc->tx_buf,
+                 * so zeroing then would corrupt it (that residue is cleared by
+                 * the next full write or by BrokerClient_Free). */
+                if (wr_rc == enc_rc ||
+                        (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
                     /* Scrub the retained (possibly retained-will) payload from
                      * the subscriber tx_buf, mirroring the will fan-out. */
                     BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
@@ -3938,7 +3940,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
         if (rm->topic != NULL && BrokerTopicMatch(filter, rm->topic)) {
             MqttPublish out_pub;
             MqttQoS eff_qos = (rm->qos < sub_qos) ? rm->qos : sub_qos;
-            int enc_rc;
+            int enc_rc, wr_rc;
             XMEMSET(&out_pub, 0, sizeof(out_pub));
             out_pub.topic_name = rm->topic;
             out_pub.qos = eff_qos;
@@ -3959,13 +3961,15 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                     "len=%u qos=%d", (int)bc->sock,
                     BrokerLog_Sanitize(rm->topic),
                     (unsigned)rm->payload_len, (int)eff_qos);
-                /* Only scrub after a fully completed write: MqttPacket_Write
-                 * returns the encoded length on success, but in non-blocking /
-                 * TLS-async mode it can return MQTT_CODE_CONTINUE with the send
-                 * still referencing bc->tx_buf - zeroing then would corrupt the
-                 * in-progress write. Residue from a partial/failed write is
-                 * cleared by the next full write or by BrokerClient_Free. */
-                if (MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc) == enc_rc) {
+                wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+                /* Scrub after a completed write and after a hard failure - both
+                 * leave bc->tx_buf idle. Skip only the in-progress case: in
+                 * non-blocking / TLS-async mode MqttPacket_Write returns
+                 * MQTT_CODE_CONTINUE with the send still referencing bc->tx_buf,
+                 * so zeroing then would corrupt it (that residue is cleared by
+                 * the next full write or by BrokerClient_Free). */
+                if (wr_rc == enc_rc ||
+                        (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
                     /* Scrub the retained (possibly retained-will) payload from
                      * the subscriber tx_buf, mirroring the will fan-out. */
                     BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
@@ -4104,7 +4108,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             BrokerTopicMatch(sub->filter, topic)) {
             MqttPublish out_pub;
             MqttQoS eff_qos;
-            int enc_rc;
+            int enc_rc, wr_rc;
             XMEMSET(&out_pub, 0, sizeof(out_pub));
             out_pub.topic_name = (char*)topic;
             eff_qos = (qos < sub->qos) ? qos : sub->qos;
@@ -4122,11 +4126,16 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             enc_rc = MqttEncode_Publish(sub->client->tx_buf,
                 BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
             if (enc_rc > 0) {
-                /* Only scrub after a fully completed write; a non-blocking /
-                 * TLS-async MQTT_CODE_CONTINUE leaves the send referencing
-                 * tx_buf, so zeroing then would corrupt the in-progress write. */
-                if (MqttPacket_Write(&sub->client->client,
-                        sub->client->tx_buf, enc_rc) == enc_rc) {
+                wr_rc = MqttPacket_Write(&sub->client->client,
+                        sub->client->tx_buf, enc_rc);
+                /* Scrub after a completed write and after a hard failure - both
+                 * leave tx_buf idle. Skip only the in-progress case: in
+                 * non-blocking / TLS-async mode MqttPacket_Write returns
+                 * MQTT_CODE_CONTINUE with the send still referencing tx_buf, so
+                 * zeroing then would corrupt it. Scrubbing on the error path
+                 * preserves the F-4524 immediate-will scrub guarantee. */
+                if (wr_rc == enc_rc ||
+                        (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
                     BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);
                 }
             }

@@ -533,42 +533,6 @@ TEST(decode_string_utf8_invalid_FE_FF)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
-/* [MQTT-1.5.3-1] The encoders must reject ill-formed UTF-8 before emitting,
- * symmetric with MqttDecode_String, so a caller gets a clean local error
- * instead of a peer-side disconnect. Exercised through the public
- * MqttEncode_Publish Topic Name path (client_id, Will Topic, username, and
- * topic filters share the same MqttEncode_Utf8Ok check). */
-TEST(encode_publish_invalid_utf8_topic_rejected)
-{
-    byte buf[64];
-    MqttPublish pub;
-    /* Topic Name with a lone continuation byte 0x80 - ill-formed UTF-8, but
-     * free of wildcards so it passes MqttPacket_TopicNameValid. */
-    char topic[] = { 'a', (char)0x80, 'b', '\0' };
-    int rc;
-
-    XMEMSET(&pub, 0, sizeof(pub));
-    pub.topic_name = topic;
-    pub.qos = MQTT_QOS_0;
-    rc = MqttEncode_Publish(buf, (int)sizeof(buf), &pub, 0);
-    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
-}
-
-TEST(encode_publish_valid_utf8_topic_accepted)
-{
-    byte buf[64];
-    MqttPublish pub;
-    /* ASCII prefix followed by U+00E9 (C3 A9), a well-formed 2-byte sequence. */
-    char topic[] = { 'c', 'a', 'f', (char)0xC3, (char)0xA9, '\0' };
-    int rc;
-
-    XMEMSET(&pub, 0, sizeof(pub));
-    pub.topic_name = topic;
-    pub.qos = MQTT_QOS_0;
-    rc = MqttEncode_Publish(buf, (int)sizeof(buf), &pub, 0);
-    ASSERT_TRUE(rc > 0);
-}
-
 TEST(decode_connect_invalid_utf8_clientid_overlong)
 {
     /* CONNECT v3.1.1 with ClientId bytes 0xC0 0xAF (overlong). Reporter's
@@ -791,6 +755,43 @@ TEST(encode_publish_qos0_packet_id_zero_ok)
     pub.qos = MQTT_QOS_0;
     pub.packet_id = 0;
     rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+}
+
+/* [MQTT-1.5.3-1] The encoders must reject ill-formed UTF-8 before emitting,
+ * symmetric with MqttDecode_String, so a caller gets a clean local error
+ * instead of a peer-side disconnect. Exercised through the public
+ * MqttEncode_Publish Topic Name path (client_id, Will Topic, username, and
+ * topic filters share the same MqttEncode_Utf8Ok check). Kept outside the
+ * broker test guard so non-broker builds also cover the encoder change. */
+TEST(encode_publish_invalid_utf8_topic_rejected)
+{
+    byte buf[64];
+    MqttPublish pub;
+    /* Topic Name with a lone continuation byte 0x80 - ill-formed UTF-8, but
+     * free of wildcards so it passes MqttPacket_TopicNameValid. */
+    char topic[] = { 'a', (char)0x80, 'b', '\0' };
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = topic;
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(buf, (int)sizeof(buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_publish_valid_utf8_topic_accepted)
+{
+    byte buf[64];
+    MqttPublish pub;
+    /* ASCII prefix followed by U+00E9 (C3 A9), a well-formed 2-byte sequence. */
+    char topic[] = { 'c', 'a', 'f', (char)0xC3, (char)0xA9, '\0' };
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = topic;
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(buf, (int)sizeof(buf), &pub, 0);
     ASSERT_TRUE(rc > 0);
 }
 
@@ -5294,8 +5295,6 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_string_utf8_invalid_truncated_2byte);
     RUN_TEST(decode_string_utf8_invalid_truncated_4byte);
     RUN_TEST(decode_string_utf8_invalid_FE_FF);
-    RUN_TEST(encode_publish_invalid_utf8_topic_rejected);
-    RUN_TEST(encode_publish_valid_utf8_topic_accepted);
     RUN_TEST(decode_connect_invalid_utf8_clientid_overlong);
     RUN_TEST(decode_connect_clientid_contains_u0000_rejected);
     RUN_TEST(decode_connect_invalid_utf8_clientid_surrogate);
@@ -5306,6 +5305,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_invalid_utf8_topic);
 
     /* MqttEncode_Publish */
+    RUN_TEST(encode_publish_invalid_utf8_topic_rejected);
+    RUN_TEST(encode_publish_valid_utf8_topic_accepted);
     RUN_TEST(encode_publish_qos1_packet_id_zero);
     RUN_TEST(encode_publish_qos2_packet_id_zero);
     RUN_TEST(encode_publish_qos0_packet_id_zero_ok);
