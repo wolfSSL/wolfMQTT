@@ -4133,7 +4133,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
                  * non-blocking / TLS-async mode MqttPacket_Write returns
                  * MQTT_CODE_CONTINUE with the send still referencing tx_buf, so
                  * zeroing then would corrupt it. Scrubbing on the error path
-                 * preserves the F-4524 immediate-will scrub guarantee. */
+                 * keeps the will payload from lingering after a failed send. */
                 if (wr_rc == enc_rc ||
                         (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
                     BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);

@@ -2290,11 +2290,8 @@ static int scrub_region_contains(const byte* hay, int hlen,
 #endif
 
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
-/* f-6950: after a retained message is delivered on a completed write, the
- * plaintext payload must not linger in the subscriber's broker-side tx_buf.
- * Deliver a distinctive retained payload, let the mock write complete, and
- * assert the payload reached the wire but was scrubbed from tx_buf. Deleting
- * the BROKER_FORCE_ZERO would leave the payload resident and trip this. */
+/* After a completed retained delivery the payload must be scrubbed from the
+ * subscriber's tx_buf: assert it reached the wire but not tx_buf. */
 TEST(broker_retained_scrub_after_completed_write)
 {
     MqttBroker broker;
@@ -2350,13 +2347,10 @@ TEST(broker_retained_scrub_after_completed_write)
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
 
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
-/* f-6950 / F-4524: the immediate-will fan-out must scrub the subscriber tx_buf
- * even when the delivery write fails hard (only the in-progress
- * MQTT_CODE_CONTINUE case is skipped). Connect and subscribe first (writes
- * succeed), then force the subscriber's writes to fail and trigger the
- * publisher's abnormal disconnect so the will fan-out write returns a network
- * error. With the error-path scrub the will plaintext is gone from tx_buf;
- * without it (a scrub gated only on wr == enc_rc) it would linger. */
+/* The immediate-will fan-out must scrub the subscriber tx_buf even when the
+ * delivery write fails hard (only an in-progress MQTT_CODE_CONTINUE is
+ * skipped). Force the subscriber's write to fail during the will fan-out and
+ * assert the will plaintext is gone from tx_buf. */
 TEST(broker_will_scrub_after_failed_write)
 {
     MqttBroker broker;
