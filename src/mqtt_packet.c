@@ -629,6 +629,17 @@ static int Utf8WellFormed(const byte* s, word16 len)
     }
     return 1;
 }
+
+/* [MQTT-1.5.3-1] Returns 1 if an MQTT UTF-8 string field is well-formed
+ * (RFC 3629) and therefore safe for the encoder to emit, 0 otherwise. Empty
+ * strings are well-formed. Encoders call this in their length-computation pass
+ * so ill-formed input is rejected with a clean local error before any bytes
+ * are written, symmetric with MqttDecode_String on the receive side. */
+static int MqttEncode_Utf8Ok(const char* str, size_t len)
+{
+    return (len == 0) ||
+           ((str != NULL) && Utf8WellFormed((const byte*)str, (word16)len));
+}
 #endif /* !WOLFMQTT_NO_UTF8_VALIDATION */
 
 /* Returns pointer to string (which is not guaranteed to be null terminated).
@@ -682,7 +693,11 @@ int MqttEncode_String(byte *buf, const char *str)
     int str_len = (int)XSTRLEN(str);
     int len;
 
-    /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3] */
+    /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3]. Callers
+     * validate UTF-8 well-formedness in their length-computation pass (where
+     * the error propagates), mirroring the wildcard/length checks; the
+     * CONNECT Password is Binary Data [MQTT-3.1.3.5] and uses MqttEncode_Data
+     * so it is deliberately excluded from that check. */
     if (str_len > (int)0xFFFF) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
@@ -798,6 +813,15 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
                             MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
+            #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+                /* [MQTT-1.5.3-1] The property value is an MQTT UTF-8 string;
+                 * reject ill-formed UTF-8 before emitting so it round-trips
+                 * through MqttDecode_Props. */
+                if (!MqttEncode_Utf8Ok(cur_prop->data_str.str,
+                        cur_prop->data_str.len)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+            #endif
                 tmp = MqttEncode_Data(buf,
                         (const byte*)cur_prop->data_str.str,
                         cur_prop->data_str.len);
@@ -839,6 +863,16 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             {
                 /* String is prefixed with a Two Byte Integer length field that
                    gives the number of bytes */
+            #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+                /* [MQTT-1.5.3-1] Both the name and value of a User Property are
+                 * MQTT UTF-8 strings; reject ill-formed UTF-8 before emitting. */
+                if (!MqttEncode_Utf8Ok(cur_prop->data_str.str,
+                        cur_prop->data_str.len) ||
+                    !MqttEncode_Utf8Ok(cur_prop->data_str2.str,
+                        cur_prop->data_str2.len)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+            #endif
                 tmp = MqttEncode_Data(buf,
                         (const byte*)cur_prop->data_str.str,
                         cur_prop->data_str.len);
@@ -1261,6 +1295,12 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+    #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+        /* [MQTT-1.5.3-1] Client Identifier is an MQTT UTF-8 string. */
+        if (!MqttEncode_Utf8Ok(mc_connect->client_id, str_len)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    #endif
         remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
     }
     if (mc_connect->enable_lwt) {
@@ -1282,6 +1322,12 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
                 (word16)str_len, mc_connect->protocol_level)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
+    #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+        /* [MQTT-1.5.3-1] Will Topic is an MQTT UTF-8 string. */
+        if (!MqttEncode_Utf8Ok(mc_connect->lwt_msg->topic_name, str_len)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    #endif
         if (mc_connect->lwt_msg->qos > MQTT_QOS_2) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
@@ -1319,6 +1365,12 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+    #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+        /* [MQTT-1.5.3-1] User Name is an MQTT UTF-8 string. */
+        if (!MqttEncode_Utf8Ok(mc_connect->username, str_len)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    #endif
         remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
     }
     if (mc_connect->password) {
@@ -1420,7 +1472,14 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         tx_payload += MqttEncode_String(tx_payload, mc_connect->username);
     }
     if (mc_connect->password) {
-        tx_payload += MqttEncode_String(tx_payload, mc_connect->password);
+        /* [MQTT-3.1.3.5] The Password is Binary Data, not a UTF-8 string, so
+         * encode it as binary (byte-identical wire format) instead of via
+         * MqttEncode_String. This keeps it out of encode-side UTF-8 validation
+         * and matches the decode path, which reads it as raw bytes. The length
+         * bound was already enforced above. */
+        tx_payload += MqttEncode_Data(tx_payload,
+            (const byte*)mc_connect->password,
+            (word16)XSTRLEN(mc_connect->password));
     }
     (void)tx_payload;
 
@@ -1966,6 +2025,12 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
                                        (word16)str_len, level)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
+    #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+        /* [MQTT-1.5.3-1] PUBLISH Topic Name is an MQTT UTF-8 string. */
+        if (!MqttEncode_Utf8Ok(publish->topic_name, str_len)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    #endif
     #ifdef WOLFMQTT_V5
         /* [MQTT-3.3.2-8] An empty v5 Topic Name requires a Topic Alias so the
          * decoder (and any conformant broker) can resolve the topic. */
@@ -2513,6 +2578,12 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
                     (word16)str_len)) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
+        #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+            /* [MQTT-1.5.3-1] Topic Filter is an MQTT UTF-8 string. */
+            if (!MqttEncode_Utf8Ok(topic->topic_filter, str_len)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+        #endif
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
             remain_len++; /* For QoS */
         }
@@ -2933,6 +3004,12 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
                     (word16)str_len)) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
+        #ifndef WOLFMQTT_NO_UTF8_VALIDATION
+            /* [MQTT-1.5.3-1] Topic Filter is an MQTT UTF-8 string. */
+            if (!MqttEncode_Utf8Ok(topic->topic_filter, str_len)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+        #endif
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
         }
         else {
@@ -3623,6 +3700,14 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     else
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
 
+    /* [MQTT-3.15.2.2] A Success AUTH with no Properties is encoded with a
+     * Remaining Length of 0 (the Reason Code and Property Length are omitted).
+     * Emit that canonical short form so MqttDecode_Auth round-trips it instead
+     * of rejecting the 2-byte body as malformed. */
+    if ((auth->reason_code == MQTT_REASON_SUCCESS) && (props_len == 0)) {
+        remain_len = 0;
+    }
+
     /* Encode fixed header */
     header_len = MqttEncode_FixedHeader(tx_buf, tx_buf_len, remain_len,
                   MQTT_PACKET_TYPE_AUTH, 0, 0, 0);
@@ -3636,8 +3721,13 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header. [MQTT-3.15.2.1] Success (0x00) is valid too and
-     * is accepted by MqttDecode_Auth, so encode it to keep the roundtrip. */
-    if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
+     * is accepted by MqttDecode_Auth, so encode it to keep the roundtrip. A
+     * Success AUTH with no Properties uses the Remaining Length 0 short form
+     * (selected above) and has no variable header to emit. */
+    if (remain_len == 0) {
+        /* Success short form: nothing further to encode. */
+    }
+    else if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
         (auth->reason_code == MQTT_REASON_CONT_AUTH) ||
         (auth->reason_code == MQTT_REASON_REAUTH)) {
 
@@ -4065,8 +4155,14 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     /* reset state */
     client->packet.stat = MQTT_PK_BEGIN;
 
-    /* Return read length */
-    return client->packet.header_len + remain_read;
+    /* Return read length. header_len and remain_read are each bounded by
+     * rx_buf_len above, so their sum cannot exceed it; clamp to keep the
+     * returned length provably in range for static analysis. */
+    rc = client->packet.header_len + remain_read;
+    if (rc > rx_buf_len) {
+        rc = rx_buf_len;
+    }
+    return rc;
 }
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS

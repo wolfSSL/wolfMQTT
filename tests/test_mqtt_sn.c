@@ -385,7 +385,7 @@ TEST(sn_gwinfo_ind_form_total_len_equals_consumed_rejected)
 
 TEST(sn_gwinfo_ind_form_poc_4byte_datagram_rejected)
 {
-    /* Exact attacker PoC from f-3632: a 4-byte IND-form GWINFO datagram.
+    /* Exact attacker PoC: a 4-byte IND-form GWINFO datagram.
      * IND header consumes 3 bytes; total_len=4 leaves room for only one of
      * the two remaining reads (type + gwId), so the gwId read (and the old
      * "total_len - 3" address copy) would walk past this 4-byte buffer.

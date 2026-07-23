@@ -963,7 +963,7 @@ TEST(publish_null_publish)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
-/* f-6805 streaming-publish chunk regression. The payload is larger than the
+/* Streaming-publish chunk regression. The payload is larger than the
  * client tx buffer and its length is not a multiple of it, so the callback loop
  * must send a short final chunk. The backing buffer holds the valid payload
  * followed by a guard region; the guard bytes must never reach the wire. */
@@ -1016,7 +1016,7 @@ static int pub_stream_cb(MqttPublish* publish)
     return PUB_STREAM_VALID_LEN;
 }
 
-/* f-6805: the streaming-publish callback loop must copy only the bytes that
+/* The streaming-publish callback loop must copy only the bytes that
  * remain on the final chunk. Before the fix the last copy reused the clamped
  * tx_buf_len and read past publish->buffer, leaking adjacent memory onto the
  * wire and over-sending the payload. Drive a 300-byte payload through a 256-byte
@@ -1061,7 +1061,7 @@ TEST(publish_stream_cb_final_chunk_no_overrun)
     ASSERT_TRUE(pub_stream_wire_len <= PUB_STREAM_VALID_LEN + 16);
 }
 
-/* f-6805 multi-fill coverage: when total_len > buffer_len the callback is
+/* Multi-fill coverage: when total_len > buffer_len the callback is
  * invoked repeatedly, so the outer loop must advance buffer_pos by each fill and
  * recompute intBuf_cb_len per fill. Drive a 700-byte payload through a 300-byte
  * callback buffer and 256-byte tx buffer; assert the whole payload is
@@ -1127,7 +1127,7 @@ static int mock_net_write_resume(void *context, const byte* buf, int buf_len,
     return n;
 }
 
-/* f-6805 non-blocking resume: when the transport partially accepts a chunk the
+/* Non-blocking resume: when the transport partially accepts a chunk the
  * streaming publish re-enters mid-fill. The callback fill length must survive
  * that re-entry (via publish->intBuf_cb_len); otherwise the resumed loop drops
  * the payload tail and re-sends the head, over-sending and desyncing framing.
