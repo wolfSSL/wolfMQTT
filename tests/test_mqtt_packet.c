@@ -969,7 +969,7 @@ TEST(encode_publish_qos2_with_dup_accepted)
     ASSERT_EQ(0xC, (int)MQTT_PACKET_FLAGS_GET(tx_buf[0]));
 }
 
-/* f-2360: topic_name with strlen > 65535 must not produce a "successful"
+/* A topic_name with strlen > 65535 must not produce a "successful"
  * encode. MqttEncode_String returns -1 for oversize strings; the encoder
  * must surface that as a negative return rather than adding -1 to the
  * tx_payload pointer and reporting header_len+remain_len as success. */
@@ -1993,7 +1993,7 @@ TEST(encode_subscribe_v5_reserved_sub_options_bit_rejected)
 }
 #endif /* WOLFMQTT_V5 */
 
-/* f-2360: topic_filter with strlen > 65535 must be rejected with a negative
+/* A topic_filter with strlen > 65535 must be rejected with a negative
  * return. Guards the unchecked tx_payload += MqttEncode_String(...) in the
  * SUBSCRIBE payload loop. */
 TEST(encode_subscribe_topic_filter_oversized_rejected)
@@ -2552,7 +2552,7 @@ TEST(encode_connect_flags_lwt_qos1_retain)
     ASSERT_EQ(0, flags & MQTT_CONNECT_FLAG_CLEAN_SESSION);
 }
 
-/* f-2360: client_id with strlen > 65535 must be rejected with a negative
+/* A client_id with strlen > 65535 must be rejected with a negative
  * return. MqttEncode_String returns -1 for such strings; the encoder must
  * not report header_len+remain_len as a successful encode while tx_payload
  * silently moves backward by one byte. */
@@ -2582,7 +2582,7 @@ TEST(encode_connect_client_id_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
-/* f-2360: username with strlen > 65535. Password is supplied so the
+/* A username with strlen > 65535. Password is supplied so the
  * USERNAME+PASSWORD branch exercises both credential encodes. */
 TEST(encode_connect_username_oversized_rejected)
 {
@@ -2612,7 +2612,7 @@ TEST(encode_connect_username_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
-/* f-2360: password with strlen > 65535. */
+/* A password with strlen > 65535. */
 TEST(encode_connect_password_oversized_rejected)
 {
     const int str_len = 0x10000;
@@ -2641,7 +2641,7 @@ TEST(encode_connect_password_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
-/* f-2360: LWT topic_name with strlen > 65535. */
+/* An LWT topic_name with strlen > 65535. */
 TEST(encode_connect_lwt_topic_oversized_rejected)
 {
     const int str_len = 0x10000;
