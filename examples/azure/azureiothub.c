@@ -531,7 +531,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                     if (mqttCtx->test_mode) {
                         mTestDone = 1;
                     }
-                    rc = MQTT_CODE_SUCCESS;
+                    continue;
                 #endif
                 }
                 else if (rc != MQTT_CODE_SUCCESS) {
@@ -544,6 +544,10 @@ int azureiothub_test(MQTTCtx *mqttCtx)
         }
         FALL_THROUGH;
 
+    #ifdef WOLFMQTT_NO_TIME
+        /* Manual keep-alive ping. With automatic keep-alive compiled in, the
+         * core client sends PINGREQ itself and WMQ_WAIT_MSG never breaks out to
+         * this state, so it is only compiled for WOLFMQTT_NO_TIME builds. */
         case WMQ_PING:
         {
             mqttCtx->stat = WMQ_PING;
@@ -568,6 +572,7 @@ int azureiothub_test(MQTTCtx *mqttCtx)
             }
         }
         FALL_THROUGH;
+    #endif /* WOLFMQTT_NO_TIME */
 
         case WMQ_DISCONNECT:
         {
@@ -607,6 +612,9 @@ int azureiothub_test(MQTTCtx *mqttCtx)
         }
 
         case WMQ_UNSUB: /* not used */
+    #ifndef WOLFMQTT_NO_TIME
+        case WMQ_PING: /* handled inline via automatic keep-alive */
+    #endif
         default:
             rc = MQTT_CODE_ERROR_STAT;
             goto exit;

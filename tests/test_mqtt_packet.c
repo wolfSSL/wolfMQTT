@@ -758,6 +758,43 @@ TEST(encode_publish_qos0_packet_id_zero_ok)
     ASSERT_TRUE(rc > 0);
 }
 
+/* [MQTT-1.5.3-1] The encoders must reject ill-formed UTF-8 before emitting,
+ * symmetric with MqttDecode_String, so a caller gets a clean local error
+ * instead of a peer-side disconnect. Exercised through the public
+ * MqttEncode_Publish Topic Name path (client_id, Will Topic, username, and
+ * topic filters share the same MqttEncode_Utf8Ok check). Kept outside the
+ * broker test guard so non-broker builds also cover the encoder change. */
+TEST(encode_publish_invalid_utf8_topic_rejected)
+{
+    byte buf[64];
+    MqttPublish pub;
+    /* Topic Name with a lone continuation byte 0x80 - ill-formed UTF-8, but
+     * free of wildcards so it passes MqttPacket_TopicNameValid. */
+    char topic[] = { 'a', (char)0x80, 'b', '\0' };
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = topic;
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(buf, (int)sizeof(buf), &pub, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_publish_valid_utf8_topic_accepted)
+{
+    byte buf[64];
+    MqttPublish pub;
+    /* ASCII prefix followed by U+00E9 (C3 A9), a well-formed 2-byte sequence. */
+    char topic[] = { 'c', 'a', 'f', (char)0xC3, (char)0xA9, '\0' };
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = topic;
+    pub.qos = MQTT_QOS_0;
+    rc = MqttEncode_Publish(buf, (int)sizeof(buf), &pub, 0);
+    ASSERT_TRUE(rc > 0);
+}
+
 TEST(encode_publish_qos1_valid)
 {
     byte tx_buf[256];
@@ -932,7 +969,7 @@ TEST(encode_publish_qos2_with_dup_accepted)
     ASSERT_EQ(0xC, (int)MQTT_PACKET_FLAGS_GET(tx_buf[0]));
 }
 
-/* f-2360: topic_name with strlen > 65535 must not produce a "successful"
+/* A topic_name with strlen > 65535 must not produce a "successful"
  * encode. MqttEncode_String returns -1 for oversize strings; the encoder
  * must surface that as a negative return rather than adding -1 to the
  * tx_payload pointer and reporting header_len+remain_len as success. */
@@ -1956,7 +1993,7 @@ TEST(encode_subscribe_v5_reserved_sub_options_bit_rejected)
 }
 #endif /* WOLFMQTT_V5 */
 
-/* f-2360: topic_filter with strlen > 65535 must be rejected with a negative
+/* A topic_filter with strlen > 65535 must be rejected with a negative
  * return. Guards the unchecked tx_payload += MqttEncode_String(...) in the
  * SUBSCRIBE payload loop. */
 TEST(encode_subscribe_topic_filter_oversized_rejected)
@@ -2230,6 +2267,112 @@ TEST(encode_connect_username_and_password)
     ASSERT_TRUE(rc > 0);
 }
 
+/* [MQTT-3.1.3.5] The Password is Binary Data, not a UTF-8 string, so the
+ * encoder must accept a password containing bytes that are not legal UTF-8
+ * (0xC0 0xAF is an overlong sequence Utf8WellFormed rejects). Locks in that
+ * the Password field bypasses encode-side UTF-8 validation, unlike the
+ * username/client_id/topic string fields. */
+TEST(encode_connect_binary_password_accepted)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    char password[] = { 'p', (char)0xC0, (char)0xAF, '\0' };
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.username = "user";
+    conn.password = password;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+}
+
+/* [MQTT-1.5.3-1] Each encoder call site of MqttEncode_Utf8Ok is exercised
+ * independently so a per-site slip (wrong variable, omitted check) is caught,
+ * not just the shared helper. 0x80 is a lone continuation byte - ill-formed
+ * UTF-8 with no wildcards, so it reaches the UTF-8 check. */
+TEST(encode_connect_invalid_utf8_clientid_rejected)
+{
+    byte tx_buf[128];
+    MqttConnect conn;
+    char client_id[] = { 'a', (char)0x80, '\0' };
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = client_id;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_connect_invalid_utf8_username_rejected)
+{
+    byte tx_buf[128];
+    MqttConnect conn;
+    char username[] = { 'u', (char)0x80, '\0' };
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.username = username;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_connect_invalid_utf8_will_topic_rejected)
+{
+    byte tx_buf[128];
+    MqttConnect conn;
+    MqttMessage lwt;
+    char will_topic[] = { 'w', (char)0x80, '\0' };
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    lwt.topic_name = will_topic;
+    conn.client_id = "test_client";
+    conn.enable_lwt = 1;
+    conn.lwt_msg = &lwt;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_subscribe_invalid_utf8_filter_rejected)
+{
+    byte tx_buf[128];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    char filter[] = { 'a', (char)0x80, '\0' };
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = filter;
+    topic.qos = MQTT_QOS_0;
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+TEST(encode_unsubscribe_invalid_utf8_filter_rejected)
+{
+    byte tx_buf[128];
+    MqttUnsubscribe unsub;
+    MqttTopic topic;
+    char filter[] = { 'a', (char)0x80, '\0' };
+    int rc;
+
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = filter;
+    unsub.topics = &topic;
+    unsub.topic_count = 1;
+    unsub.packet_id = 1;
+    rc = MqttEncode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 TEST(encode_connect_username_only)
 {
     byte tx_buf[256];
@@ -2409,7 +2552,7 @@ TEST(encode_connect_flags_lwt_qos1_retain)
     ASSERT_EQ(0, flags & MQTT_CONNECT_FLAG_CLEAN_SESSION);
 }
 
-/* f-2360: client_id with strlen > 65535 must be rejected with a negative
+/* A client_id with strlen > 65535 must be rejected with a negative
  * return. MqttEncode_String returns -1 for such strings; the encoder must
  * not report header_len+remain_len as a successful encode while tx_payload
  * silently moves backward by one byte. */
@@ -2439,7 +2582,7 @@ TEST(encode_connect_client_id_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
-/* f-2360: username with strlen > 65535. Password is supplied so the
+/* A username with strlen > 65535. Password is supplied so the
  * USERNAME+PASSWORD branch exercises both credential encodes. */
 TEST(encode_connect_username_oversized_rejected)
 {
@@ -2469,7 +2612,7 @@ TEST(encode_connect_username_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
-/* f-2360: password with strlen > 65535. */
+/* A password with strlen > 65535. */
 TEST(encode_connect_password_oversized_rejected)
 {
     const int str_len = 0x10000;
@@ -2498,7 +2641,7 @@ TEST(encode_connect_password_oversized_rejected)
     ASSERT_TRUE(rc < 0);
 }
 
-/* f-2360: LWT topic_name with strlen > 65535. */
+/* An LWT topic_name with strlen > 65535. */
 TEST(encode_connect_lwt_topic_oversized_rejected)
 {
     const int str_len = 0x10000;
@@ -3374,6 +3517,11 @@ TEST(topic_filter_valid_helper_table)
     ASSERT_EQ(0, MqttPacket_TopicFilterValid("sport+", 6));
     ASSERT_EQ(0, MqttPacket_TopicFilterValid("sport+/player1", 14));
     ASSERT_EQ(0, MqttPacket_TopicFilterValid("a+b", 3));
+    /* '+' at a valid level-start but followed by a non-'/' byte is malformed
+     * [MQTT-4.7.1-3]. These isolate the follow-character check (filter[i+1]
+     * != '/'); the preceding-character check does not reject them. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("+a", 2));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid("a/+b", 4));
 
     /* Plain non-wildcard topics. */
     ASSERT_EQ(1, MqttPacket_TopicFilterValid("a", 1));
@@ -3444,11 +3592,19 @@ TEST(decode_subscribe_hash_not_last_rejected)
 /* [MQTT-4.7.1-3] '+' must occupy an entire topic level. */
 TEST(decode_subscribe_bad_plus_placement_rejected)
 {
-    /* "a+b" - '+' embedded in a level. */
+    /* "a+b" - '+' embedded in a level (preceding-character check). */
     byte rx_buf[] = {
         0x82, 0x08,
         0x00, 0x01,
         0x00, 0x03, 'a', '+', 'b',
+        0x00
+    };
+    /* "a/+b" - '+' at a valid level-start but trailed by a non-'/' byte
+     * (follow-character check). */
+    byte rx_buf2[] = {
+        0x82, 0x09,
+        0x00, 0x01,
+        0x00, 0x04, 'a', '/', '+', 'b',
         0x00
     };
     MqttSubscribe sub;
@@ -3459,6 +3615,12 @@ TEST(decode_subscribe_bad_plus_placement_rejected)
     XMEMSET(topic_arr, 0, sizeof(topic_arr));
     sub.topics = topic_arr;
     rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    rc = MqttDecode_Subscribe(rx_buf2, (int)sizeof(rx_buf2), &sub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 
@@ -4854,6 +5016,57 @@ TEST(publish_resp_v5_success_no_props_roundtrip)
     ASSERT_EQ(MQTT_REASON_SUCCESS, dec.reason_code);
 }
 
+/* [MQTT-1.5.3-1] MqttEncode_Props must reject ill-formed UTF-8 in a STRING
+ * property value before emitting, symmetric with MqttDecode_Props. Exercised
+ * in the length-computation pass (buf == NULL), where the error propagates. */
+TEST(encode_props_string_invalid_utf8_rejected)
+{
+    MqttProp prop;
+    char bad[] = { 'a', (char)0x80, '\0' }; /* lone continuation byte */
+    int rc;
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_CONTENT_TYPE;
+    prop.data_str.str = bad;
+    prop.data_str.len = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* [MQTT-1.5.3-1] Both members of a User Property (name and value) are MQTT
+ * UTF-8 strings; ill-formed UTF-8 in either must be rejected. Covers each
+ * member independently so validating only one would fail. */
+TEST(encode_props_user_prop_invalid_utf8_rejected)
+{
+    MqttProp prop;
+    char good[] = { 'k', '\0' };
+    char bad[] = { (char)0x80, '\0' };      /* lone continuation byte */
+    int rc;
+
+    /* Ill-formed value, well-formed name. */
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_USER_PROP;
+    prop.data_str.str = good;
+    prop.data_str.len = 1;
+    prop.data_str2.str = bad;
+    prop.data_str2.len = 1;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+
+    /* Ill-formed name, well-formed value. */
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_USER_PROP;
+    prop.data_str.str = bad;
+    prop.data_str.len = 1;
+    prop.data_str2.str = good;
+    prop.data_str2.len = 1;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* ============================================================================
  * MqttEncode/Decode_Auth roundtrip
  *
@@ -4939,8 +5152,8 @@ TEST(auth_v5_reauth_decodes_without_error)
 TEST(auth_v5_success_remaining_length_zero)
 {
     /* Per MQTT 5.0 3.15.2, a Remaining Length of 0 means SUCCESS with no
-     * properties. Build that wire form directly since MqttEncode_Auth does
-     * not emit it. */
+     * properties. Build that wire form directly to guard the decoder against
+     * encoder changes masking a decoder-only regression. */
     byte buf[2];
     MqttAuth dec;
     int dec_len;
@@ -4951,6 +5164,31 @@ TEST(auth_v5_success_remaining_length_zero)
     XMEMSET(&dec, 0, sizeof(dec));
     dec_len = MqttDecode_Auth(buf, (int)sizeof(buf), &dec);
     ASSERT_EQ(2, dec_len);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, dec.reason_code);
+    ASSERT_NULL(dec.props);
+}
+
+/* [MQTT-3.15.2.2] A Success AUTH with no Properties must encode to the
+ * Remaining Length 0 short form and round-trip through MqttDecode_Auth,
+ * rather than emitting a 2-byte body the decoder rejects as malformed. */
+TEST(auth_v5_success_no_props_roundtrip)
+{
+    byte buf[8];
+    MqttAuth enc, dec;
+    int enc_len, dec_len;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.reason_code = MQTT_REASON_SUCCESS;
+    enc.props = NULL;
+
+    enc_len = MqttEncode_Auth(buf, (int)sizeof(buf), &enc);
+    /* Fixed header (2 bytes) + Remaining Length 0. */
+    ASSERT_EQ(2, enc_len);
+    ASSERT_EQ(0x00, buf[1]);
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec_len = MqttDecode_Auth(buf, enc_len, &dec);
+    ASSERT_EQ(enc_len, dec_len);
     ASSERT_EQ(MQTT_REASON_SUCCESS, dec.reason_code);
     ASSERT_NULL(dec.props);
 }
@@ -5067,6 +5305,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_invalid_utf8_topic);
 
     /* MqttEncode_Publish */
+    RUN_TEST(encode_publish_invalid_utf8_topic_rejected);
+    RUN_TEST(encode_publish_valid_utf8_topic_accepted);
     RUN_TEST(encode_publish_qos1_packet_id_zero);
     RUN_TEST(encode_publish_qos2_packet_id_zero);
     RUN_TEST(encode_publish_qos0_packet_id_zero_ok);
@@ -5161,6 +5401,12 @@ void run_mqtt_packet_tests(void)
     /* MqttEncode_Connect */
     RUN_TEST(encode_connect_password_without_username);
     RUN_TEST(encode_connect_username_and_password);
+    RUN_TEST(encode_connect_binary_password_accepted);
+    RUN_TEST(encode_connect_invalid_utf8_clientid_rejected);
+    RUN_TEST(encode_connect_invalid_utf8_username_rejected);
+    RUN_TEST(encode_connect_invalid_utf8_will_topic_rejected);
+    RUN_TEST(encode_subscribe_invalid_utf8_filter_rejected);
+    RUN_TEST(encode_unsubscribe_invalid_utf8_filter_rejected);
     RUN_TEST(encode_connect_username_only);
     RUN_TEST(encode_connect_no_credentials);
     RUN_TEST(encode_connect_fixed_header_flags);
@@ -5329,10 +5575,13 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(publish_resp_v5_success_no_props_roundtrip);
 
     /* MqttEncode/Decode_Auth */
+    RUN_TEST(encode_props_string_invalid_utf8_rejected);
+    RUN_TEST(encode_props_user_prop_invalid_utf8_rejected);
     RUN_TEST(auth_v5_cont_auth_roundtrip);
     RUN_TEST(auth_v5_reauth_roundtrip);
     RUN_TEST(auth_v5_reauth_decodes_without_error);
     RUN_TEST(auth_v5_success_remaining_length_zero);
+    RUN_TEST(auth_v5_success_no_props_roundtrip);
     RUN_TEST(auth_v5_invalid_reason_code_rejected);
     RUN_TEST(decode_auth_v5_reason_code_past_buf_rejected);
 #endif

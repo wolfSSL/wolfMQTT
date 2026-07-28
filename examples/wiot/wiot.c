@@ -354,7 +354,7 @@ int wiot_test(MQTTCtx *mqttCtx)
             if (mqttCtx->test_mode) {
                 mTestDone = 1;
             }
-            rc = MQTT_CODE_SUCCESS;
+            continue;
         #endif
         }
         else if (rc != MQTT_CODE_SUCCESS) {
