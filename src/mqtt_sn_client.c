@@ -563,6 +563,9 @@ static void MqttSNClient_PacketReset(SN_MsgType packet_type, void* packet_obj)
             break;
         case SN_MSG_TYPE_DISCONNECT:
             objSz = sizeof(SN_Disconnect);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case SN_MSG_TYPE_WILLTOPICUPD:
         case SN_MSG_TYPE_WILLTOPICRESP:
@@ -998,7 +1001,7 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
         case MQTT_MSG_WAIT:
         {
             /* Wait for Will Topic Request packet */
-            rc = SN_Client_WaitType(client, will,
+            rc = SN_Client_WaitType(client, &will->resp.topicResp,
                     SN_MSG_TYPE_WILLTOPICREQ, 0, client->cmd_timeout_ms);
         #ifdef WOLFMQTT_NONBLOCK
             if (rc == MQTT_CODE_CONTINUE) {

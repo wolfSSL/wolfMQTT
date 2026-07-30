@@ -2305,6 +2305,13 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 
     /* Decode Payload */
     if (variable_len > remain_len) {
+    #ifdef WOLFMQTT_V5
+        /* Free any v5 properties decoded above so this late error return does
+         * not leak the property list; the caller only frees props on the
+         * success path. */
+        MqttProps_Free(publish->props);
+        publish->props = NULL;
+    #endif
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
     payload_len = remain_len - variable_len;
@@ -2925,9 +2932,21 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             byte level = 0;
             int i;
             if (payload_len < 0 || buf_remain < 0) {
+            #ifdef WOLFMQTT_V5
+                if (subscribe_ack->props != NULL) {
+                    (void)MqttProps_Free(subscribe_ack->props);
+                    subscribe_ack->props = NULL;
+                }
+            #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             if (payload_len > buf_remain) {
+            #ifdef WOLFMQTT_V5
+                if (subscribe_ack->props != NULL) {
+                    (void)MqttProps_Free(subscribe_ack->props);
+                    subscribe_ack->props = NULL;
+                }
+            #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             subscribe_ack->return_code_count =
@@ -4091,10 +4110,10 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 client->packet.header_len += len;
             }
 
-            if (i == MQTT_PACKET_MAX_LEN_BYTES) {
-                return MqttPacket_HandleNetError(client,
-                        MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA));
-            }
+            /* No post-loop over-length check is needed: the in-loop guard above
+             * (i == MQTT_PACKET_MAX_LEN_BYTES - 1) is the sole exit for a VBI
+             * whose last allowed byte still sets the continuation bit, so i can
+             * never reach MQTT_PACKET_MAX_LEN_BYTES at this point. */
 
             /* Try and decode remaining length */
             if (rx_buf_len < (client->packet.header_len - (i + 1))) {

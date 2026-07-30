@@ -1110,6 +1110,13 @@ static int MqttClient_HandlePacket(MqttClient* client,
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
                 &packet_id, 1);
+            /* The decoded AUTH properties (including AUTH_DATA) were pointers
+             * into rx_buf and have now been delivered to the callback and
+             * freed. Scrub rx_buf so the enhanced-authentication material does
+             * not linger until the next read, matching MqttClient_Auth and the
+             * v5 CONNACK path. This runs under lockRecv (held by MqttReadStart
+             * in MqttClient_WaitType), so no additional locking is needed. */
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
         #else
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
         #endif
@@ -1205,33 +1212,50 @@ static void MqttClient_PacketReset(MqttPacketType packet_type, void* packet_obj)
 {
     size_t objSz = 0;
     size_t offset = sizeof(MqttMsgStat);
-#ifdef WOLFMQTT_MULTITHREAD
-    offset += sizeof(MqttPendResp);
-#endif
+    /* The MqttPendResp offset is added only for the types whose struct embeds
+     * a pendResp member (right after MqttMsgStat). Ack-only types (CONNECT_ACK,
+     * SUBSCRIBE_ACK, UNSUBSCRIBE_ACK, DISCONNECT) have no pendResp, so adding
+     * it there would skip live fields - matching the per-type handling in
+     * MqttSNClient_PacketReset. */
     switch (packet_type) {
         case MQTT_PACKET_TYPE_CONNECT:
             objSz = sizeof(MqttConnect);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case MQTT_PACKET_TYPE_CONNECT_ACK:
             objSz = sizeof(MqttConnectAck);
             break;
         case MQTT_PACKET_TYPE_PUBLISH:
             objSz = sizeof(MqttPublish);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case MQTT_PACKET_TYPE_PUBLISH_ACK:
         case MQTT_PACKET_TYPE_PUBLISH_REC:
         case MQTT_PACKET_TYPE_PUBLISH_REL:
         case MQTT_PACKET_TYPE_PUBLISH_COMP:
             objSz = sizeof(MqttPublishResp);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case MQTT_PACKET_TYPE_SUBSCRIBE:
             objSz = sizeof(MqttSubscribe);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case MQTT_PACKET_TYPE_SUBSCRIBE_ACK:
             objSz = sizeof(MqttSubscribeAck);
             break;
         case MQTT_PACKET_TYPE_UNSUBSCRIBE:
             objSz = sizeof(MqttUnsubscribe);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK:
             objSz = sizeof(MqttUnsubscribeAck);
@@ -1239,10 +1263,16 @@ static void MqttClient_PacketReset(MqttPacketType packet_type, void* packet_obj)
         case MQTT_PACKET_TYPE_PING_REQ:
         case MQTT_PACKET_TYPE_PING_RESP:
             objSz = sizeof(MqttPing);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
             break;
         case MQTT_PACKET_TYPE_AUTH:
         #ifdef WOLFMQTT_V5
             objSz = sizeof(MqttAuth);
+        #ifdef WOLFMQTT_MULTITHREAD
+            offset += sizeof(MqttPendResp);
+        #endif
         #endif
             break;
         case MQTT_PACKET_TYPE_DISCONNECT:

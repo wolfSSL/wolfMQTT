@@ -913,6 +913,22 @@ static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc);
 static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc);
 #endif
 
+/* Scrub and release the WebSocket outbound staging buffer. The staged copy
+ * holds plaintext MQTT payloads (forwarded PUBLISH, retained and will
+ * messages) that the source tx_buf scrub cannot reach, because the network
+ * callback deep-copies into this heap block before the caller wipes tx_buf.
+ * Zero it before returning the block, mirroring the rx_buffer scrub on the
+ * inbound side. tx_len is still valid at every call site. */
+static void BrokerWs_FreeTx(BrokerWsCtx* ws)
+{
+    if (ws->tx_pending != NULL) {
+        BROKER_FORCE_ZERO(ws->tx_pending, (word32)(LWS_PRE + ws->tx_len));
+        WOLFMQTT_FREE(ws->tx_pending);
+        ws->tx_pending = NULL;
+        ws->tx_len = 0;
+    }
+}
+
 static BrokerClient* BrokerClient_AddWs(MqttBroker* broker, struct lws *wsi)
 {
     BrokerClient* bc = NULL;
@@ -1036,14 +1052,25 @@ static int callback_broker_mqtt(struct lws *wsi,
          * no Origin header (native clients) are not browser-originated and are
          * allowed through. */
         if (broker != NULL && broker->ws_allowed_origin != NULL) {
-            char origin[256];
-            int olen = lws_hdr_copy(wsi, origin, (int)sizeof(origin),
-                WSI_TOKEN_ORIGIN);
-            if (olen > 0 &&
-                    XSTRCMP(origin, broker->ws_allowed_origin) != 0) {
-                WBLOG_ERR(broker, "broker: ws origin rejected: %s",
-                    BrokerLog_Sanitize(origin));
-                return -1;
+            /* Distinguish an absent Origin (native, non-browser client that is
+             * allowed through) from one that is present but does not fit the
+             * scratch buffer. lws_hdr_total_length() reports the true length
+             * regardless of copy-buffer size; an Origin of 256 bytes or more
+             * makes lws_hdr_copy() return -1, and the old "olen > 0" gate
+             * silently treated that as allowed - reopening the CSWSH hole the
+             * allowlist exists to close. A present Origin must therefore fail
+             * closed on any copy failure or mismatch. */
+            int tot = lws_hdr_total_length(wsi, WSI_TOKEN_ORIGIN);
+            if (tot > 0) {
+                char origin[256];
+                int olen = lws_hdr_copy(wsi, origin, (int)sizeof(origin),
+                    WSI_TOKEN_ORIGIN);
+                if (olen <= 0 ||
+                        XSTRCMP(origin, broker->ws_allowed_origin) != 0) {
+                    WBLOG_ERR(broker,
+                        "broker: ws origin rejected (len=%d)", tot);
+                    return -1;
+                }
             }
         }
     }
@@ -1099,15 +1126,11 @@ static int callback_broker_mqtt(struct lws *wsi,
             if (n < (int)ws->tx_len) {
                 WBLOG_ERR(broker, "broker: ws write failed (wsi=%p, "
                     "n=%d, len=%d)", (void*)wsi, n, (int)ws->tx_len);
-                WOLFMQTT_FREE(ws->tx_pending);
-                ws->tx_pending = NULL;
-                ws->tx_len = 0;
+                BrokerWs_FreeTx(ws);
                 ws->status = -1;
                 return -1;
             }
-            WOLFMQTT_FREE(ws->tx_pending);
-            ws->tx_pending = NULL;
-            ws->tx_len = 0;
+            BrokerWs_FreeTx(ws);
         }
     }
     else if (reason == LWS_CALLBACK_CLOSED) {
@@ -1230,11 +1253,7 @@ static int BrokerWsNetWrite(void* context, const byte* buf, int buf_len,
     }
 
     /* Free any prior unsent data */
-    if (ws->tx_pending != NULL) {
-        WOLFMQTT_FREE(ws->tx_pending);
-        ws->tx_pending = NULL;
-        ws->tx_len = 0;
-    }
+    BrokerWs_FreeTx(ws);
 
     /* Allocate buffer with LWS_PRE prefix space */
     ws->tx_pending = (byte*)WOLFMQTT_MALLOC(LWS_PRE + buf_len);
@@ -1260,9 +1279,7 @@ static int BrokerWsNetWrite(void* context, const byte* buf, int buf_len,
 
     if (ws->tx_pending != NULL) {
         /* Data was not flushed - connection may be in bad state */
-        WOLFMQTT_FREE(ws->tx_pending);
-        ws->tx_pending = NULL;
-        ws->tx_len = 0;
+        BrokerWs_FreeTx(ws);
         return MQTT_CODE_ERROR_NETWORK;
     }
 
@@ -1322,11 +1339,7 @@ static int BrokerWsNetDisconnect(void* context)
         }
     }
 
-    if (ws->tx_pending != NULL) {
-        WOLFMQTT_FREE(ws->tx_pending);
-        ws->tx_pending = NULL;
-    }
-    ws->tx_len = 0;
+    BrokerWs_FreeTx(ws);
     /* Scrub any unconsumed staged bytes (may hold credentials) before free. */
     BROKER_FORCE_ZERO(ws->rx_buffer, (word32)sizeof(ws->rx_buffer));
     ws->rx_len = 0;
@@ -2041,11 +2054,9 @@ static void BrokerClient_Free(BrokerClient* bc)
     if (bc->ws_ctx != NULL) {
         (void)BrokerWsNetDisconnect(bc);
     }
-    else
 #endif
-
 #ifdef ENABLE_MQTT_TLS
-    if (bc->client.tls.ssl) {
+    if (bc->client.tls.ssl != NULL) {
         /* Send close_notify before closing the socket, because
          * wolfSSL_shutdown uses I/O callbacks that need a valid fd */
         if (bc->tls_handshake_done) {
@@ -2055,6 +2066,9 @@ static void BrokerClient_Free(BrokerClient* bc)
         bc->client.tls.ssl = NULL;
     }
 #endif
+    /* Always attempt the socket close; BrokerNetDisconnect is internally
+     * guarded on sock != BROKER_SOCKET_INVALID, so it is a no-op for the
+     * WebSocket clients that never own a real descriptor. */
     (void)BrokerNetDisconnect(bc);
     MqttClient_DeInit(&bc->client);
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -5012,17 +5026,22 @@ send_connack:
 
     /* CONNECT accepted. Authentication is complete, and neither the plaintext
      * CONNECT still in bc->rx_buf (mc.username/mc.password were in-place
-     * pointers into it) nor the dedicated bc->password copy is read again for
-     * the life of this connection - the broker has no re-auth path. Scrub both
-     * now so credentials reside in memory only for the duration of CONNECT
-     * processing rather than the whole session. Refused/failed CONNECTs return
-     * earlier and are wiped when the caller frees the client. Mirrors the
-     * client-side CLIENT_FORCE_ZERO hardening in mqtt_client.c. */
+     * pointers into it) nor the dedicated bc->username / bc->password copies
+     * are read again for the life of this connection - the broker has no
+     * re-auth path. Scrub them all now so credentials reside in memory only
+     * for the duration of CONNECT processing rather than the whole session.
+     * Refused/failed CONNECTs return earlier and are wiped when the caller
+     * frees the client. Mirrors the client-side CLIENT_FORCE_ZERO hardening
+     * in mqtt_client.c. */
     BROKER_FORCE_ZERO(bc->rx_buf, (word32)rx_len);
 #ifdef WOLFMQTT_BROKER_AUTH
 #ifdef WOLFMQTT_STATIC_MEMORY
+    BROKER_FORCE_ZERO(bc->username, BROKER_MAX_USERNAME_LEN);
     BROKER_FORCE_ZERO(bc->password, BROKER_MAX_PASSWORD_LEN);
 #else
+    if (bc->username != NULL) {
+        BROKER_FORCE_ZERO(bc->username, XSTRLEN(bc->username) + 1);
+    }
     if (bc->password != NULL) {
         BROKER_FORCE_ZERO(bc->password, (size_t)bc->password_len + 1);
     }
@@ -5140,6 +5159,12 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
                 }
             }
 #endif
+        }
+        else {
+            /* The filter length could not be recovered, so no subscription
+             * was registered; report failure instead of the requested QoS so
+             * the SUBACK cannot claim a subscription that was never added. */
+            granted_qos = (MqttQoS)MQTT_SUBSCRIBE_ACK_CODE_FAILURE;
         }
         return_codes[i] = (byte)granted_qos;
     }
@@ -5280,6 +5305,22 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         WBLOG_ERR(broker, "broker: client PUBLISH carried SUBSCRIPTION_ID "
             "sock=%d", (int)bc->sock);
         (void)BrokerSend_Disconnect(bc, MQTT_REASON_PROTOCOL_ERR);
+        rc = MQTT_CODE_ERROR_MALFORMED_DATA;
+        goto publish_cleanup;
+    }
+
+    /* The broker does not implement Topic Aliases (it advertises a Topic Alias
+     * Maximum of 0), so any inbound Topic Alias property is a Protocol Error -
+     * whether it accompanies an empty Topic Name (an alias-only PUBLISH that
+     * cannot be resolved to a topic) or a full one (which would otherwise be
+     * forwarded, alias property included, to subscribers). Reject it rather
+     * than silently dropping the message while acknowledging SUCCESS. */
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            pub.props != NULL &&
+            BrokerProps_Find(pub.props, MQTT_PROP_TOPIC_ALIAS) != NULL) {
+        WBLOG_ERR(broker, "broker: client PUBLISH used unsupported Topic Alias "
+            "sock=%d", (int)bc->sock);
+        (void)BrokerSend_Disconnect(bc, MQTT_REASON_TOPIC_ALIAS_INVALID);
         rc = MQTT_CODE_ERROR_MALFORMED_DATA;
         goto publish_cleanup;
     }
@@ -6543,7 +6584,7 @@ int MqttBroker_Run(MqttBroker* broker)
             /* Idle - sleep briefly to avoid busy-waiting */
             BROKER_SLEEP_MS(10);
         }
-        else if (rc < 0 && rc != MQTT_CODE_CONTINUE) {
+        else if (rc < 0) {
             break;
         }
     }
