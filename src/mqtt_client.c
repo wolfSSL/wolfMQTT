@@ -2810,8 +2810,11 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     }
 
     if (unsubscribe->ack.props != NULL) {
-        /* Release the allocated properties */
+        /* Release the allocated properties and clear the caller-visible
+         * pointer so a stale reference cannot be observed, reused, or freed
+         * again after this API returns. */
         MqttClient_PropsFree(unsubscribe->ack.props);
+        unsubscribe->ack.props = NULL;
     }
 #endif
 

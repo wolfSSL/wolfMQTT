@@ -690,15 +690,17 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
    If buf is NULL, return number of bytes that would be encoded. */
 int MqttEncode_String(byte *buf, const char *str)
 {
-    int str_len = (int)XSTRLEN(str);
+    size_t str_len = XSTRLEN(str);
     int len;
 
     /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3]. Callers
      * validate UTF-8 well-formedness in their length-computation pass (where
      * the error propagates), mirroring the wildcard/length checks; the
      * CONNECT Password is Binary Data [MQTT-3.1.3.5] and uses MqttEncode_Data
-     * so it is deliberately excluded from that check. */
-    if (str_len > (int)0xFFFF) {
+     * so it is deliberately excluded from that check. Keep the length in
+     * size_t and reject oversize values before narrowing so a very large
+     * string cannot truncate to a small or negative int and reach XMEMCPY. */
+    if (str_len > (size_t)0xFFFF) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     len = MqttEncode_Num(buf, (word16)str_len);
@@ -707,7 +709,7 @@ int MqttEncode_String(byte *buf, const char *str)
         buf += len;
         XMEMCPY(buf, str, str_len);
     }
-    return len + str_len;
+    return len + (int)str_len;
 }
 
 /* Returns number of buffer bytes encoded
