@@ -1449,6 +1449,24 @@ TEST(decode_publish_v5_duplicate_singleton_prop_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_NULL(pub.props);
 }
+
+/* A late OUT_OF_BUFFER return (variable_len > remain_len) reached after the v5
+ * property block was already decoded must release and NULL publish->props so a
+ * caller cannot leak the property list. Wire: PUBLISH QoS 0 with remain_len=4
+ * but topic "t" plus a PAYLOAD_FORMAT_INDICATOR property make variable_len=6;
+ * the over-length buffer lets decoding reach the length-consistency check. */
+TEST(decode_publish_v5_props_freed_on_short_remain_len)
+{
+    byte buf[] = { 0x30, 0x04, 0x00, 0x01, 't', 0x02, 0x01, 0x00 };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_NULL(pub.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-2.3.1-1] PUBLISH with QoS > 0 must carry a non-zero Packet
@@ -4126,6 +4144,25 @@ TEST(decode_suback_v5_not_authorized_accepted)
     ASSERT_EQ(0x87, ack.return_codes[0]);
 }
 
+/* A late OUT_OF_BUFFER return in the return-code payload block (payload_len >
+ * buf_remain) reached after the v5 property block was already decoded must
+ * release and NULL subscribe_ack->props. Wire: SUBACK remain_len=12 (claims a
+ * 2-byte return-code payload) but the buffer ends right after a USER_PROPERTY,
+ * so the declared payload overruns the supplied buffer. */
+TEST(decode_suback_v5_props_freed_on_payload_overrun)
+{
+    byte buf[] = { 0x90, 0x0C, 0x00, 0x01, 0x07,
+                   0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v' };
+    MqttSubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_SubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_NULL(ack.props);
+}
+
 /* Pin v5's broadened set via the helper. */
 TEST(suback_return_code_v5_allowed_set)
 {
@@ -5347,6 +5384,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(decode_publish_v5_property_count_capped);
     RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
+    RUN_TEST(decode_publish_v5_props_freed_on_short_remain_len);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
     RUN_TEST(decode_publish_qos2_packet_id_zero_rejected);
@@ -5502,6 +5540,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_suback_v5_not_authorized_accepted);
     RUN_TEST(suback_return_code_v5_allowed_set);
+    RUN_TEST(decode_suback_v5_props_freed_on_payload_overrun);
 #endif
 
     /* MqttDecode_PublishResp */

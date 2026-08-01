@@ -690,15 +690,17 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
    If buf is NULL, return number of bytes that would be encoded. */
 int MqttEncode_String(byte *buf, const char *str)
 {
-    int str_len = (int)XSTRLEN(str);
+    size_t str_len = XSTRLEN(str);
     int len;
 
     /* MQTT UTF-8 strings are limited to 65535 bytes [MQTT-1.5.3]. Callers
      * validate UTF-8 well-formedness in their length-computation pass (where
      * the error propagates), mirroring the wildcard/length checks; the
      * CONNECT Password is Binary Data [MQTT-3.1.3.5] and uses MqttEncode_Data
-     * so it is deliberately excluded from that check. */
-    if (str_len > (int)0xFFFF) {
+     * so it is deliberately excluded from that check. Keep the length in
+     * size_t and reject oversize values before narrowing so a very large
+     * string cannot truncate to a small or negative int and reach XMEMCPY. */
+    if (str_len > (size_t)0xFFFF) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     len = MqttEncode_Num(buf, (word16)str_len);
@@ -707,7 +709,7 @@ int MqttEncode_String(byte *buf, const char *str)
         buf += len;
         XMEMCPY(buf, str, str_len);
     }
-    return len + str_len;
+    return len + (int)str_len;
 }
 
 /* Returns number of buffer bytes encoded
@@ -2305,6 +2307,13 @@ int MqttDecode_Publish(byte *rx_buf, int rx_buf_len, MqttPublish *publish)
 
     /* Decode Payload */
     if (variable_len > remain_len) {
+    #ifdef WOLFMQTT_V5
+        /* Free any v5 properties decoded above so this late error return does
+         * not leak the property list; the caller only frees props on the
+         * success path. */
+        MqttProps_Free(publish->props);
+        publish->props = NULL;
+    #endif
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
     payload_len = remain_len - variable_len;
@@ -2925,9 +2934,21 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             byte level = 0;
             int i;
             if (payload_len < 0 || buf_remain < 0) {
+            #ifdef WOLFMQTT_V5
+                if (subscribe_ack->props != NULL) {
+                    (void)MqttProps_Free(subscribe_ack->props);
+                    subscribe_ack->props = NULL;
+                }
+            #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             if (payload_len > buf_remain) {
+            #ifdef WOLFMQTT_V5
+                if (subscribe_ack->props != NULL) {
+                    (void)MqttProps_Free(subscribe_ack->props);
+                    subscribe_ack->props = NULL;
+                }
+            #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
             subscribe_ack->return_code_count =
@@ -4091,10 +4112,10 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 client->packet.header_len += len;
             }
 
-            if (i == MQTT_PACKET_MAX_LEN_BYTES) {
-                return MqttPacket_HandleNetError(client,
-                        MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA));
-            }
+            /* No post-loop over-length check is needed: the in-loop guard above
+             * (i == MQTT_PACKET_MAX_LEN_BYTES - 1) is the sole exit for a VBI
+             * whose last allowed byte still sets the continuation bit, so i can
+             * never reach MQTT_PACKET_MAX_LEN_BYTES at this point. */
 
             /* Try and decode remaining length */
             if (rx_buf_len < (client->packet.header_len - (i + 1))) {
