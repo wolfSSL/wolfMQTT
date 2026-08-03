@@ -6856,7 +6856,7 @@ int wolfmqtt_broker(int argc, char** argv)
     MqttBrokerNet net;
     int i;
 #ifdef WOLFMQTT_BROKER_AUTH
-    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN] = {0};
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     MqttBrokerPersistHooks persist_hooks;
