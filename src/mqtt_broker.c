@@ -1861,8 +1861,7 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
              * an application payload) once the buffer is idle. Skip only the
              * MQTT_CODE_CONTINUE case, where a non-blocking or TLS-async send
              * still references bc->tx_buf. */
-            if (wr_rc == enc_rc ||
-                    (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
+            if (wr_rc != MQTT_CODE_CONTINUE) {
                 BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
             }
             if (wr_rc < 0) {
@@ -3920,8 +3919,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                  * MQTT_CODE_CONTINUE with the send still referencing bc->tx_buf,
                  * so zeroing then would corrupt it (that residue is cleared by
                  * the next full write or by BrokerClient_Free). */
-                if (wr_rc == enc_rc ||
-                        (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
+                if (wr_rc != MQTT_CODE_CONTINUE) {
                     /* Scrub the retained (possibly retained-will) payload from
                      * the subscriber tx_buf, mirroring the will fan-out. */
                     BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
@@ -4001,8 +3999,7 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
                  * MQTT_CODE_CONTINUE with the send still referencing bc->tx_buf,
                  * so zeroing then would corrupt it (that residue is cleared by
                  * the next full write or by BrokerClient_Free). */
-                if (wr_rc == enc_rc ||
-                        (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
+                if (wr_rc != MQTT_CODE_CONTINUE) {
                     /* Scrub the retained (possibly retained-will) payload from
                      * the subscriber tx_buf, mirroring the will fan-out. */
                     BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
@@ -4167,8 +4164,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
                  * MQTT_CODE_CONTINUE with the send still referencing tx_buf, so
                  * zeroing then would corrupt it. Scrubbing on the error path
                  * keeps the will payload from lingering after a failed send. */
-                if (wr_rc == enc_rc ||
-                        (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
+                if (wr_rc != MQTT_CODE_CONTINUE) {
                     BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);
                 }
             }
@@ -6839,6 +6835,36 @@ static int wolfmqtt_broker_dev_derive_key(void* ctx, byte* out_key,
 #endif
 
 #ifdef WOLFMQTT_BROKER_AUTH
+/* Copy a CLI -P password into broker-owned storage and wipe the source argv
+ * slot so the plaintext leaves /proc/<pid>/cmdline. The destination is cleared
+ * first so no residue from a previous -P (or a rejected too-long value)
+ * survives. Exposed as WOLFMQTT_LOCAL for unit tests. */
+WOLFMQTT_LOCAL int wolfmqtt_broker_set_auth_pass(MqttBroker* broker,
+    char* pass_arg, char* auth_pass_buf, word32 auth_pass_buf_sz)
+{
+    word32 pass_len;
+
+    if (broker == NULL || pass_arg == NULL || auth_pass_buf == NULL) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    pass_len = (word32)XSTRLEN(pass_arg);
+
+    /* Clear any residue from a previous -P before copying or rejecting. */
+    BROKER_FORCE_ZERO(auth_pass_buf, auth_pass_buf_sz);
+
+    if (pass_len >= auth_pass_buf_sz) {
+        PRINTF("broker: -P password too long (max %d)",
+            (int)auth_pass_buf_sz - 1);
+        BROKER_FORCE_ZERO(pass_arg, pass_len);
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    XMEMCPY(auth_pass_buf, pass_arg, pass_len);
+    auth_pass_buf[pass_len] = '\0';
+    broker->auth_pass = auth_pass_buf;
+    BROKER_FORCE_ZERO(pass_arg, pass_len);
+    return MQTT_CODE_SUCCESS;
+}
+
 /* Wipe the stack copy of the CLI password on every exit path (including the
  * early error returns) so the plaintext does not outlive the call. Matters for
  * NO_MAIN_DRIVER builds that reuse the stack frame across invocations. No-op
@@ -6911,21 +6937,11 @@ int wolfmqtt_broker(int argc, char** argv)
             broker.auth_user = argv[++i];
         }
         else if (XSTRCMP(argv[i], "-P") == 0 && i + 1 < argc) {
-            char* pass_arg = argv[++i];
-            word32 pass_len = (word32)XSTRLEN(pass_arg);
-            /* Copy the password into broker-owned storage and wipe the argv
-             * slot so the plaintext does not linger in /proc/<pid>/cmdline
-             * for the life of the process. */
-            if (pass_len >= (word32)sizeof(auth_pass_buf)) {
-                PRINTF("broker: -P password too long (max %d)",
-                    (int)sizeof(auth_pass_buf) - 1);
-                BROKER_FORCE_ZERO(pass_arg, pass_len);
-                return MQTT_CODE_ERROR_BAD_ARG;
+            rc = wolfmqtt_broker_set_auth_pass(&broker, argv[++i],
+                auth_pass_buf, (word32)sizeof(auth_pass_buf));
+            if (rc != MQTT_CODE_SUCCESS) {
+                return rc;
             }
-            XMEMCPY(auth_pass_buf, pass_arg, pass_len);
-            auth_pass_buf[pass_len] = '\0';
-            broker.auth_pass = auth_pass_buf;
-            BROKER_FORCE_ZERO(pass_arg, pass_len);
         }
 #endif
 #ifdef ENABLE_MQTT_TLS

@@ -758,6 +758,15 @@ WOLFMQTT_API int MqttBroker_Free(MqttBroker* broker);
  * For embedded systems that use a cooperative main loop with Step(). */
 WOLFMQTT_API int MqttBroker_Start(MqttBroker* broker);
 
+#ifdef WOLFMQTT_BROKER_AUTH
+/* Internal: copy a CLI -P password into broker-owned storage, clearing any
+ * prior residue and wiping the source argv slot. Returns
+ * MQTT_CODE_ERROR_BAD_ARG if the password does not fit. WOLFMQTT_LOCAL keeps
+ * it out of the public ABI; exposed for unit tests. */
+WOLFMQTT_LOCAL int wolfmqtt_broker_set_auth_pass(MqttBroker* broker,
+    char* pass_arg, char* auth_pass_buf, word32 auth_pass_buf_sz);
+#endif
+
 /* wolfIP backend initializer.
  * wolfIP_stack is a (struct wolfIP*) pointer to the wolfIP stack instance. */
 #ifdef WOLFMQTT_WOLFIP
