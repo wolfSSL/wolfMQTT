@@ -558,8 +558,11 @@ int SN_Encode_WillMsg(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
     int total_len;
     byte *tx_payload;
 
-    /* Validate required arguments */
-    if ((tx_buf == NULL) || (willMsg == NULL)) {
+    /* Validate required arguments. A non-NULL will struct that declares a
+     * non-zero message length must also provide the buffer, mirroring the
+     * WillTopic encoders, so the XMEMCPY below cannot read from NULL. */
+    if ((tx_buf == NULL) || (willMsg == NULL) ||
+            ((willMsg->willMsgLen > 0) && (willMsg->willMsg == NULL))) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -594,8 +597,10 @@ int SN_Encode_WillMsg(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
     *tx_payload++ = SN_MSG_TYPE_WILLMSG;
 
     /* Encode Will Message */
-    XMEMCPY(tx_payload, willMsg->willMsg, willMsg->willMsgLen);
-    tx_payload += willMsg->willMsgLen;
+    if (willMsg->willMsgLen > 0) {
+        XMEMCPY(tx_payload, willMsg->willMsg, willMsg->willMsgLen);
+        tx_payload += willMsg->willMsgLen;
+    }
     (void)tx_payload;
 
     return total_len;
@@ -708,8 +713,11 @@ int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
     int total_len;
     byte *tx_payload;
 
-    /* Validate required arguments */
-    if ((tx_buf == NULL) || (willMsg == NULL)) {
+    /* Validate required arguments. A non-NULL will struct that declares a
+     * non-zero message length must also provide the buffer, mirroring the
+     * WillTopic encoders, so the XMEMCPY below cannot read from NULL. */
+    if ((tx_buf == NULL) || (willMsg == NULL) ||
+            ((willMsg->willMsgLen > 0) && (willMsg->willMsg == NULL))) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -744,8 +752,10 @@ int SN_Encode_WillMsgUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willMsg)
     *tx_payload++ = SN_MSG_TYPE_WILLMSGUPD;
 
     /* Encode Will Message */
-    XMEMCPY(tx_payload, willMsg->willMsg, willMsg->willMsgLen);
-    tx_payload += willMsg->willMsgLen;
+    if (willMsg->willMsgLen > 0) {
+        XMEMCPY(tx_payload, willMsg->willMsg, willMsg->willMsgLen);
+        tx_payload += willMsg->willMsgLen;
+    }
     (void)tx_payload;
 
     return total_len;
@@ -1279,7 +1289,8 @@ int SN_Decode_Publish(byte *rx_buf, int rx_buf_len, SN_Publish *publish)
     byte flags = 0, type;
 
     /* Validate required arguments */
-    if (rx_buf == NULL || publish == NULL) {
+    if (rx_buf == NULL || rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE ||
+            publish == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
@@ -1783,27 +1794,33 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
         {
             client->packet.stat = MQTT_PK_READ_HEAD;
 
-            if (total_len > len) {
-                client->packet.remain_len = total_len - len;
-            }
-            else if ((total_len == 2) || (total_len == 4)) {
-                /* Handle peek */
-                if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+            if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
+                /* DTLS reads (not peeks) the header, so those bytes are
+                 * already consumed and only the remainder is read at offset
+                 * header_len. */
+                if (total_len > len) {
                     client->packet.remain_len = total_len - len;
                 }
                 else {
-                    client->packet.remain_len = total_len;
+                    client->packet.remain_len = 0;
+                }
+
+                /* Make sure it does not overflow rx_buf */
+                if (client->packet.remain_len >
+                    (rx_buf_len - client->packet.header_len)) {
+                    client->packet.remain_len = rx_buf_len -
+                                                client->packet.header_len;
                 }
             }
             else {
-                client->packet.remain_len = 0;
-            }
+                /* Non-DTLS peeks the header without consuming it, so the whole
+                 * datagram must be re-read from offset 0. */
+                client->packet.remain_len = total_len;
 
-            /* Make sure it does not overflow rx_buf */
-            if (client->packet.remain_len >
-                (rx_buf_len - client->packet.header_len)) {
-                client->packet.remain_len = rx_buf_len -
-                                            client->packet.header_len;
+                /* Make sure it does not overflow rx_buf */
+                if (client->packet.remain_len > rx_buf_len) {
+                    client->packet.remain_len = rx_buf_len;
+                }
             }
         }
         FALL_THROUGH;

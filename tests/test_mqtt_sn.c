@@ -1222,6 +1222,20 @@ TEST(sn_decode_publish_null_args_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
+TEST(sn_decode_publish_short_buffer_rejected)
+{
+    /* rx_buf_len below the minimum SN header size must be rejected before the
+     * length byte is read out of the caller's buffer. */
+    byte buf[7] = { 0x07, 0x0C, 0x00, 0x00, 0x01, 0x00, 0x00 };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+
+    rc = SN_Decode_Publish(buf, 1, &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
 /* ----------------------------------------------------------------------------
  * MsgId=0 guard for QoS > 0 (report 4248)
  *
@@ -1673,6 +1687,45 @@ TEST(sn_encode_willtopicupd_topic_valid)
 }
 
 /* ============================================================================
+ * SN_Encode_WillMsg / SN_Encode_WillMsgUpdate
+ *
+ * Unlike the WillTopic encoders these size the payload from an explicit
+ * willMsgLen field rather than XSTRLEN, so a caller that sets a non-zero
+ * length but leaves the willMsg buffer NULL would XMEMCPY from NULL. The
+ * encoders must reject that with BAD_ARG, mirroring the WillTopic guard.
+ * ============================================================================ */
+
+TEST(sn_encode_willmsg_null_msg_buffer_rejected)
+{
+    /* Non-zero willMsgLen with a NULL willMsg buffer must be rejected rather
+     * than copied from NULL. */
+    byte tx_buf[32];
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willMsgLen = 4;
+    /* will.willMsg buffer left NULL by the memset */
+
+    rc = SN_Encode_WillMsg(tx_buf, (int)sizeof(tx_buf), &will);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+TEST(sn_encode_willmsgupd_null_msg_buffer_rejected)
+{
+    byte tx_buf[32];
+    SN_Will will;
+    int rc;
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willMsgLen = 4;
+    /* will.willMsg buffer left NULL by the memset */
+
+    rc = SN_Encode_WillMsgUpdate(tx_buf, (int)sizeof(tx_buf), &will);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+/* ============================================================================
  * SN_Encode_Register
  *
  * topicName is dereferenced unconditionally - XSTRLEN for length sizing and
@@ -1836,6 +1889,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_decode_publish_predef_topic_type_valid);
     RUN_TEST(sn_decode_publish_short_topic_type_valid);
     RUN_TEST(sn_decode_publish_null_args_rejected);
+    RUN_TEST(sn_decode_publish_short_buffer_rejected);
     RUN_TEST(sn_decode_publish_qos1_zero_packet_id_rejected);
     RUN_TEST(sn_decode_publish_qos2_zero_packet_id_rejected);
     RUN_TEST(sn_decode_publish_qos0_zero_packet_id_valid);
@@ -1867,6 +1921,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_willtopicupd_null_buf_rejected);
     RUN_TEST(sn_encode_willtopicupd_empty_will_valid);
     RUN_TEST(sn_encode_willtopicupd_topic_valid);
+
+    RUN_TEST(sn_encode_willmsg_null_msg_buffer_rejected);
+    RUN_TEST(sn_encode_willmsgupd_null_msg_buffer_rejected);
 
     RUN_TEST(sn_encode_register_null_topic_string_rejected);
     RUN_TEST(sn_encode_register_null_args_rejected);

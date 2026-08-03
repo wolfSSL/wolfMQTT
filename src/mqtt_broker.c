@@ -136,6 +136,10 @@ static const char* BrokerLog_Sanitize(const char* src)
     char* dst = pool[pool_idx];
     word32 di = 0;
 
+    /* Clear the slot before reuse so no residue from a previous longer
+     * sanitized string survives past this call's NUL terminator. */
+    BROKER_FORCE_ZERO(dst, BROKER_LOG_SAN_SZ);
+
     pool_idx = (pool_idx + 1) % BROKER_LOG_SAN_POOL;
 
     if (src == NULL) {
@@ -1816,6 +1820,9 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
             WBLOG_ERR(bc->broker,
                 "broker: drain encode failed sock=%d topic=%s rc=%d",
                 (int)bc->sock, BrokerLog_Sanitize(cur->topic), enc_rc);
+            /* Encode length is unknown on failure, so scrub the whole buffer
+             * in case a partial payload was written. */
+            BROKER_FORCE_ZERO(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc));
             /* Drop just this entry and continue. Encoding failure for
              * a single message is not fatal to the connection. */
             if (prev == NULL) {
@@ -1850,6 +1857,14 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
         {
             int wr_rc;
             wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+            /* Scrub the forwarded PUBLISH (which may carry a replayed will or
+             * an application payload) once the buffer is idle. Skip only the
+             * MQTT_CODE_CONTINUE case, where a non-blocking or TLS-async send
+             * still references bc->tx_buf. */
+            if (wr_rc == enc_rc ||
+                    (wr_rc < 0 && wr_rc != MQTT_CODE_CONTINUE)) {
+                BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
+            }
             if (wr_rc < 0) {
                 /* Socket dropped (EPIPE/ECONNRESET/etc). Leave this
                  * entry in QUEUED state, do not advance, do not bump
@@ -2395,6 +2410,7 @@ WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
                     broker->subs = next;
                 }
                 if (sp->filter) {
+                    BROKER_FORCE_ZERO(sp->filter, XSTRLEN(sp->filter) + 1);
                     WOLFMQTT_FREE(sp->filter);
                 }
                 if (sp->client_id) {
@@ -2783,6 +2799,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
                 broker->subs = next;
             }
             if (cur->filter) {
+                BROKER_FORCE_ZERO(cur->filter, XSTRLEN(cur->filter) + 1);
                 WOLFMQTT_FREE(cur->filter);
             }
             if (cur->client_id) {
@@ -2974,6 +2991,7 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             }
             WBLOG_INFO(broker, "broker: sub remove sock=%d filter=%s",
                 (int)bc->sock, BrokerLog_Sanitize(cur->filter));
+            BROKER_FORCE_ZERO(cur->filter, XSTRLEN(cur->filter) + 1);
             WOLFMQTT_FREE(cur->filter);
             if (cur->client_id) {
                 WOLFMQTT_FREE(cur->client_id);
@@ -3097,6 +3115,7 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
                 broker->subs = next;
             }
             if (cur->filter) {
+                BROKER_FORCE_ZERO(cur->filter, XSTRLEN(cur->filter) + 1);
                 WOLFMQTT_FREE(cur->filter);
             }
             if (cur->client_id) {
@@ -5550,11 +5569,12 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                         wr = MqttPacket_Write(&sub->client->client,
                             sub->client->tx_buf, sub_rc);
                         /* Static fan-out has no per-subscriber resume queue, so
-                         * a partial write leaves this subscriber's stream
-                         * desynced and unrecoverable. Tear down its socket and
-                         * clear connected; the main loop reaps it on the next
-                         * read error, and the match guard above then skips this
-                         * client's other matching subscriptions. */
+                         * anything short of a complete write leaves this
+                         * subscriber's stream desynced and unrecoverable. Tear
+                         * down its socket and clear connected; the main loop
+                         * reaps it on the next read error, and the match guard
+                         * above then skips this client's other matching
+                         * subscriptions. */
                         if (wr != sub_rc &&
                             sub->client->sock != BROKER_SOCKET_INVALID) {
                             broker->net.close(broker->net.ctx,
@@ -5562,6 +5582,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             sub->client->sock = BROKER_SOCKET_INVALID;
                             sub->client->connected = 0;
                         }
+                        /* Scrub the forwarded payload from the reusable tx_buf.
+                         * On a complete write the send is done; on any other
+                         * outcome the send is abandoned above (no resume queue),
+                         * so nothing references the buffer either way. */
+                        BROKER_FORCE_ZERO(sub->client->tx_buf, sub_rc);
                     }
                     else {
                         WBLOG_ERR(broker,
@@ -6422,8 +6447,14 @@ int MqttBroker_Start(MqttBroker* broker)
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Restore persisted state (orphan subs, retained messages) before
      * opening the listen sockets so reconnecting clients see the
-     * resumed session immediately. No-op when no hooks are installed. */
-    (void)BrokerPersist_Restore(broker);
+     * resumed session immediately. No-op when no hooks are installed.
+     * A nonzero result means the backing store is unhealthy, so refuse to
+     * start rather than come up with silently incomplete state. */
+    rc = BrokerPersist_Restore(broker);
+    if (rc != MQTT_CODE_SUCCESS) {
+        WBLOG_ERR(broker, "broker: persistence restore failed rc=%d", rc);
+        return rc;
+    }
 #endif
 
 #ifdef ENABLE_MQTT_TLS
@@ -6589,7 +6620,11 @@ int MqttBroker_Run(MqttBroker* broker)
         }
     }
 
-    return MQTT_CODE_SUCCESS;
+    /* Propagate a fatal step error; a clean stop leaves rc idle or success. */
+    if (rc == MQTT_CODE_CONTINUE || rc > 0) {
+        rc = MQTT_CODE_SUCCESS;
+    }
+    return rc;
 }
 
 int MqttBroker_Stop(MqttBroker* broker)
@@ -6627,6 +6662,8 @@ int MqttBroker_Free(MqttBroker* broker)
     while (broker->subs) {
         BrokerSub* next = broker->subs->next;
         if (broker->subs->filter) {
+            BROKER_FORCE_ZERO(broker->subs->filter,
+                XSTRLEN(broker->subs->filter) + 1);
             WOLFMQTT_FREE(broker->subs->filter);
         }
         if (broker->subs->client_id) {
@@ -6801,12 +6838,26 @@ static int wolfmqtt_broker_dev_derive_key(void* ctx, byte* out_key,
 }
 #endif
 
+#ifdef WOLFMQTT_BROKER_AUTH
+/* Wipe the stack copy of the CLI password on every exit path (including the
+ * early error returns) so the plaintext does not outlive the call. Matters for
+ * NO_MAIN_DRIVER builds that reuse the stack frame across invocations. No-op
+ * when broker auth is disabled. */
+#define BROKER_WIPE_AUTH_PASS() \
+    BROKER_FORCE_ZERO(auth_pass_buf, sizeof(auth_pass_buf))
+#else
+#define BROKER_WIPE_AUTH_PASS() do {} while (0)
+#endif
+
 int wolfmqtt_broker(int argc, char** argv)
 {
     int rc;
     MqttBroker broker;
     MqttBrokerNet net;
     int i;
+#ifdef WOLFMQTT_BROKER_AUTH
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+#endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     MqttBrokerPersistHooks persist_hooks;
     const char* persist_dir = NULL;
@@ -6860,7 +6911,21 @@ int wolfmqtt_broker(int argc, char** argv)
             broker.auth_user = argv[++i];
         }
         else if (XSTRCMP(argv[i], "-P") == 0 && i + 1 < argc) {
-            broker.auth_pass = argv[++i];
+            char* pass_arg = argv[++i];
+            word32 pass_len = (word32)XSTRLEN(pass_arg);
+            /* Copy the password into broker-owned storage and wipe the argv
+             * slot so the plaintext does not linger in /proc/<pid>/cmdline
+             * for the life of the process. */
+            if (pass_len >= (word32)sizeof(auth_pass_buf)) {
+                PRINTF("broker: -P password too long (max %d)",
+                    (int)sizeof(auth_pass_buf) - 1);
+                BROKER_FORCE_ZERO(pass_arg, pass_len);
+                return MQTT_CODE_ERROR_BAD_ARG;
+            }
+            XMEMCPY(auth_pass_buf, pass_arg, pass_len);
+            auth_pass_buf[pass_len] = '\0';
+            broker.auth_pass = auth_pass_buf;
+            BROKER_FORCE_ZERO(pass_arg, pass_len);
         }
 #endif
 #ifdef ENABLE_MQTT_TLS
@@ -6909,10 +6974,12 @@ int wolfmqtt_broker(int argc, char** argv)
 #endif
         else if (XSTRCMP(argv[i], "-h") == 0) {
             BrokerUsage(argv[0]);
+            BROKER_WIPE_AUTH_PASS();
             return 0;
         }
         else {
             BrokerUsage(argv[0]);
+            BROKER_WIPE_AUTH_PASS();
             return MQTT_CODE_ERROR_BAD_ARG;
         }
     }
@@ -6934,11 +7001,13 @@ int wolfmqtt_broker(int argc, char** argv)
             PRINTF("broker: ERROR persist+encrypt build needs -E <source> "
                 "(only \"dev\" is recognized; production deployments "
                 "must install MqttBrokerPersistHooks.derive_key)");
+            BROKER_WIPE_AUTH_PASS();
             return MQTT_CODE_ERROR_BAD_ARG;
         }
         if (XSTRCMP(encrypt_key_source, "dev") != 0) {
             PRINTF("broker: ERROR unknown -E source \"%s\" "
                 "(only \"dev\" is recognized)", encrypt_key_source);
+            BROKER_WIPE_AUTH_PASS();
             return MQTT_CODE_ERROR_BAD_ARG;
         }
         #else
@@ -6948,6 +7017,7 @@ int wolfmqtt_broker(int argc, char** argv)
         PRINTF("broker: ERROR persist+encrypt build has no built-in key "
             "source (rebuild with --enable-broker-persist-encrypt-dev-key "
             "for testing, or install MqttBrokerPersistHooks.derive_key)");
+        BROKER_WIPE_AUTH_PASS();
         return MQTT_CODE_ERROR_BAD_ARG;
         #endif
     #endif
@@ -6955,6 +7025,7 @@ int wolfmqtt_broker(int argc, char** argv)
         if (rc != 0) {
             PRINTF("broker: persist init failed dir=%s rc=%d",
                 persist_dir, rc);
+            BROKER_WIPE_AUTH_PASS();
             return rc;
         }
         persist_initialized = 1;
@@ -7018,6 +7089,9 @@ int wolfmqtt_broker(int argc, char** argv)
 
     MqttBroker_Free(&broker);
 
+    /* Erase the broker-owned password copy before returning. */
+    BROKER_WIPE_AUTH_PASS();
+
 #ifdef WOLFMQTT_BROKER_PERSIST
     if (persist_initialized) {
         MqttBrokerNet_PersistPosix_Free(&persist_hooks);
@@ -7026,6 +7100,7 @@ int wolfmqtt_broker(int argc, char** argv)
 
     return rc;
 }
+#undef BROKER_WIPE_AUTH_PASS
 
 #ifndef NO_MAIN_DRIVER
 int main(int argc, char** argv)
