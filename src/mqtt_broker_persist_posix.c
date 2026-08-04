@@ -70,6 +70,18 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
     void* cb_ctx);
 static int wmqb_posix_sync(void* ctx);
 
+/* Secure zeroing via a volatile pointer so the compiler cannot elide the
+ * stores. Kept file-local because MqttClient_ForceZero has hidden linkage
+ * and is not reachable from the standalone broker program. */
+static void wmqb_posix_force_zero(void* mem, word32 len)
+{
+    volatile byte* p = (volatile byte*)mem;
+    word32 i;
+    for (i = 0; i < len; i++) {
+        p[i] = 0;
+    }
+}
+
 /* hex encode key bytes into out (must be 2*key_len+1). Lowercase. */
 static void wmqb_hex_encode(char* out, const byte* in, word16 in_len)
 {
@@ -439,10 +451,16 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         }
         (void)close(fd);
         if (read_total != blob_cap) {
+            /* Scrub the record before releasing the heap buffer. In
+             * encrypt-at-rest builds the blob is ciphertext, so the wipe is
+             * harmless; in plaintext builds it clears session and payload
+             * data from a buffer that would otherwise linger in the heap. */
+            wmqb_posix_force_zero(blob, blob_cap);
             WOLFMQTT_FREE(blob);
             continue;
         }
         stop = cb(key_buf, (word16)kn, blob, blob_cap, cb_ctx);
+        wmqb_posix_force_zero(blob, blob_cap);
         WOLFMQTT_FREE(blob);
         if (stop != 0) {
             break;

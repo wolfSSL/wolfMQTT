@@ -1462,6 +1462,41 @@ TEST(sn_ping_nonblock_pendresp_lifecycle)
 
 #endif /* WOLFMQTT_NONBLOCK */
 
+/* Regression: on the non-DTLS transport SN_Packet_Read peeks the 2-byte header
+ * without consuming it, so it must re-read the whole datagram from offset 0. It
+ * previously subtracted the peeked header and short-read every frame longer
+ * than two bytes: a 3-byte CONNACK came back as one byte and failed to decode.
+ * Drive the peek path with a 3-byte CONNACK and an 8-byte SUBACK and assert the
+ * full frame length is returned. Runs in blocking and non-blocking builds. */
+static void test_sn_nondtls_reads_full_frames(void)
+{
+    SN_Connect mc;
+    SN_Subscribe sub;
+    int rc, iters;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    /* Clear the datagram flag so the reader takes the non-DTLS peek path. */
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+
+    /* Connect and read a 3-byte CONNACK. Before the fix the peek path
+     * short-read it to a single byte and SN_Decode_Header rejected it, so the
+     * connect failed instead of succeeding. */
+    XMEMSET(&mc, 0, sizeof(mc));
+    mc.client_id = "wolfMQTT-sn-test";
+    mc.protocol_level = SN_PROTOCOL_ID;
+    mc.enable_lwt = 0;
+    mock_net_push(&g_mock, CONNACK_FRAME, (int)sizeof(CONNACK_FRAME));
+    rc = sn_connect_pump(&mc, &iters);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, mc.ack.return_code);
+
+    /* Subscribe and read an 8-byte SUBACK through the same non-DTLS path. */
+    sn_subscribe_setup(&sub);
+    mock_net_push(&g_mock, SUBACK_FRAME, (int)sizeof(SUBACK_FRAME));
+    rc = sn_subscribe_pump(&sub, &iters);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+}
+
 #endif /* WOLFMQTT_SN */
 
 /* ============================================================================
@@ -1493,6 +1528,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);
+    RUN_TEST(sn_nondtls_reads_full_frames);
 
     /* The non-blocking retry regression only exists under WOLFMQTT_NONBLOCK. */
 #ifdef WOLFMQTT_NONBLOCK

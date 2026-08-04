@@ -827,6 +827,129 @@ TEST(connect_auth_partial_pass_only_fails_closed)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* ---------------------------------------------------------------------------
+ * wolfmqtt_broker_set_auth_pass: the CLI -P copy/length/scrub logic. The
+ * argument loop in wolfmqtt_broker is unreachable in the CUSTOM_NET test build
+ * (it returns before parsing), so the helper is exercised directly.
+ * ------------------------------------------------------------------------- */
+
+TEST(broker_set_auth_pass_valid)
+{
+    MqttBroker broker;
+    char pass_arg[BROKER_MAX_PASSWORD_LEN];
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+
+    XMEMSET(&broker, 0, sizeof(broker));
+    /* Non-zero fill proves the helper clears the destination before copying. */
+    XMEMSET(auth_pass_buf, 0xAA, sizeof(auth_pass_buf));
+    XMEMSET(pass_arg, 0, sizeof(pass_arg));
+    XMEMCPY(pass_arg, "secretpw", 8);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, wolfmqtt_broker_set_auth_pass(&broker,
+        pass_arg, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    ASSERT_TRUE(broker.auth_pass == auth_pass_buf);
+    ASSERT_EQ(0, XSTRCMP(auth_pass_buf, "secretpw"));
+    /* Source argv slot scrubbed. */
+    ASSERT_EQ('\0', pass_arg[0]);
+}
+
+TEST(broker_set_auth_pass_max_len_valid)
+{
+    MqttBroker broker;
+    char pass_arg[BROKER_MAX_PASSWORD_LEN + 1];
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+    int i;
+
+    XMEMSET(&broker, 0, sizeof(broker));
+    XMEMSET(auth_pass_buf, 0, sizeof(auth_pass_buf));
+    XMEMSET(pass_arg, 0, sizeof(pass_arg));
+    /* BROKER_MAX_PASSWORD_LEN-1 characters is the longest accepted. */
+    for (i = 0; i < BROKER_MAX_PASSWORD_LEN - 1; i++) {
+        pass_arg[i] = 'a';
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, wolfmqtt_broker_set_auth_pass(&broker,
+        pass_arg, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    ASSERT_EQ(BROKER_MAX_PASSWORD_LEN - 1, (int)XSTRLEN(auth_pass_buf));
+}
+
+TEST(broker_set_auth_pass_too_long_rejected)
+{
+    MqttBroker broker;
+    char pass_arg[BROKER_MAX_PASSWORD_LEN + 8];
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+    int i;
+
+    XMEMSET(&broker, 0, sizeof(broker));
+    XMEMSET(auth_pass_buf, 0, sizeof(auth_pass_buf));
+    XMEMSET(pass_arg, 0, sizeof(pass_arg));
+    /* BROKER_MAX_PASSWORD_LEN characters is one too many. */
+    for (i = 0; i < BROKER_MAX_PASSWORD_LEN; i++) {
+        pass_arg[i] = 'a';
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, wolfmqtt_broker_set_auth_pass(&broker,
+        pass_arg, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    /* The over-long argv slot is still scrubbed. */
+    ASSERT_EQ('\0', pass_arg[0]);
+}
+
+TEST(broker_set_auth_pass_too_long_wipes_prior)
+{
+    /* Repeated -P: a valid password followed by a too-long one must not leave
+     * the first password resident in the broker-owned buffer. */
+    MqttBroker broker;
+    char first[BROKER_MAX_PASSWORD_LEN];
+    char second[BROKER_MAX_PASSWORD_LEN + 8];
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+    char zero[BROKER_MAX_PASSWORD_LEN];
+    int i;
+
+    XMEMSET(&broker, 0, sizeof(broker));
+    XMEMSET(auth_pass_buf, 0, sizeof(auth_pass_buf));
+    XMEMSET(zero, 0, sizeof(zero));
+    XMEMSET(first, 0, sizeof(first));
+    XMEMSET(second, 0, sizeof(second));
+    XMEMCPY(first, "firstpw", 7);
+    for (i = 0; i < BROKER_MAX_PASSWORD_LEN; i++) {
+        second[i] = 'b';
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, wolfmqtt_broker_set_auth_pass(&broker,
+        first, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, wolfmqtt_broker_set_auth_pass(&broker,
+        second, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    /* No residue of "firstpw" survives the rejected second argument. */
+    ASSERT_EQ(0, XMEMCMP(auth_pass_buf, zero, sizeof(auth_pass_buf)));
+}
+
+TEST(broker_set_auth_pass_shorter_second_no_residue)
+{
+    /* A shorter second -P must not leave the first password's tail past the
+     * new NUL terminator. */
+    MqttBroker broker;
+    char first[BROKER_MAX_PASSWORD_LEN];
+    char second[BROKER_MAX_PASSWORD_LEN];
+    char auth_pass_buf[BROKER_MAX_PASSWORD_LEN];
+    char zero[BROKER_MAX_PASSWORD_LEN];
+
+    XMEMSET(&broker, 0, sizeof(broker));
+    XMEMSET(auth_pass_buf, 0, sizeof(auth_pass_buf));
+    XMEMSET(zero, 0, sizeof(zero));
+    XMEMSET(first, 0, sizeof(first));
+    XMEMSET(second, 0, sizeof(second));
+    XMEMCPY(first, "longpassword", 12);
+    XMEMCPY(second, "x", 1);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, wolfmqtt_broker_set_auth_pass(&broker,
+        first, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, wolfmqtt_broker_set_auth_pass(&broker,
+        second, auth_pass_buf, (word32)sizeof(auth_pass_buf)));
+    ASSERT_EQ(0, XSTRCMP(auth_pass_buf, "x"));
+    /* Everything after "x\0" is zero - no "longpassword" tail. */
+    ASSERT_EQ(0, XMEMCMP(auth_pass_buf + 1, zero, sizeof(auth_pass_buf) - 1));
+}
 #endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
@@ -3490,6 +3613,11 @@ int main(int argc, char** argv)
     RUN_TEST(connect_auth_pass_only_start_rejected);
     RUN_TEST(connect_auth_partial_config_fails_closed);
     RUN_TEST(connect_auth_partial_pass_only_fails_closed);
+    RUN_TEST(broker_set_auth_pass_valid);
+    RUN_TEST(broker_set_auth_pass_max_len_valid);
+    RUN_TEST(broker_set_auth_pass_too_long_rejected);
+    RUN_TEST(broker_set_auth_pass_too_long_wipes_prior);
+    RUN_TEST(broker_set_auth_pass_shorter_second_no_residue);
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_credentials_scrubbed_after_accept);
 #endif

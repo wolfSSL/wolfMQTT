@@ -24,22 +24,6 @@
     #include <config.h>
 #endif
 
-#ifdef WOLFMQTT_NONBLOCK
-    /* need EWOULDBLOCK and EAGAIN */
-    #if defined(WOLFMQTT_WOLFIP)
-        #include "wolfip.h"
-        #define EWOULDBLOCK WOLFIP_EAGAIN
-        #define EAGAIN WOLFIP_EAGAIN
-    #elif defined(MICROCHIP_MPLAB_HARMONY) && \
-        ((__XC32_VERSION < 4000) || (__XC32_VERSION == 243739000))
-        /* xc32 versions >= v4.0 no longer have sys/errno.h */
-        #include <sys/errno.h>
-        #include <errno.h>
-    #else
-        #include <errno.h>
-    #endif
-#endif
-
 #ifdef ENABLE_MQTT_CURL
     #include <curl/curl.h>
 #endif
@@ -215,9 +199,6 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
             rc = MQTT_CODE_CONTINUE;
         }
     }
-    else if (rc == EWOULDBLOCK || rc == EAGAIN) {
-        rc = MQTT_CODE_CONTINUE;
-    }
 
 #else
     do {
@@ -329,9 +310,6 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
         if (client->read.pos < buf_len) {
             rc = MQTT_CODE_CONTINUE;
         }
-    }
-    else if (rc == EWOULDBLOCK || rc == EAGAIN) {
-        rc = MQTT_CODE_CONTINUE;
     }
 
 #else
