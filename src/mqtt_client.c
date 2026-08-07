@@ -1223,6 +1223,17 @@ static int MqttClient_HandlePacket(MqttClient* client,
     return rc;
 }
 
+/* [MQTT-4.13.1] Malformed/protocol-invalid data requires disconnect. */
+static int MqttClient_IsFatalProtoError(int rc)
+{
+    return (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
+            rc == MQTT_CODE_ERROR_PACKET_TYPE ||
+            rc == MQTT_CODE_ERROR_PACKET_ID ||
+            rc == MQTT_CODE_ERROR_PROPERTY ||
+            rc == MQTT_CODE_ERROR_PROPERTY_MISMATCH ||
+            rc == MQTT_CODE_ERROR_SERVER_PROP);
+}
+
 static inline int MqttIsPubRespPacket(int packet_type)
 {
     return (packet_type == MQTT_PACKET_TYPE_PUBLISH_ACK /* Acknowledgment */ ||
@@ -1367,6 +1378,7 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
 #endif
     MqttMsgStat* mms_stat;
     int waitMatchFound;
+    int recvFatal = 0;
     void* use_packet_obj = NULL;
 
     if (client == NULL || packet_obj == NULL) {
@@ -1626,6 +1638,10 @@ wait_again:
         }
     } /* switch (mms_stat->read) */
 
+    /* Record whether the failure came from decoding/handling received data;
+     * a local ack-encode failure below must not tear down a healthy link. */
+    recvFatal = (rc < 0);
+
     switch (mms_stat->ack)
     {
         case MQTT_MSG_BEGIN:
@@ -1739,6 +1755,17 @@ wait_again:
                 MqttClient_ReturnCodeToString(rc), rc);
         }
     #endif
+        /* Keep IS_CONNECTED honest after a fatal error so the caller sees a
+         * dead connection. Only clear the flag; the application tears the
+         * transport down via MqttClient_NetDisconnect. Freeing it here would
+         * disconnect twice (with curl, double curl_global_cleanup) and could
+         * race a concurrent publisher inside wolfSSL_write in MT builds. Gated
+         * on recvFatal so a local ack-encode failure (e.g. an out-of-table
+         * Reason Code) does not disconnect an otherwise healthy peer. */
+        if (recvFatal && MqttClient_IsFatalProtoError(rc) &&
+            (client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) != 0) {
+            (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
+        }
         return rc;
     }
 

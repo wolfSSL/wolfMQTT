@@ -69,6 +69,16 @@ static int mock_net_disconnect(void *context)
     return MQTT_CODE_SUCCESS;
 }
 
+/* Counts MqttNet.disconnect invocations so a test can confirm
+ * MqttSocket_Disconnect actually ran. */
+static int g_disconnect_calls;
+static int mock_net_disconnect_counting(void *context)
+{
+    (void)context;
+    g_disconnect_calls++;
+    return MQTT_CODE_SUCCESS;
+}
+
 #ifdef WOLFMQTT_NONBLOCK
 /* Read side reports would-block, so a non-blocking wait defers rather than
  * completing or timing out. Defined here (not under the WOLFMQTT_NO_TIME
@@ -1008,9 +1018,78 @@ TEST(wait_message_malformed_fixed_header_disconnects)
      * transport teardown is deferred to MqttClient_NetDisconnect (avoids a
      * double disconnect and a race with a concurrent writer). */
     ASSERT_EQ(0, g_disconnect_calls);
+    /* The IS_CONNECTED flag is always cleared so the caller sees a dead
+     * connection. In a multithread build the socket/TLS teardown is
+     * deferred to MqttClient_NetDisconnect to avoid freeing the transport
+     * under a concurrent writer, so the disconnect callback does not fire
+     * here; single-threaded tears down immediately. */
+#ifndef WOLFMQTT_MULTITHREAD
+    ASSERT_EQ(1, g_disconnect_calls);
+#endif
     ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
                        MQTT_CLIENT_FLAG_IS_CONNECTED));
 }
+
+/* Feed a canned frame that decodes to a fatal protocol error, drive the
+ * receive/wait path to completion, and assert both the expected error and that
+ * IS_CONNECTED is cleared so the caller sees a dead connection. The teardown is
+ * gated on recvFatal, so this covers the MULTITHREAD build (active here) where a
+ * fatal received-data error must not leave the connected flag set. */
+static void drive_fatal_proto_teardown(const byte* frame, int frame_len,
+    int expected_rc)
+{
+    int rc;
+    int i;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+#endif
+
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    g_disconnect_calls = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    test_net.disconnect = mock_net_disconnect_counting;
+    XMEMCPY(g_canned_buf, frame, (size_t)frame_len);
+    g_canned_len = frame_len;
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(expected_rc, rc);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+/* An unexpected client-only packet type (CONNECT) arriving from the peer is a
+ * fatal PACKET_TYPE error and must clear IS_CONNECTED. */
+TEST(wait_message_fatal_packet_type_clears_is_connected)
+{
+    static const byte frame[] = { 0x10, 0x02, 0x00, 0x00 };
+    drive_fatal_proto_teardown(frame, (int)sizeof(frame),
+        MQTT_CODE_ERROR_PACKET_TYPE);
+}
+
+#ifdef WOLFMQTT_V5
+/* A received v5 AUTH carrying Authentication Data without an Authentication
+ * Method is a fatal PROPERTY error and must clear IS_CONNECTED. */
+TEST(wait_message_fatal_property_clears_is_connected)
+{
+    /* AUTH, remain=6, reason=0x18 (Continue Auth), prop_len=4,
+     * AUTH_DATA(0x16)="x" with no Auth Method. */
+    static const byte frame[] = {
+        0xF0, 0x06, 0x18, 0x04, 0x16, 0x00, 0x01, 'x'
+    };
+    drive_fatal_proto_teardown(frame, (int)sizeof(frame),
+        MQTT_CODE_ERROR_PROPERTY);
+}
+#endif /* WOLFMQTT_V5 */
 
 #ifdef WOLFMQTT_V5
 /* [MQTT-3.1.2.11.8]: CONNACK Topic Alias Maximum must latch into client. */
@@ -3157,6 +3236,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_pubrel_emits_pubcomp);
     RUN_TEST(wait_message_puback_emits_no_ack);
     RUN_TEST(wait_message_pubcomp_emits_no_ack);
+    RUN_TEST(wait_message_malformed_fixed_header_disconnects);
+    RUN_TEST(wait_message_fatal_packet_type_clears_is_connected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(wait_message_fatal_property_clears_is_connected);
+#endif
 
 #ifndef WOLFMQTT_NO_TIME
     /* Automatic keep-alive (PINGREQ) scheduling tests */

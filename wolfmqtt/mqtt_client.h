@@ -576,6 +576,11 @@ WOLFMQTT_API int MqttClient_Disconnect_ex(
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
  *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note A fatal protocol error in received data (malformed data, unexpected
+                packet type or id, or an invalid v5 property) marks the
+                connection disconnected (clears the connected flag); the
+                application should call MqttClient_NetDisconnect to tear down
+                the transport.
  *  \param      client      Pointer to MqttClient structure
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -588,6 +593,11 @@ WOLFMQTT_API int MqttClient_WaitMessage(
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
  *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note A fatal protocol error in received data (malformed data, unexpected
+                packet type or id, or an invalid v5 property) marks the
+                connection disconnected (clears the connected flag); the
+                application should call MqttClient_NetDisconnect to tear down
+                the transport.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \param      timeout_ms  Milliseconds until read timeout
