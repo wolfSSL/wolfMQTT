@@ -3586,6 +3586,103 @@ TEST(retained_qos_stored_2_sub_0_delivers_qos0)
 }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
+/* QoS 2 dedup state must survive a disconnect/reconnect cycle; a
+ * retransmitted PUBLISH must not be re-fanned-out to the subscriber. */
+TEST(qos2_dedup_survives_disconnect_reconnect)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int sub_pubs;
+    int reconnect_pubrecs;
+    static const byte connect_sub[] = {
+        0x10, 0x0F,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x03, 'S', 'u', 'b'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x02
+    };
+    /* Publisher CONNECT clean_session=0 (persistent), ClientId "Pub". */
+    static const byte connect_pub[] = {
+        0x10, 0x0F,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x03, 'P', 'u', 'b'
+    };
+    static const byte publish_qos2[] = {
+        0x34, 0x0A,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        'f', 'i', 'r', 's', 't'
+    };
+    /* Same PUBLISH, DUP=1, retransmitted after reconnect. */
+    static const byte publish_qos2_dup[] = {
+        0x3C, 0x0A,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        'f', 'i', 'r', 's', 't'
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Phase 1: subscriber + publisher's first connection. Publisher
+     * sends the QoS 2 PUBLISH, then disconnects WITHOUT a PUBREL - the
+     * broker's dedup state for packet_id=7 must be preserved, not
+     * dropped, by the disconnect cleanup. */
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish_qos2, sizeof(publish_qos2));
+    mock_client_input_append(1, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 24; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[1].closed);
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    ASSERT_EQ(1, sub_pubs); /* delivered exactly once so far */
+
+    /* Phase 2: publisher reconnects with the SAME Client Identifier and
+     * retransmits the identical QoS 2 PUBLISH (DUP=1, same packet_id).
+     * The reconnect must reclaim the dedup state before this PUBLISH is
+     * processed. */
+    g_clients_active = 3;
+    mock_client_input_append(2, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(2, publish_qos2_dup, sizeof(publish_qos2_dup));
+    for (i = 0; i < 24; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    reconnect_pubrecs = count_packets_of_type(g_clients[2].out_buf,
+        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
+    /* The QoS 2 handshake with the reconnected publisher must still
+     * complete (PUBREC sent)... */
+    ASSERT_EQ(1, reconnect_pubrecs);
+    /* ...but the retransmit must NOT be re-fanned-out to the
+     * subscriber. Pre-fix, BrokerOrphan_Take never carried
+     * bc->qos2_pending into the orphan record (only out_q was
+     * transferred) and BrokerClient_Free's BrokerInboundQos2_Clear then
+     * discarded it, so the reconnected publisher's retransmit was
+     * treated as brand new: it would be fanned out a second time here,
+     * making this total 2. */
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    ASSERT_EQ(1, sub_pubs);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -3691,6 +3788,11 @@ int main(int argc, char** argv)
     RUN_TEST(retained_qos_stored_0_sub_1_delivers_qos0);
     RUN_TEST(retained_qos_stored_2_sub_2_delivers_qos2);
     RUN_TEST(retained_qos_stored_2_sub_0_delivers_qos0);
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(qos2_dedup_survives_disconnect_reconnect);
+#endif
 #endif
     TEST_SUITE_END();
 

@@ -1614,6 +1614,62 @@ static void BrokerInboundQos2_Clear(BrokerClient* bc)
     bc->qos2_pending_count = 0;
 #endif
 }
+
+/* Returns 1 if the client holds any inbound QoS2 dedup state. */
+static int BrokerInboundQos2_HasPending(const BrokerClient* bc)
+{
+#ifdef WOLFMQTT_STATIC_MEMORY
+    int i;
+    for (i = 0; i < BROKER_MAX_INBOUND_QOS2; i++) {
+        if (bc->qos2_pending[i] != 0) {
+            return 1;
+        }
+    }
+    return 0;
+#else
+    return (bc->qos2_pending_count > 0);
+#endif
+}
+
+/* Move the old client's inbound QoS2 dedup state to the new client on a live
+ * same-ClientId takeover, but only if the old session survives: a v5 session
+ * with Session Expiry 0 (or a v3.1.1 CleanSession=1 session) ends at takeover,
+ * so its packet ids must not carry into the new session (they would suppress a
+ * fresh QoS2 message as a duplicate). Returns 1 if state carried, so the caller
+ * reports Session Present. The dropped case leaves old's state to be freed with
+ * the old client. */
+static int BrokerInboundQos2_Takeover(BrokerClient* new_bc, BrokerClient* old)
+{
+    int old_persists = (old->clean_session == 0);
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    if (old->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        old_persists = (old->session_expiry_sec != 0);
+    }
+#elif defined(WOLFMQTT_V5) && defined(WOLFMQTT_STATIC_MEMORY)
+    /* Static BrokerClient has no session_expiry_sec, so a v5 Session Expiry 0
+     * (ends the Session at disconnect [MQTT-3.1.2.11.2]) is indistinguishable
+     * from a surviving one. Conservatively do not carry inbound QoS2 dedup
+     * state across a v5 takeover rather than risk suppressing a later PUBLISH
+     * that legitimately reuses a freed packet id. */
+    if (old->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        old_persists = 0;
+    }
+#endif
+    if (!old_persists || !BrokerInboundQos2_HasPending(old)) {
+        return 0;
+    }
+#ifdef WOLFMQTT_STATIC_MEMORY
+    XMEMCPY(new_bc->qos2_pending, old->qos2_pending,
+        sizeof(new_bc->qos2_pending));
+    XMEMSET(old->qos2_pending, 0, sizeof(old->qos2_pending));
+#else
+    new_bc->qos2_pending       = old->qos2_pending;
+    new_bc->qos2_pending_count = old->qos2_pending_count;
+    old->qos2_pending          = NULL;
+    old->qos2_pending_count    = 0;
+#endif
+    return 1;
+}
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
@@ -2316,6 +2372,18 @@ static void BrokerOrphan_FreeContents(BrokerOrphanSession* o)
     o->out_q_tail = NULL;
     o->out_q_count = 0;
     o->out_q_inflight = 0;
+#if WOLFMQTT_MAX_QOS >= 2
+    {
+        BrokerInboundQos2* q2cur = o->qos2_pending;
+        while (q2cur != NULL) {
+            BrokerInboundQos2* q2next = q2cur->next;
+            WOLFMQTT_FREE(q2cur);
+            q2cur = q2next;
+        }
+        o->qos2_pending = NULL;
+        o->qos2_pending_count = 0;
+    }
+#endif
     if (o->client_id != NULL) {
         WOLFMQTT_FREE(o->client_id);
         o->client_id = NULL;
@@ -2492,6 +2560,16 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
     bc->out_q_count   = 0;
     bc->out_q_inflight = 0;
 
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Move QoS 2 dedup state too, so a retransmit after reconnect is
+     * still recognized instead of re-fanned-out. Same move-not-copy
+     * pattern as out_q above. */
+    o->qos2_pending       = bc->qos2_pending;
+    o->qos2_pending_count = bc->qos2_pending_count;
+    bc->qos2_pending       = NULL;
+    bc->qos2_pending_count = 0;
+#endif
+
     /* Link at head; orphan_session_count tracks size. */
     o->next = broker->orphan_sessions;
     broker->orphan_sessions = o;
@@ -2548,6 +2626,13 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
     if (new_bc->session_expiry_sec == 0xFFFFFFFFu) {
         new_bc->session_expiry_sec = o->session_expiry_sec;
     }
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Move QoS 2 dedup state back before any new PUBLISH is processed. */
+    new_bc->qos2_pending       = o->qos2_pending;
+    new_bc->qos2_pending_count = o->qos2_pending_count;
+    o->qos2_pending       = NULL;
+    o->qos2_pending_count = 0;
+#endif
     /* MQTT-4.4.0-1: any message that was previously in-flight on the old
      * session is re-sent on resume. PUBLISH_SENT -> QUEUED with
      * retransmit_dup so the drain re-sends the PUBLISH with DUP=1.
@@ -4784,6 +4869,15 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                     > 0) {
                     session_present = 1;
                 }
+            #if WOLFMQTT_MAX_QOS >= 2
+                /* Carry inbound QoS2 dedup state so a retransmit after the
+                 * takeover is still recognized, but only from a surviving
+                 * session (see helper). Transferred state is Session state, so
+                 * report Session Present even when there are no subs. */
+                if (BrokerInboundQos2_Takeover(bc, old)) {
+                    session_present = 1;
+                }
+            #endif
             }
             BrokerSubs_RemoveClient(broker, old);
             BrokerClient_Remove(broker, old);

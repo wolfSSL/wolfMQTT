@@ -477,6 +477,15 @@ typedef struct BrokerOrphanSession {
     BrokerOutPub* out_q_tail;
     int           out_q_count;
     int           out_q_inflight;
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Inbound QoS 2 dedup state (see BrokerClient.qos2_pending), moved
+     * here on disconnect so a retransmitted PUBLISH after reconnect is
+     * still recognized as a duplicate instead of being re-fanned-out.
+     * Ownership transfers by pointer reassignment, mirroring out_q_head
+     * above - see BrokerOrphan_Take / BrokerOrphan_Reclaim. */
+    BrokerInboundQos2* qos2_pending;
+    int                qos2_pending_count;
+#endif
     struct BrokerOrphanSession* next;
 } BrokerOrphanSession;
 #endif
