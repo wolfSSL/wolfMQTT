@@ -4932,13 +4932,16 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
-#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
-    /* [MQTT-3.1.2.11.3] Receive Maximum caps in-flight QoS 1/2 PUBLISHes;
-     * absent means 65535, 0 is a Protocol Error. */
+#ifdef WOLFMQTT_V5
+    /* Protocol-error rejections must run even under static memory; they set
+     * no persistent-session field, unlike the capture block below. */
     if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
             mc.props != NULL) {
         MqttProp* rm_prop = BrokerProps_Find(mc.props,
                 MQTT_PROP_RECEIVE_MAX);
+        MqttProp* am_prop = BrokerProps_Find(mc.props,
+                MQTT_PROP_AUTH_METHOD);
+        /* [MQTT-3.1.2.11.3] Receive Maximum 0 is a Protocol Error. */
         if (rm_prop != NULL && rm_prop->data_short == 0) {
             WBLOG_ERR(broker,
                 "broker: Receive Maximum 0 is a Protocol Error sock=%d "
@@ -4946,7 +4949,26 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             ack.return_code = MQTT_REASON_PROTOCOL_ERR;
             goto send_connack;
         }
-        else if (rm_prop != NULL) {
+        /* No Enhanced Authentication support; refuse an Auth Method. */
+        if (am_prop != NULL) {
+            WBLOG_ERR(broker,
+                "broker: Authentication Method unsupported sock=%d",
+                (int)bc->sock);
+            ack.return_code = MQTT_REASON_BAD_AUTH_METHOD;
+            goto send_connack;
+        }
+    }
+#endif
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    /* Capture Receive Maximum and Session Expiry into the persistent-session
+     * fields, which exist only in the dynamic-memory build. */
+    if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            mc.props != NULL) {
+        MqttProp* rm_prop = BrokerProps_Find(mc.props,
+                MQTT_PROP_RECEIVE_MAX);
+        MqttProp* se_prop = BrokerProps_Find(mc.props,
+                MQTT_PROP_SESSION_EXPIRY_INTERVAL);
+        if (rm_prop != NULL) {
             bc->client_receive_max = rm_prop->data_short;
             WBLOG_DBG(broker,
                 "broker: client Receive Maximum sock=%d value=%u",
@@ -4954,39 +4976,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         }
         /* [MQTT-3.1.2.11.2] v5 Session Expiry Interval. Absent means the
          * default set above stands (always 0 for v5). */
-        {
-            MqttProp* se_prop = BrokerProps_Find(mc.props,
-                    MQTT_PROP_SESSION_EXPIRY_INTERVAL);
-            if (se_prop != NULL) {
-                bc->session_expiry_sec = se_prop->data_int;
-                WBLOG_DBG(broker,
-                    "broker: client Session Expiry sock=%d value=%u",
-                    (int)bc->sock, (unsigned)bc->session_expiry_sec);
-            }
-        }
-        /* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. */
-        {
-            MqttProp* mp_prop = BrokerProps_Find(mc.props,
-                    MQTT_PROP_MAX_PACKET_SZ);
-            if (mp_prop != NULL && mp_prop->data_int == 0) {
-                WBLOG_ERR(broker,
-                    "broker: Maximum Packet Size 0 is a Protocol Error "
-                    "sock=%d [MQTT-3.1.2.11.4]", (int)bc->sock);
-                ack.return_code = MQTT_REASON_PROTOCOL_ERR;
-                goto send_connack;
-            }
-        }
-        /* No Enhanced Authentication support; refuse an Auth Method. */
-        {
-            MqttProp* am_prop = BrokerProps_Find(mc.props,
-                    MQTT_PROP_AUTH_METHOD);
-            if (am_prop != NULL) {
-                WBLOG_ERR(broker,
-                    "broker: Authentication Method unsupported sock=%d",
-                    (int)bc->sock);
-                ack.return_code = MQTT_REASON_BAD_AUTH_METHOD;
-                goto send_connack;
-            }
+        if (se_prop != NULL) {
+            bc->session_expiry_sec = se_prop->data_int;
+            WBLOG_DBG(broker,
+                "broker: client Session Expiry sock=%d value=%u",
+                (int)bc->sock, (unsigned)bc->session_expiry_sec);
         }
     }
 #endif

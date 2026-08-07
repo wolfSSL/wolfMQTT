@@ -5386,6 +5386,129 @@ TEST(decode_connect_v5_auth_data_without_auth_method_rejected)
     ASSERT_NULL(dec.props);
 }
 
+/* [MQTT-3.1.2.11.4] Maximum Packet Size, if present, MUST NOT be 0. Wire:
+ * CONNECT, props_len=5, MAX_PACKET_SZ(39)=0x00000000, client_id "cid". */
+TEST(decode_connect_v5_max_packet_size_zero_rejected)
+{
+    byte buf[] = {
+        0x10, 0x15,                         /* CONNECT, remain_len = 21 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,                               /* protocol level v5 */
+        0x02,                               /* flags: clean_session */
+        0x00, 0x3C,                         /* keep alive */
+        0x05,                               /* props_len VBI = 5 */
+        0x27, 0x00, 0x00, 0x00, 0x00,       /* Maximum Packet Size = 0 */
+        0x00, 0x03, 'c', 'i', 'd'           /* client_id "cid" */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(dec.props);
+}
+#endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
+
+#ifdef WOLFMQTT_V5
+/* [MQTT-3.6.2.1] 0x10 (No Matching Subscribers) is valid for PUBACK/PUBREC but
+ * NOT for PUBREL; encoding it as PUBREL must be rejected. */
+TEST(encode_pubrel_v5_reason_code_out_of_table_rejected)
+{
+    byte buf[16];
+    MqttPublishResp enc;
+    int enc_len;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.packet_id = 1;
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    enc.reason_code = MQTT_REASON_NO_MATCH_SUB;
+
+    enc_len = MqttEncode_PublishResp(buf, (int)sizeof(buf),
+                  MQTT_PACKET_TYPE_PUBLISH_REL, &enc);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, enc_len);
+}
+
+/* [MQTT-3.7.2.1] Same out-of-table Reason Code rejected for PUBCOMP. */
+TEST(encode_pubcomp_v5_reason_code_out_of_table_rejected)
+{
+    byte buf[16];
+    MqttPublishResp enc;
+    int enc_len;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.packet_id = 1;
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    enc.reason_code = MQTT_REASON_NO_MATCH_SUB;
+
+    enc_len = MqttEncode_PublishResp(buf, (int)sizeof(buf),
+                  MQTT_PACKET_TYPE_PUBLISH_COMP, &enc);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, enc_len);
+}
+
+/* [MQTT-3.3.2.3.8] A Subscription Identifier MAY appear more than once in a
+ * PUBLISH; the duplicate-property gate must allow it here (accept direction,
+ * companion to decode_subscribe_v5_duplicate_subscription_id_rejected). Wire:
+ * PUBLISH QoS 0, topic "t", props_len=4, SUB_ID=1, SUB_ID=2, payload "x". */
+TEST(decode_publish_v5_duplicate_subscription_id_accepted)
+{
+    byte buf[] = {
+        0x30, 0x09, 0x00, 0x01, 't', 0x04,
+        0x0B, 0x01, 0x0B, 0x02, 'x'
+    };
+    MqttPublish pub;
+    MqttProp* prop;
+    int rc, count = 0;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_TRUE(rc > 0);
+    for (prop = pub.props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_SUBSCRIPTION_ID) {
+            count++;
+        }
+    }
+    ASSERT_EQ(2, count);
+    MqttProps_Free(pub.props);
+}
+
+/* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. Today only the
+ * CONNECT direction is exercised; the check lives in MqttDecode_Props and must
+ * fire for the CONNACK direction too. Wire: MAX_PACKET_SZ(0x27)=0. */
+TEST(decode_props_connack_max_packet_size_zero_rejected)
+{
+    byte buf[] = { 0x27, 0x00, 0x00, 0x00, 0x00 };
+    MqttProp* props = NULL;
+    int rc;
+
+    rc = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &props, buf,
+            (word32)sizeof(buf), (word32)sizeof(buf));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(props);
+}
+
+/* [MQTT-3.1.2.11.9/10] Auth Data without Auth Method is a Protocol Error. Today
+ * only the CONNECT direction is exercised; the check lives in MqttDecode_Props
+ * and must fire for the AUTH direction too. Wire: AUTH_DATA(0x16)="x". */
+TEST(decode_props_auth_data_without_method_rejected)
+{
+    byte buf[] = { 0x16, 0x00, 0x01, 'x' };
+    MqttProp* props = NULL;
+    int rc;
+
+    rc = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH, &props, buf,
+            (word32)sizeof(buf), (word32)sizeof(buf));
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(props);
+}
+#endif /* WOLFMQTT_V5 */
+
+/* ============================================================================
+ * Test Suite Runner
+ * ============================================================================ */
+
 void run_mqtt_packet_tests(void)
 {
 #ifdef WOLFMQTT_V5
@@ -5500,6 +5623,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(decode_publish_v5_property_count_capped);
     RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
+    RUN_TEST(decode_publish_v5_duplicate_subscription_id_accepted);
     RUN_TEST(decode_publish_v5_props_freed_on_short_remain_len);
 #endif
     RUN_TEST(decode_publish_qos1_packet_id_zero_rejected);
@@ -5603,6 +5727,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_v5_rejects_nul_in_client_id);
     RUN_TEST(decode_connect_v5_password_without_username_accepted);
     RUN_TEST(decode_connect_v5_props_freed_on_client_id_error);
+    RUN_TEST(decode_connect_v5_max_packet_size_zero_rejected);
     RUN_TEST(decode_connect_v5_auth_data_without_auth_method_rejected);
     RUN_TEST(decode_connect_v5_will_props_session_expiry_rejected);
 #endif
@@ -5733,6 +5858,10 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(publish_resp_v5_success_no_props_roundtrip);
     RUN_TEST(encode_pubrel_v5_reason_code_packet_id_not_found_accepted);
     RUN_TEST(encode_puback_v5_reason_code_out_of_table_rejected);
+    RUN_TEST(encode_pubrel_v5_reason_code_out_of_table_rejected);
+    RUN_TEST(encode_pubcomp_v5_reason_code_out_of_table_rejected);
+    RUN_TEST(decode_props_connack_max_packet_size_zero_rejected);
+    RUN_TEST(decode_props_auth_data_without_method_rejected);
 
     /* MqttEncode/Decode_Auth */
     RUN_TEST(encode_props_string_invalid_utf8_rejected);

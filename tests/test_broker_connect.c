@@ -3587,6 +3587,7 @@ TEST(retained_qos_stored_2_sub_0_delivers_qos0)
 }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
 /* QoS 2 dedup state must survive a disconnect/reconnect cycle; a
  * retransmitted PUBLISH must not be re-fanned-out to the subscriber. */
 TEST(qos2_dedup_survives_disconnect_reconnect)
@@ -3965,6 +3966,7 @@ TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error)
     MqttBroker_Free(&broker);
 }
 
+#ifdef WOLFMQTT_BROKER_RETAINED
 /* [MQTT-3.3.1-9..11]: Retain Handling = 2 must not deliver on subscribe. */
 TEST(subscribe_v5_retain_handling_2_never_delivers)
 {
@@ -4022,6 +4024,7 @@ TEST(subscribe_v5_retain_handling_2_never_delivers)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_BROKER_RETAINED */
 
 /* v5 PUBLISH properties must survive QoS>=1 fan-out through out_q. */
 TEST(publish_v5_props_survive_queued_delivery)
@@ -4091,6 +4094,7 @@ TEST(publish_v5_props_survive_queued_delivery)
     MqttBroker_Free(&broker);
 }
 
+#ifdef WOLFMQTT_BROKER_RETAINED
 /* An unacked QoS>=1 retained delivery must survive into the orphan's
  * out_q on disconnect, same as normal PUBLISH fan-out. */
 TEST(retained_qos1_delivery_survives_via_outq)
@@ -4158,7 +4162,9 @@ TEST(retained_qos1_delivery_survives_via_outq)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_BROKER_RETAINED */
 
+#ifdef WOLFMQTT_BROKER_WILL
 /* A shorter Session Expiry than Will Delay must publish the Will at
  * Session end, not the full delay. */
 TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry)
@@ -4271,7 +4277,10 @@ TEST(will_delay_interval_capped)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_BROKER_WILL */
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
 
+#ifndef WOLFMQTT_STATIC_MEMORY
 /* A fatal PUBACK decode failure must close, same as PUBLISH/PUBREC/PUBREL. */
 TEST(puback_malformed_closes_connection)
 {
@@ -4306,6 +4315,7 @@ TEST(puback_malformed_closes_connection)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
 /* [MQTT-3.7] A malformed PUBCOMP (Remaining Length 0, no Packet Identifier)
@@ -4324,6 +4334,7 @@ TEST(pubcomp_malformed_closes_connection)
     };
     /* PUBCOMP with remain_len = 0 (no Packet Identifier at all). */
     static const byte pubcomp_bad[] = { 0x70, 0x00 };
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
 /* No Enhanced Authentication support; a CONNECT with Auth Method must
  * be refused, not silently accepted. */
 TEST(connect_v5_auth_method_present_rejected)
@@ -4691,6 +4702,24 @@ TEST(subscribe_v5_retain_handling_1_only_if_new)
         0x00,
         0x00, 0x01, 'x',
         0x10
+/* [MQTT-3.1.2.11.4]: Maximum Packet Size 0 in CONNECT is a Protocol Error.
+ * Rejected at decode time (mqtt_packet.c), so no CONNACK is ever sent -
+ * just a close, same as any other malformed CONNECT. */
+TEST(connect_v5_max_packet_size_zero_protocol_error)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* props: Maximum Packet Size (0x27) = 0x00000000 (5 bytes). remain =
+     * 6+1+1+2+1+5+2+1 = 19 */
+    static const byte connect[] = {
+        0x10, 19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x05,
+        0x27, 0x00, 0x00, 0x00, 0x00, /* Maximum Packet Size = 0 */
+        0x00, 0x01, 'B'
     };
 
     install_mock_net(&net);
@@ -4714,6 +4743,11 @@ TEST(subscribe_v5_retain_handling_1_only_if_new)
         g_clients[1].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
     ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
         g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    ASSERT_EQ(0, g_out_len);
+    ASSERT_TRUE(g_client_closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -4785,6 +4819,7 @@ TEST(will_qos1_routes_through_outq)
     MqttBroker_Free(&broker);
 }
 #endif /* WOLFMQTT_BROKER_WILL && !WOLFMQTT_STATIC_MEMORY */
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
 
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
@@ -4941,15 +4976,15 @@ int main(int argc, char** argv)
 #endif
 #endif
 #endif
-#ifdef WOLFMQTT_V5
-#ifndef WOLFMQTT_STATIC_MEMORY
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY) && \
+    defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry);
 #endif
 #endif
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(will_delay_interval_capped);
-#endif
+    RUN_TEST(will_delay_interval_uncapped);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(puback_malformed_closes_connection);
@@ -4970,6 +5005,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_v5_auth_method_present_rejected);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_v5_max_packet_size_zero_protocol_error);
 #endif
 #endif
     TEST_SUITE_END();

@@ -827,6 +827,11 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_INT:
             {
+                /* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_MAX_PACKET_SZ &&
+                        cur_prop->data_int == 0) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 tmp = MqttEncode_Int(buf, cur_prop->data_int);
                 rc += tmp;
                 if (buf != NULL) {
@@ -1100,6 +1105,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 buf += tmp;
                 total += tmp;
                 prop_len -= tmp;
+                /* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_MAX_PACKET_SZ &&
+                        cur_prop->data_int == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_STRING:
