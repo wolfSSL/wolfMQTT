@@ -85,6 +85,11 @@ static void MqttBroker_ForceZero(void* mem, word32 len)
     #endif
 #endif
 
+/* The sweep math relies on unsigned wraparound and a ~0 saturation ceiling,
+ * so an override to a signed type would break Will Delay and orphan expiry. */
+typedef char wolfmqtt_broker_time_t_must_be_unsigned[
+    ((WOLFMQTT_BROKER_TIME_T)-1 > 0) ? 1 : -1];
+
 /* -------------------------------------------------------------------------- */
 /* Default sleep abstraction                                                   */
 /* -------------------------------------------------------------------------- */
@@ -3834,6 +3839,9 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
     int i;
+#else
+    BrokerPendingWill* wcur;
+    int wcount = 0;
 #endif
 
     BrokerPendingWill* pw = NULL;
@@ -3877,9 +3885,20 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
         }
     }
 #else
-    pw = (BrokerPendingWill*)WOLFMQTT_MALLOC(sizeof(BrokerPendingWill));
-    if (pw == NULL) {
+    /* Bound the dynamic list: repeated abnormal closes with unique client IDs
+     * must not grow pending_wills without limit. When full, fail so the caller
+     * publishes the Will immediately instead of retaining it. */
+    for (wcur = broker->pending_wills; wcur != NULL; wcur = wcur->next) {
+        wcount++;
+    }
+    if (wcount >= BROKER_MAX_PENDING_WILLS) {
         rc = MQTT_CODE_ERROR_MEMORY;
+    }
+    if (rc == MQTT_CODE_SUCCESS) {
+        pw = (BrokerPendingWill*)WOLFMQTT_MALLOC(sizeof(BrokerPendingWill));
+        if (pw == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
     }
     if (rc == MQTT_CODE_SUCCESS) {
         int id_len = (int)XSTRLEN(bc->client_id);
@@ -3933,12 +3952,33 @@ static int BrokerPendingWill_Add(MqttBroker* broker, BrokerClient* bc)
 #endif
 
     if (rc == MQTT_CODE_SUCCESS) {
+        word32 delay_sec = bc->will_delay_sec;
+        WOLFMQTT_BROKER_TIME_T max_time = (WOLFMQTT_BROKER_TIME_T)~(WOLFMQTT_BROKER_TIME_T)0;
         pw->qos = bc->will_qos;
         pw->retain = bc->will_retain;
-        pw->publish_time = now + (WOLFMQTT_BROKER_TIME_T)bc->will_delay_sec;
+    #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+        /* [MQTT-3.1.3.2.2] Publish the Will at the earlier of the Will Delay or
+         * Session end. Any finite Session Expiry shorter than the Will Delay
+         * wins - including 0 (or absent), which ends the Session at disconnect
+         * and so publishes immediately. Only 0xFFFFFFFF (never expires) leaves
+         * the full Will Delay authoritative. */
+        if (bc->session_expiry_sec != 0xFFFFFFFFu &&
+                bc->session_expiry_sec < delay_sec) {
+            delay_sec = bc->session_expiry_sec;
+        }
+    #endif
+        /* Saturate rather than wrap: on a 32-bit WOLFMQTT_BROKER_TIME_T a
+         * huge Will Delay could push now+delay below now and make the sweep
+         * fire the Will immediately. */
+        if ((WOLFMQTT_BROKER_TIME_T)delay_sec > max_time - now) {
+            pw->publish_time = max_time;
+        }
+        else {
+            pw->publish_time = now + (WOLFMQTT_BROKER_TIME_T)delay_sec;
+        }
         WBLOG_DBG(broker, "broker: will deferred sock=%d client_id=%s delay=%u",
             (int)bc->sock, BrokerLog_Sanitize(bc->client_id),
-            (unsigned)bc->will_delay_sec);
+            (unsigned)delay_sec);
     }
     return rc;
 }

@@ -135,12 +135,6 @@
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
 #endif
-/* Upper bound (seconds) the broker accepts for a v5 Will Delay Interval.
- * Caps how long a deferred-will slot can be monopolized so a few clients
- * advertising near-UINT32_MAX delays cannot permanently exhaust the pool. */
-#ifndef BROKER_MAX_WILL_DELAY_SEC
-    #define BROKER_MAX_WILL_DELAY_SEC 3600
-#endif
 /* Seconds a freshly accepted client has to complete a CONNECT before the
  * broker evicts it, so half-open pre-CONNECT sockets cannot exhaust the client
  * table (Slowloris / slot exhaustion). */

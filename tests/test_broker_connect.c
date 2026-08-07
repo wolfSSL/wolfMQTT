@@ -4159,6 +4159,61 @@ TEST(retained_qos1_delivery_survives_via_outq)
     MqttBroker_Free(&broker);
 }
 
+/* A shorter Session Expiry than Will Delay must publish the Will at
+ * Session end, not the full delay. */
+TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerPendingWill* pw;
+    /* v5 CONNECT, Will flag, ClientId "M". CONNECT props: Session
+     * Expiry Interval = 30. Will props: Will Delay Interval = 3600.
+     * remain = 35 (same shape as will_delay_interval_uncapped). */
+    static const byte connect_m[] = {
+        0x10, 35,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x04,
+        0x00, 0x3C,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x1E, /* Session Expiry Interval = 30 */
+        0x00, 0x01, 'M',
+        0x05,
+        0x18, 0x00, 0x00, 0x0E, 0x10, /* Will Delay Interval = 3600 */
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    static const byte disconnect_bad[] = { 0xE1, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_m, sizeof(connect_m));
+    mock_client_input_append(0, disconnect_bad, sizeof(disconnect_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    pw = broker.pending_wills;
+    while (pw != NULL && (pw->client_id == NULL ||
+            XSTRCMP(pw->client_id, "M") != 0)) {
+        pw = pw->next;
+    }
+    ASSERT_TRUE(pw != NULL);
+    /* Pre-fix, BrokerPendingWill_Add computed publish_time from
+     * will_delay_sec alone (now + 3600); Session Expiry was never
+     * consulted. */
+    ASSERT_EQ((WOLFMQTT_BROKER_TIME_T)30, pw->publish_time);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -4312,6 +4367,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_BROKER_RETAINED
     RUN_TEST(retained_qos1_delivery_survives_via_outq);
 #endif
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry);
 #endif
 #endif
     TEST_SUITE_END();
