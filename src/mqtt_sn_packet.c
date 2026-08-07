@@ -352,6 +352,10 @@ int SN_Decode_GWInfo(byte *rx_buf, int rx_buf_len, SN_GwInfo *gw_info)
             if (addr_len > (word16)sizeof(SN_GwAddr)) {
                 addr_len = (word16)sizeof(SN_GwAddr);
             }
+            /* No destination to write the optional address into. */
+            if (gw_info->gwAddr == NULL) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+            }
             XMEMCPY(gw_info->gwAddr, rx_payload, addr_len);
         }
     }

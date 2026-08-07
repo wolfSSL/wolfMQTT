@@ -140,6 +140,11 @@ typedef struct _SN_GwInfo {
 
     byte gwId; /* ID of the gateway that sent this message */
     SN_GwAddr* gwAddr; /* Address of the indicated gateway */
+
+    /* Backing storage for gwAddr. Callers may point gwAddr elsewhere;
+     * SN_Client_HandlePacket defaults it here so decode never writes
+     * through a NULL pointer. */
+    SN_GwAddr gwAddrBuf;
 } SN_GwInfo;
 
 typedef struct _SN_SearchGw {
