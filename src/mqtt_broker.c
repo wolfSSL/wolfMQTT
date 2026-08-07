@@ -1684,7 +1684,107 @@ static int BrokerInboundQos2_Takeover(BrokerClient* new_bc, BrokerClient* old)
  * gets unblocked promptly.                                                  */
 /* -------------------------------------------------------------------------- */
 
-/* Free a single queue entry (topic, payload, the entry itself). */
+#ifdef WOLFMQTT_V5
+/* Deep-copy props so they outlive rx_buf; free via BrokerProps_FreeClone,
+ * not MqttProps_Free (this bypasses the shared fixed-size pool). */
+static void BrokerProps_FreeClone(MqttProp* head);
+
+/* Returns NULL on OOM (never a partial list): a truncated v5 property
+ * list would go out on the wire silently short, so any allocation
+ * failure frees what was built and fails the whole clone. */
+static MqttProp* BrokerProps_Clone(const MqttProp* src)
+{
+    MqttProp* head = NULL;
+    MqttProp* tail = NULL;
+
+    for (; src != NULL; src = src->next) {
+        MqttProp* dst = (MqttProp*)WOLFMQTT_MALLOC(sizeof(MqttProp));
+        if (dst == NULL) {
+            BrokerProps_FreeClone(head);
+            return NULL;
+        }
+        XMEMSET(dst, 0, sizeof(*dst));
+        dst->type = src->type;
+        dst->data_byte = src->data_byte;
+        dst->data_short = src->data_short;
+        dst->data_int = src->data_int;
+        dst->data_str.len = 0;
+        dst->data_str.str = NULL;
+        dst->data_str2.len = 0;
+        dst->data_str2.str = NULL;
+        dst->data_bin.len = 0;
+        dst->data_bin.data = NULL;
+        if (src->data_str.len > 0 && src->data_str.str != NULL) {
+            dst->data_str.str = (char*)WOLFMQTT_MALLOC(src->data_str.len);
+            if (dst->data_str.str == NULL) {
+                BrokerProps_FreeClone(dst);
+                BrokerProps_FreeClone(head);
+                return NULL;
+            }
+            XMEMCPY(dst->data_str.str, src->data_str.str, src->data_str.len);
+            dst->data_str.len = src->data_str.len;
+        }
+        if (src->data_str2.len > 0 && src->data_str2.str != NULL) {
+            dst->data_str2.str = (char*)WOLFMQTT_MALLOC(src->data_str2.len);
+            if (dst->data_str2.str == NULL) {
+                BrokerProps_FreeClone(dst);
+                BrokerProps_FreeClone(head);
+                return NULL;
+            }
+            XMEMCPY(dst->data_str2.str, src->data_str2.str,
+                src->data_str2.len);
+            dst->data_str2.len = src->data_str2.len;
+        }
+        if (src->data_bin.len > 0 && src->data_bin.data != NULL) {
+            dst->data_bin.data = (byte*)WOLFMQTT_MALLOC(src->data_bin.len);
+            if (dst->data_bin.data == NULL) {
+                BrokerProps_FreeClone(dst);
+                BrokerProps_FreeClone(head);
+                return NULL;
+            }
+            XMEMCPY(dst->data_bin.data, src->data_bin.data,
+                src->data_bin.len);
+            dst->data_bin.len = src->data_bin.len;
+        }
+        dst->next = NULL;
+        if (tail == NULL) {
+            head = dst;
+        }
+        else {
+            tail->next = dst;
+        }
+        tail = dst;
+    }
+    return head;
+}
+
+/* Free a property list allocated by BrokerProps_Clone(). */
+static void BrokerProps_FreeClone(MqttProp* head)
+{
+    while (head != NULL) {
+        MqttProp* next = head->next;
+        /* Cloned Correlation Data / User Properties / Content Type can carry
+         * application secrets; scrub before free, matching the queue cleanup. */
+        if (head->data_str.str != NULL) {
+            BROKER_FORCE_ZERO(head->data_str.str, head->data_str.len);
+            WOLFMQTT_FREE(head->data_str.str);
+        }
+        if (head->data_str2.str != NULL) {
+            BROKER_FORCE_ZERO(head->data_str2.str, head->data_str2.len);
+            WOLFMQTT_FREE(head->data_str2.str);
+        }
+        if (head->data_bin.data != NULL) {
+            BROKER_FORCE_ZERO(head->data_bin.data, head->data_bin.len);
+            WOLFMQTT_FREE(head->data_bin.data);
+        }
+        BROKER_FORCE_ZERO(head, sizeof(*head));
+        WOLFMQTT_FREE(head);
+        head = next;
+    }
+}
+#endif /* WOLFMQTT_V5 */
+
+/* Free a single queue entry (topic, payload, props, the entry itself). */
 static void BrokerOutPub_Free(BrokerOutPub* e)
 {
     if (e == NULL) {
@@ -1700,15 +1800,25 @@ static void BrokerOutPub_Free(BrokerOutPub* e)
         WOLFMQTT_FREE(e->payload);
         e->payload = NULL;
     }
+#ifdef WOLFMQTT_V5
+    if (e->props != NULL) {
+        BrokerProps_FreeClone(e->props);
+        e->props = NULL;
+    }
+#endif
     WOLFMQTT_FREE(e);
 }
 
-/* Allocate a new entry holding a deep copy of topic + payload. Returns
- * NULL on allocation failure (caller decides whether that means drop or
- * close). All fields are zero-initialized; caller fills qos / packet_id /
- * etc. and links into out_q via BrokerClient_EnqueueOutPub. */
+/* Allocate a new entry holding a deep copy of topic + payload (+ props if
+ * src_props is non-NULL). Returns NULL on allocation failure (caller
+ * decides whether that means drop or close). Fields are zero-initialized;
+ * caller fills qos / packet_id / etc. and links into out_q. */
 static BrokerOutPub* BrokerOutPub_Alloc(const char* topic,
-    const byte* payload, word32 payload_len)
+    const byte* payload, word32 payload_len
+#ifdef WOLFMQTT_V5
+    , const MqttProp* src_props
+#endif
+    )
 {
     BrokerOutPub* e;
     size_t topic_len;
@@ -1741,6 +1851,17 @@ static BrokerOutPub* BrokerOutPub_Alloc(const char* topic,
         XMEMCPY(e->payload, payload, payload_len);
         e->payload_len = payload_len;
     }
+#ifdef WOLFMQTT_V5
+    if (src_props != NULL) {
+        e->props = BrokerProps_Clone(src_props);
+        if (e->props == NULL) {
+            /* Clone failed (OOM): drop the whole entry rather than
+             * queue a PUBLISH silently missing its v5 properties. */
+            BrokerOutPub_Free(e);
+            return NULL;
+        }
+    }
+#endif
     return e;
 }
 
@@ -1868,6 +1989,7 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
         out_pub.total_len  = cur->payload_len;
     #ifdef WOLFMQTT_V5
         out_pub.protocol_level = cur->protocol_level;
+        out_pub.props = cur->props;
     #endif
 
         enc_rc = MqttEncode_Publish(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
@@ -2687,7 +2809,11 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
  * messages live in the offline queue. */
 static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     const char* topic, const byte* payload, word32 payload_len,
-    MqttQoS qos, byte retain)
+    MqttQoS qos, byte retain
+#ifdef WOLFMQTT_V5
+    , const MqttProp* src_props
+#endif
+    )
 {
     BrokerOutPub* e;
     if (broker == NULL || o == NULL || topic == NULL ||
@@ -2723,7 +2849,11 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
         BrokerOutPub_Free(head);
     }
 
-    e = BrokerOutPub_Alloc(topic, payload, payload_len);
+    e = BrokerOutPub_Alloc(topic, payload, payload_len
+#ifdef WOLFMQTT_V5
+        , src_props
+#endif
+        );
     if (e == NULL) {
         WBLOG_ERR(broker,
             "broker: orphan enqueue alloc failed client_id=%s",
@@ -5822,7 +5952,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 }
                 else {
                     BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,
-                                          pub.total_len);
+                                          pub.total_len
+                    #ifdef WOLFMQTT_V5
+                                          , pub.props
+                    #endif
+                                          );
                     if (e == NULL) {
                         WBLOG_ERR(broker,
                             "broker: PUBLISH fwd alloc failed sock=%d "
@@ -5871,7 +6005,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                         BrokerOrphan_Find(broker, sub->client_id);
                     if (o != NULL) {
                         BrokerOrphan_Enqueue(broker, o, topic, payload,
-                            pub.total_len, eff_qos, 0);
+                            pub.total_len, eff_qos, 0
+                        #ifdef WOLFMQTT_V5
+                            , pub.props
+                        #endif
+                            );
                     }
                 }
             }

@@ -455,6 +455,16 @@ typedef struct BrokerOutPub {
     WOLFMQTT_BROKER_TIME_T enq_time;
     word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
     byte    protocol_level; /* echoed back to subscriber on send */
+#ifdef WOLFMQTT_V5
+    /* Deep copy (BrokerProps_Clone) of the originating PUBLISH's v5
+     * Application Message properties (Payload Format Indicator, Content
+     * Type, Response Topic, Correlation Data, User Property, etc.), or
+     * NULL if none. Owned by this entry; freed once by BrokerOutPub_Free
+     * via BrokerProps_FreeClone - never via MqttProps_Free().
+     * Not serialized by the persist layer: a queued message replayed after a
+     * broker restart is delivered without these properties. */
+    MqttProp* props;
+#endif
     struct BrokerOutPub* next;
 } BrokerOutPub;
 

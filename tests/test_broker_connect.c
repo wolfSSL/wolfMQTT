@@ -4023,6 +4023,74 @@ TEST(subscribe_v5_retain_handling_2_never_delivers)
     MqttBroker_Free(&broker);
 }
 
+/* v5 PUBLISH properties must survive QoS>=1 fan-out through out_q. */
+TEST(publish_v5_props_survive_queued_delivery)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    PublishInfo info;
+    static const byte connect_sub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE QoS 1, filter "x", options = QoS1 (0x01). remain = 7 */
+    static const byte subscribe_x[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'x',
+        0x01
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+    /* PUBLISH QoS 1, packet_id=5, topic "x", one property (Payload
+     * Format Indicator = 1), payload "p". remain =
+     * 2+1+2+1(props_len)+2(prop)+1(payload) = 9 */
+    static const byte publish_v5[] = {
+        0x32, 0x09,
+        0x00, 0x01, 'x',
+        0x00, 0x05,
+        0x02,
+        0x01, 0x01,
+        'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish_v5, sizeof(publish_v5));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    info = first_publish_info(g_clients[0].out_buf, g_clients[0].out_len);
+    ASSERT_TRUE(info.found);
+    /* Pre-fix, BrokerOutPub had no props field and out_pub.props was
+     * never set, so the encoder would write an empty (1-byte, value 0)
+     * properties block instead: remain would be 7, not 9. */
+    ASSERT_EQ(9, (int)info.remain_len);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -4164,6 +4232,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_BROKER_RETAINED
     RUN_TEST(subscribe_v5_retain_handling_2_never_delivers);
 #endif
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(publish_v5_props_survive_queued_delivery);
 #endif
 #endif
     TEST_SUITE_END();
