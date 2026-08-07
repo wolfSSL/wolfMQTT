@@ -3774,6 +3774,53 @@ TEST(connect_v5_clean0_no_se_prop_orphan_expiry_zero)
     MqttBroker_Free(&broker);
 }
 
+/* Zero subs + positive Session Expiry must still create an orphan. */
+TEST(disconnect_v5_zero_subs_nonzero_expiry_creates_orphan)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    /* v5 CONNECT clean=0, ClientId "K2", props: Session Expiry Interval
+     * (0x11) = 60. No SUBSCRIBE at all. remain = 6+1+1+2+1+5+2+2 = 20 */
+    static const byte connect0[] = {
+        0x10, 20,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x02, 'K', '2'
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    /* Pre-fix, BrokerSubs_OrphanClient returned early on count==0 before
+     * BrokerOrphan_Take was ever called, so no orphan exists here. */
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "K2") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL);
+    ASSERT_EQ((word32)60, o->session_expiry_sec);
+    ASSERT_EQ(0, o->out_q_count);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -3893,6 +3940,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_v5_clean0_no_se_prop_orphan_expiry_zero);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(disconnect_v5_zero_subs_nonzero_expiry_creates_orphan);
 #endif
 #endif
     TEST_SUITE_END();

@@ -2788,6 +2788,7 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
     int i;
 #else
     BrokerSub *cur;
+    BrokerOrphanSession* orphan_exp = NULL;
 #endif
     int count = 0;
 
@@ -2811,9 +2812,26 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
         cur = cur->next;
     }
 #endif
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* [MQTT-3.1.2.11.2] Session Expiry 0 (or absent) ends the Session at
+     * disconnect: remove any subscriptions and drop a pre-existing carrier
+     * rather than orphaning. v3.1.1 persistent clients carry 0xFFFFFFFF here,
+     * so this fires only for v5 zero-expiry sessions. */
+    if (bc->session_expiry_sec == 0) {
+        if (count > 0) {
+            BrokerSubs_RemoveClient(broker, bc);
+        }
+        orphan_exp = BrokerOrphan_Find(broker, bc->client_id);
+        if (orphan_exp != NULL) {
+            BrokerOrphan_Remove(broker, orphan_exp);
+        }
+        return;
+    }
+#else
     if (count == 0) {
         return;
     }
+#endif
 
 #ifndef WOLFMQTT_STATIC_MEMORY
     /* Stage a persistent-session record in broker->orphan_sessions.
@@ -2829,6 +2847,10 @@ static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc)
                 BROKER_STR_VALID(bc->client_id) ? bc->client_id : "(null)"),
             count);
         BrokerSubs_RemoveClient(broker, bc);
+        return;
+    }
+    if (count == 0) {
+        /* No subs to detach; orphan record alone preserves the Session. */
         return;
     }
 #endif
