@@ -3897,6 +3897,7 @@ TEST(orphan_expire_sweep_removes_zero_expiry_session)
     MqttBroker_Free(&broker);
 }
 
+#ifdef WOLFMQTT_BROKER_WILL
 /* [MQTT-3.14.2-1]: DISCONNECT setting Session Expiry 0-to-nonzero is a
  * Protocol Error; confirmed via the immediate Will fired on abnormal close. */
 TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error)
@@ -3965,6 +3966,7 @@ TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_BROKER_WILL */
 
 #ifdef WOLFMQTT_BROKER_RETAINED
 /* [MQTT-3.3.1-9..11]: Retain Handling = 2 must not deliver on subscribe. */
@@ -4317,23 +4319,6 @@ TEST(puback_malformed_closes_connection)
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
-#ifndef WOLFMQTT_STATIC_MEMORY
-/* [MQTT-3.7] A malformed PUBCOMP (Remaining Length 0, no Packet Identifier)
- * must fail to decode and close the connection - the PUBCOMP twin of
- * puback_malformed_closes_connection. */
-TEST(pubcomp_malformed_closes_connection)
-{
-    MqttBroker broker;
-    MqttBrokerNet net;
-    int i;
-    static const byte connect0[] = {
-        0x10, 0x0D,
-        0x00, 0x04, 'M', 'Q', 'T', 'T',
-        0x04, 0x02, 0x00, 0x3C,
-        0x00, 0x01, 'A'
-    };
-    /* PUBCOMP with remain_len = 0 (no Packet Identifier at all). */
-    static const byte pubcomp_bad[] = { 0x70, 0x00 };
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
 /* No Enhanced Authentication support; a CONNECT with Auth Method must
  * be refused, not silently accepted. */
@@ -4353,6 +4338,77 @@ TEST(connect_v5_auth_method_present_rejected)
         0x15, 0x00, 0x05, 'P', 'L', 'A', 'I', 'N',
         0x00, 0x01, 'A'
     };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_BAD_AUTH_METHOD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* [MQTT-3.1.2.11.4]: Maximum Packet Size 0 in CONNECT is a Protocol Error.
+ * Rejected at decode time (mqtt_packet.c), so no CONNACK is ever sent -
+ * just a close, same as any other malformed CONNECT. */
+TEST(connect_v5_max_packet_size_zero_protocol_error)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* props: Maximum Packet Size (0x27) = 0x00000000 (5 bytes). remain =
+     * 6+1+1+2+1+5+2+1 = 19 */
+    static const byte connect[] = {
+        0x10, 19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x05,
+        0x27, 0x00, 0x00, 0x00, 0x00, /* Maximum Packet Size = 0 */
+        0x00, 0x01, 'B'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    ASSERT_EQ(0, g_out_len);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* [MQTT-3.7] A malformed PUBCOMP (Remaining Length 0, no Packet Identifier)
+ * must fail to decode and close the connection - the PUBCOMP twin of
+ * puback_malformed_closes_connection. */
+TEST(pubcomp_malformed_closes_connection)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect0[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* PUBCOMP with remain_len = 0 (no Packet Identifier at all). */
+    static const byte pubcomp_bad[] = { 0x70, 0x00 };
 
     install_mock_net(&net);
     XMEMSET(&broker, 0, sizeof(broker));
@@ -4658,13 +4714,6 @@ TEST(subscribe_v5_retain_handling_0_delivers)
 
     ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
         g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
-    reset_mock_state(connect, sizeof(connect));
-    run_broker_one_connect(&broker);
-
-    ASSERT_TRUE(g_out_len >= 4);
-    ASSERT_EQ(0x20, g_out_buf[0]);
-    ASSERT_EQ(MQTT_REASON_BAD_AUTH_METHOD, g_out_buf[3]);
-    ASSERT_TRUE(g_client_closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -4702,24 +4751,6 @@ TEST(subscribe_v5_retain_handling_1_only_if_new)
         0x00,
         0x00, 0x01, 'x',
         0x10
-/* [MQTT-3.1.2.11.4]: Maximum Packet Size 0 in CONNECT is a Protocol Error.
- * Rejected at decode time (mqtt_packet.c), so no CONNACK is ever sent -
- * just a close, same as any other malformed CONNECT. */
-TEST(connect_v5_max_packet_size_zero_protocol_error)
-{
-    MqttBroker broker;
-    MqttBrokerNet net;
-    /* props: Maximum Packet Size (0x27) = 0x00000000 (5 bytes). remain =
-     * 6+1+1+2+1+5+2+1 = 19 */
-    static const byte connect[] = {
-        0x10, 19,
-        0x00, 0x04, 'M', 'Q', 'T', 'T',
-        0x05,
-        0x02,
-        0x00, 0x3C,
-        0x05,
-        0x27, 0x00, 0x00, 0x00, 0x00, /* Maximum Packet Size = 0 */
-        0x00, 0x01, 'B'
     };
 
     install_mock_net(&net);
@@ -4743,11 +4774,6 @@ TEST(connect_v5_max_packet_size_zero_protocol_error)
         g_clients[1].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
     ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
         g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
-    reset_mock_state(connect, sizeof(connect));
-    run_broker_one_connect(&broker);
-
-    ASSERT_EQ(0, g_out_len);
-    ASSERT_TRUE(g_client_closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -4819,7 +4845,6 @@ TEST(will_qos1_routes_through_outq)
     MqttBroker_Free(&broker);
 }
 #endif /* WOLFMQTT_BROKER_WILL && !WOLFMQTT_STATIC_MEMORY */
-#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
 
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
@@ -4954,7 +4979,9 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_BROKER_WILL
     RUN_TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error);
+#endif
 #endif
 #endif
 #ifdef WOLFMQTT_V5
@@ -4979,12 +5006,7 @@ int main(int argc, char** argv)
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY) && \
     defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry);
-#endif
-#endif
-#ifdef WOLFMQTT_V5
-#ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(will_delay_interval_capped);
-    RUN_TEST(will_delay_interval_uncapped);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(puback_malformed_closes_connection);

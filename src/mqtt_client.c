@@ -671,6 +671,10 @@ static int Handle_ConnectAck_Props(MqttClient* client, MqttProp* props)
             client->server_recv_max = prop->data_short;
             client->server_recv_max_negotiated = prop->data_short;
         }
+        else if (prop->type == MQTT_PROP_TOPIC_ALIAS_MAX) {
+            /* MQTT v5 [3.1.2.11.8] */
+            client->topic_alias_max = prop->data_short;
+        }
     }
     return rc;
 }
@@ -1830,6 +1834,8 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     /* [MQTT-3.1.2.11.3]: absent Receive Maximum means 65535. */
     client->server_recv_max = 65535;
     client->server_recv_max_negotiated = 65535;
+    /* [MQTT-3.1.2.11.8]: absent Topic Alias Maximum means none accepted. */
+    client->topic_alias_max = 0;
     rc = MqttProps_Init();
 #endif
 
@@ -1965,6 +1971,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         client->packet_sz_max = 0;
         client->server_recv_max = 65535;
         client->server_recv_max_negotiated = 65535;
+        client->topic_alias_max = 0;
     #endif
 
         /* Encode the connect packet */
@@ -2465,6 +2472,21 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
     {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }
+
+    /* [MQTT-3.3.2.3.4]: reject a Topic Alias over CONNACK's maximum. */
+    if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        MqttProp* prop;
+        for (prop = publish->props; prop != NULL; prop = prop->next) {
+            if (prop->type == MQTT_PROP_TOPIC_ALIAS) {
+                if ((prop->data_short == 0) ||
+                    (prop->data_short > client->topic_alias_max)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+                }
+                break;
+            }
+        }
+    }
+
 #endif
 
     switch (publish->stat.write)

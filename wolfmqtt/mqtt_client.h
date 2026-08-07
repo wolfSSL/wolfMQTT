@@ -291,6 +291,8 @@ typedef struct _MqttClient {
     /* Ceiling server_recv_max replenishes to; a spurious/duplicate ack
      * must not inflate the live quota above the negotiated value. */
     word16 server_recv_max_negotiated;
+    /* Max Topic Alias value; absent CONNACK means 0 [3.1.2.11.8]. */
+    word16 topic_alias_max;
 #endif
 } MqttClient;
 
@@ -393,7 +395,11 @@ WOLFMQTT_API int MqttClient_Connect(
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
                 MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
                 QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
-                reason code >= 0x80 (see MqttPublish.resp.reason_code), or
+                reason code >= 0x80 (see MqttPublish.resp.reason_code),
+                MQTT_CODE_ERROR_SERVER_PROP if the request violates a
+                CONNACK-advertised v5 server property before sending (QoS above
+                Maximum QoS, Retain unavailable, Topic Alias above the server
+                maximum, or Receive Maximum quota exhausted), or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish_WriteOnly
     \sa         MqttClient_Publish_ex
@@ -420,7 +426,11 @@ WOLFMQTT_API int MqttClient_Publish(
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
                 MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
                 QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
-                reason code >= 0x80 (see MqttPublish.resp.reason_code), or
+                reason code >= 0x80 (see MqttPublish.resp.reason_code),
+                MQTT_CODE_ERROR_SERVER_PROP if the request violates a
+                CONNACK-advertised v5 server property before sending (QoS above
+                Maximum QoS, Retain unavailable, Topic Alias above the server
+                maximum, or Receive Maximum quota exhausted), or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Publish_ex(

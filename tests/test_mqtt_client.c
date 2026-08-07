@@ -715,11 +715,6 @@ TEST(connect_refused_connack_preserves_v5_defaults)
     ASSERT_EQ(0, test_client.packet_sz_max);
 }
 
-/* MQTT v5 [3.1.2.11.6]: only Max QoS 0 or 1 are legal. A non-conforming or
- * malicious broker that advertises a larger value (2 here) must be clamped to
- * MQTT_QOS_1 before being narrowed against this build's WOLFMQTT_MAX_QOS, so the
- * client-side publish guard cannot be tricked into permitting QoS 2. Exercises
- * the clamp branch that the in-spec acceptance test above does not reach. */
 /* [MQTT-3.1.2.11.3]: CONNACK Receive Maximum must latch into the client. */
 TEST(connect_accepted_connack_latches_receive_max)
 {
@@ -1018,14 +1013,6 @@ TEST(wait_message_malformed_fixed_header_disconnects)
      * transport teardown is deferred to MqttClient_NetDisconnect (avoids a
      * double disconnect and a race with a concurrent writer). */
     ASSERT_EQ(0, g_disconnect_calls);
-    /* The IS_CONNECTED flag is always cleared so the caller sees a dead
-     * connection. In a multithread build the socket/TLS teardown is
-     * deferred to MqttClient_NetDisconnect to avoid freeing the transport
-     * under a concurrent writer, so the disconnect callback does not fire
-     * here; single-threaded tears down immediately. */
-#ifndef WOLFMQTT_MULTITHREAD
-    ASSERT_EQ(1, g_disconnect_calls);
-#endif
     ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
                        MQTT_CLIENT_FLAG_IS_CONNECTED));
 }
@@ -3160,6 +3147,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_clamps_illegal_max_qos);
+    RUN_TEST(connect_accepted_connack_latches_topic_alias_max);
     RUN_TEST(connect_accepted_connack_rejects_zero_receive_max);
     RUN_TEST(connect_accepted_connack_latches_receive_max);
 #endif
@@ -3202,6 +3190,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos2_v5_success_returns_success);
     RUN_TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected);
     RUN_TEST(publish_v311_ack_not_misread_as_rejected);
+    RUN_TEST(publish_v5_topic_alias_zero_rejected);
+    RUN_TEST(publish_v5_topic_alias_exceeds_max_rejected);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(publish_qos1_v5_receive_max_quota_decrements_once_and_replenishes);
 #endif
