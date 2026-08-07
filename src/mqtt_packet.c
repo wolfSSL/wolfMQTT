@@ -1489,6 +1489,20 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     return header_len + remain_len;
 }
 
+#if defined(WOLFMQTT_BROKER) && defined(WOLFMQTT_V5)
+/* [MQTT-3.1.3.2] Will Properties allow-list, tighter than CONNECT's. */
+static int MqttWillProps_ValidateType(MqttPropertyType type)
+{
+    return (type == MQTT_PROP_WILL_DELAY_INTERVAL) ||
+           (type == MQTT_PROP_PAYLOAD_FORMAT_IND) ||
+           (type == MQTT_PROP_MSG_EXPIRY_INTERVAL) ||
+           (type == MQTT_PROP_CONTENT_TYPE) ||
+           (type == MQTT_PROP_RESP_TOPIC) ||
+           (type == MQTT_PROP_CORRELATION_DATA) ||
+           (type == MQTT_PROP_USER_PROP);
+}
+#endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
+
 #ifdef WOLFMQTT_BROKER
 int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
 {
@@ -1678,6 +1692,7 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
         if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             word32 lwt_props_len = 0;
             int lwt_tmp;
+            MqttProp* will_prop;
             /* Decode Length of LWT Properties */
             if (rx_buf_len < (rx_payload - rx_buf)) {
                 rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
@@ -1691,7 +1706,7 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
             }
             rx_payload += lwt_tmp;
             if (lwt_props_len > 0) {
-                /* Decode LWT Properties */
+                /* Decode, then enforce the tighter Will allow-list below. */
                 lwt_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT,
                         &mc_connect->lwt_msg->props, rx_payload,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)),
@@ -1701,6 +1716,15 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
                     goto cleanup;
                 }
                 rx_payload += lwt_tmp;
+
+                /* [MQTT-3.1.3.2] Reject CONNECT-only properties in Will. */
+                for (will_prop = mc_connect->lwt_msg->props;
+                        will_prop != NULL; will_prop = will_prop->next) {
+                    if (!MqttWillProps_ValidateType(will_prop->type)) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                        goto cleanup;
+                    }
+                }
             }
         }
 #endif

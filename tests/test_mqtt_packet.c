@@ -5292,6 +5292,39 @@ TEST(decode_subscribe_v5_duplicate_subscription_id_rejected)
     ASSERT_NULL(sub.props);
 }
 
+/* [MQTT-3.1.3.2]: a CONNECT-only property in Will Properties is rejected. */
+TEST(decode_connect_v5_will_props_session_expiry_rejected)
+{
+    byte buf[256];
+    MqttConnect enc, dec;
+    MqttMessage enc_lwt, dec_lwt;
+    MqttProp will_prop;
+    int enc_len, rc;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    XMEMSET(&enc_lwt, 0, sizeof(enc_lwt));
+    XMEMSET(&will_prop, 0, sizeof(will_prop));
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    enc.client_id       = "cid";
+    enc.enable_lwt       = 1;
+    enc.lwt_msg          = &enc_lwt;
+    enc_lwt.topic_name   = "will/topic";
+    enc_lwt.qos          = MQTT_QOS_0;
+    will_prop.type       = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    will_prop.data_int   = 30;
+    enc_lwt.props        = &will_prop;
+
+    enc_len = MqttEncode_Connect(buf, (int)sizeof(buf), &enc);
+    ASSERT_TRUE(enc_len > 0);
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&dec_lwt, 0, sizeof(dec_lwt));
+    dec.lwt_msg = &dec_lwt;
+    rc = MqttDecode_Connect(buf, enc_len, &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+}
+#endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
+
 void run_mqtt_packet_tests(void)
 {
 #ifdef WOLFMQTT_V5
@@ -5509,6 +5542,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_v5_rejects_nul_in_client_id);
     RUN_TEST(decode_connect_v5_password_without_username_accepted);
     RUN_TEST(decode_connect_v5_props_freed_on_client_id_error);
+    RUN_TEST(decode_connect_v5_will_props_session_expiry_rejected);
 #endif
 
     /* MqttDecode_Subscribe */
