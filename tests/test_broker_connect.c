@@ -4324,6 +4324,24 @@ TEST(pubcomp_malformed_closes_connection)
     };
     /* PUBCOMP with remain_len = 0 (no Packet Identifier at all). */
     static const byte pubcomp_bad[] = { 0x70, 0x00 };
+/* No Enhanced Authentication support; a CONNECT with Auth Method must
+ * be refused, not silently accepted. */
+TEST(connect_v5_auth_method_present_rejected)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* props: Authentication Method (0x15) = "PLAIN" (UTF8, 5 bytes).
+     * prop TLV = 1(type)+2(len)+5(str) = 8. remain = 6+1+1+2+1+8+2+1 = 22 */
+    static const byte connect[] = {
+        0x10, 22,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x08,
+        0x15, 0x00, 0x05, 'P', 'L', 'A', 'I', 'N',
+        0x00, 0x01, 'A'
+    };
 
     install_mock_net(&net);
     XMEMSET(&broker, 0, sizeof(broker));
@@ -4629,6 +4647,13 @@ TEST(subscribe_v5_retain_handling_0_delivers)
 
     ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
         g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_BAD_AUTH_METHOD, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -4941,6 +4966,11 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(will_qos1_routes_through_outq);
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_v5_auth_method_present_rejected);
+#endif
 #endif
     TEST_SUITE_END();
 

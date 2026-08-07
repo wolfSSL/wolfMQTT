@@ -4964,6 +4964,30 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                     (int)bc->sock, (unsigned)bc->session_expiry_sec);
             }
         }
+        /* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. */
+        {
+            MqttProp* mp_prop = BrokerProps_Find(mc.props,
+                    MQTT_PROP_MAX_PACKET_SZ);
+            if (mp_prop != NULL && mp_prop->data_int == 0) {
+                WBLOG_ERR(broker,
+                    "broker: Maximum Packet Size 0 is a Protocol Error "
+                    "sock=%d [MQTT-3.1.2.11.4]", (int)bc->sock);
+                ack.return_code = MQTT_REASON_PROTOCOL_ERR;
+                goto send_connack;
+            }
+        }
+        /* No Enhanced Authentication support; refuse an Auth Method. */
+        {
+            MqttProp* am_prop = BrokerProps_Find(mc.props,
+                    MQTT_PROP_AUTH_METHOD);
+            if (am_prop != NULL) {
+                WBLOG_ERR(broker,
+                    "broker: Authentication Method unsupported sock=%d",
+                    (int)bc->sock);
+                ack.return_code = MQTT_REASON_BAD_AUTH_METHOD;
+                goto send_connack;
+            }
+        }
     }
 #endif
 
