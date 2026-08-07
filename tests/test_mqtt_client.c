@@ -599,11 +599,13 @@ TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf)
     int rc;
     int i;
     MqttConnect connect;
-    /* CONNACK v5: type=0x20, remain=0x14, flags=0x00, return_code=0x00,
-     * prop_len=0x11, then AUTH_DATA (0x16) binary length 14 =
-     * "SASLfinalPROOF". */
+    /* CONNACK v5: type=0x20, remain=0x1C, flags=0x00, return_code=0x00,
+     * prop_len=0x19, then AUTH_METHOD (0x15)="PLAIN" and AUTH_DATA (0x16)
+     * binary length 14 = "SASLfinalPROOF". [MQTT-3.1.2.11.10] requires
+     * AUTH_METHOD whenever AUTH_DATA is present. */
     static const byte connack[] = {
-        0x20, 0x14, 0x00, 0x00, 0x11,
+        0x20, 0x1C, 0x00, 0x00, 0x19,
+        0x15, 0x00, 0x05, 'P', 'L', 'A', 'I', 'N',
         0x16, 0x00, 0x0E,
         'S', 'A', 'S', 'L', 'f', 'i', 'n', 'a', 'l', 'P', 'R', 'O', 'O', 'F'
     };

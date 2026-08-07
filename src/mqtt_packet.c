@@ -953,6 +953,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     int rc = 0;
     int total, tmp;
     int prop_count = 0;
+    int saw_auth_method = 0, saw_auth_data = 0;
     word32 seen_lo = 0, seen_hi = 0; /* singleton-property duplicate guard */
     word32 prop_type;
     MqttProp* cur_prop;
@@ -1026,6 +1027,14 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 }
                 seen_hi |= bit;
             }
+        }
+
+        /* Tracked for the Auth Data/Method cross-check below the loop. */
+        if (cur_prop->type == MQTT_PROP_AUTH_METHOD) {
+            saw_auth_method = 1;
+        }
+        else if (cur_prop->type == MQTT_PROP_AUTH_DATA) {
+            saw_auth_data = 1;
         }
 
         switch (gPropMatrix[cur_prop->type].data)
@@ -1256,6 +1265,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
         }
     };
+
+    /* [MQTT-3.1.2.11.9/10] Auth Data requires Auth Method. */
+    if (rc >= 0 && saw_auth_data && !saw_auth_method) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+    }
 
     if (rc < 0) {
         /* Free the property */

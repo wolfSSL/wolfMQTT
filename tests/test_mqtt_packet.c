@@ -5362,6 +5362,30 @@ TEST(encode_pubrel_v5_reason_code_packet_id_not_found_accepted)
 }
 #endif /* WOLFMQTT_V5 */
 
+#if defined(WOLFMQTT_BROKER) && defined(WOLFMQTT_V5)
+/* [MQTT-3.1.2.11.9/10]: Auth Data without Auth Method is a Protocol Error. */
+TEST(decode_connect_v5_auth_data_without_auth_method_rejected)
+{
+    byte buf[] = {
+        0x10, 0x14,                         /* CONNECT, remain_len = 20 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,                               /* protocol level v5 */
+        0x02,                               /* flags: clean_session */
+        0x00, 0x3C,                         /* keep alive */
+        0x04,                               /* props_len VBI = 4 */
+        0x16, 0x00, 0x01, 'x',              /* Authentication Data = "x" */
+        0x00, 0x03, 'c', 'i', 'd'           /* client_id "cid" */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    dec.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(dec.props);
+}
+
 void run_mqtt_packet_tests(void)
 {
 #ifdef WOLFMQTT_V5
@@ -5579,6 +5603,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_v5_rejects_nul_in_client_id);
     RUN_TEST(decode_connect_v5_password_without_username_accepted);
     RUN_TEST(decode_connect_v5_props_freed_on_client_id_error);
+    RUN_TEST(decode_connect_v5_auth_data_without_auth_method_rejected);
     RUN_TEST(decode_connect_v5_will_props_session_expiry_rejected);
 #endif
 
