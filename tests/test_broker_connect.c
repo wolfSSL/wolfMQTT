@@ -3123,15 +3123,16 @@ TEST(connack_session_present_v5_set_on_resumed_session)
     MqttConnectAck ack;
     int rc;
     int i;
-    /* v5 CONNECT clean=0, level=5, props_len=0, client_id="K". remain
-     * = 6 + 1 + 1 + 2 + 1 + 3 = 14. */
+    /* v5 CONNECT clean=0, level=5, Session Expiry=60 (persistent session so a
+     * same-id reconnect resumes it), client_id="K". props = 5 (0x11 + u32).
+     * remain = 6 + 1 + 1 + 2 + (1+5) + 3 = 19. */
     static const byte connect0[] = {
-        0x10, 0x0E,
+        0x10, 0x13,
         0x00, 0x04, 'M', 'Q', 'T', 'T',
         0x05,
         0x00,                              /* clean_start = 0 */
         0x00, 0x3C,
-        0x00,                              /* properties length = 0 */
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,/* props_len=5, SessionExpiry=60 */
         0x00, 0x01, 'K'
     };
     static const byte subscribe0[] = {
@@ -3147,12 +3148,12 @@ TEST(connack_session_present_v5_set_on_resumed_session)
      * properties. remain = 1 + 1 = 2. */
     static const byte disconnect0[] = { 0xE0, 0x02, 0x00, 0x00 };
     static const byte connect1[] = {
-        0x10, 0x0E,
+        0x10, 0x13,
         0x00, 0x04, 'M', 'Q', 'T', 'T',
         0x05,
         0x00,
         0x00, 0x3C,
-        0x00,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,/* props_len=5, SessionExpiry=60 */
         0x00, 0x01, 'K'
     };
 
@@ -3719,6 +3720,60 @@ TEST(connect_v5_receive_max_zero_protocol_error)
     MqttBroker_Free(&broker);
 }
 
+/* v5 CONNECT with Clean Start=0, no Session Expiry: must default to 0,
+ * not the v3.1.1 0xFFFFFFFF "never" sentinel. */
+TEST(connect_v5_clean0_no_se_prop_orphan_expiry_zero)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    /* v5 CONNECT clean=0, no props, ClientId "K". remain = 14. */
+    static const byte connect0[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'K'
+    };
+    static const byte subscribe0[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, subscribe0, sizeof(subscribe0));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    /* [MQTT-3.1.2.11.2] A v5 Clean Start=0 CONNECT without a Session Expiry
+     * property defaults the interval to 0, so the Session ends when the
+     * connection closes: no orphan is retained and a same-id reconnect gets a
+     * fresh session. */
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "K") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o == NULL);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -3833,6 +3888,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_v5_receive_max_zero_protocol_error);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_v5_clean0_no_se_prop_orphan_expiry_zero);
 #endif
 #endif
     TEST_SUITE_END();

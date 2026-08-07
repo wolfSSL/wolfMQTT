@@ -4590,13 +4590,16 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     bc->last_rx = WOLFMQTT_BROKER_GET_TIME_S();
 
 #ifndef WOLFMQTT_STATIC_MEMORY
-    /* Default Session Expiry. Set BEFORE the v5 property parse below
-     * so that a v5 client carrying MQTT_PROP_SESSION_EXPIRY_INTERVAL
-     * overrides this default rather than being silently clobbered:
-     *  - v3.1.1 persistent (clean_session=0): 0xFFFFFFFF (server
-     *    policy decides eviction; MQTT 3.1.1 sec 3.1.2.4).
-     *  - clean_session=1 or v5 client without the property: 0
-     *    (expire on disconnect, per MQTT v5 sec 3.1.2.11.2). */
+    /* Default Session Expiry, overridden below by an explicit v5 property:
+     *  - v5: 0 regardless of Clean Start [MQTT-3.1.2.11.2].
+     *  - v3.1.1 clean_session=0: 0xFFFFFFFF (MQTT 3.1.1 sec 3.1.2.4).
+     *  - v3.1.1 clean_session=1: 0. */
+#ifdef WOLFMQTT_V5
+    if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        bc->session_expiry_sec = 0;
+    }
+    else
+#endif
     if (!mc.clean_session) {
         bc->session_expiry_sec = 0xFFFFFFFFu;
     }
@@ -4625,12 +4628,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 "broker: client Receive Maximum sock=%d value=%u",
                 (int)bc->sock, (unsigned)bc->client_receive_max);
         }
-        /* [MQTT-3.1.2.11.2] v5 Session Expiry Interval. If present,
-         * carry it onto bc->session_expiry_sec so the disconnect
-         * path stamps it into the orphan record. Absent property
-         * means the default set above stands (0 for clean_session=1,
-         * 0xFFFFFFFF for clean_session=0 to honor v3.1.1 persistence
-         * semantics when a v5 client opts in without the property). */
+        /* [MQTT-3.1.2.11.2] v5 Session Expiry Interval. Absent means the
+         * default set above stands (always 0 for v5). */
         {
             MqttProp* se_prop = BrokerProps_Find(mc.props,
                     MQTT_PROP_SESSION_EXPIRY_INTERVAL);
@@ -4865,7 +4864,16 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 ((BrokerWsCtx*)old->ws_ctx)->processing = 0;
             }
 #endif
-            if (!mc.clean_session) {
+            /* Reassociate only if the old session survives the takeover.
+             * [MQTT-3.1.2.11.2] a zero Session Expiry ends the old session when
+             * its connection closes - which the takeover is doing - so its subs
+             * and QoS2 state must not carry into the new client. Matches the
+             * old_persists check the QoS2 takeover helper already applies. */
+            if (!mc.clean_session
+            #ifndef WOLFMQTT_STATIC_MEMORY
+                    && old->session_expiry_sec != 0
+            #endif
+                    ) {
                 /* Reassociate old client's subs to new client */
                 if (BrokerSubs_ReassociateClient(broker, bc->client_id, bc)
                     > 0) {
