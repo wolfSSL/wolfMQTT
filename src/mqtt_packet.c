@@ -973,11 +973,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             break;
         }
 
-        /* [MQTT v5 2.2.2.2] Every property except User Property and
-         * Subscription Identifier MUST appear at most once; a duplicate is a
-         * Protocol Error. */
+        /* [MQTT-2.2.2.2] Duplicate is a Protocol Error, except User Property
+         * and Subscription Identifier in PUBLISH [MQTT-3.3.2.3.8]. */
         if (cur_prop->type != MQTT_PROP_USER_PROP &&
-                cur_prop->type != MQTT_PROP_SUBSCRIPTION_ID) {
+                !(cur_prop->type == MQTT_PROP_SUBSCRIPTION_ID &&
+                  packet == MQTT_PACKET_TYPE_PUBLISH)) {
             word32 bit;
             if (cur_prop->type < 32) {
                 bit = (word32)1 << cur_prop->type;

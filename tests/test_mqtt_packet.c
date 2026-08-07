@@ -5266,9 +5266,31 @@ TEST(decode_auth_v5_reason_code_past_buf_rejected)
 }
 #endif /* WOLFMQTT_V5 */
 
-/* ============================================================================
- * Test Suite Runner
- * ============================================================================ */
+#if defined(WOLFMQTT_BROKER) && defined(WOLFMQTT_V5)
+/* [MQTT-2.2.2.2]: duplicate Subscription ID in SUBSCRIBE is a Protocol Error. */
+TEST(decode_subscribe_v5_duplicate_subscription_id_rejected)
+{
+    byte rx_buf[] = {
+        0x82, 0x0B,                        /* SUBSCRIBE, remain_len = 11 */
+        0x00, 0x01,                        /* packet_id */
+        0x04,                              /* props_len VBI = 4 */
+        0x0B, 0x01,                        /* Subscription Identifier = 1 */
+        0x0B, 0x01,                        /* Subscription Identifier = 1 (dup) */
+        0x00, 0x01, 'a',                   /* filter "a" */
+        0x00                               /* options */
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(sub.props);
+}
 
 void run_mqtt_packet_tests(void)
 {
@@ -5505,6 +5527,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_empty_payload_rejected);
     RUN_TEST(decode_subscribe_v5_props_freed_on_bad_filter);
+    RUN_TEST(decode_subscribe_v5_duplicate_subscription_id_rejected);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_subscribe_v5_options_byte_qos_extracted);
