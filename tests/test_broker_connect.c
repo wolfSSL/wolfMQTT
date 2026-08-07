@@ -3896,6 +3896,75 @@ TEST(orphan_expire_sweep_removes_zero_expiry_session)
     MqttBroker_Free(&broker);
 }
 
+/* [MQTT-3.14.2-1]: DISCONNECT setting Session Expiry 0-to-nonzero is a
+ * Protocol Error; confirmed via the immediate Will fired on abnormal close. */
+TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_lwt[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    /* v5 CONNECT publisher, ClientId "P", Will flag set (topic "lwt",
+     * payload "bye"), no CONNECT props, no Will props (delay=0). remain =
+     * 6+1+1+2+1(props_len=0)+2+1('P')+1(will_props_len=0)+2+3+2+3 = 25 */
+    static const byte connect_pub[] = {
+        0x10, 25,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x04,                       /* Will flag, CleanStart=0 */
+        0x00, 0x3C,
+        0x00,                       /* connect props_len = 0 */
+        0x00, 0x01, 'P',
+        0x00,                       /* will props_len = 0 */
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* v5 DISCONNECT, reason=Normal(0x00), props: Session Expiry Interval
+     * (0x11) = 30. remain = 1(reason)+1(props_len)+5(prop) = 7 */
+    static const byte disconnect_se[] = {
+        0xE0, 0x07,
+        0x00,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x1E
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_lwt, sizeof(subscribe_lwt));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, disconnect_se, sizeof(disconnect_se));
+    for (i = 0; i < 24; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Pre-fix: SE update was silently ignored (or, for BROKER_WILL
+     * builds, only read for the Will-reason-code check), no protocol
+     * error was raised, and the graceful path cleared the Will without
+     * publishing it -> 0 PUBLISH to the subscriber. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -4025,6 +4094,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(orphan_expire_sweep_removes_zero_expiry_session);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error);
 #endif
 #endif
     TEST_SUITE_END();

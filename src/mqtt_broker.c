@@ -6291,23 +6291,54 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     BrokerClient_AbnormalClose(broker, bc);
                     return 0;
                 }
-            #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
-                /* [MQTT-3.14.4-3] A v5 DISCONNECT with Reason Code 0x04
-                 * (Disconnect with Will Message) asks the broker to publish
-                 * the Will rather than discard it. */
+            #ifdef WOLFMQTT_V5
+                /* Always decode v5 DISCONNECT props, not only with Will. */
                 if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                         bc->client.packet.remain_len > 0) {
                     MqttDisconnect disc;
+                    int disc_rc;
                     XMEMSET(&disc, 0, sizeof(disc));
                     disc.protocol_level = bc->protocol_level;
-                    if (MqttDecode_Disconnect(bc->rx_buf, rc, &disc) >= 0 &&
-                            disc.reason_code ==
+                    disc_rc = MqttDecode_Disconnect(bc->rx_buf, rc, &disc);
+                    if (disc_rc >= 0) {
+                #ifndef WOLFMQTT_STATIC_MEMORY
+                        /* [MQTT-3.14.2-1] 0-to-nonzero here is a Protocol
+                         * Error; any other change is permitted. */
+                        MqttProp* se_prop = (disc.props != NULL) ?
+                            BrokerProps_Find(disc.props,
+                                MQTT_PROP_SESSION_EXPIRY_INTERVAL) : NULL;
+                        if (se_prop != NULL) {
+                            if (bc->session_expiry_sec == 0 &&
+                                    se_prop->data_int != 0) {
+                                WBLOG_ERR(broker,
+                                    "broker: DISCONNECT Session Expiry "
+                                    "0->nonzero is a Protocol Error sock=%d "
+                                    "[MQTT-3.14.2-1]", (int)bc->sock);
+                                if (disc.props != NULL) {
+                                    (void)MqttProps_Free(disc.props);
+                                }
+                                BrokerClient_AbnormalClose(broker, bc);
+                                return 0;
+                            }
+                            bc->session_expiry_sec = se_prop->data_int;
+                        }
+                #endif
+                #ifdef WOLFMQTT_BROKER_WILL
+                        /* [MQTT-3.14.4-3] Reason 0x04 requests Will publish. */
+                        if (disc.reason_code ==
                                 MQTT_REASON_DISCONNECT_W_WILL_MSG) {
-                        BrokerClient_PublishWill(broker, bc);
+                            BrokerClient_PublishWill(broker, bc);
+                        }
+                        else {
+                            BrokerClient_ClearWill(bc);
+                        }
+                #endif
                     }
+                #ifdef WOLFMQTT_BROKER_WILL
                     else {
                         BrokerClient_ClearWill(bc);
                     }
+                #endif
                     /* Free any decoded v5 DISCONNECT properties. */
                     if (disc.props != NULL) {
                         (void)MqttProps_Free(disc.props);
