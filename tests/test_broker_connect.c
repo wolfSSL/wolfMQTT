@@ -4091,6 +4091,74 @@ TEST(publish_v5_props_survive_queued_delivery)
     MqttBroker_Free(&broker);
 }
 
+/* An unacked QoS>=1 retained delivery must survive into the orphan's
+ * out_q on disconnect, same as normal PUBLISH fan-out. */
+TEST(retained_qos1_delivery_survives_via_outq)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* Retained QoS 1 PUBLISH, packet_id=1, topic "x", payload "r". */
+    static const byte publish_retained[] = {
+        0x33, 0x06,
+        0x00, 0x01, 'x',
+        0x00, 0x01,
+        'r'
+    };
+    /* Subscriber CONNECT v3.1.1, clean_session=0, ClientId "S". */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x01
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_retained, sizeof(publish_retained));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 24; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[1].closed);
+
+    /* Pre-fix: retained QoS>=1 delivery was a direct MqttPacket_Write
+     * with no BrokerOutPub entry, so the orphan's out_q would be empty
+     * (out_q_count == 0) here. */
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "S") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL);
+    ASSERT_EQ(1, o->out_q_count);
+    ASSERT_EQ(1, o->out_q_inflight);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -4237,6 +4305,13 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(publish_v5_props_survive_queued_delivery);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_BROKER_RETAINED
+    RUN_TEST(retained_qos1_delivery_survives_via_outq);
+#endif
 #endif
 #endif
     TEST_SUITE_END();

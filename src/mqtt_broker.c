@@ -4121,6 +4121,10 @@ static int BrokerPendingWill_Process(MqttBroker* broker)
 }
 #endif /* WOLFMQTT_BROKER_WILL */
 
+#ifdef WOLFMQTT_V5
+static int BrokerSend_Disconnect(BrokerClient* bc, byte reason_code);
+#endif
+
 #ifdef WOLFMQTT_BROKER_RETAINED
 static void BrokerRetained_DeliverToClient(MqttBroker* broker,
     BrokerClient* bc, const char* filter, MqttQoS sub_qos)
@@ -4241,40 +4245,82 @@ static void BrokerRetained_DeliverToClient(MqttBroker* broker,
             continue;
         }
         if (rm->topic != NULL && BrokerTopicMatch(filter, rm->topic)) {
-            MqttPublish out_pub;
             MqttQoS eff_qos = (rm->qos < sub_qos) ? rm->qos : sub_qos;
-            int enc_rc, wr_rc;
-            XMEMSET(&out_pub, 0, sizeof(out_pub));
-            out_pub.topic_name = rm->topic;
-            out_pub.qos = eff_qos;
-            out_pub.retain = 1;
-            out_pub.duplicate = 0;
-            out_pub.buffer = (rm->payload_len > 0) ? rm->payload : NULL;
-            out_pub.total_len = rm->payload_len;
             if (eff_qos >= MQTT_QOS_1) {
-                out_pub.packet_id = BrokerNextPacketId(broker);
+                /* Route QoS 1/2 through out_q so it survives reconnect. A full
+                 * queue must not silently drop a required retained delivery:
+                 * disconnect the slow subscriber with Quota Exceeded, matching
+                 * the live PUBLISH fan-out policy. */
+                if (bc->out_q_count >= BROKER_MAX_QUEUED_MSGS_PER_SUB) {
+                    WBLOG_ERR(broker,
+                        "broker: retained out_q full (%d) -> disconnect sock=%d",
+                        bc->out_q_count, (int)bc->sock);
+                #ifdef WOLFMQTT_V5
+                    (void)BrokerSend_Disconnect(bc, MQTT_REASON_QUOTA_EXCEEDED);
+                #endif
+                    if (bc->sock != BROKER_SOCKET_INVALID) {
+                        broker->net.close(broker->net.ctx, bc->sock);
+                        bc->sock = BROKER_SOCKET_INVALID;
+                    }
+                    bc->connected = 0;
+                    break;
+                }
+                else {
+                    BrokerOutPub* e = BrokerOutPub_Alloc(rm->topic,
+                        (rm->payload_len > 0) ? rm->payload : NULL,
+                        rm->payload_len
+                    #ifdef WOLFMQTT_V5
+                        , NULL
+                    #endif
+                        );
+                    if (e == NULL) {
+                        WBLOG_ERR(broker,
+                            "broker: retained alloc failed sock=%d topic=%s",
+                            (int)bc->sock, BrokerLog_Sanitize(rm->topic));
+                    }
+                    else {
+                        e->qos = eff_qos;
+                        e->packet_id = BrokerNextPacketId(broker);
+                        e->retain = 1;
+                        e->state = BROKER_OUTQ_QUEUED;
+                    #ifdef WOLFMQTT_V5
+                        e->protocol_level = bc->protocol_level;
+                    #endif
+                        BrokerClient_EnqueueOutPub(bc, e);
+                        WBLOG_DBG(broker,
+                            "broker: retained enq sock=%d topic=%s qos=%d",
+                            (int)bc->sock, BrokerLog_Sanitize(rm->topic),
+                            (int)eff_qos);
+                        BrokerClient_DrainOutQueue(bc);
+                    }
+                }
             }
+            else {
+                MqttPublish out_pub;
+                int enc_rc, wr_rc;
+                XMEMSET(&out_pub, 0, sizeof(out_pub));
+                out_pub.topic_name = rm->topic;
+                out_pub.qos = eff_qos;
+                out_pub.retain = 1;
+                out_pub.duplicate = 0;
+                out_pub.buffer = (rm->payload_len > 0) ? rm->payload : NULL;
+                out_pub.total_len = rm->payload_len;
 #ifdef WOLFMQTT_V5
-            out_pub.protocol_level = bc->protocol_level;
+                out_pub.protocol_level = bc->protocol_level;
 #endif
-            enc_rc = MqttEncode_Publish(bc->tx_buf,
-                BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
-            if (enc_rc > 0) {
-                WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
-                    "len=%u qos=%d", (int)bc->sock,
-                    BrokerLog_Sanitize(rm->topic),
-                    (unsigned)rm->payload_len, (int)eff_qos);
-                wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
-                /* Scrub after a completed write and after a hard failure - both
-                 * leave bc->tx_buf idle. Skip only the in-progress case: in
-                 * non-blocking / TLS-async mode MqttPacket_Write returns
-                 * MQTT_CODE_CONTINUE with the send still referencing bc->tx_buf,
-                 * so zeroing then would corrupt it (that residue is cleared by
-                 * the next full write or by BrokerClient_Free). */
-                if (wr_rc != MQTT_CODE_CONTINUE) {
-                    /* Scrub the retained (possibly retained-will) payload from
-                     * the subscriber tx_buf, mirroring the will fan-out. */
-                    BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
+                enc_rc = MqttEncode_Publish(bc->tx_buf,
+                    BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
+                if (enc_rc > 0) {
+                    WBLOG_DBG(broker,
+                        "broker: retained deliver sock=%d topic=%s "
+                        "len=%u qos=%d", (int)bc->sock,
+                        BrokerLog_Sanitize(rm->topic),
+                        (unsigned)rm->payload_len, (int)eff_qos);
+                    wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+                    /* Scrub tx_buf unless still in-progress (CONTINUE). */
+                    if (wr_rc != MQTT_CODE_CONTINUE) {
+                        BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
+                    }
                 }
             }
         }
@@ -4408,36 +4454,87 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
         if (sub->client != NULL && sub->client->protocol_level != 0 &&
             BROKER_STR_VALID(sub->filter) &&
             BrokerTopicMatch(sub->filter, topic)) {
-            MqttPublish out_pub;
-            MqttQoS eff_qos;
-            int enc_rc, wr_rc;
-            XMEMSET(&out_pub, 0, sizeof(out_pub));
-            out_pub.topic_name = (char*)topic;
-            eff_qos = (qos < sub->qos) ? qos : sub->qos;
-            out_pub.qos = eff_qos;
-            out_pub.retain = 0;
-            out_pub.duplicate = 0;
-            out_pub.buffer = (payload_len > 0) ? (byte*)payload : NULL;
-            out_pub.total_len = payload_len;
+            MqttQoS eff_qos = (qos < sub->qos) ? qos : sub->qos;
+#ifndef WOLFMQTT_STATIC_MEMORY
             if (eff_qos >= MQTT_QOS_1) {
-                out_pub.packet_id = BrokerNextPacketId(broker);
+                /* Route QoS 1/2 through out_q so it survives reconnect. A full
+                 * queue must not silently drop an accepted Will: disconnect the
+                 * slow subscriber with Quota Exceeded, matching the live PUBLISH
+                 * fan-out policy. Gate on connected (not sock) so a WebSocket
+                 * client - which uses ws_ctx with sock == INVALID - is still
+                 * torn down, and a client with several matching subscriptions is
+                 * not disconnected twice. Clearing connected lets the reaper
+                 * close the transport (BrokerClient_Remove -> ws disconnect). */
+                if (sub->client->out_q_count >=
+                        BROKER_MAX_QUEUED_MSGS_PER_SUB) {
+                    BrokerClient* c = sub->client;
+                    if (c->connected) {
+                        WBLOG_ERR(broker,
+                            "broker: will out_q full (%d) -> disconnect sock=%d",
+                            c->out_q_count, (int)c->sock);
+                    #ifdef WOLFMQTT_V5
+                        (void)BrokerSend_Disconnect(c,
+                            MQTT_REASON_QUOTA_EXCEEDED);
+                    #endif
+                        if (c->sock != BROKER_SOCKET_INVALID) {
+                            broker->net.close(broker->net.ctx, c->sock);
+                            c->sock = BROKER_SOCKET_INVALID;
+                        }
+                        c->connected = 0;
+                    }
+                }
+                else {
+                    BrokerOutPub* e = BrokerOutPub_Alloc(topic,
+                        (payload_len > 0) ? payload : NULL, payload_len
+                    #ifdef WOLFMQTT_V5
+                        , NULL
+                    #endif
+                        );
+                    if (e == NULL) {
+                        WBLOG_ERR(broker,
+                            "broker: will alloc failed sock=%d",
+                            (int)sub->client->sock);
+                    }
+                    else {
+                        e->qos = eff_qos;
+                        e->packet_id = BrokerNextPacketId(broker);
+                        e->retain = 0;
+                        e->state = BROKER_OUTQ_QUEUED;
+                    #ifdef WOLFMQTT_V5
+                        e->protocol_level = sub->client->protocol_level;
+                    #endif
+                        BrokerClient_EnqueueOutPub(sub->client, e);
+                        BrokerClient_DrainOutQueue(sub->client);
+                    }
+                }
             }
-#ifdef WOLFMQTT_V5
-            out_pub.protocol_level = sub->client->protocol_level;
+            else
 #endif
-            enc_rc = MqttEncode_Publish(sub->client->tx_buf,
-                BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
-            if (enc_rc > 0) {
-                wr_rc = MqttPacket_Write(&sub->client->client,
-                        sub->client->tx_buf, enc_rc);
-                /* Scrub after a completed write and after a hard failure - both
-                 * leave tx_buf idle. Skip only the in-progress case: in
-                 * non-blocking / TLS-async mode MqttPacket_Write returns
-                 * MQTT_CODE_CONTINUE with the send still referencing tx_buf, so
-                 * zeroing then would corrupt it. Scrubbing on the error path
-                 * keeps the will payload from lingering after a failed send. */
-                if (wr_rc != MQTT_CODE_CONTINUE) {
-                    BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);
+            {
+                MqttPublish out_pub;
+                int enc_rc, wr_rc;
+                XMEMSET(&out_pub, 0, sizeof(out_pub));
+                out_pub.topic_name = (char*)topic;
+                out_pub.qos = eff_qos;
+                out_pub.retain = 0;
+                out_pub.duplicate = 0;
+                out_pub.buffer = (payload_len > 0) ? (byte*)payload : NULL;
+                out_pub.total_len = payload_len;
+                if (eff_qos >= MQTT_QOS_1) {
+                    out_pub.packet_id = BrokerNextPacketId(broker);
+                }
+#ifdef WOLFMQTT_V5
+                out_pub.protocol_level = sub->client->protocol_level;
+#endif
+                enc_rc = MqttEncode_Publish(sub->client->tx_buf,
+                    BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
+                if (enc_rc > 0) {
+                    wr_rc = MqttPacket_Write(&sub->client->client,
+                            sub->client->tx_buf, enc_rc);
+                    /* Scrub tx_buf unless still in-progress (CONTINUE). */
+                    if (wr_rc != MQTT_CODE_CONTINUE) {
+                        BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);
+                    }
                 }
             }
         }
