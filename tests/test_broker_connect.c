@@ -4169,7 +4169,7 @@ TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry)
     BrokerPendingWill* pw;
     /* v5 CONNECT, Will flag, ClientId "M". CONNECT props: Session
      * Expiry Interval = 30. Will props: Will Delay Interval = 3600.
-     * remain = 35 (same shape as will_delay_interval_uncapped). */
+     * remain = 35 (same shape as will_delay_interval_capped). */
     static const byte connect_m[] = {
         0x10, 35,
         0x00, 0x04, 'M', 'Q', 'T', 'T',
@@ -4209,6 +4209,64 @@ TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry)
      * will_delay_sec alone (now + 3600); Session Expiry was never
      * consulted. */
     ASSERT_EQ((WOLFMQTT_BROKER_TIME_T)30, pw->publish_time);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* A Will Delay Interval above BROKER_MAX_WILL_DELAY_SEC is clamped so a
+ * client cannot monopolize a deferred-will slot indefinitely. */
+TEST(will_delay_interval_capped)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerPendingWill* pw;
+    /* v5 CONNECT, Will flag, ClientId "W". CONNECT props: Session
+     * Expiry Interval = 0xFFFFFFFF. Will props: Will Delay Interval =
+     * 4600 (> BROKER_MAX_WILL_DELAY_SEC's default of 3600). remain = 35 */
+    static const byte connect_w[] = {
+        0x10, 35,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x04,
+        0x00, 0x3C,
+        0x05,
+        0x11, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x01, 'W',
+        0x05,
+        0x18, 0x00, 0x00, 0x11, 0xF8, /* Will Delay Interval = 4600 */
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* Malformed DISCONNECT (reserved flag bit set) drives the abnormal
+     * (immediate-teardown) close path, which still defers via
+     * BrokerPendingWill_Add when will_delay_sec > 0. */
+    static const byte disconnect_bad[] = { 0xE1, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_w, sizeof(connect_w));
+    mock_client_input_append(0, disconnect_bad, sizeof(disconnect_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    pw = broker.pending_wills;
+    while (pw != NULL && (pw->client_id == NULL ||
+            XSTRCMP(pw->client_id, "W") != 0)) {
+        pw = pw->next;
+    }
+    ASSERT_TRUE(pw != NULL);
+    /* 4600 exceeds the 3600 cap; with mock time pinned at 0 and an infinite
+     * Session Expiry the publish time is the clamped delay. */
+    ASSERT_EQ((WOLFMQTT_BROKER_TIME_T)BROKER_MAX_WILL_DELAY_SEC,
+        pw->publish_time);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -4372,6 +4430,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(will_delay_interval_capped);
 #endif
 #endif
     TEST_SUITE_END();

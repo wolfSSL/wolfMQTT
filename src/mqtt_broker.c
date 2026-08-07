@@ -5330,9 +5330,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             MqttProp* prop = BrokerProps_Find(mc.lwt_msg->props,
                 MQTT_PROP_WILL_DELAY_INTERVAL);
             if (prop != NULL) {
-                /* Clamp to a sane maximum so a client advertising a huge
-                 * delay (e.g. UINT32_MAX) cannot monopolize a pending-will
-                 * slot indefinitely. */
+                /* [MQTT-3.1.2.11.5] Honor the negotiated value, but clamp to a
+                 * sane maximum so a client advertising a huge delay cannot
+                 * hold a pending-will slot indefinitely. */
                 if (prop->data_int > BROKER_MAX_WILL_DELAY_SEC) {
                     bc->will_delay_sec = BROKER_MAX_WILL_DELAY_SEC;
                 }
