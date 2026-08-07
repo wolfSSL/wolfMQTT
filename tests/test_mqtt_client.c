@@ -69,6 +69,18 @@ static int mock_net_disconnect(void *context)
     return MQTT_CODE_SUCCESS;
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Read side reports would-block, so a non-blocking wait defers rather than
+ * completing or timing out. Defined here (not under the WOLFMQTT_NO_TIME
+ * gate below) so the v5 flow-control tests can use it in a NO_TIME build. */
+static int mock_net_read_wouldblock(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
+    return MQTT_CODE_CONTINUE;
+}
+#endif
+
 static int test_client_inited;
 
 static void setup(void)
@@ -691,6 +703,425 @@ TEST(connect_refused_connack_preserves_v5_defaults)
     ASSERT_EQ((byte)WOLFMQTT_MAX_QOS, test_client.max_qos);
     ASSERT_EQ(1, test_client.retain_avail);
     ASSERT_EQ(0, test_client.packet_sz_max);
+}
+
+/* MQTT v5 [3.1.2.11.6]: only Max QoS 0 or 1 are legal. A non-conforming or
+ * malicious broker that advertises a larger value (2 here) must be clamped to
+ * MQTT_QOS_1 before being narrowed against this build's WOLFMQTT_MAX_QOS, so the
+ * client-side publish guard cannot be tricked into permitting QoS 2. Exercises
+ * the clamp branch that the in-spec acceptance test above does not reach. */
+/* [MQTT-3.1.2.11.3]: CONNACK Receive Maximum must latch into the client. */
+TEST(connect_accepted_connack_latches_receive_max)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5 accepted, prop_len=3, [0x21 00 0A] = Receive Maximum 10. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x00, 0x00, 0x03,
+        0x21, 0x00, 0x0A
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(10, test_client.server_recv_max);
+}
+
+/* [MQTT-3.1.2.11.3]: Receive Maximum 0 must fail, not silently latch. */
+TEST(connect_accepted_connack_rejects_zero_receive_max)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5 accepted, prop_len=3, [0x21 00 00] = Receive Maximum 0. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x00, 0x00, 0x03,
+        0x21, 0x00, 0x00
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    /* Pre-CONNACK default (65535, absent-property default) must be intact;
+     * an illegal value must not be latched. */
+    ASSERT_EQ(65535, test_client.server_recv_max);
+}
+
+/* [MQTT-3.1.2.11.3]: quota exhausted must refuse before the wire. */
+TEST(publish_qos1_v5_receive_max_quota_exhausted_rejects_before_send)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 0; /* quota exhausted */
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read; /* errors if ever reached */
+
+    rc = MqttClient_Publish(&test_client, &publish);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    /* Rejected pre-send: no PUBLISH (or anything else) reached the wire. */
+    ASSERT_EQ(0, g_frames_written);
+}
+
+#ifdef WOLFMQTT_NONBLOCK
+/* Quota decrements once per publish, not per non-blocking re-entry. */
+TEST(publish_qos1_v5_receive_max_quota_decrements_once_and_replenishes)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBACK: type=0x40, remain=3, packet_id=1, reason=0x00 Success. */
+    static const byte puback[] = { 0x40, 0x03, 0x00, 0x01, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 5;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_wouldblock;
+
+    /* First entry: PUBLISH is sent (quota 5 -> 4), then the ack wait reports
+     * would-block. */
+    rc = MqttClient_Publish(&test_client, &publish);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    ASSERT_EQ(4, test_client.server_recv_max);
+
+    /* Re-entry for the same logical publish while still parked at
+     * MQTT_MSG_WAIT: must NOT decrement again. */
+    rc = MqttClient_Publish(&test_client, &publish);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    ASSERT_EQ(4, test_client.server_recv_max);
+
+    /* The broker's PUBACK now arrives: replenish exactly once. */
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, puback, sizeof(puback));
+    g_canned_len = (int)sizeof(puback);
+    g_canned_pos = 0;
+
+    rc = MqttClient_Publish(&test_client, &publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(5, test_client.server_recv_max);
+}
+#endif /* WOLFMQTT_NONBLOCK */
+
+/* These two exercise MqttClient_CancelMessage, which is only a public API when
+ * WOLFMQTT_MULTITHREAD or WOLFMQTT_NONBLOCK is defined (otherwise it is a
+ * file-local static in mqtt_client.c). */
+#if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
+/* [MQTT-4.9] MqttClient_CancelMessage must NOT credit the reserved Receive
+ * Maximum unit. An abandoned QoS>0 v5 publish may already be on the wire, where
+ * the server still counts it against Receive Maximum, so cancelling retains the
+ * unit while the connection stays open rather than risking an over-credit that
+ * lets the client exceed the negotiated quota. */
+TEST(cancel_message_retains_recv_quota_on_wire)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max_negotiated = 5;
+    test_client.server_recv_max = 4; /* one unit reserved and on the wire */
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+    publish.stat.recvQuotaHeld = 1;
+
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* Retained: the unit is not credited back and stays reserved. */
+    ASSERT_EQ(4, test_client.server_recv_max);
+    ASSERT_EQ(1, (int)publish.stat.recvQuotaHeld);
+}
+
+/* Cancelling the same abandoned publish twice is stable: the retained unit is
+ * never credited, so repeated cancels leave the quota unchanged. */
+TEST(cancel_message_retain_is_idempotent)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max_negotiated = 5;
+    test_client.server_recv_max = 4;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+    publish.stat.recvQuotaHeld = 1;
+
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(4, test_client.server_recv_max);
+
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(4, test_client.server_recv_max);
+}
+#endif /* WOLFMQTT_MULTITHREAD || WOLFMQTT_NONBLOCK */
+
+/* A QoS>0 v5 publish that fails on the wire (unsent) must give its reserved
+ * Receive Maximum unit back via RestoreRecvQuota on the write-failure path.
+ * The recvQuotaHeld flag keeps the credit to exactly one. */
+TEST(publish_qos1_v5_write_failure_restores_recv_quota)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max_negotiated = 5;
+    test_client.server_recv_max = 5;
+
+    /* mock_net_write returns MQTT_CODE_ERROR_NETWORK, so the PUBLISH write
+     * fails after the quota unit has been reserved. */
+    test_net.write = mock_net_write;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MqttClient_Publish(&test_client, &publish);
+    ASSERT_TRUE(rc < 0);
+    /* Reserved then restored: back at the ceiling, credited exactly once. */
+    ASSERT_EQ(5, test_client.server_recv_max);
+    ASSERT_EQ(0, (int)publish.stat.recvQuotaHeld);
+}
+
+#endif /* WOLFMQTT_V5 */
+
+/* [MQTT-2.2.2-2/4.13.1]: invalid fixed-header flags must disconnect. */
+TEST(wait_message_malformed_fixed_header_disconnects)
+{
+    int rc;
+    int i;
+    /* Malformed PUBACK: type nibble 4 (PUBACK), reserved flags nibble 1
+     * (illegal; PUBACK requires 0). remain=2, packet_id=4. */
+    static const byte malformed_puback[] = { 0x41, 0x02, 0x00, 0x04 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    /* Simulate an already-connected client, as MqttClient_NetConnect would
+     * leave it, so the fix's IS_CONNECTED guard is actually exercised. */
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    g_disconnect_calls = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    test_net.disconnect = mock_net_disconnect_counting;
+    XMEMCPY(g_canned_buf, malformed_puback, sizeof(malformed_puback));
+    g_canned_len = (int)sizeof(malformed_puback);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    /* IS_CONNECTED is cleared so the caller sees a dead connection; the
+     * transport teardown is deferred to MqttClient_NetDisconnect (avoids a
+     * double disconnect and a race with a concurrent writer). */
+    ASSERT_EQ(0, g_disconnect_calls);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+#ifdef WOLFMQTT_V5
+/* [MQTT-3.1.2.11.8]: CONNACK Topic Alias Maximum must latch into client. */
+TEST(connect_accepted_connack_latches_topic_alias_max)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v5 accepted, prop_len=3, [0x22 00 05] = Topic Alias Maximum 5. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x00, 0x00, 0x03,
+        0x22, 0x00, 0x05
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(5, test_client.topic_alias_max);
+}
+
+/* [MQTT-3.3.2.3.4]: Topic Alias over the max must be rejected pre-send. */
+TEST(publish_v5_topic_alias_exceeds_max_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    MqttProp* prop;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.topic_alias_max = 5; /* server accepts alias values 1..5 */
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    prop = MqttClient_PropsAdd(&publish.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_TOPIC_ALIAS;
+    prop->data_short = 6; /* exceeds topic_alias_max of 5 */
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read; /* errors if ever reached */
+
+    rc = MqttClient_Publish(&test_client, &publish);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    ASSERT_EQ(0, g_frames_written);
+
+    MqttClient_PropsFree(publish.props);
+}
+
+/* a Topic Alias of 0 is always illegal, even when
+ * the server did advertise a positive maximum. */
+TEST(publish_v5_topic_alias_zero_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    MqttProp* prop;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.topic_alias_max = 5;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    prop = MqttClient_PropsAdd(&publish.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_TOPIC_ALIAS;
+    prop->data_short = 0;
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Publish(&test_client, &publish);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    ASSERT_EQ(0, g_frames_written);
+
+    MqttClient_PropsFree(publish.props);
 }
 
 /* MQTT v5 [3.1.2.11.6]: only Max QoS 0 or 1 are legal. A non-conforming or
@@ -2044,17 +2475,6 @@ static int mock_net_read_timeout(void *context, byte* buf, int buf_len,
     return MQTT_CODE_ERROR_TIMEOUT;
 }
 
-#ifdef WOLFMQTT_NONBLOCK
-/* Read side reports would-block, so a non-blocking wait defers rather than
- * completing or timing out. */
-static int mock_net_read_wouldblock(void *context, byte* buf, int buf_len,
-    int timeout_ms)
-{
-    (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
-    return MQTT_CODE_CONTINUE;
-}
-#endif
-
 TEST(wait_message_auto_pings_on_keepalive_deadline)
 {
     int rc;
@@ -2661,6 +3081,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_clamps_illegal_max_qos);
+    RUN_TEST(connect_accepted_connack_rejects_zero_receive_max);
+    RUN_TEST(connect_accepted_connack_latches_receive_max);
 #endif
 
     /* MqttClient_Disconnect tests */
@@ -2701,6 +3123,15 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos2_v5_success_returns_success);
     RUN_TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected);
     RUN_TEST(publish_v311_ack_not_misread_as_rejected);
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(publish_qos1_v5_receive_max_quota_decrements_once_and_replenishes);
+#endif
+    RUN_TEST(publish_qos1_v5_receive_max_quota_exhausted_rejects_before_send);
+#if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
+    RUN_TEST(cancel_message_retains_recv_quota_on_wire);
+    RUN_TEST(cancel_message_retain_is_idempotent);
+#endif
+    RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(publish_qos2_v5_pubrec_rejection_multithread_reader);
 #endif

@@ -284,6 +284,14 @@ typedef struct _MqttClient {
      * flag per the wolfSSL struct guidance for booleans. */
     unsigned int keep_alive_from_server : 1;
 #endif
+
+#ifdef WOLFMQTT_V5
+    /* Max unacked QoS>0 in flight; absent CONNACK means 65535 [3.1.2.11.3]. */
+    word16 server_recv_max;
+    /* Ceiling server_recv_max replenishes to; a spurious/duplicate ack
+     * must not inflate the live quota above the negotiated value. */
+    word16 server_recv_max_negotiated;
+#endif
 } MqttClient;
 
 #ifdef WOLFMQTT_SN

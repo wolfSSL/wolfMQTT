@@ -336,6 +336,7 @@ typedef struct _MqttMsgStat {
 
     byte isReadActive:1;
     byte isWriteActive:1;
+    byte recvQuotaHeld:1; /* v5 Receive Maximum unit reserved for this message */
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD
