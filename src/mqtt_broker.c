@@ -2773,6 +2773,39 @@ static void BrokerOrphan_FreeAll(MqttBroker* broker)
     broker->orphan_sessions = NULL;
     broker->orphan_session_count = 0;
 }
+
+/* Drop orphan sessions whose finite Session Expiry has elapsed. */
+static void BrokerOrphan_ExpireSweep(MqttBroker* broker)
+{
+    BrokerOrphanSession* cur;
+    WOLFMQTT_BROKER_TIME_T now;
+    int dropped;
+    if (broker == NULL) {
+        return;
+    }
+    now = WOLFMQTT_BROKER_GET_TIME_S();
+    /* Re-scan from head after each removal; DropFull mutates the list. */
+    do {
+        dropped = 0;
+        for (cur = broker->orphan_sessions; cur != NULL; cur = cur->next) {
+            /* Compare in WOLFMQTT_BROKER_TIME_T (may be wider than word32)
+             * rather than narrowing the elapsed delta down to compare
+             * against session_expiry_sec. */
+            if (cur->session_expiry_sec != 0xFFFFFFFFu &&
+                    now >= cur->orphan_since &&
+                    (now - cur->orphan_since) >=
+                        (WOLFMQTT_BROKER_TIME_T)cur->session_expiry_sec) {
+                WBLOG_INFO(broker,
+                    "broker: orphan session expired client_id=%s",
+                    BrokerLog_Sanitize(BROKER_STR_VALID(cur->client_id)
+                        ? cur->client_id : "(null)"));
+                BrokerOrphan_DropFull(broker, cur);
+                dropped = 1;
+                break;
+            }
+        }
+    } while (dropped);
+}
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 /* Forward declaration; orphan-take-failure rollback in
@@ -6433,6 +6466,18 @@ int MqttBroker_Step(MqttBroker* broker)
     if (!broker->running) {
         return MQTT_CODE_SUCCESS;
     }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Orphan expiry sweep, rate-limited to once per second. */
+    {
+        WOLFMQTT_BROKER_TIME_T now = WOLFMQTT_BROKER_GET_TIME_S();
+        if (now < broker->orphan_last_expire_check ||
+                (now - broker->orphan_last_expire_check) >= 1) {
+            BrokerOrphan_ExpireSweep(broker);
+            broker->orphan_last_expire_check = now;
+        }
+    }
+#endif
 
     /* 1. Try to accept new connections (non-blocking) */
 

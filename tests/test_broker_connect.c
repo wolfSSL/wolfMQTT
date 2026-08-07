@@ -3821,6 +3821,81 @@ TEST(disconnect_v5_zero_subs_nonzero_expiry_creates_orphan)
     MqttBroker_Free(&broker);
 }
 
+/* MqttBroker_Step must sweep expired orphan Sessions. Time is pinned at
+ * 0, so a finite expiry of 0 is already expired; nonzero never is. */
+TEST(orphan_expire_sweep_removes_zero_expiry_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    /* Client "K3": clean=0, no SE prop (expiry defaults to 0 per #7668),
+     * one sub -> orphan created via the count>0 path. remain = 15
+     * (2-byte ClientId "K3"). */
+    static const byte connect_k3[] = {
+        0x10, 0x0F,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x00,
+        0x00, 0x02, 'K', '3'
+    };
+    static const byte subscribe_k3[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    /* Client "K4": clean=0, SE prop = 60, no subs -> orphan created via
+     * the #7669 count==0 path with a nonzero expiry. remain = 20. */
+    static const byte connect_k4[] = {
+        0x10, 20,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x02, 'K', '4'
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_k3, sizeof(connect_k3));
+    mock_client_input_append(0, subscribe_k3, sizeof(subscribe_k3));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    mock_client_input_append(1, connect_k4, sizeof(connect_k4));
+    mock_client_input_append(1, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 24; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+    ASSERT_TRUE(g_clients[1].closed);
+
+    /* [MQTT-3.1.2.11.2] K3's Session Expiry is 0, so its Session ends when the
+     * connection closes: no orphan is retained at all (removed immediately at
+     * disconnect, not left reclaimable for the once-per-second sweep). */
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "K3") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o == NULL);
+
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "K4") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL); /* expiry=60, not yet elapsed -> survives */
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -3945,6 +4020,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(disconnect_v5_zero_subs_nonzero_expiry_creates_orphan);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(orphan_expire_sweep_removes_zero_expiry_session);
 #endif
 #endif
     TEST_SUITE_END();

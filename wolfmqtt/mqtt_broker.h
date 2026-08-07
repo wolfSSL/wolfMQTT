@@ -741,6 +741,9 @@ typedef struct MqttBroker {
      * branches on that to look up the orphan by client_id. */
     BrokerOrphanSession* orphan_sessions;
     int                  orphan_session_count;
+    /* Rate-limits BrokerOrphan_ExpireSweep so MqttBroker_Step does not
+     * walk the orphan list on every single call. */
+    WOLFMQTT_BROKER_TIME_T orphan_last_expire_check;
 #endif
 } MqttBroker;
 
