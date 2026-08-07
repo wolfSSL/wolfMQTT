@@ -269,6 +269,39 @@ static int MqttPacket_UnsubAckReasonCodeValid(byte code)
     }
     return 0;
 }
+
+/* [MQTT-3.4.2.1/3.6.2.1/3.7.2.1] Reason Code allow-list per packet type. */
+static int MqttPacket_PublishRespReasonCodeValid(byte type, byte code)
+{
+    if (type == MQTT_PACKET_TYPE_PUBLISH_REL ||
+            type == MQTT_PACKET_TYPE_PUBLISH_COMP) {
+        switch (code) {
+            case MQTT_REASON_SUCCESS:            /* 0x00 */
+            case MQTT_REASON_PACKET_ID_NOT_FOUND: /* 0x92 */
+                return 1;
+            default:
+                break;
+        }
+        return 0;
+    }
+
+    /* PUBACK / PUBREC */
+    switch (code) {
+        case MQTT_REASON_SUCCESS:               /* 0x00 */
+        case MQTT_REASON_NO_MATCH_SUB:          /* 0x10 */
+        case MQTT_REASON_UNSPECIFIED_ERR:       /* 0x80 */
+        case MQTT_REASON_IMPL_SPECIFIC_ERR:     /* 0x83 */
+        case MQTT_REASON_NOT_AUTHORIZED:        /* 0x87 */
+        case MQTT_REASON_TOPIC_NAME_INVALID:    /* 0x90 */
+        case MQTT_REASON_PACKET_ID_IN_USE:      /* 0x91 */
+        case MQTT_REASON_QUOTA_EXCEEDED:        /* 0x97 */
+        case MQTT_REASON_PAYLOAD_FORMAT_INVALID: /* 0x99 */
+            return 1;
+        default:
+            break;
+    }
+    return 0;
+}
 #endif
 
 /* Validate an MQTT Topic Filter against the syntax rules from
@@ -2381,6 +2414,11 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
 #ifdef WOLFMQTT_V5
     if (publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5)
     {
+        /* [MQTT-3.4.2.1/3.6.2.1/3.7.2.1] Reject an out-of-table Reason Code. */
+        if (!MqttPacket_PublishRespReasonCodeValid(type,
+                publish_resp->reason_code)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+        }
         if (publish_resp->props != NULL) {
             /* Determine length of properties */
             props_len = MqttEncode_Props((MqttPacketType)type,

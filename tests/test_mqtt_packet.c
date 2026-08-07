@@ -5325,6 +5325,43 @@ TEST(decode_connect_v5_will_props_session_expiry_rejected)
 }
 #endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
 
+#ifdef WOLFMQTT_V5
+/* [MQTT-3.4.2.1]: 0x92 is valid for PUBREL/PUBCOMP, not PUBACK/PUBREC. */
+TEST(encode_puback_v5_reason_code_out_of_table_rejected)
+{
+    byte buf[16];
+    MqttPublishResp enc;
+    int enc_len;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.packet_id = 1;
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    enc.reason_code = MQTT_REASON_PACKET_ID_NOT_FOUND;
+
+    enc_len = MqttEncode_PublishResp(buf, (int)sizeof(buf),
+                  MQTT_PACKET_TYPE_PUBLISH_ACK, &enc);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, enc_len);
+}
+
+/* Companion case: the same Reason Code IS valid for PUBREL, so the gate
+ * must be per-packet-type rather than a single fixed set. */
+TEST(encode_pubrel_v5_reason_code_packet_id_not_found_accepted)
+{
+    byte buf[16];
+    MqttPublishResp enc;
+    int enc_len;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.packet_id = 1;
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    enc.reason_code = MQTT_REASON_PACKET_ID_NOT_FOUND;
+
+    enc_len = MqttEncode_PublishResp(buf, (int)sizeof(buf),
+                  MQTT_PACKET_TYPE_PUBLISH_REL, &enc);
+    ASSERT_TRUE(enc_len > 0);
+}
+#endif /* WOLFMQTT_V5 */
+
 void run_mqtt_packet_tests(void)
 {
 #ifdef WOLFMQTT_V5
@@ -5669,6 +5706,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(publish_resp_v5_success_with_props_roundtrip);
     RUN_TEST(publish_resp_v5_error_no_props_roundtrip);
     RUN_TEST(publish_resp_v5_success_no_props_roundtrip);
+    RUN_TEST(encode_pubrel_v5_reason_code_packet_id_not_found_accepted);
+    RUN_TEST(encode_puback_v5_reason_code_out_of_table_rejected);
 
     /* MqttEncode/Decode_Auth */
     RUN_TEST(encode_props_string_invalid_utf8_rejected);
