@@ -5110,6 +5110,26 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif /* WOLFMQTT_BROKER_AUTH */
 
+#ifndef WOLFMQTT_BROKER_WILL
+    /* Refuse a Will-bearing CONNECT before any session takeover/reclaim so a
+     * rejected connection does not first destroy the client's prior session. */
+    if (mc.enable_lwt) {
+        WBLOG_ERR(broker,
+            "broker: Will not supported (WOLFMQTT_BROKER_WILL disabled) "
+            "sock=%d", (int)bc->sock);
+    #ifdef WOLFMQTT_V5
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            ack.return_code = MQTT_REASON_IMPL_SPECIFIC_ERR;
+        }
+        else
+    #endif
+        {
+            ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+        }
+        goto send_connack;
+    }
+#endif
+
     if (BROKER_STR_VALID(bc->client_id)) {
         BrokerClient* old;
 
