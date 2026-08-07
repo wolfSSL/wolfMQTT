@@ -3683,6 +3683,42 @@ TEST(qos2_dedup_survives_disconnect_reconnect)
     MqttBroker_Free(&broker);
 }
 
+/* [MQTT-3.1.2.11.3]: Receive Maximum = 0 in CONNECT must close, not "unset". */
+TEST(connect_v5_receive_max_zero_protocol_error)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* v5 CONNECT, ClientId "A", props: Receive Maximum (0x21) = 0x0000.
+     * remain = 6("MQTT")+1(level)+1(flags)+2(keepalive)+1(props_len)+
+     *          3(prop TLV)+2(clientid_len)+1(clientid) = 17 */
+    static const byte connect[] = {
+        0x10, 17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,                       /* CleanStart = 1 */
+        0x00, 0x3C,
+        0x03,                       /* props_len = 3 */
+        0x21, 0x00, 0x00,           /* Receive Maximum = 0 */
+        0x00, 0x01, 'A'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_PROTOCOL_ERR, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -3792,6 +3828,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(qos2_dedup_survives_disconnect_reconnect);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_v5_receive_max_zero_protocol_error);
 #endif
 #endif
     TEST_SUITE_END();

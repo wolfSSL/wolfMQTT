@@ -4606,18 +4606,20 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
 
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
-    /* [MQTT-3.1.2.11.3] v5 Receive Maximum. If present and non-zero, the
-     * client is telling us not to exceed this many outbound QoS 1/2
-     * PUBLISHes in flight to it. Absent property means 65535 (no
-     * client-imposed cap). 0 is a protocol error, but tolerate it as
-     * "unset" rather than disconnecting, to stay friendly to mildly
-     * non-conforming clients - the actual cap then comes from
-     * BROKER_MAX_INFLIGHT_PER_SUB alone. */
+    /* [MQTT-3.1.2.11.3] Receive Maximum caps in-flight QoS 1/2 PUBLISHes;
+     * absent means 65535, 0 is a Protocol Error. */
     if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
             mc.props != NULL) {
         MqttProp* rm_prop = BrokerProps_Find(mc.props,
                 MQTT_PROP_RECEIVE_MAX);
-        if (rm_prop != NULL && rm_prop->data_short > 0) {
+        if (rm_prop != NULL && rm_prop->data_short == 0) {
+            WBLOG_ERR(broker,
+                "broker: Receive Maximum 0 is a Protocol Error sock=%d "
+                "[MQTT-3.1.2.11.3]", (int)bc->sock);
+            ack.return_code = MQTT_REASON_PROTOCOL_ERR;
+            goto send_connack;
+        }
+        else if (rm_prop != NULL) {
             bc->client_receive_max = rm_prop->data_short;
             WBLOG_DBG(broker,
                 "broker: client Receive Maximum sock=%d value=%u",
