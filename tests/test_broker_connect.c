@@ -4272,6 +4272,495 @@ TEST(will_delay_interval_capped)
     MqttBroker_Free(&broker);
 }
 
+/* A fatal PUBACK decode failure must close, same as PUBLISH/PUBREC/PUBREL. */
+TEST(puback_malformed_closes_connection)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect0[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* PUBACK with remain_len = 0 (no Packet Identifier at all). */
+    static const byte puback_bad[] = { 0x40, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, puback_bad, sizeof(puback_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Pre-fix, the decode failure was silently discarded and the
+     * connection stayed open. */
+    ASSERT_TRUE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* [MQTT-3.7] A malformed PUBCOMP (Remaining Length 0, no Packet Identifier)
+ * must fail to decode and close the connection - the PUBCOMP twin of
+ * puback_malformed_closes_connection. */
+TEST(pubcomp_malformed_closes_connection)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect0[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* PUBCOMP with remain_len = 0 (no Packet Identifier at all). */
+    static const byte pubcomp_bad[] = { 0x70, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, pubcomp_bad, sizeof(pubcomp_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_TRUE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* [MQTT-3.14.4] A valid v5 DISCONNECT carrying a Session Expiry Interval must
+ * update the client's session expiry (any change other than 0->nonzero is
+ * allowed). The orphan created on close must carry the updated value. */
+TEST(disconnect_v5_session_expiry_updated_on_valid)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    /* v5 CONNECT clean=0, ClientId "U", props: Session Expiry = 60. */
+    static const byte connect0[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'U'
+    };
+    static const byte subscribe0[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'u',
+        0x00
+    };
+    /* v5 DISCONNECT reason=Normal(0x00), props: Session Expiry = 30. */
+    static const byte disconnect_se[] = {
+        0xE0, 0x07,
+        0x00,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x1E
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect0, sizeof(connect0));
+    mock_client_input_append(0, subscribe0, sizeof(subscribe0));
+    mock_client_input_append(0, disconnect_se, sizeof(disconnect_se));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "U") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL);
+    /* Updated by the DISCONNECT from 60 to 30. */
+    ASSERT_EQ((word32)30, o->session_expiry_sec);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* BrokerOrphan_ExpireSweep must not expire a session whose orphan_since is in
+ * the future relative to the (frozen at 0) clock - a backward clock jump must
+ * never drop a live session early. Companion to the retained clock-rollback
+ * guard. */
+TEST(orphan_expire_sweep_backward_clock_keeps_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    /* Client "K3": clean=0, Session Expiry=60 (persistent session, so a
+     * backward clock jump must not sweep it), one sub -> orphan. */
+    static const byte connect_k3[] = {
+        0x10, 0x14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x02, 'K', '3'
+    };
+    static const byte subscribe_k3[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'k',
+        0x00
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_k3, sizeof(connect_k3));
+    mock_client_input_append(0, subscribe_k3, sizeof(subscribe_k3));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "K3") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL);
+
+    /* Stamp orphan_since in the future relative to now=0 and keep expiry=0.
+     * Without the now >= orphan_since guard, (now - orphan_since) underflows
+     * and the entry would be falsely expired. */
+    o->orphan_since = 1;
+    o->session_expiry_sec = 0;
+
+    broker.orphan_last_expire_check = 1;
+    MqttBroker_Step(&broker);
+
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "K3") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL); /* future-stamped -> not swept */
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* An offline durable subscriber's queued PUBLISH must carry a deep copy of the
+ * v5 Application Message properties (BrokerProps_Clone). The cloned string and
+ * binary property values must survive after the source PUBLISH is freed. */
+TEST(orphan_offline_queue_clones_v5_publish_props)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    BrokerOrphanSession* o;
+    MqttProp* p;
+    int saw_content_type = 0;
+    int saw_correlation = 0;
+    static const byte connect_sub[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,/* Session Expiry=60 -> persists */
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE QoS 1, filter "x". */
+    static const byte subscribe_x[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'x',
+        0x01
+    };
+    static const byte disconnect0[] = { 0xE0, 0x00 };
+    static const byte connect_pub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+    /* PUBLISH QoS 1, packet_id=7, topic "x", props: Content Type = "text/plain"
+     * and Correlation Data = DE AD BE EF, payload "p". props block = 20 bytes,
+     * remain = 3+2+1+20+1 = 27. */
+    static const byte publish_v5[] = {
+        0x32, 0x1B,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        0x14,
+        0x03, 0x00, 0x0A, 't', 'e', 'x', 't', '/', 'p', 'l', 'a', 'i', 'n',
+        0x09, 0x00, 0x04, 0xDE, 0xAD, 0xBE, 0xEF,
+        'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(0, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+        if (g_clients[0].closed) break;
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish_v5, sizeof(publish_v5));
+    mock_client_input_append(1, disconnect0, sizeof(disconnect0));
+    for (i = 0; i < 24; i++) {
+        MqttBroker_Step(&broker);
+        if (g_clients[1].closed) break;
+    }
+
+    o = broker.orphan_sessions;
+    while (o != NULL && (o->client_id == NULL ||
+            XSTRCMP(o->client_id, "S") != 0)) {
+        o = o->next;
+    }
+    ASSERT_TRUE(o != NULL);
+    ASSERT_EQ(1, o->out_q_count);
+    ASSERT_TRUE(o->out_q_head != NULL);
+
+    for (p = o->out_q_head->props; p != NULL; p = p->next) {
+        if (p->type == MQTT_PROP_CONTENT_TYPE) {
+            saw_content_type = 1;
+            ASSERT_EQ(10, (int)p->data_str.len);
+            ASSERT_EQ(0, XMEMCMP(p->data_str.str, "text/plain", 10));
+        }
+        else if (p->type == MQTT_PROP_CORRELATION_DATA) {
+            saw_correlation = 1;
+            ASSERT_EQ(4, (int)p->data_bin.len);
+            ASSERT_EQ(0xDE, p->data_bin.data[0]);
+            ASSERT_EQ(0xEF, p->data_bin.data[3]);
+        }
+    }
+    ASSERT_TRUE(saw_content_type);
+    ASSERT_TRUE(saw_correlation);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
+
+#if defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_V5)
+/* [MQTT-3.3.1-9] Retain Handling = 0 must always deliver the matching retained
+ * message on subscribe (positive control for the Retain Handling = 2 test). */
+TEST(subscribe_v5_retain_handling_0_delivers)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte publish_retained[] = {
+        0x31, 0x04,
+        0x00, 0x01, 'x', 'r'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE filter "x", options = Retain Handling 0 (0x00) | QoS 0. */
+    static const byte subscribe_rh0[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'x',
+        0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_retained, sizeof(publish_retained));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_rh0, sizeof(subscribe_rh0));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* [MQTT-3.3.1-10] Retain Handling = 1 delivers the retained message only if
+ * the subscription did not already exist. A second identical subscribe must
+ * not re-deliver. */
+TEST(subscribe_v5_retain_handling_1_only_if_new)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte publish_retained[] = {
+        0x31, 0x04,
+        0x00, 0x01, 'x', 'r'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE filter "x", options = Retain Handling 1 (0x10) | QoS 0. */
+    static const byte subscribe_rh1[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'x',
+        0x10
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_retained, sizeof(publish_retained));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_rh1, sizeof(subscribe_rh1));
+    mock_client_input_append(1, subscribe_rh1, sizeof(subscribe_rh1));
+    for (i = 0; i < 20; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Two SUBSCRIBEs -> two SUBACKs, but the retained message is delivered
+     * only on the first (new) subscription. */
+    ASSERT_EQ(2, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED && WOLFMQTT_V5 */
+
+#if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* BrokerClient_PublishWillImmediate must route a QoS >= 1 Will through the
+ * tracked outbound queue, so a subscriber that requested QoS 1 receives the
+ * Will as a QoS 1 PUBLISH carrying a Packet Identifier. */
+TEST(will_qos1_routes_through_outq)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    PublishInfo info;
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE filter "lwt", QoS 1. */
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x01
+    };
+    /* Publisher CONNECT with a QoS 1 Will: flags = will_flag(0x04) |
+     * will_qos1(0x08) | clean_session(0x02) = 0x0E. */
+    static const byte pub_connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x0E, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* 0xE1 - DISCONNECT type with reserved bit set -> abnormal close fires
+     * the Will. */
+    static const byte disconnect_bad[] = { 0xE1, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    mock_client_input_append(1, disconnect_bad, sizeof(disconnect_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(g_clients[1].closed);
+
+    /* The delivered Will must be QoS 1 (out_q route) with a Packet Id. */
+    info = first_publish_info(g_clients[0].out_buf, g_clients[0].out_len);
+    ASSERT_TRUE(info.found);
+    ASSERT_EQ(MQTT_QOS_1, (int)((info.first_byte >> 1) & 0x03));
+    ASSERT_NE(0, (int)info.packet_id);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_WILL && !WOLFMQTT_STATIC_MEMORY */
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -4436,6 +4925,22 @@ int main(int argc, char** argv)
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(will_delay_interval_capped);
 #endif
+#endif
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(puback_malformed_closes_connection);
+    RUN_TEST(pubcomp_malformed_closes_connection);
+    RUN_TEST(orphan_expire_sweep_backward_clock_keeps_session);
+#endif
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(disconnect_v5_session_expiry_updated_on_valid);
+    RUN_TEST(orphan_offline_queue_clones_v5_publish_props);
+#endif
+#if defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_V5)
+    RUN_TEST(subscribe_v5_retain_handling_0_delivers);
+    RUN_TEST(subscribe_v5_retain_handling_1_only_if_new);
+#endif
+#if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(will_qos1_routes_through_outq);
 #endif
     TEST_SUITE_END();
 

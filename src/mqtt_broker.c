@@ -6502,12 +6502,14 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
 #ifndef WOLFMQTT_STATIC_MEMORY
             {
                 MqttPublishResp ack_resp;
+                int ack_rc;
                 XMEMSET(&ack_resp, 0, sizeof(ack_resp));
             #ifdef WOLFMQTT_V5
                 ack_resp.protocol_level = bc->protocol_level;
             #endif
-                if (MqttDecode_PublishResp(bc->rx_buf, rc,
-                        MQTT_PACKET_TYPE_PUBLISH_ACK, &ack_resp) >= 0) {
+                ack_rc = MqttDecode_PublishResp(bc->rx_buf, rc,
+                        MQTT_PACKET_TYPE_PUBLISH_ACK, &ack_resp);
+                if (ack_rc >= 0) {
                     BrokerClient_OnPubAck(bc, ack_resp.packet_id);
                 }
             #ifdef WOLFMQTT_V5
@@ -6515,6 +6517,10 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     (void)MqttProps_Free(ack_resp.props);
                 }
             #endif
+                if (BrokerRcIsFatal(ack_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
             }
 #endif
                 break;
@@ -6548,12 +6554,14 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
 #ifndef WOLFMQTT_STATIC_MEMORY
             {
                 MqttPublishResp comp_resp;
+                int comp_rc;
                 XMEMSET(&comp_resp, 0, sizeof(comp_resp));
             #ifdef WOLFMQTT_V5
                 comp_resp.protocol_level = bc->protocol_level;
             #endif
-                if (MqttDecode_PublishResp(bc->rx_buf, rc,
-                        MQTT_PACKET_TYPE_PUBLISH_COMP, &comp_resp) >= 0) {
+                comp_rc = MqttDecode_PublishResp(bc->rx_buf, rc,
+                        MQTT_PACKET_TYPE_PUBLISH_COMP, &comp_resp);
+                if (comp_rc >= 0) {
                     BrokerClient_OnPubComp(bc, comp_resp.packet_id);
                 }
             #ifdef WOLFMQTT_V5
@@ -6561,6 +6569,10 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                     (void)MqttProps_Free(comp_resp.props);
                 }
             #endif
+                if (BrokerRcIsFatal(comp_rc)) {
+                    BrokerClient_AbnormalClose(broker, bc);
+                    return 0;
+                }
             }
 #endif
                 break;
