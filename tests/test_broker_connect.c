@@ -3965,6 +3965,64 @@ TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error)
     MqttBroker_Free(&broker);
 }
 
+/* [MQTT-3.3.1-9..11]: Retain Handling = 2 must not deliver on subscribe. */
+TEST(subscribe_v5_retain_handling_2_never_delivers)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* Retained QoS 0 PUBLISH, topic "x", payload "r". */
+    static const byte publish_retained[] = {
+        0x31, 0x04,
+        0x00, 0x01, 'x', 'r'
+    };
+    /* v5 CONNECT subscriber, ClientId "S", props_len=0. remain = 14. */
+    static const byte connect_sub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'S'
+    };
+    /* v5 SUBSCRIBE, filter "x", options = Retain Handling 2 (0x20) |
+     * QoS 0. remain = 2+1+2+1+1 = 7 */
+    static const byte subscribe_rh2[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 'x',
+        0x20
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_retained, sizeof(publish_retained));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_rh2, sizeof(subscribe_rh2));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Pre-fix, Retain Handling bits were never read and retained delivery
+     * was unconditional -> this would be 1. */
+    ASSERT_EQ(0, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Runner                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -4099,6 +4157,13 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_BROKER_RETAINED
+    RUN_TEST(subscribe_v5_retain_handling_2_never_delivers);
+#endif
 #endif
 #endif
     TEST_SUITE_END();

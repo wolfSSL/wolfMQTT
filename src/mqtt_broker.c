@@ -3084,6 +3084,8 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
         bc->sub_count++;
         WBLOG_INFO(broker, "broker: sub add sock=%d filter=%s qos=%d",
             (int)bc->sock, BrokerLog_Sanitize(sub->filter), qos);
+        /* 1 = newly created (vs. 0 = updated), for Retain Handling = 1. */
+        return 1;
     }
     return rc;
 }
@@ -5292,7 +5294,7 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
             {
                 sub_rc = BrokerSubs_Add(broker, bc, f, flen, topic_qos);
             }
-            if (sub_rc != MQTT_CODE_SUCCESS) {
+            if (sub_rc < 0) {
                 granted_qos = (MqttQoS)fail_code;
             #ifdef WOLFMQTT_V5
                 /* A capacity rejection (per-client cap or full table) maps to
@@ -5305,9 +5307,27 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
             }
 #ifdef WOLFMQTT_BROKER_RETAINED
             else {
-                /* Deliver retained messages matching this filter. */
+                /* [MQTT-3.3.1-9..11] Retain Handling: 0 always, 1 only
+                 * if new (sub_rc == 1), 2 never. */
+                byte deliver_retained = 1;
                 char filter_z[BROKER_MAX_FILTER_LEN];
                 word16 copy_len = flen;
+            #ifdef WOLFMQTT_V5
+                if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    byte rh = sub.topics[i].sub_options &
+                        (MQTT_SUBSCRIBE_RETAIN_HANDLING_0 |
+                         MQTT_SUBSCRIBE_RETAIN_HANDLING_1 |
+                         MQTT_SUBSCRIBE_RETAIN_HANDLING_2);
+                    if (rh == MQTT_SUBSCRIBE_RETAIN_HANDLING_2) {
+                        deliver_retained = 0;
+                    }
+                    else if (rh == MQTT_SUBSCRIBE_RETAIN_HANDLING_1 &&
+                            sub_rc != 1) {
+                        deliver_retained = 0;
+                    }
+                }
+            #endif
+                if (deliver_retained) {
             #ifndef WOLFMQTT_STATIC_MEMORY
                 /* Dynamic builds store filters longer than the stack buffer in
                  * full; use a heap copy so retained matching uses the same
@@ -5330,6 +5350,7 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
                     filter_z[copy_len] = '\0';
                     BrokerRetained_DeliverToClient(broker, bc, filter_z,
                         topic_qos);
+                }
                 }
             }
 #endif
