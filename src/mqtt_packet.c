@@ -553,7 +553,6 @@ int MqttEncode_Int(byte* buf, word32 len)
     return MQTT_DATA_INT_SIZE;
 }
 
-#ifndef WOLFMQTT_NO_UTF8_VALIDATION
 /* MQTT 3.1.1 section 1.5.3 / v5 section 1.5.4: validate that the given byte sequence
  * is a well-formed MQTT UTF-8 encoded string. This combines:
  *   [MQTT-1.5.3-1] RFC 3629 well-formedness (no overlongs, no surrogate
@@ -630,6 +629,7 @@ static int Utf8WellFormed(const byte* s, word16 len)
     return 1;
 }
 
+#ifndef WOLFMQTT_NO_UTF8_VALIDATION
 /* [MQTT-1.5.3-1] Returns 1 if an MQTT UTF-8 string field is well-formed
  * (RFC 3629) and therefore safe for the encoder to emit, 0 otherwise. Empty
  * strings are well-formed. Encoders call this in their length-computation pass
@@ -659,12 +659,10 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
     }
     buf += len;
     if (str_len > 0) {
-    #ifndef WOLFMQTT_NO_UTF8_VALIDATION
-        /* [MQTT-1.5.3-1] Reject ill-formed UTF-8 (RFC 3629). */
+        /* [MQTT-1.5.3-1] Reject ill-formed UTF-8; mandatory, not gate-able. */
         if (!Utf8WellFormed(buf, str_len)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
-    #endif
         /* [MQTT-1.5.3-2] / [MQTT-1.5.4-2]: an MQTT UTF-8 encoded string
          * MUST NOT include the null character (U+0000). Although U+0000
          * is well-formed UTF-8, it is forbidden in MQTT string fields -

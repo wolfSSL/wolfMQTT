@@ -49,15 +49,12 @@
 #endif
 
 /* WOLFMQTT_NO_UTF8_VALIDATION
- *   Define to disable RFC 3629 UTF-8 well-formedness validation in
- *   MqttDecode_String. Spec requirement [MQTT-1.5.3-1] (v3.1.1 1.5.3 /
- *   v5 1.5.4) makes ill-formed UTF-8 a "MUST close the network
- *   connection" condition; disabling the check trades that compliance
- *   for ~300 bytes of .text on x86-64 (~200 bytes on ARM Thumb-2) and
- *   should only be considered for severely flash-constrained targets
- *   where the peer is known-trusted. The independent embedded-NUL
- *   check ([MQTT-1.5.3-2]) remains active either way because it also
- *   guards downstream C-string handling. */
+ *   Define to disable RFC 3629 UTF-8 well-formedness validation on the
+ *   encode side (MqttEncode_Utf8Ok). Decode-side validation in
+ *   MqttDecode_String is mandatory per [MQTT-1.5.3-1] and cannot be
+ *   disabled. The independent embedded-NUL check ([MQTT-1.5.3-2]) also
+ *   remains active either way because it also guards downstream
+ *   C-string handling. */
 
 #ifdef WOLFMQTT_V5
 
