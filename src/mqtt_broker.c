@@ -912,10 +912,26 @@ static int BrokerWsNetDisconnect(void* context);
 
 /* Forward declarations for client management used by lws callback */
 static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc);
+static void BrokerSubs_OrphanClient(MqttBroker* broker, BrokerClient* bc);
 static void BrokerClient_Remove(MqttBroker* broker, BrokerClient* bc);
 #ifdef WOLFMQTT_BROKER_WILL
 static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc);
 #endif
+
+static int BrokerClient_SessionPersists(const BrokerClient* bc)
+{
+    if (bc == NULL) {
+        return 0;
+    }
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    /* MQTT 5.0 section 3.1.2.11.2: Session Expiry, not Clean Start,
+     * determines whether session state survives the network connection. */
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        return bc->session_expiry_sec != 0;
+    }
+#endif
+    return !bc->clean_session;
+}
 
 /* Scrub and release the WebSocket outbound staging buffer. The staged copy
  * holds plaintext MQTT payloads (forwarded PUBLISH, retained and will
@@ -1161,9 +1177,14 @@ static int callback_broker_mqtt(struct lws *wsi,
             }
         }
 
-        /* Peer-initiated close: publish will and remove client. */
+        /* Peer-initiated close: publish will and preserve persistent state. */
         BrokerClient_PublishWill(broker, bc);
-        BrokerSubs_RemoveClient(broker, bc);
+        if (BrokerClient_SessionPersists(bc)) {
+            BrokerSubs_OrphanClient(broker, bc);
+        }
+        else {
+            BrokerSubs_RemoveClient(broker, bc);
+        }
         *bc_ptr = NULL;
         if (ws != NULL && ws->processing) {
             /* bc is on the call stack inside BrokerClient_Process (a packet
