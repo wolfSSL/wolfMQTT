@@ -2265,11 +2265,97 @@ TEST(encode_connect_password_without_username)
 
     XMEMSET(&conn, 0, sizeof(conn));
     conn.client_id = "test_client";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
     conn.username = NULL;
     conn.password = "secret";
     rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
+
+TEST(encode_connect_default_password_without_username)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.password = "secret";
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+#ifdef WOLFMQTT_V5
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(MQTT_CONNECT_PROTOCOL_LEVEL_5, conn.protocol_level);
+#else
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(MQTT_CONNECT_PROTOCOL_LEVEL_4, conn.protocol_level);
+#endif
+}
+
+TEST(encode_connect_unsupported_protocol_level)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.protocol_level = 3;
+    conn.username = "user";
+    conn.password = "secret";
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5 + 1;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT v5 permits the Password Flag without the User Name Flag.
+ * [MQTT-3.1.2-22] is scoped to MQTT 3.1.1; v5 section 3.1.2.9
+ * explicitly removes that restriction. */
+TEST(encode_connect_v5_password_without_username)
+{
+    byte tx_buf[256];
+    static const byte expected[] = {
+        /* Fixed header: CONNECT, Remaining Length 32. */
+        0x10, 0x20,
+        /* Variable header: MQTT, level 5, Password flag, keepalive 0,
+         * Properties Length 0. */
+        0x00, 0x04, 'M', 'Q', 'T', 'T', 0x05, 0x40, 0x00, 0x00, 0x00,
+        /* Payload: Client Identifier "test_client", Password "secret". */
+        0x00, 0x0B, 't', 'e', 's', 't', '_', 'c', 'l', 'i', 'e', 'n', 't',
+        0x00, 0x06, 's', 'e', 'c', 'r', 'e', 't'
+    };
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    conn.password = "secret";
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ((int)sizeof(expected), rc);
+    ASSERT_MEM_EQ(expected, tx_buf, sizeof(expected));
+}
+#else
+/* A build without v5 support cannot encode the v5 CONNECT Properties
+ * Length field, so it must reject an application-selected v5 level. */
+TEST(encode_connect_v5_unsupported)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    conn.username = "user";
+    conn.password = "secret";
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+#endif
 
 TEST(encode_connect_username_and_password)
 {
@@ -5438,6 +5524,13 @@ void run_mqtt_packet_tests(void)
 
     /* MqttEncode_Connect */
     RUN_TEST(encode_connect_password_without_username);
+    RUN_TEST(encode_connect_default_password_without_username);
+    RUN_TEST(encode_connect_unsupported_protocol_level);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(encode_connect_v5_password_without_username);
+#else
+    RUN_TEST(encode_connect_v5_unsupported);
+#endif
     RUN_TEST(encode_connect_username_and_password);
     RUN_TEST(encode_connect_binary_password_accepted);
     RUN_TEST(encode_connect_invalid_utf8_clientid_rejected);
