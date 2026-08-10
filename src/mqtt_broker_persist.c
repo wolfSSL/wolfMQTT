@@ -570,6 +570,9 @@ int MqttBroker_SetPersistHooks(MqttBroker* broker,
     if (broker == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+    if (hooks != NULL && (broker->running || broker->persist_restored)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
     broker->persist = hooks;
     return MQTT_CODE_SUCCESS;
 }
@@ -2214,11 +2217,7 @@ static int wmqb_wipe_all(MqttBroker* broker)
 #endif
 }
 
-/* Restore is intended to be called exactly once per process (from
- * MqttBroker_Start). Calling it more than once will re-insert
- * already-restored subs / retained / OUTQ entries because the splice
- * paths below do not check for duplicates against current in-memory
- * state. */
+/* Restore runs once for each initialized broker. */
 int BrokerPersist_Restore(MqttBroker* broker)
 {
     const MqttBrokerPersistHooks* h;
@@ -2227,6 +2226,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     struct wmqb_restore_ctx ctx;
 
     if (broker == NULL || broker->persist == NULL) {
+        return 0;
+    }
+    if (broker->persist_restored) {
         return 0;
     }
     h = broker->persist;
@@ -2243,7 +2245,11 @@ int BrokerPersist_Restore(MqttBroker* broker)
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
         (void)wmqb_wipe_all(broker);
-        return wmqb_meta_write(broker);
+        rc = wmqb_meta_write(broker);
+        if (rc == 0) {
+            broker->persist_restored = 1;
+        }
+        return rc;
     }
     if (rc != 0) {
         /* Real backend error (I/O failure, permission denied, etc.).
@@ -2256,7 +2262,11 @@ int BrokerPersist_Restore(MqttBroker* broker)
     }
     if (!meta_present) {
         /* First run - no state to restore. Just stamp META. */
-        return wmqb_meta_write(broker);
+        rc = wmqb_meta_write(broker);
+        if (rc == 0) {
+            broker->persist_restored = 1;
+        }
+        return rc;
     }
 
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -2275,22 +2285,16 @@ int BrokerPersist_Restore(MqttBroker* broker)
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SESSION,
             wmqb_iter_session_cb, &ctx);
 #ifdef WOLFMQTT_STATIC_MEMORY
-        if (rc != 0 || ctx.fatal_rc != 0) {
-            int restore_rc = (rc != 0) ? rc : ctx.fatal_rc;
-
-            /* SESSION is the first restore namespace, so only carriers can
-             * have been inserted. Remove that partial state before returning
-             * the backend failure so MqttBroker_Start refuses to start and a
-             * caller can retry safely. */
-            XMEMSET(broker->static_orphans, 0,
-                sizeof(broker->static_orphans));
-            WMQB_LOG_ERR(broker,
-                "broker: persist restore sessions failed rc=%d", restore_rc);
-            return restore_rc;
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
         }
-#else
-        (void)rc;
 #endif
+        if (rc != 0) {
+            WMQB_LOG_ERR(broker,
+                "broker: persist restore sessions failed rc=%d", rc);
+            BrokerPersist_RestoreRollback(broker);
+            return rc;
+        }
         WMQB_LOG_INFO(broker,
             "broker: persist restore sessions loaded=%d skipped=%d",
             ctx.loaded, ctx.skipped);
@@ -2299,8 +2303,14 @@ int BrokerPersist_Restore(MqttBroker* broker)
     }
 #ifdef WOLFMQTT_BROKER_RETAINED
     if (h->kv_iter != NULL) {
-        (void)wmqb_kv_iter(broker, BROKER_PERSIST_NS_RETAINED,
+        rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_RETAINED,
             wmqb_iter_retained_cb, &ctx);
+        if (rc != 0) {
+            WMQB_LOG_ERR(broker,
+                "broker: persist restore retained failed rc=%d", rc);
+            BrokerPersist_RestoreRollback(broker);
+            return rc;
+        }
         WMQB_LOG_INFO(broker,
             "broker: persist restore retained loaded=%d skipped=%d",
             ctx.loaded, ctx.skipped);
@@ -2309,8 +2319,14 @@ int BrokerPersist_Restore(MqttBroker* broker)
     }
 #endif
     if (h->kv_iter != NULL) {
-        (void)wmqb_kv_iter(broker, BROKER_PERSIST_NS_SUBS,
+        rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SUBS,
             wmqb_iter_subs_cb, &ctx);
+        if (rc != 0) {
+            WMQB_LOG_ERR(broker,
+                "broker: persist restore subs failed rc=%d", rc);
+            BrokerPersist_RestoreRollback(broker);
+            return rc;
+        }
         WMQB_LOG_INFO(broker,
             "broker: persist restore subs loaded=%d skipped=%d",
             ctx.loaded, ctx.skipped);
@@ -2319,8 +2335,14 @@ int BrokerPersist_Restore(MqttBroker* broker)
     }
 #ifndef WOLFMQTT_STATIC_MEMORY
     if (h->kv_iter != NULL) {
-        (void)wmqb_kv_iter(broker, BROKER_PERSIST_NS_OUTQ,
+        rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_OUTQ,
             wmqb_iter_outq_cb, &ctx);
+        if (rc != 0) {
+            WMQB_LOG_ERR(broker,
+                "broker: persist restore outq failed rc=%d", rc);
+            BrokerPersist_RestoreRollback(broker);
+            return rc;
+        }
         WMQB_LOG_INFO(broker,
             "broker: persist restore outq loaded=%d skipped=%d",
             ctx.loaded, ctx.skipped);
@@ -2330,6 +2352,7 @@ int BrokerPersist_Restore(MqttBroker* broker)
      * elapsed since orphan_since was stamped. Cascades to its subs and
      * persisted OUTQ records via the existing helpers. */
     wmqb_restore_expiry_sweep(broker);
+    broker->persist_restored = 1;
     return 0;
 }
 
