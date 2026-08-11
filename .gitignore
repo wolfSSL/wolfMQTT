@@ -132,3 +132,8 @@ tests/test_broker_connect
 tests/test_mqtt_sn
 tests/test_mqtt_sn_client
 tests/unit_tests
+
+# SBOM output (make sbom)
+wolfmqtt-*.cdx.json
+wolfmqtt-*.spdx
+wolfmqtt-*.spdx.json
