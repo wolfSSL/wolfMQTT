@@ -9,8 +9,7 @@ on:
     inputs:
       wolfssl_ref:
         description: 'wolfssl git ref that provides scripts/gen-sbom'
-        # TODO: switch back to 'master' once wolfSSL/wolfssl#10343 merges.
-        default: 'refs/pull/10343/head'
+        default: 'master'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -35,16 +34,14 @@ jobs:
       # dependency.  wolfSSL is built + installed here so wolfMQTT has a library
       # to link, and the same source tree (scripts/gen-sbom + wolfssl/version.h)
       # is passed to `make sbom` via WOLFSSL_DIR -- so the recorded wolfSSL
-      # dependency version matches the linked one.  gen-sbom is not yet on
-      # wolfssl master, so default to the open PR head that carries it
-      # (wolfSSL/wolfssl#10343) so CI actually exercises `make sbom` instead of
-      # silently skipping.  TODO: switch the fallback back to 'master' once
-      # #10343 merges.
+      # dependency version matches the linked one.  scripts/gen-sbom lives on
+      # wolfssl master (wolfSSL/wolfssl#10343); the wolfssl_ref input overrides
+      # it for testing against a different ref.
       - name: Checkout wolfssl (gen-sbom + library source)
         uses: actions/checkout@v4
         with:
           repository: wolfSSL/wolfssl
-          ref: ${{ github.event.inputs.wolfssl_ref || 'refs/pull/10343/head' }}
+          ref: ${{ github.event.inputs.wolfssl_ref || 'master' }}
           path: wolfssl
 
       - name: Install build tooling and SBOM validator (pyspdxtools)
@@ -176,7 +173,8 @@ jobs:
 
   # The CMake `sbom` custom target is a separate implementation from the
   # autotools recipe above; build it too so a regression in either path
-  # fails CI (the deep content assertions live in the autotools job).
+  # fails CI.  The reproducibility and CycloneDX assertions live in the
+  # autotools job; the wolfssl dependency is asserted in both.
   sbom-cmake:
     name: wolfMQTT SBOM generation (cmake)
     runs-on: ubuntu-latest
@@ -191,7 +189,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: wolfSSL/wolfssl
-          ref: ${{ github.event.inputs.wolfssl_ref || 'refs/pull/10343/head' }}
+          ref: ${{ github.event.inputs.wolfssl_ref || 'master' }}
           path: wolfssl
 
       - name: Install build tooling and SBOM validator (pyspdxtools)
@@ -214,11 +212,18 @@ jobs:
       - name: Detect gen-sbom availability
         id: gate
         run: |
-          if [ -f "$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom" ]; then
-            echo "have=yes" >> "$GITHUB_OUTPUT"
-          else
+          GS="$GITHUB_WORKSPACE/wolfssl/scripts/gen-sbom"
+          if [ ! -f "$GS" ]; then
             echo "have=no" >> "$GITHUB_OUTPUT"
             echo "::notice::wolfssl scripts/gen-sbom not present on this ref; skipping CMake SBOM job."
+            exit 0
+          fi
+          echo "have=yes" >> "$GITHUB_OUTPUT"
+          if python3 "$GS" --help 2>/dev/null | grep -q -- '--dep-wolfssl'; then
+            echo "dep_wolfssl=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "dep_wolfssl=no" >> "$GITHUB_OUTPUT"
+            echo "::notice::gen-sbom on this ref has no --dep-wolfssl; the wolfssl dependency assertion will be skipped."
           fi
 
       - name: Configure and build wolfmqtt (cmake)
@@ -241,3 +246,22 @@ jobs:
         run: |
           ls wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
           pyspdxtools --infile wolfmqtt-*.spdx.json
+
+      # The CMake target passes --dep-wolfssl independently of scripts/sbom.am,
+      # so assert it here too; file existence alone would pass on an SBOM that
+      # silently dropped the dependency component.
+      - name: wolfssl recorded as a dependency (cmake)
+        if: steps.gate.outputs.have == 'yes' && steps.gate.outputs.dep_wolfssl == 'yes'
+        working-directory: wolfmqtt/build
+        run: |
+          python3 - <<'PY'
+          import glob, json
+          d = json.load(open(glob.glob('wolfmqtt-*.spdx.json')[0]))
+          assert 'wolfssl' in {p['name'] for p in d['packages']}, \
+              [p['name'] for p in d['packages']]
+          rels = [(r['spdxElementId'], r['relationshipType'],
+                   r['relatedSpdxElement']) for r in d['relationships']]
+          assert ('SPDXRef-Package-wolfmqtt', 'DEPENDS_ON',
+                  'SPDXRef-Package-wolfssl') in rels, rels
+          print('cmake wolfssl dependency ok')
+          PY
