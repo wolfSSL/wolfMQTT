@@ -137,14 +137,3 @@ tests/unit_tests
 wolfmqtt-*.cdx.json
 wolfmqtt-*.spdx
 wolfmqtt-*.spdx.json
-
-# AI tool local files
-CLAUDE.md
-.claude/
-.beads/
-.cursorrules
-.cursor/
-.aider*
-.copilot/
-.continue/
-.windsurf/
