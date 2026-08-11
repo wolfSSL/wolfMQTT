@@ -5,11 +5,12 @@
 # sets a few variables (below) and does `include scripts/sbom.am` to get the
 # `sbom`, `install-sbom` and `uninstall-sbom` targets.
 #
-# The canonical copy lives in the wolfSSL repository (scripts/sbom.am); keep
-# product copies in sync.  gen-sbom is taken from a vendored scripts/gen-sbom
-# if a product ships one (used automatically), otherwise from a wolfSSL source
-# tree via WOLFSSL_DIR.  wolfSSH uses the WOLFSSL_DIR route; vendoring gen-sbom
-# for fully offline tarball builds can be added later with no change here.
+# This is the canonical copy (wolfSSL repository, scripts/sbom.am); product
+# repositories vendor a copy of it and must be kept in sync with this file.
+# gen-sbom is taken from a vendored scripts/gen-sbom if a product ships one
+# (used automatically), otherwise from a wolfSSL source tree via WOLFSSL_DIR.
+# Products such as wolfSSH use the WOLFSSL_DIR route; vendoring gen-sbom for
+# fully offline tarball builds can be added later with no change here.
 #
 # ---------------------------------------------------------------------------
 # The including Makefile.am MUST set, before `include scripts/sbom.am`:
@@ -39,6 +40,13 @@
 #                       auto-detected from WOLFSSL_DIR/wolfssl/version.h when unset.
 #   SBOM_OPENSSL_VERSION   Version recorded for the OpenSSL dependency;
 #                       gen-sbom resolves it via pkg-config when unset.
+#   SBOM_CONFIG_H       Path to the configure-generated config header to
+#                       force-include when capturing the configured build
+#                       macros.  Products whose AC_CONFIG_HEADERS lives in a
+#                       subdirectory MUST override this so config.h defines are
+#                       captured (e.g. wolfEngine: $(abs_builddir)/include/config.h;
+#                       wolfCLU: $(abs_builddir)/src/config.h).
+#                       Default: $(abs_builddir)/config.h.
 #
 # The wolfSSL/OpenSSL dependency flags are feature-detected against gen-sbom
 # --help, so a product wired for them still produces a valid SBOM (with a NOTE)
@@ -47,6 +55,10 @@
 # gen-sbom is located at $(srcdir)/scripts/gen-sbom if vendored, else at
 # $(WOLFSSL_DIR)/scripts/gen-sbom.  python3, pyspdxtools and git come from
 # configure (AC_PATH_PROG); git is used only to derive SOURCE_DATE_EPOCH.
+#
+# NOTE: this fragment requires GNU make.  It uses GNU conditional assignment
+# (?=) and the GNU make functions $(wildcard), $(if), $(firstword) and
+# $(addprefix); under a non-GNU make the SBOM targets will not work.
 # ---------------------------------------------------------------------------
 
 SBOM_ARTIFACT ?= lib
@@ -54,11 +66,14 @@ SBOM_LIB_STEM ?= lib$(SBOM_PKGNAME)
 SBOM_BIN_NAME ?= $(SBOM_PKGNAME)
 SBOM_DEP_WOLFSSL ?= no
 SBOM_DEP_OPENSSL ?= no
+SBOM_CONFIG_H ?= $(abs_builddir)/config.h
 
 SBOM_CDX     = $(SBOM_PKGNAME)-$(PACKAGE_VERSION).cdx.json
 SBOM_SPDX    = $(SBOM_PKGNAME)-$(PACKAGE_VERSION).spdx.json
 SBOM_SPDX_TV = $(SBOM_PKGNAME)-$(PACKAGE_VERSION).spdx
-sbomdir      = $(datadir)/doc/$(PACKAGE)
+# Use Automake's $(docdir) so a user's --docdir override is honoured (this
+# equals $(datadir)/doc/$(PACKAGE) by default).
+sbomdir      = $(docdir)
 
 # Prefer a vendored gen-sbom; fall back to an external wolfSSL source tree.
 # The fallback is $(wildcard)-guarded and only consulted when WOLFSSL_DIR is
@@ -90,7 +105,10 @@ CLEANFILES += $(SBOM_CDX) $(SBOM_SPDX) $(SBOM_SPDX_TV)
 
 # Stage a `make install` into a private tree, discover the installed artifact
 # (shared/static library or program; ELF/Mach-O/PE), hash it, capture the
-# configured build macros (AM_CPPFLAGS + config.h), generate SPDX+CDX, validate
+# configured build macros (from SBOM_OPTIONS_H if set, else AM_CPPFLAGS/
+# AM_CFLAGS/CFLAGS + config.h; some products carry their feature -D flags in
+# AM_CFLAGS rather than AM_CPPFLAGS, and some outside config.h entirely),
+# generate SPDX+CDX, validate
 # the SPDX, then convert to tag-value.  The staging tree and temp defines file
 # are removed unconditionally via `trap`, even on failure.  SOURCE_DATE_EPOCH is
 # honoured for reproducible output (defaults to the last git commit time).
@@ -136,7 +154,8 @@ sbom:
 	if test -z "$$opts_h"; then \
 	    opts_h="$$_defines"; \
 	    $(CC) -dM -E $(DEFAULT_INCLUDES) $(AM_CPPFLAGS) $(CPPFLAGS) \
-	        $(if $(wildcard $(abs_builddir)/config.h),-include $(abs_builddir)/config.h) \
+	        $(AM_CFLAGS) $(CFLAGS) \
+	        $(if $(wildcard $(SBOM_CONFIG_H)),-include $(SBOM_CONFIG_H)) \
 	        -x c /dev/null > "$$_defines"; \
 	fi; \
 	if test -z "$${SOURCE_DATE_EPOCH:-}" && test -n "$(GIT)" && \
@@ -151,7 +170,7 @@ sbom:
 	        dep_args="$$dep_args --dep-wolfssl yes"; \
 	        wv="$(SBOM_WOLFSSL_VERSION)"; \
 	        if test -z "$$wv" && test -f "$(WOLFSSL_DIR)/wolfssl/version.h"; then \
-	            wv=`sed -n 's/.*LIBWOLFSSL_VERSION_STRING[ \t]*"\([^"]*\)".*/\1/p' \
+	            wv=`sed -n 's/.*LIBWOLFSSL_VERSION_STRING[[:space:]]*"\([^"]*\)".*/\1/p' \
 	                "$(WOLFSSL_DIR)/wolfssl/version.h"`; \
 	        fi; \
 	        if test -n "$$wv"; then \
@@ -203,4 +222,8 @@ uninstall-sbom:
 	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_SPDX)
 	-rm -f $(DESTDIR)$(sbomdir)/$(SBOM_SPDX_TV)
 
+# SBOM install is intentionally opt-in (`make install-sbom`), so `make install`
+# does NOT place SBOM files.  uninstall-sbom is still chained into the standard
+# `make uninstall` via uninstall-hook so a prior `make install-sbom` is cleaned
+# up; it uses `rm -f`, so it is a harmless no-op when no SBOM was installed.
 uninstall-hook: uninstall-sbom
