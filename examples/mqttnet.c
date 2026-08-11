@@ -986,8 +986,21 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     }
 #endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
-    /* get the active socket from libcurl */
+    /* get the active socket from libcurl. Serialize with lockCURL: siblings
+     * share one easy handle, and libcurl rejects concurrent easy-API use on
+     * it with CURLE_RECURSIVE_API_CALL. */
+#ifdef WOLFMQTT_MULTITHREAD
+    {
+        int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
+        if (rc != 0) {
+            return rc;
+        }
+    }
+#endif
     res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+#endif
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_getinfo(CURLINFO_ACTIVESOCKET) returned %d",
                res);
@@ -1074,8 +1087,21 @@ static int NetRead(void *context, byte* buf, int buf_len,
     }
 #endif /* WOLFMQTT_NONBLOCK && WOLFMQTT_TEST_NONBLOCK */
 
-    /* get the active socket from libcurl */
+    /* get the active socket from libcurl. Serialize with lockCURL: siblings
+     * share one easy handle, and libcurl rejects concurrent easy-API use on
+     * it with CURLE_RECURSIVE_API_CALL. */
+#ifdef WOLFMQTT_MULTITHREAD
+    {
+        int rc = wm_SemLock(&sock->mqttCtx->client.lockCURL);
+        if (rc != 0) {
+            return rc;
+        }
+    }
+#endif
     res = curl_easy_getinfo(sock->curl, CURLINFO_ACTIVESOCKET, &sockfd);
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&sock->mqttCtx->client.lockCURL);
+#endif
     if (res != CURLE_OK) {
         PRINTF("error: curl_easy_getinfo(CURLINFO_ACTIVESOCKET) returned %d",
                res);
