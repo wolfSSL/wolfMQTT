@@ -435,8 +435,11 @@ message("-----------------------------------------------")
 #   wolfmqtt-<version>.spdx.json
 #   wolfmqtt-<version>.spdx
 #
-# This mirrors the autotools `make sbom` target so both build systems emit
-# byte-comparable SBOMs for the same source tree.
+# This mirrors the autotools `make sbom` target: same package metadata, licence,
+# option fingerprint and wolfSSL dependency component. The hashed artifact is
+# whatever that build system actually installs, so the recorded file name and
+# checksum legitimately differ between the two (autotools installs the
+# SONAME-versioned library, cmake an unversioned one).
 
 # Location of the wolfssl source tree that ships scripts/gen-sbom. A cache PATH
 # (not a plain var) so it can be set on the command line with -DWOLFSSL_DIR=...
@@ -500,10 +503,59 @@ endif()
 # library without polluting the system or requiring root.
 set(SBOM_STAGING "${CMAKE_BINARY_DIR}/_sbom_staging")
 
+# Subdirectory of the staging prefix that holds the installed library. The
+# install(TARGETS) rule above sends LIBRARY/ARCHIVE to lib and RUNTIME to bin,
+# and a shared build on the Windows-family toolchains (MSVC, MinGW, Cygwin) is
+# the only case whose artifact - the DLL - is a RUNTIME output.
+# CMAKE_IMPORT_LIBRARY_SUFFIX is set exactly on those platforms. The file name
+# itself comes from $<TARGET_FILE_NAME:wolfmqtt>, so .so/.dylib/.dll/.a/.lib
+# are all handled without hardcoding a suffix.
+if(BUILD_SHARED_LIBS AND CMAKE_IMPORT_LIBRARY_SUFFIX)
+    set(SBOM_ARTIFACT_DIR "bin")
+else()
+    set(SBOM_ARTIFACT_DIR "lib")
+endif()
+
+# wolfMQTT links wolfSSL for TLS, so the SBOM records it as a dependency
+# component -- the same thing SBOM_DEP_WOLFSSL = yes does in Makefile.am.
+# gen-sbom only learned --dep-wolfssl in wolfSSL/wolfssl#10343, so probe for it
+# the way scripts/sbom.am does: an older gen-sbom still emits a valid SBOM
+# (just without the dependency) instead of dying on an unknown flag.
+execute_process(
+    COMMAND ${PYTHON3_EXECUTABLE} ${WOLFSSL_DIR}/scripts/gen-sbom --help
+    OUTPUT_VARIABLE SBOM_GEN_HELP
+    ERROR_VARIABLE  SBOM_GEN_HELP
+    RESULT_VARIABLE SBOM_GEN_HELP_RC)
+set(SBOM_DEP_ARGS "")
+if(SBOM_GEN_HELP_RC EQUAL 0 AND SBOM_GEN_HELP MATCHES "--dep-wolfssl")
+    list(APPEND SBOM_DEP_ARGS --dep-wolfssl yes)
+    # Record the version of the wolfSSL that WOLFSSL_DIR points at, matching the
+    # version scrape in scripts/sbom.am.
+    if(EXISTS "${WOLFSSL_DIR}/wolfssl/version.h")
+        file(STRINGS "${WOLFSSL_DIR}/wolfssl/version.h" WOLFSSL_VERSION_LINE
+             REGEX "^#define[ \t]+LIBWOLFSSL_VERSION_STRING[ \t]+\"")
+        string(REGEX REPLACE "^.*\"([^\"]+)\".*$" "\\1"
+               WOLFSSL_SBOM_VERSION "${WOLFSSL_VERSION_LINE}")
+        if(NOT WOLFSSL_SBOM_VERSION STREQUAL "")
+            list(APPEND SBOM_DEP_ARGS --dep-version wolfssl=${WOLFSSL_SBOM_VERSION})
+        endif()
+    endif()
+else()
+    message(STATUS
+        "gen-sbom has no --dep-wolfssl support, so the SBOM will not list "
+        "wolfssl as a dependency component. That support is added by "
+        "wolfSSL/wolfssl#10343. The generated SBOM is valid either way.")
+endif()
+
 add_custom_target(sbom
     # Install into the staging dir so the SBOM hashes the real installed
     # artifact rather than a build-tree intermediate.
+    # --config is required for multi-config generators (Visual Studio, Ninja
+    # Multi-Config): without it the install script falls back to "Release" and
+    # cannot find a library built in any other configuration. It expands to an
+    # empty (harmless) argument under single-config generators.
     COMMAND ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR}
+            --config $<CONFIG>
             --prefix ${SBOM_STAGING}/usr/local
 
     # The generated options.h is passed to gen-sbom directly, the same input
@@ -519,8 +571,9 @@ add_custom_target(sbom
             # scripts/sbom.am): source headers say GPLv3 or later, which
             # LICENSE-file detection alone records as GPL-3.0-only.
             --license-override GPL-3.0-or-later
+            ${SBOM_DEP_ARGS}
             --options-h ${WOLFMQTT_OUTPUT_BASE}/wolfmqtt/options.h
-            --lib ${SBOM_STAGING}/usr/local/lib/$<TARGET_FILE_NAME:wolfmqtt>
+            --lib ${SBOM_STAGING}/usr/local/${SBOM_ARTIFACT_DIR}/$<TARGET_FILE_NAME:wolfmqtt>
             --cdx-out ${CMAKE_BINARY_DIR}/${SBOM_CDX}
             --spdx-out ${CMAKE_BINARY_DIR}/${SBOM_SPDX}
 
