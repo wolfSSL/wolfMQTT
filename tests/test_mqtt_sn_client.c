@@ -239,6 +239,15 @@ static const byte SUBACK_REJECT_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
 /* Gateway PINGRESP: total_len=2, type. */
 static const byte PINGRESP_FRAME[] = { 0x02, SN_MSG_TYPE_PING_RESP };
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Unsolicited GWINFO broadcast: total_len=5, type, gwId, addr(2). Not a
+ * match for any pending wait, so SN_Client_WaitType routes it through the
+ * shared client->msgSN object. */
+#define SN_TEST_GWINFO_GWID 0x09
+static const byte GWINFO_FRAME[] = { 0x05, SN_MSG_TYPE_GWINFO,
+                                     SN_TEST_GWINFO_GWID, 0xAA, 0xBB };
+#endif
+
 /* Scripted publish-response frames for packet_id 1.
  * PUBACK:  total_len=7, type, topicId(2), packet_id(2), return_code.
  * PUBREC:  total_len=4, type, packet_id(2).
@@ -1460,6 +1469,44 @@ TEST(sn_ping_nonblock_pendresp_lifecycle)
     ASSERT_NO_PENDRESP();
 }
 
+/* Positive path: an unsolicited GWINFO arrives while waiting on
+ * a PINGRESP, so SN_Client_WaitType routes it to the shared client->msgSN
+ * object (not a caller-supplied packet_obj). Confirms SN_Client_HandlePacket's
+ * `p_info->gwAddr = &p_info->gwAddrBuf;` wiring means the gateway address is
+ * actually captured, not just safely dropped by the NULL-check backstop.
+ *
+ * Only the GWINFO frame is armed here: with no further frame queued, the mock
+ * read returns CONTINUE once the mismatched GWINFO has been fully decoded, so
+ * this first call returns in-flight *before* a later packet's
+ * MqttSNClient_PacketReset() call zeroes the shared msgSN union again. The
+ * decoded fields are checked at that checkpoint. */
+TEST(sn_ping_unsolicited_gwinfo_captured)
+{
+    SN_PingReq ping;
+    int rc;
+    const byte expect_addr[2] = { 0xAA, 0xBB };
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+
+    mock_net_push(&g_mock, GWINFO_FRAME, (int)sizeof(GWINFO_FRAME));
+
+    XMEMSET(&ping, 0, sizeof(ping));
+
+    rc = SN_Client_Ping(&g_client, &ping);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    ASSERT_EQ(SN_TEST_GWINFO_GWID, g_client.msgSN.gwInfo.gwId);
+    ASSERT_NOT_NULL(g_client.msgSN.gwInfo.gwAddr);
+    ASSERT_MEM_EQ(expect_addr, &g_client.msgSN.gwInfo.gwAddrBuf,
+        sizeof(expect_addr));
+
+    /* Let the still-pending PINGREQ resolve so it does not leak a pendResp
+     * entry into later tests. */
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+    rc = sn_ping_pump(&ping, NULL);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_NO_PENDRESP();
+}
+
 #endif /* WOLFMQTT_NONBLOCK */
 
 /* Regression: on the non-DTLS transport SN_Packet_Read peeks the 2-byte header
@@ -1547,6 +1594,7 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(sn_ping_null_nonblock_no_dangling_pendresp);
     RUN_TEST(sn_ping_nonblock_pendresp_lifecycle);
+    RUN_TEST(sn_ping_unsolicited_gwinfo_captured);
 #endif
 
     TEST_SUITE_END();

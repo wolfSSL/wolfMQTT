@@ -269,6 +269,39 @@ static int MqttPacket_UnsubAckReasonCodeValid(byte code)
     }
     return 0;
 }
+
+/* [MQTT-3.4.2.1/3.6.2.1/3.7.2.1] Reason Code allow-list per packet type. */
+static int MqttPacket_PublishRespReasonCodeValid(byte type, byte code)
+{
+    if (type == MQTT_PACKET_TYPE_PUBLISH_REL ||
+            type == MQTT_PACKET_TYPE_PUBLISH_COMP) {
+        switch (code) {
+            case MQTT_REASON_SUCCESS:            /* 0x00 */
+            case MQTT_REASON_PACKET_ID_NOT_FOUND: /* 0x92 */
+                return 1;
+            default:
+                break;
+        }
+        return 0;
+    }
+
+    /* PUBACK / PUBREC */
+    switch (code) {
+        case MQTT_REASON_SUCCESS:               /* 0x00 */
+        case MQTT_REASON_NO_MATCH_SUB:          /* 0x10 */
+        case MQTT_REASON_UNSPECIFIED_ERR:       /* 0x80 */
+        case MQTT_REASON_IMPL_SPECIFIC_ERR:     /* 0x83 */
+        case MQTT_REASON_NOT_AUTHORIZED:        /* 0x87 */
+        case MQTT_REASON_TOPIC_NAME_INVALID:    /* 0x90 */
+        case MQTT_REASON_PACKET_ID_IN_USE:      /* 0x91 */
+        case MQTT_REASON_QUOTA_EXCEEDED:        /* 0x97 */
+        case MQTT_REASON_PAYLOAD_FORMAT_INVALID: /* 0x99 */
+            return 1;
+        default:
+            break;
+    }
+    return 0;
+}
 #endif
 
 /* Validate an MQTT Topic Filter against the syntax rules from
@@ -553,7 +586,6 @@ int MqttEncode_Int(byte* buf, word32 len)
     return MQTT_DATA_INT_SIZE;
 }
 
-#ifndef WOLFMQTT_NO_UTF8_VALIDATION
 /* MQTT 3.1.1 section 1.5.3 / v5 section 1.5.4: validate that the given byte sequence
  * is a well-formed MQTT UTF-8 encoded string. This combines:
  *   [MQTT-1.5.3-1] RFC 3629 well-formedness (no overlongs, no surrogate
@@ -630,6 +662,7 @@ static int Utf8WellFormed(const byte* s, word16 len)
     return 1;
 }
 
+#ifndef WOLFMQTT_NO_UTF8_VALIDATION
 /* [MQTT-1.5.3-1] Returns 1 if an MQTT UTF-8 string field is well-formed
  * (RFC 3629) and therefore safe for the encoder to emit, 0 otherwise. Empty
  * strings are well-formed. Encoders call this in their length-computation pass
@@ -659,12 +692,10 @@ int MqttDecode_String(byte *buf, const char **pstr, word16 *pstr_len, word32 buf
     }
     buf += len;
     if (str_len > 0) {
-    #ifndef WOLFMQTT_NO_UTF8_VALIDATION
-        /* [MQTT-1.5.3-1] Reject ill-formed UTF-8 (RFC 3629). */
+        /* [MQTT-1.5.3-1] Reject ill-formed UTF-8; mandatory, not gate-able. */
         if (!Utf8WellFormed(buf, str_len)) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
-    #endif
         /* [MQTT-1.5.3-2] / [MQTT-1.5.4-2]: an MQTT UTF-8 encoded string
          * MUST NOT include the null character (U+0000). Although U+0000
          * is well-formed UTF-8, it is forbidden in MQTT string fields -
@@ -796,6 +827,11 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_INT:
             {
+                /* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_MAX_PACKET_SZ &&
+                        cur_prop->data_int == 0) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 tmp = MqttEncode_Int(buf, cur_prop->data_int);
                 rc += tmp;
                 if (buf != NULL) {
@@ -922,6 +958,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
     int rc = 0;
     int total, tmp;
     int prop_count = 0;
+    int saw_auth_method = 0, saw_auth_data = 0;
     word32 seen_lo = 0, seen_hi = 0; /* singleton-property duplicate guard */
     word32 prop_type;
     MqttProp* cur_prop;
@@ -973,11 +1010,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             break;
         }
 
-        /* [MQTT v5 2.2.2.2] Every property except User Property and
-         * Subscription Identifier MUST appear at most once; a duplicate is a
-         * Protocol Error. */
+        /* [MQTT-2.2.2.2] Duplicate is a Protocol Error, except User Property
+         * and Subscription Identifier in PUBLISH [MQTT-3.3.2.3.8]. */
         if (cur_prop->type != MQTT_PROP_USER_PROP &&
-                cur_prop->type != MQTT_PROP_SUBSCRIPTION_ID) {
+                !(cur_prop->type == MQTT_PROP_SUBSCRIPTION_ID &&
+                  packet == MQTT_PACKET_TYPE_PUBLISH)) {
             word32 bit;
             if (cur_prop->type < 32) {
                 bit = (word32)1 << cur_prop->type;
@@ -995,6 +1032,14 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 }
                 seen_hi |= bit;
             }
+        }
+
+        /* Tracked for the Auth Data/Method cross-check below the loop. */
+        if (cur_prop->type == MQTT_PROP_AUTH_METHOD) {
+            saw_auth_method = 1;
+        }
+        else if (cur_prop->type == MQTT_PROP_AUTH_DATA) {
+            saw_auth_data = 1;
         }
 
         switch (gPropMatrix[cur_prop->type].data)
@@ -1060,6 +1105,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 buf += tmp;
                 total += tmp;
                 prop_len -= tmp;
+                /* [MQTT-3.1.2.11.4] Maximum Packet Size 0 is a Protocol Error. */
+                if (cur_prop->type == MQTT_PROP_MAX_PACKET_SZ &&
+                        cur_prop->data_int == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
                 break;
             }
             case MQTT_DATA_TYPE_STRING:
@@ -1225,6 +1275,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             }
         }
     };
+
+    /* [MQTT-3.1.2.11.9/10] Auth Data requires Auth Method. */
+    if (rc >= 0 && saw_auth_data && !saw_auth_method) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+    }
 
     if (rc < 0) {
         /* Free the property */
@@ -1489,6 +1544,20 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     return header_len + remain_len;
 }
 
+#if defined(WOLFMQTT_BROKER) && defined(WOLFMQTT_V5)
+/* [MQTT-3.1.3.2] Will Properties allow-list, tighter than CONNECT's. */
+static int MqttWillProps_ValidateType(MqttPropertyType type)
+{
+    return (type == MQTT_PROP_WILL_DELAY_INTERVAL) ||
+           (type == MQTT_PROP_PAYLOAD_FORMAT_IND) ||
+           (type == MQTT_PROP_MSG_EXPIRY_INTERVAL) ||
+           (type == MQTT_PROP_CONTENT_TYPE) ||
+           (type == MQTT_PROP_RESP_TOPIC) ||
+           (type == MQTT_PROP_CORRELATION_DATA) ||
+           (type == MQTT_PROP_USER_PROP);
+}
+#endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
+
 #ifdef WOLFMQTT_BROKER
 int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
 {
@@ -1678,6 +1747,7 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
         if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             word32 lwt_props_len = 0;
             int lwt_tmp;
+            MqttProp* will_prop;
             /* Decode Length of LWT Properties */
             if (rx_buf_len < (rx_payload - rx_buf)) {
                 rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
@@ -1691,7 +1761,7 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
             }
             rx_payload += lwt_tmp;
             if (lwt_props_len > 0) {
-                /* Decode LWT Properties */
+                /* Decode, then enforce the tighter Will allow-list below. */
                 lwt_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT,
                         &mc_connect->lwt_msg->props, rx_payload,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)),
@@ -1701,6 +1771,15 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
                     goto cleanup;
                 }
                 rx_payload += lwt_tmp;
+
+                /* [MQTT-3.1.3.2] Reject CONNECT-only properties in Will. */
+                for (will_prop = mc_connect->lwt_msg->props;
+                        will_prop != NULL; will_prop = will_prop->next) {
+                    if (!MqttWillProps_ValidateType(will_prop->type)) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                        goto cleanup;
+                    }
+                }
             }
         }
 #endif
@@ -2359,6 +2438,11 @@ int MqttEncode_PublishResp(byte* tx_buf, int tx_buf_len, byte type,
 #ifdef WOLFMQTT_V5
     if (publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5)
     {
+        /* [MQTT-3.4.2.1/3.6.2.1/3.7.2.1] Reject an out-of-table Reason Code. */
+        if (!MqttPacket_PublishRespReasonCodeValid(type,
+                publish_resp->reason_code)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+        }
         if (publish_resp->props != NULL) {
             /* Determine length of properties */
             props_len = MqttEncode_Props((MqttPacketType)type,

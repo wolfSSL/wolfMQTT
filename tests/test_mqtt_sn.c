@@ -448,6 +448,21 @@ TEST(sn_gwinfo_wrong_type_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_PACKET_TYPE, rc);
 }
 
+TEST(sn_gwinfo_null_gwaddr_with_addr_field_rejected)
+{
+    /* [len=5][type=GWINFO][gwId][addr0][addr1] - address field present, but
+     * gwAddr is left NULL (unlike sn_gwinfo_short_form_with_addr_valid).
+     * Prior to the NULL check this would XMEMCPY through a NULL pointer.
+     * Must be rejected instead of crashing/corrupting memory. */
+    byte buf[5] = { 0x05, SN_MSG_TYPE_GWINFO, 0x09, 0xAA, 0xBB };
+    SN_GwInfo info;
+    int rc;
+    XMEMSET(&info, 0, sizeof(info));
+    ASSERT_TRUE(info.gwAddr == NULL);
+    rc = SN_Decode_GWInfo(buf, (int)sizeof(buf), &info);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
 /* ============================================================================
  * SN_Decode_Register
  * ============================================================================ */
@@ -1836,6 +1851,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_gwinfo_ind_form_no_addr_no_overread);
     RUN_TEST(sn_gwinfo_ind_form_with_addr_valid);
     RUN_TEST(sn_gwinfo_wrong_type_rejected);
+    RUN_TEST(sn_gwinfo_null_gwaddr_with_addr_field_rejected);
 
     /* SN_Decode_Register */
     RUN_TEST(sn_register_short_form_valid);

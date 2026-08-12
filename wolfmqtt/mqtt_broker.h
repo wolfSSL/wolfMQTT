@@ -455,6 +455,16 @@ typedef struct BrokerOutPub {
     WOLFMQTT_BROKER_TIME_T enq_time;
     word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
     byte    protocol_level; /* echoed back to subscriber on send */
+#ifdef WOLFMQTT_V5
+    /* Deep copy (BrokerProps_Clone) of the originating PUBLISH's v5
+     * Application Message properties (Payload Format Indicator, Content
+     * Type, Response Topic, Correlation Data, User Property, etc.), or
+     * NULL if none. Owned by this entry; freed once by BrokerOutPub_Free
+     * via BrokerProps_FreeClone - never via MqttProps_Free().
+     * Not serialized by the persist layer: a queued message replayed after a
+     * broker restart is delivered without these properties. */
+    MqttProp* props;
+#endif
     struct BrokerOutPub* next;
 } BrokerOutPub;
 
@@ -477,6 +487,15 @@ typedef struct BrokerOrphanSession {
     BrokerOutPub* out_q_tail;
     int           out_q_count;
     int           out_q_inflight;
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Inbound QoS 2 dedup state (see BrokerClient.qos2_pending), moved
+     * here on disconnect so a retransmitted PUBLISH after reconnect is
+     * still recognized as a duplicate instead of being re-fanned-out.
+     * Ownership transfers by pointer reassignment, mirroring out_q_head
+     * above - see BrokerOrphan_Take / BrokerOrphan_Reclaim. */
+    BrokerInboundQos2* qos2_pending;
+    int                qos2_pending_count;
+#endif
     struct BrokerOrphanSession* next;
 } BrokerOrphanSession;
 #endif
@@ -732,6 +751,9 @@ typedef struct MqttBroker {
      * branches on that to look up the orphan by client_id. */
     BrokerOrphanSession* orphan_sessions;
     int                  orphan_session_count;
+    /* Rate-limits BrokerOrphan_ExpireSweep so MqttBroker_Step does not
+     * walk the orphan list on every single call. */
+    WOLFMQTT_BROKER_TIME_T orphan_last_expire_check;
 #endif
 } MqttBroker;
 

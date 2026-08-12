@@ -48,6 +48,12 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             else {
                 XMEMSET(p_info, 0, sizeof(SN_GwInfo));
             }
+            /* Default to the struct's own backing storage so the decoder
+             * never writes through a NULL gwAddr, but honor a
+             * caller-supplied destination if one was set. */
+            if (p_info->gwAddr == NULL) {
+                p_info->gwAddr = &p_info->gwAddrBuf;
+            }
 
             rc = SN_Decode_GWInfo(client->rx_buf, client->packet.buf_len,
                     p_info);

@@ -284,6 +284,16 @@ typedef struct _MqttClient {
      * flag per the wolfSSL struct guidance for booleans. */
     unsigned int keep_alive_from_server : 1;
 #endif
+
+#ifdef WOLFMQTT_V5
+    /* Max unacked QoS>0 in flight; absent CONNACK means 65535 [3.1.2.11.3]. */
+    word16 server_recv_max;
+    /* Ceiling server_recv_max replenishes to; a spurious/duplicate ack
+     * must not inflate the live quota above the negotiated value. */
+    word16 server_recv_max_negotiated;
+    /* Max Topic Alias value; absent CONNACK means 0 [3.1.2.11.8]. */
+    word16 topic_alias_max;
+#endif
 } MqttClient;
 
 #ifdef WOLFMQTT_SN
@@ -385,7 +395,11 @@ WOLFMQTT_API int MqttClient_Connect(
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
                 MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
                 QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
-                reason code >= 0x80 (see MqttPublish.resp.reason_code), or
+                reason code >= 0x80 (see MqttPublish.resp.reason_code),
+                MQTT_CODE_ERROR_SERVER_PROP if the request violates a
+                CONNACK-advertised v5 server property before sending (QoS above
+                Maximum QoS, Retain unavailable, Topic Alias above the server
+                maximum, or Receive Maximum quota exhausted), or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish_WriteOnly
     \sa         MqttClient_Publish_ex
@@ -412,7 +426,11 @@ WOLFMQTT_API int MqttClient_Publish(
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
                 MQTT_CODE_ERROR_PUBLISH_REJECTED if a v5 broker rejected a
                 QoS>0 PUBLISH via a PUBACK (QoS 1) or PUBREC/PUBCOMP (QoS 2)
-                reason code >= 0x80 (see MqttPublish.resp.reason_code), or
+                reason code >= 0x80 (see MqttPublish.resp.reason_code),
+                MQTT_CODE_ERROR_SERVER_PROP if the request violates a
+                CONNACK-advertised v5 server property before sending (QoS above
+                Maximum QoS, Retain unavailable, Topic Alias above the server
+                maximum, or Receive Maximum quota exhausted), or
                 MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Publish_ex(
@@ -568,6 +586,11 @@ WOLFMQTT_API int MqttClient_Disconnect_ex(
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
  *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note A fatal protocol error in received data (malformed data, unexpected
+                packet type or id, or an invalid v5 property) marks the
+                connection disconnected (clears the connected flag); the
+                application should call MqttClient_NetDisconnect to tear down
+                the transport.
  *  \param      client      Pointer to MqttClient structure
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -580,6 +603,11 @@ WOLFMQTT_API int MqttClient_WaitMessage(
 /*! \brief      Waits for packets to arrive. Incoming publish messages
                 will arrive via callback provided in MqttClient_Init.
  *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note A fatal protocol error in received data (malformed data, unexpected
+                packet type or id, or an invalid v5 property) marks the
+                connection disconnected (clears the connected flag); the
+                application should call MqttClient_NetDisconnect to tear down
+                the transport.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \param      timeout_ms  Milliseconds until read timeout

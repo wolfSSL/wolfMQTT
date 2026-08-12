@@ -385,7 +385,9 @@ if ! wait_for_file "${TMP_DIR}/t6b_watcher.ready" 5; then
     FAIL=1
     t6b_setup_ok=0
 fi
-./$sub_bin -T -h 127.0.0.1 -p $port -n "test/ka2_trigger" -i "ka2_client" -l -k 4 \
+# -s (persistent session, Session Expiry != 0) so the v5 Will Delay is honored;
+# an expiry-0 session ends at disconnect and publishes the Will immediately.
+./$sub_bin -T -h 127.0.0.1 -p $port -n "test/ka2_trigger" -i "ka2_client" -l -s -k 4 \
     -R "${TMP_DIR}/t6b_client.ready" >"${TMP_DIR}/t6b_client.log" 2>&1 &
 T6B_CLIENT_PID=$!
 TEST_PIDS+=($T6B_CLIENT_PID)
