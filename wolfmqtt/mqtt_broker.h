@@ -655,6 +655,12 @@ typedef struct BrokerClient {
     word16        static_client_receive_max;
 #endif
     byte          session_established;
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Length of an accepted CONNACK still being written (0 = none). While
+     * nonzero, tx_buf is owned by that write and no other packet may be
+     * read from or written to this client. */
+    int           connack_pending_len;
+#endif
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
