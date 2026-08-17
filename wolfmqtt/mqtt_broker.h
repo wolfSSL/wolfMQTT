@@ -169,8 +169,8 @@
  *   -DBROKER_MAX_INFLIGHT_PER_SUB=N   to set a hard cap (1 = strict serial),
  *   -DBROKER_DEFAULT_AVG_MSG_SZ=N     to retune the derivation.
  *
- * Only used in dynamic-memory mode; STATIC_MEMORY mode keeps the legacy
- * synchronous fan-out path. */
+ * Dynamic mode applies this to each client queue. Static mode applies it
+ * while draining a persistent Session carrier. */
 #ifndef BROKER_DEFAULT_AVG_MSG_SZ
     #define BROKER_DEFAULT_AVG_MSG_SZ 256
 #endif
@@ -185,14 +185,38 @@
          (BROKER_TX_BUF_SZ / BROKER_DEFAULT_AVG_MSG_SZ))
 #endif
 
-/* Persistent storage caps (only meaningful with WOLFMQTT_BROKER_PERSIST).
- *
- * BROKER_MAX_PERSIST_SESSIONS bounds the number of disconnected
- * persistent sessions kept across broker restart.
- * BROKER_MAX_OFFLINE_MSGS_PER_SUB bounds the per-session offline queue
- * depth; overflow drops the oldest message (FIFO eviction). */
+/* Static-memory persistent Session caps. */
+#ifdef WOLFMQTT_STATIC_MEMORY
+#ifndef BROKER_MAX_STATIC_ORPHAN_SESSIONS
+    #define BROKER_MAX_STATIC_ORPHAN_SESSIONS BROKER_MAX_CLIENTS
+#endif
+#ifndef BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB
+    #define BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB 8
+#endif
+#ifndef BROKER_MAX_STATIC_OFFLINE_DATA_LEN
+    #if BROKER_TX_BUF_SZ > (BROKER_MAX_TOPIC_LEN + 272)
+        #define BROKER_MAX_STATIC_OFFLINE_DATA_LEN 256
+    #else
+        #define BROKER_MAX_STATIC_OFFLINE_DATA_LEN \
+            (BROKER_TX_BUF_SZ - BROKER_MAX_TOPIC_LEN - 16)
+    #endif
+#endif
+#if BROKER_MAX_STATIC_ORPHAN_SESSIONS < 1
+    #error BROKER_MAX_STATIC_ORPHAN_SESSIONS must be at least 1
+#endif
+#if BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB < 1
+    #error BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB must be at least 1
+#endif
+#if BROKER_MAX_STATIC_OFFLINE_DATA_LEN < 1
+    #error BROKER_MAX_STATIC_OFFLINE_DATA_LEN must be at least 1
+#endif
+#if (BROKER_MAX_STATIC_OFFLINE_DATA_LEN + BROKER_MAX_TOPIC_LEN + 16) > \
+        BROKER_TX_BUF_SZ
+    #error BROKER_MAX_STATIC_OFFLINE_DATA_LEN exceeds BROKER_TX_BUF_SZ
+#endif
+#endif /* WOLFMQTT_STATIC_MEMORY */
 #ifndef BROKER_MAX_PERSIST_SESSIONS
-    #define BROKER_MAX_PERSIST_SESSIONS  64
+    #define BROKER_MAX_PERSIST_SESSIONS 64
 #endif
 #ifndef BROKER_MAX_OFFLINE_MSGS_PER_SUB
     #define BROKER_MAX_OFFLINE_MSGS_PER_SUB 32
@@ -418,7 +442,7 @@ typedef struct BrokerInboundQos2 {
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* -------------------------------------------------------------------------- */
-/* Per-subscriber outbound publish queue (dynamic memory mode only).
+/* Per-subscriber outbound publish queue.
  *
  * Each entry owns the topic and payload bytes via heap copy so the queue is
  * independent of the publisher's rx_buf lifetime. The state field tracks
@@ -429,15 +453,47 @@ typedef struct BrokerInboundQos2 {
  *   BROKER_OUTQ_PUBREL_SENT   QoS 2 only: PUBREC received, PUBREL sent,
  *                             awaiting PUBCOMP.
  *
- * QoS 0 entries are deleted as soon as the PUBLISH is written; they never
- * leave the QUEUED state and never increment the inflight counter. */
-#ifndef WOLFMQTT_STATIC_MEMORY
+ * Dynamic-memory QoS 0 entries are deleted as soon as the PUBLISH is written;
+ * they never leave the QUEUED state or increment the inflight counter. */
 enum BrokerOutPubState {
     BROKER_OUTQ_QUEUED       = 0,
     BROKER_OUTQ_PUBLISH_SENT = 1,
     BROKER_OUTQ_PUBREL_SENT  = 2
 };
 
+#ifdef WOLFMQTT_STATIC_MEMORY
+typedef struct BrokerStaticOutPub {
+    char    topic[BROKER_MAX_TOPIC_LEN];
+    byte    data[BROKER_MAX_STATIC_OFFLINE_DATA_LEN];
+    word32  payload_len;
+#ifdef WOLFMQTT_V5
+    word32  prop_len;
+#endif
+    MqttQoS qos;
+    word16  packet_id;
+    byte    retain;
+    byte    duplicate;
+    byte    state;
+    byte    was_sent;
+    byte    has_expiry;
+    WOLFMQTT_BROKER_TIME_T enq_time;
+    word32  expiry_sec;
+} BrokerStaticOutPub;
+
+typedef struct BrokerStaticOrphanSession {
+    byte    in_use;
+    byte    protocol_level;
+    char    client_id[BROKER_MAX_CLIENT_ID_LEN];
+    word32  session_expiry_sec;
+    WOLFMQTT_BROKER_TIME_T orphan_since;
+#if WOLFMQTT_MAX_QOS >= 2
+    word16  qos2_pending[BROKER_MAX_INBOUND_QOS2];
+#endif
+    int     out_q_count;
+    int     out_q_inflight;
+    BrokerStaticOutPub out_q[BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB];
+} BrokerStaticOrphanSession;
+#else
 typedef struct BrokerOutPub {
     char*   topic;          /* heap-owned, NUL-terminated */
     byte*   payload;        /* heap-owned, may be NULL when payload_len == 0 */
@@ -593,12 +649,12 @@ typedef struct BrokerClient {
      * property. For v3.1.1 clients this is left at 65535 - the cap
      * comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
     word16        client_receive_max;
-    /* v5 Session Expiry Interval (seconds). Captured from CONNECT
-     * properties for clean_session=0 sessions so the disconnect path
-     * can stamp it into the orphan slot. 0xFFFFFFFF means "never
-     * expire"; the v3.1.1 persistent-session default. */
-    word32        session_expiry_sec;
 #endif /* !WOLFMQTT_STATIC_MEMORY */
+    word32        session_expiry_sec;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    word16        static_client_receive_max;
+#endif
+    byte          session_established;
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
@@ -751,9 +807,11 @@ typedef struct MqttBroker {
      * branches on that to look up the orphan by client_id. */
     BrokerOrphanSession* orphan_sessions;
     int                  orphan_session_count;
-    /* Rate-limits BrokerOrphan_ExpireSweep so MqttBroker_Step does not
-     * walk the orphan list on every single call. */
+#endif
+    /* Rate-limits the orphan expiry sweep in MqttBroker_Step. */
     WOLFMQTT_BROKER_TIME_T orphan_last_expire_check;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    BrokerStaticOrphanSession static_orphans[BROKER_MAX_STATIC_ORPHAN_SESSIONS];
 #endif
 } MqttBroker;
 
@@ -838,11 +896,9 @@ struct BrokerOutPub;
 
 WOLFMQTT_LOCAL int BrokerPersist_PutSession(MqttBroker* broker,
     const struct BrokerClient* bc);
-#ifndef WOLFMQTT_STATIC_MEMORY
 WOLFMQTT_LOCAL int BrokerPersist_PutOrphanSession(MqttBroker* broker,
     const char* client_id, byte protocol_level, word32 session_expiry_sec,
-    word64 orphan_since);
-#endif
+    WOLFMQTT_BROKER_TIME_T orphan_since);
 WOLFMQTT_LOCAL int BrokerPersist_DelSession(MqttBroker* broker,
     const char* client_id);
 
@@ -870,7 +926,10 @@ WOLFMQTT_LOCAL int BrokerPersist_DelOutQueue(MqttBroker* broker,
 WOLFMQTT_LOCAL int BrokerPersist_Restore(MqttBroker* broker);
 #endif /* WOLFMQTT_BROKER_PERSIST */
 
-#ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_STATIC_MEMORY
+WOLFMQTT_LOCAL void BrokerStaticOrphan_DropFull(MqttBroker* broker,
+    BrokerStaticOrphanSession* orphan);
+#else
 /* Full orphan teardown: delete persisted records (no-op without
  * WOLFMQTT_BROKER_PERSIST), drop any orphan-bound subs
  * (sub->client == NULL with matching client_id) from broker->subs,

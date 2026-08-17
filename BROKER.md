@@ -103,20 +103,45 @@ When built with `WOLFMQTT_STATIC_MEMORY`, the broker uses fixed-size arrays inst
 | `BROKER_MAX_WILL_PAYLOAD_LEN` | 256 | Maximum LWT payload |
 | `BROKER_MAX_PENDING_WILLS` | 4 | Maximum queued pending wills |
 | `BROKER_MAX_INBOUND_QOS2` | 16 | Concurrent inbound QoS 2 packet IDs per client |
+| `BROKER_MAX_STATIC_ORPHAN_SESSIONS` | `BROKER_MAX_CLIENTS` | Persistent sessions with a bounded offline queue |
+| `BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB` | 8 | Queued QoS 1/2 messages per static persistent session |
+| `BROKER_MAX_STATIC_OFFLINE_DATA_LEN` | 256 | Maximum property and payload bytes per queued message |
 | `BROKER_RX_BUF_SZ` | 4096 | Per-client receive buffer size |
 | `BROKER_TX_BUF_SZ` | 4096 | Per-client transmit buffer size |
 | `BROKER_TIMEOUT_MS` | 1000 | `select()` timeout |
 | `BROKER_LISTEN_BACKLOG` | 128 | Listen queue depth |
 
-With dynamic memory the per-subscriber inflight window is derived at runtime, bounded by `BROKER_MIN_INFLIGHT_PER_SUB` (default 8) and `BROKER_MAX_INFLIGHT_PER_SUB`. Define `BROKER_MAX_INFLIGHT_PER_SUB=1` to force strict serial delivery (one inflight QoS 1/2 message per subscriber).
+The static offline queue is broker-owned fixed storage. Its dominant RAM cost
+is approximately `sessions * messages * (topic length + data length)` bytes,
+plus queue metadata. A new persistent CONNECT is refused when all session slots
+are occupied; existing persistent sessions are never evicted to admit it. An
+MQTT v3.1.1 CleanSession=0 Session reserves its slot until that Client Identifier
+reconnects with CleanSession=1. With the default limits, the static Session
+queues add approximately 27 KB to `MqttBroker`. If a matching QoS 1/2
+publication cannot fit in a Session queue, the broker preserves the existing
+backlog and drops that Session's new delivery without disconnecting it. A
+connected client whose Session queue is already full is disconnected so it can
+resume the preserved backlog later. Capacity for one Session does not change
+the publisher's ACK. Increase `BROKER_MAX_STATIC_OFFLINE_DATA_LEN` when durable
+Sessions must retain messages whose property and payload bytes exceed 256.
+
+The per-subscriber inflight window is bounded by `BROKER_MAX_INFLIGHT_PER_SUB`
+and, for MQTT v5, the client's Receive Maximum. Define
+`BROKER_MAX_INFLIGHT_PER_SUB=1` to force strict serial delivery.
 
 ## Persistence
 
-Build with `--enable-broker-persist` to persist sessions, subscriptions, retained messages, and offline queues across restarts. The persistence layer is hook-based: a default POSIX backend stores records as files under the directory given with `-D` (default `/var/lib/wolfmqtt`). Embedded targets can supply their own storage backend through `MqttBroker_SetPersistHooks()`.
+Build with `--enable-broker-persist` to persist sessions, subscriptions,
+retained messages, and dynamic-memory offline queues across restarts. Static
+Session queues are RAM-only, so their queued QoS 1/2 publications do not
+survive a broker restart. The persistence layer is hook-based: a default POSIX
+backend stores records as files under the directory given with `-D` (default
+`/var/lib/wolfmqtt`). Embedded targets can supply their own storage backend
+through `MqttBroker_SetPersistHooks()`.
 
 | Macro | Default | Description |
 |---|---|---|
-| `BROKER_MAX_PERSIST_SESSIONS` | 64 | Persistent sessions retained across restarts |
+| `BROKER_MAX_PERSIST_SESSIONS` | 64 | Dynamic-memory persistent sessions retained across restarts |
 | `BROKER_MAX_OFFLINE_MSGS_PER_SUB` | 32 | Offline queue depth per session |
 | `WOLFMQTT_BROKER_PERSIST_SCHEMA_VER` | 3 | On-disk record schema version |
 
