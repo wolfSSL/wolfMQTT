@@ -3917,6 +3917,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_DelSubs(broker, bc->client_id);
         (void)BrokerPersist_DelSession(broker, bc->client_id);
+        (void)BrokerPersist_DelOutQueue(broker, bc->client_id);
     }
 #endif
 }
