@@ -8424,11 +8424,55 @@ int MqttBroker_Stop(MqttBroker* broker)
     return MQTT_CODE_SUCCESS;
 }
 
+static void BrokerSubs_FreeAll(MqttBroker* broker)
+{
+#ifdef WOLFMQTT_STATIC_MEMORY
+    BROKER_FORCE_ZERO(broker->subs, sizeof(broker->subs));
+#else
+    while (broker->subs != NULL) {
+        BrokerSub* next = broker->subs->next;
+        if (broker->subs->filter != NULL) {
+            BROKER_FORCE_ZERO(broker->subs->filter,
+                XSTRLEN(broker->subs->filter) + 1);
+            WOLFMQTT_FREE(broker->subs->filter);
+        }
+        if (broker->subs->client_id != NULL) {
+            BROKER_FORCE_ZERO(broker->subs->client_id,
+                XSTRLEN(broker->subs->client_id) + 1);
+            WOLFMQTT_FREE(broker->subs->client_id);
+        }
+        WOLFMQTT_FREE(broker->subs);
+        broker->subs = next;
+    }
+#endif
+}
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+/* BrokerPersist_Restore is called on an empty broker before its first start. */
+WOLFMQTT_LOCAL void BrokerPersist_RestoreRollback(MqttBroker* broker)
+{
+    if (broker == NULL) {
+        return;
+    }
+    BrokerSubs_FreeAll(broker);
+#ifdef WOLFMQTT_STATIC_MEMORY
+    BROKER_FORCE_ZERO(broker->static_orphans, sizeof(broker->static_orphans));
+#else
+    BrokerOrphan_FreeAll(broker);
+#endif
+#ifdef WOLFMQTT_BROKER_RETAINED
+    BrokerRetained_FreeAll(broker);
+#endif
+    broker->next_packet_id = 1;
+}
+#endif
+
 int MqttBroker_Free(MqttBroker* broker)
 {
     if (broker == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+    broker->running = 0;
 
     /* Disconnect and free all clients and subscriptions */
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -8462,21 +8506,9 @@ int MqttBroker_Free(MqttBroker* broker)
         BrokerSubs_RemoveClient(broker, broker->clients);
         BrokerClient_Remove(broker, broker->clients);
     }
-    /* Free any orphaned subs (e.g. from clean_session=0 clients) */
-    while (broker->subs) {
-        BrokerSub* next = broker->subs->next;
-        if (broker->subs->filter) {
-            BROKER_FORCE_ZERO(broker->subs->filter,
-                XSTRLEN(broker->subs->filter) + 1);
-            WOLFMQTT_FREE(broker->subs->filter);
-        }
-        if (broker->subs->client_id) {
-            WOLFMQTT_FREE(broker->subs->client_id);
-        }
-        WOLFMQTT_FREE(broker->subs);
-        broker->subs = next;
-    }
 #endif
+    /* Free any orphaned subs (e.g. from clean_session=0 clients). */
+    BrokerSubs_FreeAll(broker);
 
     /* Clean up pending wills and retained messages */
     BrokerPendingWill_FreeAll(broker);
@@ -8485,6 +8517,10 @@ int MqttBroker_Free(MqttBroker* broker)
     BROKER_FORCE_ZERO(broker->static_orphans, sizeof(broker->static_orphans));
 #else
     BrokerOrphan_FreeAll(broker);
+#endif
+#ifdef WOLFMQTT_BROKER_PERSIST
+    broker->persist_restored = 0;
+    broker->persist = NULL;
 #endif
 
 #ifdef ENABLE_MQTT_TLS
@@ -8863,7 +8899,14 @@ int wolfmqtt_broker(int argc, char** argv)
          * "DEV-KEY" log line below makes the choice obvious. */
         persist_hooks.derive_key = wolfmqtt_broker_dev_derive_key;
     #endif
-        (void)MqttBroker_SetPersistHooks(&broker, &persist_hooks);
+        rc = MqttBroker_SetPersistHooks(&broker, &persist_hooks);
+        if (rc != MQTT_CODE_SUCCESS) {
+            PRINTF("broker: persist hook install failed rc=%d", rc);
+            MqttBroker_Free(&broker);
+            MqttBrokerNet_PersistPosix_Free(&persist_hooks);
+            BROKER_WIPE_AUTH_PASS();
+            return rc;
+        }
         PRINTF("broker: persist enabled dir=%s%s", persist_dir,
         #if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) && \
             defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT_DEV_KEY)

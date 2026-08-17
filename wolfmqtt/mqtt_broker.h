@@ -344,8 +344,8 @@ typedef struct MqttBrokerNet {
 /* The persistence layer is intentionally hook-based so the broker can run
  * on top of POSIX files, embedded flash, an external KV store, or an
  * in-RAM stub used by tests. Each hook returns 0 on success or a negative
- * error code (broker logs and skips persist for that record - the
- * in-memory state is still authoritative).
+ * error code. Shadow-write failures are logged while in-memory state remains
+ * authoritative. Iterator failures during restore abort MqttBroker_Start.
  *
  * Both a key/value API and a streaming API are provided. The broker will
  * use whichever family the registered hook implements; any individual
@@ -813,6 +813,9 @@ typedef struct MqttBroker {
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerStaticOrphanSession static_orphans[BROKER_MAX_STATIC_ORPHAN_SESSIONS];
 #endif
+#ifdef WOLFMQTT_BROKER_PERSIST
+    byte persist_restored;
+#endif
 } MqttBroker;
 
 /* -------------------------------------------------------------------------- */
@@ -861,10 +864,10 @@ WOLFMQTT_API int MqttBrokerNet_Init(MqttBrokerNet* net);
 #endif
 
 #ifdef WOLFMQTT_BROKER_PERSIST
-/* Install persistence hooks on the broker. Must be called before
- * MqttBroker_Start. Passing NULL clears any previously installed hooks
- * (reverts to in-memory-only behavior). The MqttBrokerPersistHooks
- * struct must outlive the broker. */
+/* Install non-NULL persistence hooks after MqttBroker_Init and before the
+ * first MqttBroker_Start, or after MqttBroker_Free. Passing NULL may detach
+ * the current hooks at any time. The MqttBrokerPersistHooks struct must
+ * outlive the broker while installed. */
 WOLFMQTT_API int MqttBroker_SetPersistHooks(MqttBroker* broker,
     const MqttBrokerPersistHooks* hooks);
 
@@ -919,11 +922,13 @@ WOLFMQTT_LOCAL int BrokerPersist_DelOutPub(MqttBroker* broker,
 WOLFMQTT_LOCAL int BrokerPersist_DelOutQueue(MqttBroker* broker,
     const char* client_id);
 
-/* Startup-time restore: iterate persisted records and rebuild the
- * in-memory tables. Called from MqttBroker_Init when hooks are
- * installed. Wipes everything and re-stamps the META namespace if
- * the persisted schema version doesn't match. */
+/* Startup-time restore on a freshly initialized, empty broker. Rebuilds the
+ * in-memory tables before the first MqttBroker_Start accepts clients. Wipes
+ * and re-stamps META when the persisted schema version does not match. */
 WOLFMQTT_LOCAL int BrokerPersist_Restore(MqttBroker* broker);
+/* Discard state loaded by a failed startup restore. Defined in
+ * mqtt_broker.c because it uses the broker's shared teardown helpers. */
+WOLFMQTT_LOCAL void BrokerPersist_RestoreRollback(MqttBroker* broker);
 #endif /* WOLFMQTT_BROKER_PERSIST */
 
 #ifdef WOLFMQTT_STATIC_MEMORY
