@@ -1085,7 +1085,7 @@ static int wmqb_delq_iter_cb(const byte* key, word16 key_len,
     struct wmqb_wipe_key* node;
     (void)blob; (void)blob_len;
     /* Match key prefix: cid bytes followed by 0x00. */
-    if (key_len < (word16)(dq->cid_len + 1)) {
+    if ((word32)key_len < (word32)dq->cid_len + 1u) {
         return 0;
     }
     if (XMEMCMP(key, dq->cid, dq->cid_len) != 0) {
@@ -1247,6 +1247,18 @@ static int wmqb_meta_write(MqttBroker* broker)
         &meta_key, 1, buf, sizeof(buf));
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* One Session that ended (zero Session Expiry) before this restart. outq_err is
+ * set only if that client's own OUTQ delete failed, so a single client's
+ * transient error defers just its own SUBS/SESSION cleanup, not everyone's. */
+struct wmqb_ended_session {
+    word16 key_len;
+    byte*  key;
+    byte   outq_err;
+    struct wmqb_ended_session* next;
+};
+#endif
+
 /* Restore iterator context. Used for retained-msg, subs, session,
  * and OUTQ callbacks. */
 struct wmqb_restore_ctx {
@@ -1254,6 +1266,11 @@ struct wmqb_restore_ctx {
     int         loaded;
     int         skipped;
     int         fatal_rc;
+#ifndef WOLFMQTT_STATIC_MEMORY
+    /* Session keys whose zero Session Expiry ended them before this restart */
+    struct wmqb_ended_session* ended;
+    int         ended_count;
+#endif
 };
 
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -1857,6 +1874,7 @@ static int wmqb_decode_and_insert_session(MqttBroker* broker,
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     if (session_expiry == 0) {
+        /* Ended when its connection closed; nothing to resume */
         return MQTT_CODE_ERROR_NOT_FOUND;
     }
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -1882,12 +1900,47 @@ static int wmqb_decode_and_insert_session(MqttBroker* broker,
     return 0;
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* The session key must be the record's own client_id, NUL-free, before it can
+ * be used as a C string to delete that client's dependent records. */
+static int wmqb_session_key_is_client_id(const byte* key, word16 key_len,
+    const byte* blob, word32 blob_len)
+{
+    word32 body_len = 0;
+    word16 cid_len;
+    word16 i;
+    const byte* p;
+
+    if (key == NULL || key_len == 0 || key_len == 0xFFFFu ||
+            wmqb_read_header(blob, blob_len, BROKER_PERSIST_NS_SESSION,
+                &body_len) != 0 || body_len < 16) {
+        return 0;
+    }
+    p = &blob[WMQB_HDR_LEN];
+    cid_len = wmqb_r_u16(&p[14]);
+    if (cid_len != key_len || body_len < (word32)(16 + cid_len) ||
+            XMEMCMP(key, &p[16], key_len) != 0) {
+        return 0;
+    }
+    for (i = 0; i < key_len; i++) {
+        if (key[i] == 0x00) {
+            return 0;
+        }
+    }
+    return 1;
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 static int wmqb_iter_session_cb(const byte* key, word16 key_len,
     const byte* blob, word32 blob_len, void* cb_ctx)
 {
     struct wmqb_restore_ctx* c = (struct wmqb_restore_ctx*)cb_ctx;
     int rc;
+#ifndef WOLFMQTT_STATIC_MEMORY
+    struct wmqb_ended_session* node;
+#else
     (void)key; (void)key_len;
+#endif
     rc = wmqb_decode_and_insert_session(c->broker, blob, blob_len);
     if (rc == 0) {
         c->loaded++;
@@ -1899,10 +1952,185 @@ static int wmqb_iter_session_cb(const byte* key, word16 key_len,
             c->fatal_rc = rc;
             return 1;
         }
+#else
+        if (rc == MQTT_CODE_ERROR_NOT_FOUND &&
+                c->ended_count < BROKER_MAX_PERSIST_SESSIONS &&
+                wmqb_session_key_is_client_id(key, key_len, blob, blob_len)) {
+            /* An ended Session's records are stale. Collect the key; the
+             * backend iterator must not be mutated while it runs. */
+            node = (struct wmqb_ended_session*)WOLFMQTT_MALLOC(sizeof(*node));
+            if (node != NULL) {
+                node->key = (byte*)WOLFMQTT_MALLOC(key_len);
+                if (node->key == NULL) {
+                    WOLFMQTT_FREE(node);
+                }
+                else {
+                    XMEMCPY(node->key, key, key_len);
+                    node->key_len = key_len;
+                    node->outq_err = 0;
+                    node->next = c->ended;
+                    c->ended = node;
+                    c->ended_count++;
+                }
+            }
+        }
 #endif
     }
     return 0;
 }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* A collected NS_OUTQ key plus the ended Session that owns it. */
+struct wmqb_ended_outq_node {
+    word16 key_len;
+    byte*  key;
+    struct wmqb_ended_session* owner;
+    struct wmqb_ended_outq_node* next;
+};
+
+/* Collects, in one pass over NS_OUTQ, every key owned by an ended session. */
+struct wmqb_ended_outq_ctx {
+    struct wmqb_ended_session* ended;
+    struct wmqb_ended_outq_node* head;
+    int oom;
+};
+
+static int wmqb_ended_outq_iter_cb(const byte* key, word16 key_len,
+    const byte* blob, word32 blob_len, void* cb_ctx)
+{
+    struct wmqb_ended_outq_ctx* c = (struct wmqb_ended_outq_ctx*)cb_ctx;
+    struct wmqb_ended_session* e;
+    struct wmqb_ended_outq_node* node;
+    (void)blob; (void)blob_len;
+
+    for (e = c->ended; e != NULL; e = e->next) {
+        if ((word32)key_len >= (word32)e->key_len + 1u &&
+                key[e->key_len] == 0x00 &&
+                XMEMCMP(key, e->key, e->key_len) == 0) {
+            break;
+        }
+    }
+    if (e == NULL) {
+        return 0;
+    }
+    node = (struct wmqb_ended_outq_node*)WOLFMQTT_MALLOC(sizeof(*node));
+    if (node == NULL) {
+        c->oom = 1;
+        return 1;
+    }
+    node->key = (byte*)WOLFMQTT_MALLOC(key_len);
+    if (node->key == NULL) {
+        WOLFMQTT_FREE(node);
+        c->oom = 1;
+        return 1;
+    }
+    XMEMCPY(node->key, key, key_len);
+    node->key_len = key_len;
+    node->owner = e;
+    node->next = c->head;
+    c->head = node;
+    return 0;
+}
+
+/* Free a collected ended-session list without deleting any persisted record.
+ * Used when session restore fails and the whole restore is rolled back, so no
+ * on-disk state is mutated on the abort path. */
+static void wmqb_free_ended_list(struct wmqb_ended_session* head)
+{
+    struct wmqb_ended_session* cur = head;
+    struct wmqb_ended_session* next;
+
+    while (cur != NULL) {
+        next = cur->next;
+        WOLFMQTT_FREE(cur->key);
+        WOLFMQTT_FREE(cur);
+        cur = next;
+    }
+}
+
+/* Drop the persisted records of Sessions that ended before this restart, the
+ * same cascade the runtime expiry sweep applies through BrokerOrphan_DropFull.
+ * OUTQ is scanned once for all of them. Each Session's SUBS and (last) SESSION
+ * records are removed only when that client's own OUTQ entries were cleared, so
+ * one client's transient failure is retried on the next restore without
+ * blocking the others. An iterator or allocation failure leaves the whole OUTQ
+ * set unknown, so it conservatively defers every ended Session that round. */
+static void wmqb_restore_drop_ended(MqttBroker* broker,
+    struct wmqb_ended_session* head)
+{
+    const MqttBrokerPersistHooks* h = broker->persist;
+    struct wmqb_ended_outq_ctx oq;
+    struct wmqb_ended_session* cur;
+    struct wmqb_ended_session* next;
+    struct wmqb_ended_outq_node* on;
+    struct wmqb_ended_outq_node* on_next;
+    char* cid;
+    int rc;
+    int outq_fatal = 0;
+    int deferred = 0;
+
+    if (head == NULL) {
+        return;
+    }
+    XMEMSET(&oq, 0, sizeof(oq));
+    oq.ended = head;
+    if (h->kv_iter != NULL && h->kv_del != NULL) {
+        rc = h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
+            wmqb_ended_outq_iter_cb, &oq);
+        if (rc != 0 || oq.oom) {
+            outq_fatal = 1;
+        }
+        on = oq.head;
+        while (on != NULL) {
+            on_next = on->next;
+            if (h->kv_del(h->ctx, BROKER_PERSIST_NS_OUTQ, on->key,
+                    on->key_len) != 0) {
+                on->owner->outq_err = 1;
+            }
+            WOLFMQTT_FREE(on->key);
+            WOLFMQTT_FREE(on);
+            on = on_next;
+        }
+        if (h->sync != NULL) {
+            (void)h->sync(h->ctx);
+        }
+    }
+
+    cur = head;
+    while (cur != NULL) {
+        next = cur->next;
+        if (outq_fatal || cur->outq_err) {
+            deferred++;
+        }
+        else {
+            cid = (char*)WOLFMQTT_MALLOC((size_t)cur->key_len + 1);
+            if (cid != NULL) {
+                XMEMCPY(cid, cur->key, cur->key_len);
+                cid[cur->key_len] = '\0';
+                rc = BrokerPersist_DelSubs(broker, cid);
+                if (rc == 0) {
+                    rc = wmqb_kv_del_commit(broker, BROKER_PERSIST_NS_SESSION,
+                        cur->key, cur->key_len);
+                }
+                if (rc != 0) {
+                    WMQB_LOG_ERR(broker,
+                        "broker: persist drop ended session failed "
+                        "client_id=%s rc=%d", cid, rc);
+                }
+                WOLFMQTT_FREE(cid);
+            }
+        }
+        WOLFMQTT_FREE(cur->key);
+        WOLFMQTT_FREE(cur);
+        cur = next;
+    }
+    if (deferred > 0) {
+        WMQB_LOG_ERR(broker,
+            "broker: persist deferred %d ended-session drop(s) to next restore "
+            "(outq backend error)", deferred);
+    }
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
 /* Decode NS_OUTQ record and append to the matching orphan's queue.
@@ -2292,9 +2520,20 @@ int BrokerPersist_Restore(MqttBroker* broker)
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore sessions failed rc=%d", rc);
+#ifndef WOLFMQTT_STATIC_MEMORY
+            wmqb_free_ended_list(ctx.ended);
+            ctx.ended = NULL;
+#endif
             BrokerPersist_RestoreRollback(broker);
             return rc;
         }
+#ifndef WOLFMQTT_STATIC_MEMORY
+        /* Session iteration succeeded; drop the persisted records of Sessions
+         * that ended before this restart. Best-effort - a delete failure is
+         * deferred to the next restore and must not fail startup. */
+        wmqb_restore_drop_ended(broker, ctx.ended);
+        ctx.ended = NULL;
+#endif
         WMQB_LOG_INFO(broker,
             "broker: persist restore sessions loaded=%d skipped=%d",
             ctx.loaded, ctx.skipped);

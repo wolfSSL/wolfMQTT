@@ -1946,7 +1946,7 @@ static void BrokerClient_DrainOutQueue(BrokerClient* bc)
     BrokerOutPub* prev;
     int effective_cap;
 
-    if (bc == NULL || bc->out_q_head == NULL) {
+    if (bc == NULL || bc->out_q_head == NULL || bc->connack_pending_len != 0) {
         return;
     }
 
@@ -3917,6 +3917,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_DelSubs(broker, bc->client_id);
         (void)BrokerPersist_DelSession(broker, bc->client_id);
+        (void)BrokerPersist_DelOutQueue(broker, bc->client_id);
     }
 #endif
 }
@@ -5504,7 +5505,9 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
                     }
                 }
             }
-            else
+            /* QoS 0 is best effort; skip while tx_buf holds an in-flight
+             * CONNACK. */
+            else if (sub->client->connack_pending_len == 0)
 #endif
             {
                 MqttPublish out_pub;
@@ -5760,6 +5763,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_STATIC_MEMORY
     BrokerStaticOrphanSession* orphan = NULL;
     int had_static_session = 0;
+#else
+    int ack_len = 0;
 #endif
     /* [MQTT-3.2.2-2] Session Present is set when an accepted
      * CleanSession=0 connection finds stored session state for the
@@ -6542,6 +6547,9 @@ send_connack:
     }
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
     if (rc > 0) {
+    #ifndef WOLFMQTT_STATIC_MEMORY
+        ack_len = rc;
+    #endif
         WBLOG_INFO(broker, "broker: CONNACK send sock=%d code=%d", (int)bc->sock,
             ack.return_code);
         rc = MqttPacket_Write(&bc->client, bc->tx_buf, rc);
@@ -6563,6 +6571,15 @@ send_connack:
     if (ack.return_code != MQTT_CONNECT_ACK_CODE_ACCEPTED) {
         return 0;
     }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+    if (rc == MQTT_CODE_CONTINUE) {
+        /* Accepted, but the CONNACK is only partly on the wire. Keep the
+         * connection; BrokerClient_Process finishes the write before any
+         * further packet is serviced. */
+        bc->connack_pending_len = ack_len;
+    }
+#endif
 
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Successful CONNECT with a retained session -> shadow-write the
@@ -7561,6 +7578,34 @@ static int BrokerRcIsFatal(int rc)
             rc == MQTT_CODE_ERROR_OUT_OF_BUFFER);
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Finish an accepted CONNACK whose write returned MQTT_CODE_CONTINUE. Returns
+ * CONTINUE while it is still in flight, MQTT_CODE_SUCCESS once fully written
+ * (deliveries queued meanwhile are then drained), or a negative code after
+ * closing the client on a write failure. */
+static int BrokerClient_ResumeConnAck(MqttBroker* broker, BrokerClient* bc)
+{
+    int rc;
+
+    rc = MqttPacket_Write(&bc->client, bc->tx_buf, bc->connack_pending_len);
+    if (rc == MQTT_CODE_CONTINUE) {
+        return rc;
+    }
+    if (rc != bc->connack_pending_len) {
+        WBLOG_ERR(broker, "broker: CONNACK write failed sock=%d rc=%d",
+            (int)bc->sock, rc);
+        bc->connack_pending_len = 0;
+        BrokerClient_AbnormalClose(broker, bc);
+        return (rc < 0) ? rc : MQTT_CODE_ERROR_NETWORK;
+    }
+    bc->connack_pending_len = 0;
+    if (bc->out_q_count > 0) {
+        BrokerClient_DrainOutQueue(bc);
+    }
+    return MQTT_CODE_SUCCESS;
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 /* -------------------------------------------------------------------------- */
 /* Per-client processing (called from Step)                                    */
 /* -------------------------------------------------------------------------- */
@@ -7627,8 +7672,24 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     }
 #endif /* ENABLE_MQTT_TLS */
 
-    /* Try non-blocking read (timeout=0) */
-    rc = MqttPacket_Read(&bc->client, bc->rx_buf, BROKER_CLIENT_RX_SZ(bc), 0);
+#ifndef WOLFMQTT_STATIC_MEMORY
+    if (bc->connack_pending_len != 0) {
+        /* Nothing is read from this client until its CONNACK is written */
+        rc = BrokerClient_ResumeConnAck(broker, bc);
+        if (rc == MQTT_CODE_SUCCESS) {
+            activity = 1;
+        }
+        else if (rc != MQTT_CODE_CONTINUE) {
+            return 0;
+        }
+    }
+    else
+#endif
+    {
+        /* Try non-blocking read (timeout=0) */
+        rc = MqttPacket_Read(&bc->client, bc->rx_buf, BROKER_CLIENT_RX_SZ(bc),
+            0);
+    }
 
     if (rc == MQTT_CODE_ERROR_TIMEOUT || rc == MQTT_CODE_CONTINUE) {
         /* No data available - not an error */
@@ -7690,7 +7751,11 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             case MQTT_PACKET_TYPE_CONNECT:
             {
                 int c_rc = BrokerHandle_Connect(bc, rc, broker);
-                if (c_rc <= 0) {
+                if (c_rc <= 0
+            #ifndef WOLFMQTT_STATIC_MEMORY
+                        && bc->connack_pending_len == 0
+            #endif
+                        ) {
                     /* Refused/decode-failed CONNECTs have no established
                      * Session. A CONNECT accepted internally whose CONNACK
                      * write failed has already resumed/created Session state;
