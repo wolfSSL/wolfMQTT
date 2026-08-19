@@ -2732,6 +2732,24 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
             #endif
                 return rc;
             }
+        #ifdef WOLFMQTT_V5
+            /* [MQTT-3.1.2-24] The whole PUBLISH must fit the Server's Maximum
+             * Packet Size. MqttPacket_Write only sees each tx_buf-sized
+             * fragment, so a streamed or oversized payload can slip past it;
+             * check the full packet once here before any byte is written.
+             * rc is fixed header + variable header + the in-buffer payload
+             * chunk (publish->intBuf_len), so (rc - intBuf_len) is the fixed
+             * plus variable header and the full size adds total_len. The
+             * comparison is ordered to avoid unsigned overflow. */
+            if (client->packet_sz_max > 0 &&
+                ((publish->total_len > client->packet_sz_max) ||
+                 (((word32)rc - publish->intBuf_len) >
+                     (client->packet_sz_max - publish->total_len)))) {
+                MqttWriteStop(client, &publish->stat);
+                MqttClient_RestoreRecvQuota(client, publish);
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+            }
+        #endif
             client->write.len = rc;
 
         #ifdef WOLFMQTT_MULTITHREAD

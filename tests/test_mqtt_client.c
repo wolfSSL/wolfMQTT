@@ -1299,6 +1299,82 @@ TEST(publish_v5_subscription_id_rejected)
     MqttClient_PropsFree(publish.props);
 }
 
+/* [MQTT-3.1.2-24] The whole PUBLISH Control Packet must fit the Server's
+ * Maximum Packet Size. A payload larger than tx_buf is streamed in tx_buf-sized
+ * fragments, each within the negotiated limit, so the per-write check cannot see
+ * that the cumulative packet exceeds it. The publish path must reject the whole
+ * oversized packet before any byte is written. */
+TEST(publish_v5_oversized_packet_rejected_before_write)
+{
+    int rc;
+    int i;
+    MqttPublish publish;
+    static byte payload[400];
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    /* Larger than any single tx_buf-sized fragment (<=256), smaller than the
+     * whole PUBLISH (~417 bytes). */
+    test_client.packet_sz_max = 300;
+
+    XMEMSET(payload, 'x', sizeof(payload));
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)sizeof(payload);
+    publish.buffer_len = publish.total_len;
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    ASSERT_EQ(0, g_frames_written);
+}
+
+/* Positive control: a PUBLISH whose whole size is within the Server's Maximum
+ * Packet Size must still be sent, so the new whole-packet check does not
+ * over-reject a legitimate large-but-permitted publish. */
+TEST(publish_v5_within_max_packet_size_allowed)
+{
+    int rc;
+    int i;
+    MqttPublish publish;
+    static byte payload[400];
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.packet_sz_max = 1000; /* comfortably above the ~417-byte packet */
+
+    XMEMSET(payload, 'x', sizeof(payload));
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)sizeof(payload);
+    publish.buffer_len = publish.total_len;
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+
+    ASSERT_NE(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    ASSERT_TRUE(g_frames_written > 0);
+}
+
 /* MQTT v5 [3.1.2.11.6]: only Max QoS 0 or 1 are legal. A non-conforming or
  * malicious broker that advertises a larger value (2 here) must be clamped to
  * MQTT_QOS_1 before being narrowed against this build's WOLFMQTT_MAX_QOS, so the
@@ -3351,6 +3427,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_v5_topic_alias_zero_rejected);
     RUN_TEST(publish_v5_topic_alias_exceeds_max_rejected);
     RUN_TEST(publish_v5_subscription_id_rejected);
+    RUN_TEST(publish_v5_oversized_packet_rejected_before_write);
+    RUN_TEST(publish_v5_within_max_packet_size_allowed);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(publish_qos1_v5_receive_max_quota_decrements_once_and_replenishes);
 #endif
