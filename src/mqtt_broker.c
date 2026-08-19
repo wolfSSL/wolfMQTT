@@ -6235,6 +6235,20 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
             goto send_connack;
         }
+#ifdef WOLFMQTT_V5
+        /* [MQTT-3.2.2-11] A v5 Server that caps Maximum QoS below the requested
+         * Will QoS must refuse the connection, not silently downgrade the Will
+         * delivery QoS. v3.1.1 has no Maximum QoS advertisement, so it is still
+         * downgraded when the Will is stored below. */
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) {
+            WBLOG_ERR(broker,
+                "broker: LWT QoS %d exceeds max %d sock=%d",
+                (int)mc.lwt_msg->qos, WOLFMQTT_MAX_QOS, (int)bc->sock);
+            ack.return_code = MQTT_REASON_QOS_NOT_SUPPORTED;
+            goto send_connack;
+        }
+#endif
     }
 #endif
 
@@ -6447,10 +6461,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
             bc->will_payload_len = wp_len;
         }
-        /* Clamp will QoS to this build's Maximum QoS. A v5 client that
-         * sent Will QoS > advertised Max QoS would already be in
-         * Protocol Error territory, but for v3.1.1 (no advertisement)
-         * we silently downgrade rather than rejecting CONNECT. */
+        /* Clamp will QoS to this build's Maximum QoS. A v5 Will over the cap
+         * was already refused above, so this only downgrades v3.1.1, which has
+         * no Maximum QoS advertisement to reject against. */
         bc->will_qos = (mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) ?
             (MqttQoS)WOLFMQTT_MAX_QOS : mc.lwt_msg->qos;
         bc->will_retain = mc.lwt_msg->retain;

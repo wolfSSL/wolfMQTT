@@ -4224,6 +4224,52 @@ TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry)
 
 /* A Will Delay Interval above BROKER_MAX_WILL_DELAY_SEC is clamped so a
  * client cannot monopolize a deferred-will slot indefinitely. */
+#if WOLFMQTT_MAX_QOS < 2
+/* [MQTT-3.2.2-11] A v5 Server whose Maximum QoS is below the requested Will
+ * QoS must refuse the CONNECT with reason 0x9B (QoS not supported) and close,
+ * rather than silently downgrading the stored Will QoS. Only reachable in a
+ * build whose WOLFMQTT_MAX_QOS is below 2. */
+TEST(connect_v5_will_qos_exceeds_max_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* v5 CONNECT: clean + Will flag + Will QoS 2 (flags 0x16), ClientId "W",
+     * empty CONNECT and Will props, Will topic "lwt", Will payload "bye".
+     * remain = 25 (0x19). */
+    static const byte connect_wq2[] = {
+        0x10, 0x19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x16,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'W',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect_wq2, sizeof(connect_wq2));
+    run_broker_one_connect(&broker);
+
+    /* v5 CONNACK: 0x20, remain, ack flags, reason. The connection must be
+     * refused with QoS-not-supported and then closed, not accepted. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_REASON_QOS_NOT_SUPPORTED, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_MAX_QOS < 2 */
+
 TEST(will_delay_interval_capped)
 {
     MqttBroker broker;
@@ -5007,6 +5053,9 @@ int main(int argc, char** argv)
     defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry);
     RUN_TEST(will_delay_interval_capped);
+#if WOLFMQTT_MAX_QOS < 2
+    RUN_TEST(connect_v5_will_qos_exceeds_max_refused);
+#endif
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(puback_malformed_closes_connection);
