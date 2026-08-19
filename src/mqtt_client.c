@@ -2348,6 +2348,17 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CONNECT_REFUSED);
     }
 
+    /* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] A Server MUST report Session Present = 0
+     * when the Client requested Clean Session / Clean Start. A successful
+     * CONNACK that reports Session Present = 1 is then a protocol violation:
+     * refuse it rather than proceed on session state the client never had.
+     * Returning an error also leaves keep-alive disarmed below, and the caller
+     * tears the transport down as it does for a refused CONNACK. */
+    if (rc == MQTT_CODE_SUCCESS && mc_connect->clean_session &&
+            (mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT)) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+    }
+
 #ifndef WOLFMQTT_NO_TIME
     if (rc == MQTT_CODE_SUCCESS) {
         /* Connection accepted: arm auto keep-alive. A v5 Server Keep Alive

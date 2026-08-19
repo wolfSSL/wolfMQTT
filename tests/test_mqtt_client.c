@@ -519,6 +519,80 @@ TEST(connect_accepted_connack_returns_success)
     ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
 }
 
+/* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] When the Client requests Clean Session /
+ * Clean Start, the Server MUST report Session Present = 0. A successful CONNACK
+ * that reports Session Present = 1 in that case is a protocol violation, so the
+ * client must refuse the connection rather than report success. */
+TEST(connect_clean_session_present_mismatch_refused)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v3.1.1: type=0x20, remain=2, flags=0x01 (Session Present),
+     * return_code=0x00 (accepted). */
+    static const byte connack[] = { 0x20, 0x02, 0x01, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+}
+
+/* Positive control: with Clean Session = 0 the client may resume a prior
+ * session, so Session Present = 1 is valid and must be accepted, confirming the
+ * cross-check keys off the requested Clean Session and does not over-reject. */
+TEST(connect_resume_session_present_accepted)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* CONNACK v3.1.1: flags=0x01 (Session Present), return_code=0x00. */
+    static const byte connack[] = { 0x20, 0x02, 0x01, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+}
+
 /* A broker that refuses the connection returns a CONNACK whose return code is
  * non-zero (0x05 = not authorized here). MqttClient_Connect must surface this
  * as MQTT_CODE_ERROR_CONNECT_REFUSED rather than MQTT_CODE_SUCCESS, else an
@@ -3373,6 +3447,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_with_mock_network);
     RUN_TEST(connect_clears_tx_buf_credentials);
     RUN_TEST(connect_accepted_connack_returns_success);
+    RUN_TEST(connect_clean_session_present_mismatch_refused);
+    RUN_TEST(connect_resume_session_present_accepted);
     RUN_TEST(connect_refused_connack_returns_connect_refused);
 #if defined(WOLFMQTT_V5)
     RUN_TEST(connect_accepted_connack_latches_v5_props);
