@@ -435,6 +435,20 @@ static int MqttClient_RecvQuotaReserve(MqttClient* client,
     return reserved;
 }
 
+/* Credit one Receive Maximum unit back for this message. The caller must hold
+ * lockClient (where applicable). Idempotent via recvQuotaHeld, so a second
+ * release for the same message is a no-op. */
+static void MqttClient_RecvQuotaRelease_Locked(MqttClient* client,
+    MqttMsgStat* stat)
+{
+    if (stat->recvQuotaHeld) {
+        if (client->server_recv_max < client->server_recv_max_negotiated) {
+            client->server_recv_max++;
+        }
+        stat->recvQuotaHeld = 0;
+    }
+}
+
 static void MqttClient_RecvQuotaRelease(MqttClient* client, MqttMsgStat* stat)
 {
 #ifdef WOLFMQTT_MULTITHREAD
@@ -442,12 +456,7 @@ static void MqttClient_RecvQuotaRelease(MqttClient* client, MqttMsgStat* stat)
         return;
     }
 #endif
-    if (stat->recvQuotaHeld) {
-        if (client->server_recv_max < client->server_recv_max_negotiated) {
-            client->server_recv_max++;
-        }
-        stat->recvQuotaHeld = 0;
-    }
+    MqttClient_RecvQuotaRelease_Locked(client, stat);
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
@@ -1689,6 +1698,19 @@ wait_again:
                 if (wm_SemLock(&client->lockClient) == 0) {
                     pendResp->packetDone = 1;
                     pendResp->packet_ret = rc;
+                #ifdef WOLFMQTT_V5
+                    /* A write-only QoS>0 publish reserves a Receive Maximum unit
+                     * but does not wait for its own ack; release it here as this
+                     * reading thread completes the terminal PUBACK / PUBCOMP,
+                     * via the reserving stat recorded on the pending response.
+                     * Idempotent, so an ordinary publish that also releases in
+                     * its waiting thread is unaffected. */
+                    if (rc == MQTT_CODE_SUCCESS &&
+                            pendResp->recvQuotaStat != NULL) {
+                        MqttClient_RecvQuotaRelease_Locked(client,
+                            pendResp->recvQuotaStat);
+                    }
+                #endif
                 #ifdef WOLFMQTT_DEBUG_CLIENT
                     PRINTF("PendResp Done %p", pendResp);
                 #endif
@@ -2711,13 +2733,12 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
 
         #ifdef WOLFMQTT_V5
             /* [MQTT-3.1.2.11.3]: atomically reserve one flow-control unit,
-             * refusing once the quota is exhausted. Released when the publish
-             * terminates. Only reached in MQTT_MSG_BEGIN, so once per logical
-             * publish. Write-only publishes are excluded: a reader thread owns
-             * their ack, so a per-object reservation cannot be released
-             * reliably across that hand-off. */
-            if (!writeOnly &&
-                client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+             * refusing once the quota is exhausted. Only reached in
+             * MQTT_MSG_BEGIN, so once per logical publish. A write-only publish
+             * is included: it reserves here and the reading thread that
+             * completes its terminal PUBACK / PUBCOMP releases the unit (see
+             * MqttClient_WaitType), so the quota is enforced on that API too. */
+            if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 publish->qos > MQTT_QOS_0 &&
                 !MqttClient_RecvQuotaReserve(client, publish))
             {
@@ -2774,6 +2795,14 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     /* inform other threads of expected response */
                     rc = MqttClient_RespList_Add(client, resp_type,
                         publish->packet_id, &publish->pendResp, &publish->resp);
+                #ifdef WOLFMQTT_V5
+                    /* Let the thread that completes this ack release any
+                     * reserved Receive Maximum unit, needed for a write-only
+                     * publish that does not wait for its own ack. */
+                    if (rc == 0 && publish->stat.recvQuotaHeld) {
+                        publish->pendResp.recvQuotaStat = &publish->stat;
+                    }
+                #endif
                     wm_SemUnlock(&client->lockClient);
                 }
                 if (rc != 0) {

@@ -2234,6 +2234,87 @@ TEST(publish_qos2_v5_pubrec_rejection_multithread_reader)
     /* The publisher's own struct is NOT updated on this path. */
     ASSERT_EQ(MQTT_REASON_SUCCESS, publish.resp.reason_code);
 }
+
+/* [MQTT-3.3.4-9] Receive Maximum bounds unacknowledged QoS>0 PUBLISH packets,
+ * and MqttClient_Publish_WriteOnly must honor it like any other publish. With
+ * the quota exhausted, a write-only QoS 1 publish must be refused before
+ * anything reaches the wire rather than slipping through unreserved. */
+TEST(publish_writeonly_v5_receive_max_quota_exhausted_rejects)
+{
+    int rc;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 0; /* quota exhausted */
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
+    ASSERT_EQ(0, g_frames_written);
+}
+
+/* A write-only QoS 1 publish reserves a Receive Maximum unit; when a reading
+ * thread later processes the PUBACK, the unit must be credited back so the
+ * reservation does not leak and permanently shrink the quota. */
+TEST(publish_writeonly_v5_receive_max_released_on_puback)
+{
+    int rc;
+    int i;
+    /* static so the registered pendResp does not point into freed stack. */
+    static MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBACK: type=0x40, remain=3, packet_id=21 (0x15), reason=0x00. */
+    static const byte puback[] = { 0x40, 0x03, 0x00, 0x15, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 1;
+    test_client.server_recv_max_negotiated = 1;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 21;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    /* The single unit was reserved and the call returned without waiting. */
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    ASSERT_EQ(0, test_client.server_recv_max);
+
+    /* Reading thread processes the PUBACK. */
+    XMEMCPY(g_canned_buf, puback, sizeof(puback));
+    g_canned_len = (int)sizeof(puback);
+    g_canned_pos = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    /* The reserved unit was credited back rather than leaked. */
+    ASSERT_EQ(1, test_client.server_recv_max);
+}
 #endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
 #endif /* WOLFMQTT_V5 */
 
@@ -3516,6 +3597,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(publish_qos2_v5_pubrec_rejection_multithread_reader);
+    RUN_TEST(publish_writeonly_v5_receive_max_quota_exhausted_rejects);
+    RUN_TEST(publish_writeonly_v5_receive_max_released_on_puback);
 #endif
 #endif
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)

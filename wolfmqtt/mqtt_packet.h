@@ -354,6 +354,12 @@ typedef struct _MqttPendResp {
     /* double linked list */
     struct _MqttPendResp* next;
     struct _MqttPendResp* prev;
+#ifdef WOLFMQTT_V5
+    /* Points to the message stat holding a reserved Receive Maximum unit so the
+     * thread that completes this response can release it, covering a write-only
+     * publish that never waits for its own ack. NULL when none is held. */
+    MqttMsgStat* recvQuotaStat;
+#endif
 } MqttPendResp;
 #endif /* WOLFMQTT_MULTITHREAD */
 
