@@ -716,6 +716,22 @@ WOLFMQTT_API int MqttPacket_FixedHeaderFlagsValid(byte type_flags);
  */
 WOLFMQTT_API int MqttPacket_TopicFilterValid(const char* filter, word16 len);
 
+/*! \brief      Validate an MQTT Topic Filter, additionally enforcing the MQTT
+ *              v5 shared-subscription form '$share/{ShareName}/{filter}'
+ *              [MQTT-4.8.2]: when protocol_level is 5 and the filter carries
+ *              the '$share/' prefix, the ShareName must be non-empty and must
+ *              not contain '/', '+' or '#', and must be followed by a
+ *              non-empty, well-formed trailing filter. Under v3.1.1
+ *              (protocol_level < 5) the '$share/' prefix has no special
+ *              meaning and only the generic wildcard rules apply.
+ *  \param      filter          Pointer to the topic filter bytes.
+ *  \param      len             Length of the filter in bytes.
+ *  \param      protocol_level  MQTT protocol level (4 = v3.1.1, 5 = v5).
+ *  \return     1 if the filter is well-formed, 0 if it is malformed.
+ */
+WOLFMQTT_API int MqttPacket_TopicFilterValid_ex(const char* filter,
+    word16 len, byte protocol_level);
+
 /*! \brief      Return non-zero if the Topic Filter contains a wildcard
  *              ('#' or '+'). Use only on a filter that has already
  *              passed MqttPacket_TopicFilterValid - wildcard placement

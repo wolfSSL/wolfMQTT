@@ -3632,6 +3632,49 @@ TEST(topic_filter_valid_helper_table)
     ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/tennis", 12));
 }
 
+/* [MQTT-4.8.2] v5 shared-subscription filters take the form
+ * '$share/{ShareName}/{filter}': the ShareName must be non-empty and free of
+ * '/', '+' and '#', followed by a non-empty well-formed filter. An empty
+ * ShareName ('$share//topic') is malformed. Under v3.1.1 '$share/' carries no
+ * special meaning, so the same bytes are an ordinary filter with an empty topic
+ * level, which the spec permits, and must still pass. */
+TEST(topic_filter_valid_shared_subscription)
+{
+#ifdef WOLFMQTT_V5
+    /* Well-formed shared filters are accepted. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share/g/sport", 14,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share/g/sport/#", 16,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share/g/sport/+/x", 18,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+
+    /* Empty ShareName ('$share//...') is malformed. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share//sport", 13,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* No '/' after ShareName means there is no trailing filter. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/g", 8,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* Empty trailing filter. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/g/", 9,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* A wildcard inside the ShareName is malformed. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/a+b/x", 12,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/a#/x", 11,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* The trailing filter itself must be well-formed. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/g/a#b", 12,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+#endif
+
+    /* v3.1.1: '$share/' is not special; '$share//sport' is an ordinary filter
+     * with an empty level, which is permitted, so it must pass. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share//sport", 13,
+        MQTT_CONNECT_PROTOCOL_LEVEL_4));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("$share//sport", 13));
+}
+
 /* [MQTT-4.7.3-1] zero-length Topic Filter rejected by SUBSCRIBE decoder. */
 TEST(decode_subscribe_empty_topic_filter_rejected)
 {
@@ -5833,6 +5876,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_rejects_nul_in_filter);
     RUN_TEST(decode_subscribe_packet_id_zero_rejected);
     RUN_TEST(topic_filter_valid_helper_table);
+    RUN_TEST(topic_filter_valid_shared_subscription);
     RUN_TEST(decode_subscribe_empty_topic_filter_rejected);
     RUN_TEST(decode_subscribe_bad_hash_placement_rejected);
     RUN_TEST(decode_subscribe_hash_not_last_rejected);
