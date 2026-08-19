@@ -2641,7 +2641,9 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }
 
-    /* [MQTT-3.3.2.3.4]: reject a Topic Alias over CONNACK's maximum. */
+    /* [MQTT-3.3.2.3.4]: reject a Topic Alias over CONNACK's maximum.
+     * [MQTT-3.3.4-6]: a Client-to-Server PUBLISH MUST NOT carry a
+     * Subscription Identifier. */
     if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         MqttProp* prop;
         for (prop = publish->props; prop != NULL; prop = prop->next) {
@@ -2650,7 +2652,11 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     (prop->data_short > client->topic_alias_max)) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
                 }
-                break;
+            }
+            /* The Subscription Identifier is only valid on a Server-to-Client
+             * PUBLISH the broker generates; reject a caller-supplied one. */
+            else if (prop->type == MQTT_PROP_SUBSCRIPTION_ID) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
             }
         }
     }

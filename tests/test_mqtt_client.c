@@ -1190,6 +1190,45 @@ TEST(publish_v5_topic_alias_zero_rejected)
     MqttClient_PropsFree(publish.props);
 }
 
+/* [MQTT-3.3.4-6] A PUBLISH sent from a Client to a Server MUST NOT contain a
+ * Subscription Identifier; that property is only valid on a Server-to-Client
+ * PUBLISH the broker generates. The client publish path must reject it before
+ * anything reaches the wire rather than transmitting an illegal packet. */
+TEST(publish_v5_subscription_id_rejected)
+{
+    int rc;
+    MqttPublish publish;
+    MqttProp* prop;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    prop = MqttClient_PropsAdd(&publish.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_SUBSCRIPTION_ID;
+    prop->data_int = 1;
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read; /* errors if ever reached */
+
+    rc = MqttClient_Publish(&test_client, &publish);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+
+    MqttClient_PropsFree(publish.props);
+}
+
 /* MQTT v5 [3.1.2.11.6]: only Max QoS 0 or 1 are legal. A non-conforming or
  * malicious broker that advertises a larger value (2 here) must be clamped to
  * MQTT_QOS_1 before being narrowed against this build's WOLFMQTT_MAX_QOS, so the
@@ -3239,6 +3278,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_v311_ack_not_misread_as_rejected);
     RUN_TEST(publish_v5_topic_alias_zero_rejected);
     RUN_TEST(publish_v5_topic_alias_exceeds_max_rejected);
+    RUN_TEST(publish_v5_subscription_id_rejected);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(publish_qos1_v5_receive_max_quota_decrements_once_and_replenishes);
 #endif
