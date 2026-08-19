@@ -6248,6 +6248,18 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             ack.return_code = MQTT_REASON_QOS_NOT_SUPPORTED;
             goto send_connack;
         }
+#ifndef WOLFMQTT_BROKER_RETAINED
+        /* A v5 Server that does not support retained messages must refuse a
+         * CONNECT whose Will Retain is set, not accept it while advertising
+         * Retain Available = 0 in the same CONNACK. */
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                mc.lwt_msg->retain != 0) {
+            WBLOG_ERR(broker,
+                "broker: LWT retain unsupported sock=%d", (int)bc->sock);
+            ack.return_code = MQTT_REASON_RETAIN_NOT_SUPPORTED;
+            goto send_connack;
+        }
+#endif
 #endif
     }
 #endif

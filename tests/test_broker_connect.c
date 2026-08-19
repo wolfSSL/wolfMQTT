@@ -4270,6 +4270,51 @@ TEST(connect_v5_will_qos_exceeds_max_refused)
 }
 #endif /* WOLFMQTT_MAX_QOS < 2 */
 
+#ifndef WOLFMQTT_BROKER_RETAINED
+/* A v5 Server that does not support retained messages must refuse a CONNECT
+ * whose Will Retain is set with reason 0x9A (Retain not supported) and close,
+ * rather than accepting it while advertising Retain Available = 0. */
+TEST(connect_v5_will_retain_unsupported_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* v5 CONNECT: clean + Will flag + Will Retain (flags 0x26), Will QoS 0,
+     * ClientId "W", empty CONNECT and Will props, Will topic "lwt", Will
+     * payload "bye". remain = 25 (0x19). */
+    static const byte connect_wretain[] = {
+        0x10, 0x19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x26,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'W',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect_wretain, sizeof(connect_wretain));
+    run_broker_one_connect(&broker);
+
+    /* v5 CONNACK: 0x20, remain, ack flags, reason. Must be refused with
+     * Retain-not-supported and closed, not accepted. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_REASON_RETAIN_NOT_SUPPORTED, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED */
+
 TEST(will_delay_interval_capped)
 {
     MqttBroker broker;
@@ -5055,6 +5100,9 @@ int main(int argc, char** argv)
     RUN_TEST(will_delay_interval_capped);
 #if WOLFMQTT_MAX_QOS < 2
     RUN_TEST(connect_v5_will_qos_exceeds_max_refused);
+#endif
+#ifndef WOLFMQTT_BROKER_RETAINED
+    RUN_TEST(connect_v5_will_retain_unsupported_refused);
 #endif
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
