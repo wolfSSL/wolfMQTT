@@ -454,6 +454,63 @@ static void MqttClient_RecvQuotaRelease(MqttClient* client, MqttMsgStat* stat)
 }
 #endif /* WOLFMQTT_V5 */
 
+#if WOLFMQTT_MAX_QOS >= 2
+/* Inbound QoS 2 de-duplication. A subscribing client that has delivered a
+ * QoS 2 PUBLISH to the application and answered with PUBREC records its packet
+ * id until the matching PUBREL arrives, so a retransmitted PUBLISH is
+ * acknowledged again without a second delivery [MQTT-4.3.3-10]. These run on
+ * the receive path (under lockRecv), so no extra locking is required. */
+static int MqttClient_RecvQos2_Contains(const MqttClient* client,
+    word16 packet_id)
+{
+    int i;
+
+    if (client == NULL || packet_id == 0) {
+        return 0;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == packet_id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
+{
+    int i;
+
+    if (client == NULL || packet_id == 0 ||
+            MqttClient_RecvQos2_Contains(client, packet_id)) {
+        return;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == 0) {
+            client->recv_qos2_pending[i] = packet_id;
+            return;
+        }
+    }
+    /* Table full: this id stays untracked, so a later retransmit of it may
+     * still reach the application. Delivery correctness is preserved; only the
+     * duplicate suppression is best effort under a flood of unacked QoS 2. */
+}
+
+static void MqttClient_RecvQos2_Remove(MqttClient* client, word16 packet_id)
+{
+    int i;
+
+    if (client == NULL || packet_id == 0) {
+        return;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == packet_id) {
+            client->recv_qos2_pending[i] = 0;
+            return;
+        }
+    }
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
+
 #ifdef WOLFMQTT_MULTITHREAD
 
 /* These RespList functions assume caller has locked client->lockClient mutex */
@@ -1100,6 +1157,15 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 MQTT_PACKET_TYPE_PUBLISH_ACK :
                 MQTT_PACKET_TYPE_PUBLISH_REC;
             resp->packet_id = packet_id;
+        #if WOLFMQTT_MAX_QOS >= 2
+            /* Record this QoS 2 packet id as delivered and awaiting PUBREL so a
+             * retransmit is acknowledged again without a second delivery
+             * [MQTT-4.3.3-10]. A no-op for the retransmit, which is already
+             * tracked. */
+            if (packet_qos == MQTT_QOS_2) {
+                MqttClient_RecvQos2_Add(client, packet_id);
+            }
+        #endif
             break;
         }
         case MQTT_PACKET_TYPE_PUBLISH_ACK:
@@ -1150,6 +1216,14 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 (((MqttPublishResp*)packet_obj)->reason_code & 0x80)) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PUBLISH_REJECTED);
+            }
+        #endif
+
+        #if WOLFMQTT_MAX_QOS >= 2
+            /* An incoming PUBREL completes the inbound QoS 2 handshake: drop the
+             * awaiting-PUBREL record so a future PUBLISH may reuse the id. */
+            if (packet_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
+                MqttClient_RecvQos2_Remove(client, packet_id);
             }
         #endif
 
@@ -1969,6 +2043,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     }
 
     if (mc_connect->stat.write == MQTT_MSG_BEGIN) {
+    #if WOLFMQTT_MAX_QOS >= 2
+        /* Packet ids restart per connection, so clear any inbound QoS 2 dedup
+         * state left by a prior connection: a stale entry must not suppress a
+         * new message that reuses its id [MQTT-4.3.3-10]. */
+        XMEMSET(client->recv_qos2_pending, 0,
+            sizeof(client->recv_qos2_pending));
+    #endif
     #ifdef WOLFMQTT_V5
         #ifdef WOLFMQTT_MULTITHREAD
         rc = wm_SemLock(&client->lockClient);
@@ -2269,6 +2350,14 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 {
     int rc = MQTT_CODE_SUCCESS;
     byte msg_done;
+#if WOLFMQTT_MAX_QOS >= 2
+    /* A retransmitted QoS 2 PUBLISH still awaiting its PUBREL must be drained to
+     * keep the stream in sync, but not delivered to the application again
+     * [MQTT-4.3.3-10]. Re-derived from the packet id so it survives non-blocking
+     * re-entry into this function. */
+    int suppress_cb = (publish->qos == MQTT_QOS_2 &&
+        MqttClient_RecvQos2_Contains(client, publish->packet_id));
+#endif
 
     /* Handle packet callback and read remaining payload */
     do {
@@ -2278,7 +2367,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 
         if (publish->buffer_new) {
             /* Issue callback for new message (first time only) */
-            if (client->msg_cb) {
+            if (client->msg_cb
+            #if WOLFMQTT_MAX_QOS >= 2
+                && !suppress_cb
+            #endif
+            ) {
                 /* if using the temp publish message buffer,
                    then populate message context with client context */
                 if (publish->ctx == NULL && &client->msg.publish == publish) {
@@ -2331,7 +2424,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
                     publish->total_len) ? 1 : 0;
 
                 /* Issue callback for additional publish payload */
-                if (client->msg_cb) {
+                if (client->msg_cb
+                #if WOLFMQTT_MAX_QOS >= 2
+                    && !suppress_cb
+                #endif
+                ) {
                     rc = client->msg_cb(client, publish, publish->buffer_new,
                                         msg_done);
                     if (rc != MQTT_CODE_SUCCESS) {

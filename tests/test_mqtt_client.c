@@ -2437,6 +2437,53 @@ TEST(wait_message_qos2_publish_acks_pubrec)
     ASSERT_EQ(9, g_last_ack_id);
 }
 
+/* [MQTT-4.3.3-10] Until the matching PUBREL is received, a retransmitted QoS 2
+ * PUBLISH must be answered with another PUBREC but MUST NOT be delivered to the
+ * application a second time. Two identical QoS 2 PUBLISH frames (both packet
+ * id 9, no intervening PUBREL) arrive back to back; the message callback must
+ * fire exactly once while both frames are acknowledged. Pre-fix the client had
+ * no inbound QoS 2 dedup and delivered the duplicate, so g_msg_cb_calls was 2. */
+TEST(wait_message_qos2_duplicate_publish_delivered_once)
+{
+    int rc = MQTT_CODE_SUCCESS;
+    int i;
+    /* Two v3.1.1 QoS2 PUBLISH frames, both packet_id=9, topic "a", payload
+     * "hi": type|qos2=0x34, remain=7. */
+    static const byte publish_qos2_dup[] = {
+        0x34, 0x07, 0x00, 0x01, 'a', 0x00, 0x09, 'h', 'i',
+        0x34, 0x07, 0x00, 0x01, 'a', 0x00, 0x09, 'h', 'i'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+
+    g_pubresp_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_qos2_dup, sizeof(publish_qos2_dup));
+    g_canned_len = (int)sizeof(publish_qos2_dup);
+    g_canned_pos = 0;
+
+    /* Each successful WaitMessage returns after one frame, so pump until both
+     * staged frames are consumed or a real error is hit. */
+    for (i = 0; i < 40 && g_canned_pos < g_canned_len; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+        if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+
+    /* Both PUBLISHes were acknowledged with a PUBREC, but the retransmit must
+     * not have reached the application. */
+    ASSERT_TRUE(g_pubresp_written);
+    ASSERT_EQ(1, g_msg_cb_calls);
+}
+
 /* The four PUBLISH-response packet types (PUBACK 4, PUBREC 5, PUBREL 6,
  * PUBCOMP 7) all decode through the same branch of MqttClient_HandlePacket, but
  * only PUBREC and PUBREL may advance the QoS handshake. The branch gates this
@@ -3222,6 +3269,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_qos0_publish_no_ack);
     RUN_TEST(wait_message_qos1_publish_acks_puback);
     RUN_TEST(wait_message_qos2_publish_acks_pubrec);
+    RUN_TEST(wait_message_qos2_duplicate_publish_delivered_once);
     RUN_TEST(wait_message_pubrec_emits_pubrel);
     RUN_TEST(wait_message_pubrel_emits_pubcomp);
     RUN_TEST(wait_message_puback_emits_no_ack);

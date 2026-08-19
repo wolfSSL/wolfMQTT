@@ -218,6 +218,15 @@ typedef struct _MqttSk {
     typedef int (*SN_ClientRegisterCb)(word16 topicId, const char* topicName, void *reg_ctx);
 #endif
 
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Max distinct inbound QoS 2 packet ids tracked awaiting PUBREL, used to
+     * suppress re-delivery of a retransmitted PUBLISH [MQTT-4.3.3-10].
+     * Override in user_settings.h to trade memory for a larger dedup window. */
+    #ifndef MQTT_MAX_RECV_QOS2
+        #define MQTT_MAX_RECV_QOS2 16
+    #endif
+#endif
+
 /* Client structure */
 typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
@@ -293,6 +302,14 @@ typedef struct _MqttClient {
     word16 server_recv_max_negotiated;
     /* Max Topic Alias value; absent CONNACK means 0 [3.1.2.11.8]. */
     word16 topic_alias_max;
+#endif
+
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Inbound QoS 2 packet ids delivered to the application and awaiting their
+     * PUBREL. A retransmitted PUBLISH with an id still listed here is answered
+     * with PUBREC but not delivered a second time [MQTT-4.3.3-10]. Slot value 0
+     * is empty; a QoS 2 packet id is never 0. */
+    word16 recv_qos2_pending[MQTT_MAX_RECV_QOS2];
 #endif
 } MqttClient;
 

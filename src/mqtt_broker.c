@@ -3948,6 +3948,28 @@ static void BrokerSubs_EndClientSession(MqttBroker* broker, BrokerClient* bc)
     }
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Confirm a fan-out loop's snapshotted successor is still linked in
+ * broker->subs. A peer-initiated WS LWS_CALLBACK_CLOSED delivered during a
+ * fan-out write runs BrokerSubs_RemoveClient, which frees every BrokerSub owned
+ * by the closing subscriber. That set can include the node a loop saved as
+ * next_sub, so the snapshot guards only against sub->next moving, not against
+ * next_sub itself being freed. Re-check it before the next dereference,
+ * mirroring the client-list revalidation in MqttBroker_Step. */
+static int BrokerSubs_StillLinked(const MqttBroker* broker,
+    const BrokerSub* node)
+{
+    const BrokerSub* cur = broker->subs;
+    while (cur != NULL) {
+        if (cur == node) {
+            return 1;
+        }
+        cur = cur->next;
+    }
+    return 0;
+}
+#endif
+
 static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     const char* filter, word16 filter_len, MqttQoS qos)
 {
@@ -5564,6 +5586,11 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
         }
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
+        /* The write above can drive a re-entrant WS close that frees next_sub;
+         * stop the walk if that snapshot is no longer linked. */
+        if (next_sub != NULL && !BrokerSubs_StillLinked(broker, next_sub)) {
+            break;
+        }
         sub = next_sub;
 #endif
     }
@@ -7368,6 +7395,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             );
                     }
                 }
+            }
+            /* The write above can drive a re-entrant WS close that frees
+             * next_sub; stop the walk if that snapshot is no longer linked. */
+            if (next_sub != NULL && !BrokerSubs_StillLinked(broker, next_sub)) {
+                break;
             }
             sub = next_sub;
 #endif
