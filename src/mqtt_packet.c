@@ -377,6 +377,17 @@ int MqttPacket_TopicFilterValid(const char* filter, word16 len)
         MQTT_CONNECT_PROTOCOL_LEVEL_4);
 }
 
+#ifdef WOLFMQTT_V5
+/* Return 1 if the Topic Filter is an MQTT v5 shared subscription, i.e. it
+ * begins with the "$share/" prefix [MQTT-4.8.2]. Full ShareName validity is
+ * enforced by MqttPacket_TopicFilterValid_ex; this only detects the form. */
+static int MqttPacket_TopicFilterIsShared(const char* filter, word16 len)
+{
+    return (filter != NULL && len >= 7 &&
+        XMEMCMP(filter, "$share/", 7) == 0);
+}
+#endif
+
 /* Validate an MQTT PUBLISH Topic Name against [MQTT-3.3.2-2] /
  * [MQTT-4.7.1-1] (Topic Names MUST NOT contain wildcard characters '#'
  * or '+'; applies to both v3.1.1 and v5) and [MQTT-4.7.3-1] (minimum
@@ -2809,6 +2820,13 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
                 ((topic->sub_options >> 4) & 0x03) == 0x03) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
+            /* [MQTT-3.8.3-4] No Local MUST NOT be set on a Shared
+             * Subscription. */
+            if ((topic->sub_options & MQTT_SUBSCRIBE_NO_LOCAL) != 0 &&
+                    MqttPacket_TopicFilterIsShared(topic->topic_filter,
+                        (word16)XSTRLEN(topic->topic_filter))) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
             options |= (byte)(topic->sub_options & MQTT_SUBSCRIBE_OPTIONS_MASK);
         }
     #endif
@@ -2948,6 +2966,14 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
                 if ((options & 0xC0) != 0 ||
                     (options & 0x03) > MQTT_QOS_2 ||
                     ((options >> 4) & 0x03) == 0x03) {
+                    tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
+                /* [MQTT-3.8.3-4] No Local MUST NOT be set on a Shared
+                 * Subscription; treat as a Protocol Error. */
+                if ((options & MQTT_SUBSCRIBE_NO_LOCAL) != 0 &&
+                        MqttPacket_TopicFilterIsShared(topic->topic_filter,
+                            filter_len)) {
                     tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                     break;
                 }
