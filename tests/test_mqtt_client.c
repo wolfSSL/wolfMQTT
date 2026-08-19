@@ -665,6 +665,76 @@ TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf)
                              blob, blob_len));
 }
 
+/* [MQTT-4.12.0-1] A Client that did not include an Authentication Method in its
+ * CONNECT MUST NOT send an AUTH packet. After a CONNECT that negotiated no
+ * enhanced authentication, MqttClient_Auth must refuse to put an AUTH on the
+ * wire even when the caller supplies a well-formed AUTH carrying a method. */
+TEST(auth_without_connect_method_rejected)
+{
+    int rc;
+    MqttAuth auth;
+    MqttProp* prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    /* Fresh client: no CONNECT Authentication Method was negotiated. */
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    prop = MqttClient_PropsAdd(&auth.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_AUTH_METHOD;
+    prop->data_str.str = (char*)"SCRAM-SHA-256";
+    prop->data_str.len = (word16)XSTRLEN("SCRAM-SHA-256");
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+
+    MqttClient_PropsFree(auth.props);
+}
+
+/* Positive control: after a CONNECT that did carry an Authentication Method,
+ * MqttClient_Auth must not be blocked by the new guard and the AUTH must reach
+ * the wire. Guards against the guard over-rejecting legitimate re-auth. */
+TEST(auth_with_connect_method_allowed)
+{
+    int rc;
+    MqttAuth auth;
+    MqttProp* prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.auth_method_set = 1; /* CONNECT negotiated a method */
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    prop = MqttClient_PropsAdd(&auth.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_AUTH_METHOD;
+    prop->data_str.str = (char*)"SCRAM-SHA-256";
+    prop->data_str.len = (word16)XSTRLEN("SCRAM-SHA-256");
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+
+    /* Not blocked by the new guard, and the AUTH was written to the wire. */
+    ASSERT_NE(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_TRUE(g_frames_written > 0);
+
+    MqttClient_PropsFree(auth.props);
+}
+
 /* MQTT v5: a refused CONNACK (non-zero return code) must NOT mutate long-lived
  * client state even when it carries server properties, otherwise a rejected or
  * malicious broker could shrink the client's packet-size cap or lower its QoS
@@ -3231,6 +3301,8 @@ void run_mqtt_client_tests(void)
 #if defined(WOLFMQTT_V5)
     RUN_TEST(connect_accepted_connack_latches_v5_props);
     RUN_TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf);
+    RUN_TEST(auth_without_connect_method_rejected);
+    RUN_TEST(auth_with_connect_method_allowed);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_clamps_illegal_max_qos);
     RUN_TEST(connect_accepted_connack_latches_topic_alias_max);

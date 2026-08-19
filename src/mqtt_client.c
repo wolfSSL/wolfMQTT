@@ -2033,6 +2033,25 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* Return 1 if the CONNECT carries an Authentication Method property, i.e. the
+ * connection is negotiating enhanced authentication [MQTT-4.12]. */
+static int MqttConnect_HasAuthMethod(const MqttConnect* mc_connect)
+{
+    const MqttProp* prop;
+
+    if (mc_connect == NULL) {
+        return 0;
+    }
+    for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_AUTH_METHOD) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 {
     int rc;
@@ -2068,6 +2087,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             return rc;
         }
         XMEMSET(&mc_connect->ack, 0, sizeof(mc_connect->ack));
+
+        /* Record whether this connection negotiates enhanced authentication so
+         * a later MqttClient_Auth can be refused when no Authentication Method
+         * was sent [MQTT-4.12.0-1]. Recomputed each connect, so it also resets
+         * across a reconnect on the same client. */
+        client->auth_method_set =
+            (byte)MqttConnect_HasAuthMethod(mc_connect);
     #endif
         /* Warn if credentials are being sent without TLS */
     #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -3530,7 +3556,13 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
 
 int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 {
-    if (auth == NULL) {
+    if (client == NULL || auth == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    /* [MQTT-4.12.0-1] An AUTH may only be sent on a connection whose CONNECT
+     * carried an Authentication Method. Refuse otherwise so a client cannot
+     * emit an AUTH on a connection that never negotiated enhanced auth. */
+    if (client->auth_method_set == 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     return MqttClient_AuthEx(client, auth, &auth->stat,

@@ -302,6 +302,10 @@ typedef struct _MqttClient {
     word16 server_recv_max_negotiated;
     /* Max Topic Alias value; absent CONNACK means 0 [3.1.2.11.8]. */
     word16 topic_alias_max;
+    /* Set when the current connection's CONNECT carried an Authentication
+     * Method; gates MqttClient_Auth so an AUTH is never sent on a connection
+     * that never negotiated enhanced authentication [MQTT-4.12.0-1]. */
+    byte   auth_method_set;
 #endif
 
 #if WOLFMQTT_MAX_QOS >= 2
