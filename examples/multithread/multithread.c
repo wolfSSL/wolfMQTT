@@ -672,19 +672,34 @@ static void *publish_task(void *param)
         startSec[i] = 0;
     }
 
-    /* Send until != continue */
+    /* Send until complete. A write-only publish returns MQTT_CODE_CONTINUE
+     * while its acknowledgement is still outstanding; the reader thread
+     * completes that ack, so keep polling until it reports success rather than
+     * abandoning an in-flight publish. Cancelling one whose PUBLISH already
+     * reached the wire cannot reclaim its Receive Maximum unit until reconnect,
+     * since the server keeps counting it [MQTT-4.9]. */
     for (i=0; i<NUM_PUB_PER_TASK; i++) {
         while (rc[i] == MQTT_CODE_CONTINUE) {
             rc[i] = MqttClient_Publish_WriteOnly(&mqttCtx->client, &publish[i],
                 NULL);
             rc[i] = check_response(mqttCtx, rc[i], &startSec[i],
                 MQTT_PACKET_TYPE_PUBLISH, mqttCtx->cmd_timeout_ms);
+        #ifndef WOLFMQTT_TEST_CANCEL
+            /* A benign poll timeout is not a failure for an in-flight write-only
+             * publish; keep waiting for the reader thread to finish its ack. */
+            if (rc[i] == MQTT_CODE_ERROR_TIMEOUT) {
+                rc[i] = MQTT_CODE_CONTINUE;
+            }
+        #endif
         }
     }
 
     /* Report result */
     for (i=0; i<NUM_PUB_PER_TASK; i++) {
-        if (rc[i] != MQTT_CODE_SUCCESS) {
+        /* Only cancel on a genuine terminal error, never a publish still in
+         * flight (MQTT_CODE_CONTINUE): cancelling one whose PUBLISH is already
+         * on the wire forfeits its reserved Receive Maximum unit [MQTT-4.9]. */
+        if (rc[i] != MQTT_CODE_SUCCESS && rc[i] != MQTT_CODE_CONTINUE) {
             MqttClient_CancelMessage(&mqttCtx->client, (MqttObject*)&publish[i]);
         }
 

@@ -1230,19 +1230,25 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 (((MqttPublishResp*)packet_obj)->reason_code & 0x80)) {
             #ifdef WOLFMQTT_MULTITHREAD
-                /* The QoS 2 exchange ends here with no PUBCOMP [MQTT-4.9], so
-                 * the reserved Receive Maximum unit for this packet id would be
-                 * leaked. Release it via the PUBCOMP pending response (the only
-                 * way a write-only publisher, whose thread never returns, can be
-                 * credited). Idempotent, so an ordinary waiting publisher is
-                 * unaffected. */
+                /* The QoS 2 exchange ends here with no PUBCOMP [MQTT-4.9].
+                 * Complete the PUBCOMP pending response with the rejection so a
+                 * write-only publisher polling for it observes the failure
+                 * instead of spinning on CONTINUE, release the reserved unit,
+                 * and clear the back-reference so a later cancel/disconnect
+                 * cannot touch it. Idempotent for an ordinary waiting
+                 * publisher, whose own wait also surfaces the rejection. */
                 MqttPendResp* qpr = NULL;
                 if (wm_SemLock(&client->lockClient) == 0) {
                     if (MqttClient_RespList_Find(client,
                             MQTT_PACKET_TYPE_PUBLISH_COMP, packet_id, &qpr) &&
-                            qpr != NULL && qpr->recvQuotaStat != NULL) {
-                        MqttClient_RecvQuotaRelease_Locked(client,
-                            qpr->recvQuotaStat);
+                            qpr != NULL) {
+                        if (qpr->recvQuotaStat != NULL) {
+                            MqttClient_RecvQuotaRelease_Locked(client,
+                                qpr->recvQuotaStat);
+                            qpr->recvQuotaStat = NULL;
+                        }
+                        qpr->packet_ret = MQTT_CODE_ERROR_PUBLISH_REJECTED;
+                        qpr->packetDone = 1;
                     }
                     wm_SemUnlock(&client->lockClient);
                 }
@@ -2108,11 +2114,15 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 
     if (mc_connect->stat.write == MQTT_MSG_BEGIN) {
     #if WOLFMQTT_MAX_QOS >= 2
-        /* Packet ids restart per connection, so clear any inbound QoS 2 dedup
-         * state left by a prior connection: a stale entry must not suppress a
-         * new message that reuses its id [MQTT-4.3.3-10]. */
-        XMEMSET(client->recv_qos2_pending, 0,
-            sizeof(client->recv_qos2_pending));
+        /* A Clean Start resets the session, so drop any inbound QoS 2 dedup
+         * state from a prior connection; a resumed session (clean_session == 0)
+         * keeps its pending inbound QoS 2 packet ids so a server retransmit
+         * still awaiting PUBREL is not delivered to the app twice
+         * [MQTT-4.3.3-10]. */
+        if (mc_connect->clean_session) {
+            XMEMSET(client->recv_qos2_pending, 0,
+                sizeof(client->recv_qos2_pending));
+        }
     #endif
     #ifdef WOLFMQTT_V5
         #ifdef WOLFMQTT_MULTITHREAD
@@ -2757,12 +2767,21 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
         #ifdef WOLFMQTT_V5
             /* [MQTT-3.1.2.11.3]: atomically reserve one flow-control unit,
              * refusing once the quota is exhausted. Only reached in
-             * MQTT_MSG_BEGIN, so once per logical publish. A write-only publish
-             * is included: it reserves here and the reading thread that
-             * completes its terminal PUBACK / PUBCOMP releases the unit (see
-             * MqttClient_WaitType), so the quota is enforced on that API too. */
+             * MQTT_MSG_BEGIN, so once per logical publish. The unit is released
+             * only on the acknowledgement, so a publish is reserved only when
+             * that ack can be tracked to completion. A write-only publish in a
+             * WOLFMQTT_MULTITHREAD build without WOLFMQTT_NONBLOCK returns
+             * success immediately, abandoning ack tracking (and the caller may
+             * free the object), so it is left unreserved there - the alternative
+             * would either over-credit an on-wire PUBLISH [MQTT-4.9] or dangle.
+             * A blocking (non-multithread) write-only still waits, and a
+             * non-blocking one keeps its pending response for the reader, so
+             * both reserve. */
             if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 publish->qos > MQTT_QOS_0 &&
+            #if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+                !writeOnly &&
+            #endif
                 !MqttClient_RecvQuotaReserve(client, publish))
             {
                 MqttWriteStop(client, &publish->stat);
@@ -2922,13 +2941,11 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                 #ifndef WOLFMQTT_NONBLOCK
                     if (rc == MQTT_CODE_CONTINUE) {
                         /* No non-blocking re-entry will complete this ack, so
-                         * report success now. Release the reserved quota since
-                         * the ack will no longer be tracked, and the pending
-                         * response is unlinked below so no reference to the
-                         * caller's publish object remains. */
-                    #ifdef WOLFMQTT_V5
-                        MqttClient_RestoreRecvQuota(client, publish);
-                    #endif
+                         * report success. This build does not reserve quota for
+                         * a write-only publish (see the reserve gate above), and
+                         * the pending response is unlinked below, so nothing is
+                         * leaked and no reference to the caller's object
+                         * remains. */
                         rc = MQTT_CODE_SUCCESS;
                     }
                 #endif
@@ -2943,15 +2960,18 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                         publish->packet_id, client->cmd_timeout_ms, NULL);
 
                 #ifdef WOLFMQTT_V5
-                    /* Replenish the reserved quota unit only on a real
-                     * acknowledgement. rc is still SUCCESS here for both a clean
-                     * PUBACK/PUBCOMP and a rejecting reason code (reclassified to
-                     * PUBLISH_REJECTED just below), which both free the unit
-                     * [MQTT-4.9]. A timeout leaves the PUBLISH unacknowledged on
-                     * a still-open connection - the server keeps counting it
-                     * against Receive Maximum - so crediting here would let the
-                     * client exceed the negotiated quota. */
-                    if (rc == MQTT_CODE_SUCCESS) {
+                    /* Replenish the reserved quota unit on any real end to the
+                     * exchange, all of which free the server's unit [MQTT-4.9]:
+                     * a clean PUBACK/PUBCOMP (rc SUCCESS), a rejecting
+                     * PUBACK/PUBCOMP reason code (still SUCCESS here,
+                     * reclassified below), and a PUBREC rejection (surfaced
+                     * directly as PUBLISH_REJECTED, which without this credit
+                     * would leak a unit in a non-multithread build). A timeout
+                     * leaves the PUBLISH unacknowledged on a still-open
+                     * connection - the server keeps counting it - so it is
+                     * excluded. */
+                    if (rc == MQTT_CODE_SUCCESS ||
+                            rc == MQTT_CODE_ERROR_PUBLISH_REJECTED) {
                         MqttClient_RestoreRecvQuota(client, publish);
                     }
 
@@ -3880,15 +3900,11 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
-        #ifdef WOLFMQTT_V5
-            /* Release any Receive Maximum unit this response reserved so
-             * cancelling a QoS>0 (e.g. write-only) publish does not leak it.
-             * lockClient is held; idempotent via recvQuotaHeld. */
-            if (tmpResp->recvQuotaStat != NULL) {
-                MqttClient_RecvQuotaRelease_Locked(client,
-                    tmpResp->recvQuotaStat);
-            }
-        #endif
+            /* Do not credit any reserved Receive Maximum unit here: the PUBLISH
+             * may already be on the wire, where the server keeps counting it
+             * [MQTT-4.9], so crediting it on a local cancel could exceed the
+             * negotiated quota. The unit is released on the acknowledgement, or
+             * recovered when the connection resets server_recv_max. */
             MqttClient_RespList_Remove(client, tmpResp);
             break;
         }
@@ -3994,15 +4010,9 @@ int MqttClient_NetDisconnect(MqttClient *client)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
-        #ifdef WOLFMQTT_V5
-            /* Release any reserved Receive Maximum unit as the list is purged
-             * on disconnect, so it is not left held. Idempotent via
-             * recvQuotaHeld; lockClient is held. */
-            if (tmpResp->recvQuotaStat != NULL) {
-                MqttClient_RecvQuotaRelease_Locked(client,
-                    tmpResp->recvQuotaStat);
-            }
-        #endif
+            /* Reserved Receive Maximum units are not credited on disconnect
+             * (the PUBLISH may be on the wire); the next connect resets
+             * server_recv_max to the newly negotiated value. */
             MqttClient_RespList_Remove(client, tmpResp);
         }
         wm_SemUnlock(&client->lockClient);

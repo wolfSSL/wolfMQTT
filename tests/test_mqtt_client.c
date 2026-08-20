@@ -2143,6 +2143,121 @@ TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected)
     ASSERT_FALSE(g_pubrel_written);
 }
 
+/* [MQTT-4.9] A PUBREC rejection (reason >= 0x80) ends the QoS 2 exchange and
+ * frees the reserved Receive Maximum unit. MqttPublishMsg must credit it back
+ * on this path, which surfaces as PUBLISH_REJECTED rather than SUCCESS; without
+ * that credit a non-multithread build leaks one unit per rejection. */
+TEST(publish_qos2_v5_pubrec_reject_restores_receive_max)
+{
+    int rc;
+    int i;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBREC: type=0x50, remain=3, packet_id=15 (0x0F), reason=0x87. */
+    static const byte pubrec[] = { 0x50, 0x03, 0x00, 0x0F, 0x87 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 1;
+    test_client.server_recv_max_negotiated = 1;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, pubrec, sizeof(pubrec));
+    g_canned_len = (int)sizeof(pubrec);
+    g_canned_pos = 0;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_2;
+    publish.packet_id = 15;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PUBLISH_REJECTED, rc);
+    /* The reserved unit was credited back, not leaked. */
+    ASSERT_EQ(1, test_client.server_recv_max);
+}
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* [MQTT-4.3.3-10] A resumed session (Clean Start = 0) keeps its inbound QoS 2
+ * dedup state across reconnect, so a server retransmit still awaiting PUBREL is
+ * not delivered to the application a second time. */
+TEST(connect_clean0_preserves_qos2_dedup)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* v3.1.1 CONNACK: Session Present = 1 (resume), accepted. */
+    static const byte connack[] = { 0x20, 0x02, 0x01, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    /* A prior connection left an inbound QoS 2 id awaiting PUBREL. */
+    test_client.recv_qos2_pending[0] = 9;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(9, test_client.recv_qos2_pending[0]);
+}
+
+/* Clean Start = 1 clears the inbound QoS 2 dedup state, since packet ids
+ * restart for a fresh session. */
+TEST(connect_clean1_clears_qos2_dedup)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* v3.1.1 CONNACK: Session Present = 0, accepted. */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    test_client.recv_qos2_pending[0] = 9;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, test_client.recv_qos2_pending[0]);
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
+
 /* A v3.1.1 PUBACK carries no reason code, so the rejection check must not run
  * for protocol level < 5. Pre-seed resp.reason_code with a failure byte to
  * prove the protocol_level guard prevents a stale value from being misread as
@@ -2237,6 +2352,11 @@ TEST(publish_qos2_v5_pubrec_rejection_multithread_reader)
 #endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
 
 #ifdef WOLFMQTT_MULTITHREAD
+/* The write-only Receive Maximum lifecycle (reserve, enforce, release) is
+ * exercised only where the ack is tracked to completion: a non-blocking
+ * multithread build. A blocking multithread write-only reports success while
+ * abandoning the ack, so it does not reserve (see MqttPublishMsg). */
+#ifdef WOLFMQTT_NONBLOCK
 /* [MQTT-3.3.4-9] Receive Maximum bounds unacknowledged QoS>0 PUBLISH packets,
  * and MqttClient_Publish_WriteOnly must honor it like any other publish. With
  * the quota exhausted, a write-only QoS 1 publish must be refused before
@@ -2376,13 +2496,26 @@ TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject)
 
     /* The reserved unit was credited back despite the rejection. */
     ASSERT_EQ(1, test_client.server_recv_max);
+#ifdef WOLFMQTT_NONBLOCK
+    /* Under NONBLOCK the write-only pending response is left for the reader, so
+     * it must be completed with the rejection (so a poll observes it instead of
+     * spinning) and its quota back-reference cleared. In a blocking build the
+     * give-up path already removed it, so there is nothing left to inspect. */
+    ASSERT_NOT_NULL(test_client.firstPendResp);
+    ASSERT_TRUE(test_client.firstPendResp->packetDone);
+    ASSERT_EQ(MQTT_CODE_ERROR_PUBLISH_REJECTED,
+        test_client.firstPendResp->packet_ret);
+    ASSERT_NULL(test_client.firstPendResp->recvQuotaStat);
+#endif
 }
+#endif /* WOLFMQTT_NONBLOCK */
 
 #ifndef WOLFMQTT_NONBLOCK
 /* In a multithread build without NONBLOCK, MqttClient_Publish_WriteOnly reports
  * SUCCESS while the ack is still outstanding. The caller may then free its
  * MqttPublish (here on the stack), so no pending response may still reference
- * it, and the reserved quota must be released rather than orphaned. */
+ * it. Because the ack cannot be tracked to completion in this build, no
+ * Receive Maximum unit is reserved for it, so none can be orphaned. */
 TEST(publish_writeonly_v5_no_dangling_pendresp_on_success)
 {
     int rc;
@@ -2411,16 +2544,19 @@ TEST(publish_writeonly_v5_no_dangling_pendresp_on_success)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     /* No dangling reference to the soon-freed stack object. */
     ASSERT_NULL(test_client.firstPendResp);
-    /* The reserved unit was released, not orphaned. */
+    /* No unit was reserved, so the quota is untouched. */
     ASSERT_EQ(1, test_client.server_recv_max);
 }
 #endif /* !WOLFMQTT_NONBLOCK */
 
 #ifdef WOLFMQTT_NONBLOCK
-/* Cancelling a write-only publish whose ack is still outstanding must release
- * the reserved Receive Maximum unit, not leak it: the shipped multithread
- * example cancels on the non-success path. */
-TEST(publish_writeonly_v5_cancel_releases_receive_max)
+/* Cancelling a write-only publish whose ack is still outstanding must NOT credit
+ * the reserved Receive Maximum unit: the PUBLISH may already be on the wire,
+ * where the server keeps counting it [MQTT-4.9], so crediting it locally could
+ * push the client past the negotiated quota. The unit stays held until the ack
+ * arrives or the connection resets server_recv_max. The conservative leak is the
+ * safe failure; over-crediting an on-wire packet is not. */
+TEST(publish_writeonly_v5_cancel_holds_receive_max)
 {
     int rc;
     int i;
@@ -2453,8 +2589,9 @@ TEST(publish_writeonly_v5_cancel_releases_receive_max)
 
     MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
 
-    /* The cancel released the reserved unit rather than leaking it. */
-    ASSERT_EQ(1, test_client.server_recv_max);
+    /* The cancel removed the pending response but did NOT credit the unit: the
+     * PUBLISH may be on the wire, so the quota stays held (conservative). */
+    ASSERT_EQ(0, test_client.server_recv_max);
     ASSERT_NULL(test_client.firstPendResp);
 }
 #endif /* WOLFMQTT_NONBLOCK */
@@ -3723,6 +3860,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos2_v5_broker_rejection_returns_publish_rejected);
     RUN_TEST(publish_qos2_v5_success_returns_success);
     RUN_TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected);
+    RUN_TEST(publish_qos2_v5_pubrec_reject_restores_receive_max);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(connect_clean0_preserves_qos2_dedup);
+    RUN_TEST(connect_clean1_clears_qos2_dedup);
+#endif
     RUN_TEST(publish_v311_ack_not_misread_as_rejected);
     RUN_TEST(publish_v5_topic_alias_zero_rejected);
     RUN_TEST(publish_v5_topic_alias_exceeds_max_rejected);
@@ -3742,14 +3884,13 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos2_v5_pubrec_rejection_multithread_reader);
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
+#ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(publish_writeonly_v5_receive_max_quota_exhausted_rejects);
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_puback);
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject);
-#ifndef WOLFMQTT_NONBLOCK
+    RUN_TEST(publish_writeonly_v5_cancel_holds_receive_max);
+#else
     RUN_TEST(publish_writeonly_v5_no_dangling_pendresp_on_success);
-#endif
-#ifdef WOLFMQTT_NONBLOCK
-    RUN_TEST(publish_writeonly_v5_cancel_releases_receive_max);
 #endif
 #endif
 #endif
