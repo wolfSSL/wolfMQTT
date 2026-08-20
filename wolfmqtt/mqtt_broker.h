@@ -769,6 +769,11 @@ typedef struct MqttBroker {
 #else
     BrokerClient* clients;
     BrokerSub*    subs;
+    /* Bumped whenever a BrokerSub is unlinked from `subs`. A fan-out loop
+     * snapshots it before a write that may re-entrantly free a subscriber and
+     * only re-validates its snapshotted successor when it changed, so the
+     * common (no free) case avoids an O(n) rescan of the whole list. */
+    word32        subs_gen;
 #ifdef WOLFMQTT_BROKER_RETAINED
     BrokerRetainedMsg* retained;
     int                retained_count;

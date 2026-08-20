@@ -610,6 +610,11 @@ void MqttClient_RespList_Remove(MqttClient *client, MqttPendResp *rmResp)
         }
     }
     if (tmpResp) {
+    #ifdef WOLFMQTT_V5
+        /* Drop the reserved-quota back-reference so a recycled publish object
+         * cannot carry a stale pointer into a future pending response. */
+        tmpResp->recvQuotaStat = NULL;
+    #endif
         /* Fix up the first and last pointers */
         if (client->firstPendResp == tmpResp) {
             client->firstPendResp = tmpResp->next;
@@ -2916,7 +2921,14 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                         publish->packet_id);
                 #ifndef WOLFMQTT_NONBLOCK
                     if (rc == MQTT_CODE_CONTINUE) {
-                        /* mark success, let other thread handle response */
+                        /* No non-blocking re-entry will complete this ack, so
+                         * report success now. Release the reserved quota since
+                         * the ack will no longer be tracked, and the pending
+                         * response is unlinked below so no reference to the
+                         * caller's publish object remains. */
+                    #ifdef WOLFMQTT_V5
+                        MqttClient_RestoreRecvQuota(client, publish);
+                    #endif
                         rc = MQTT_CODE_SUCCESS;
                     }
                 #endif
@@ -2968,13 +2980,13 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     break;
             #endif
             #ifdef WOLFMQTT_MULTITHREAD
-                /* Leave a write-only publish's pending response in the list: a
-                 * build without WOLFMQTT_NONBLOCK reports success here without
-                 * the ack, and unlinking it now would prevent the reading thread
-                 * from completing it and releasing the reserved Receive Maximum
-                 * unit, leaking quota. The reader removes it when the ack
-                 * arrives. */
-                if (!writeOnly && wm_SemLock(&client->lockClient) == 0) {
+                /* Remove the pending response before returning: a caller told
+                 * SUCCESS may free its publish object, so no reference to it may
+                 * remain in the list. A write-only publish under
+                 * WOLFMQTT_NONBLOCK returned CONTINUE above and broke out before
+                 * here, leaving its entry for the reading thread to complete and
+                 * remove. */
+                if (wm_SemLock(&client->lockClient) == 0) {
                     MqttClient_RespList_Remove(client, &publish->pendResp);
                     wm_SemUnlock(&client->lockClient);
                 }
@@ -3868,6 +3880,15 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
+        #ifdef WOLFMQTT_V5
+            /* Release any Receive Maximum unit this response reserved so
+             * cancelling a QoS>0 (e.g. write-only) publish does not leak it.
+             * lockClient is held; idempotent via recvQuotaHeld. */
+            if (tmpResp->recvQuotaStat != NULL) {
+                MqttClient_RecvQuotaRelease_Locked(client,
+                    tmpResp->recvQuotaStat);
+            }
+        #endif
             MqttClient_RespList_Remove(client, tmpResp);
             break;
         }
@@ -3972,6 +3993,15 @@ int MqttClient_NetDisconnect(MqttClient *client)
                 MqttPacket_TypeDesc(tmpResp->packet_type),
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
+        #endif
+        #ifdef WOLFMQTT_V5
+            /* Release any reserved Receive Maximum unit as the list is purged
+             * on disconnect, so it is not left held. Idempotent via
+             * recvQuotaHeld; lockClient is held. */
+            if (tmpResp->recvQuotaStat != NULL) {
+                MqttClient_RecvQuotaRelease_Locked(client,
+                    tmpResp->recvQuotaStat);
+            }
         #endif
             MqttClient_RespList_Remove(client, tmpResp);
         }

@@ -2307,7 +2307,11 @@ TEST(publish_writeonly_v5_receive_max_released_on_puback)
     for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
         rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
     }
+#ifdef WOLFMQTT_NONBLOCK
+    /* Under NONBLOCK the unit stays reserved until the reader acks it; a
+     * blocking multithread build releases it at the give-up point instead. */
     ASSERT_EQ(0, test_client.server_recv_max);
+#endif
 
     /* Reading thread processes the PUBACK. */
     XMEMCPY(g_canned_buf, puback, sizeof(puback));
@@ -2355,7 +2359,11 @@ TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject)
     for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
         rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
     }
+#ifdef WOLFMQTT_NONBLOCK
+    /* Under NONBLOCK the unit stays reserved until the reader acks it; a
+     * blocking multithread build releases it at the give-up point instead. */
     ASSERT_EQ(0, test_client.server_recv_max);
+#endif
 
     /* Reading thread processes the rejecting PUBREC. */
     XMEMCPY(g_canned_buf, pubrec, sizeof(pubrec));
@@ -2369,6 +2377,87 @@ TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject)
     /* The reserved unit was credited back despite the rejection. */
     ASSERT_EQ(1, test_client.server_recv_max);
 }
+
+#ifndef WOLFMQTT_NONBLOCK
+/* In a multithread build without NONBLOCK, MqttClient_Publish_WriteOnly reports
+ * SUCCESS while the ack is still outstanding. The caller may then free its
+ * MqttPublish (here on the stack), so no pending response may still reference
+ * it, and the reserved quota must be released rather than orphaned. */
+TEST(publish_writeonly_v5_no_dangling_pendresp_on_success)
+{
+    int rc;
+    MqttPublish publish; /* automatic storage: must not stay referenced */
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 1;
+    test_client.server_recv_max_negotiated = 1;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 23;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* No dangling reference to the soon-freed stack object. */
+    ASSERT_NULL(test_client.firstPendResp);
+    /* The reserved unit was released, not orphaned. */
+    ASSERT_EQ(1, test_client.server_recv_max);
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
+#ifdef WOLFMQTT_NONBLOCK
+/* Cancelling a write-only publish whose ack is still outstanding must release
+ * the reserved Receive Maximum unit, not leak it: the shipped multithread
+ * example cancels on the non-success path. */
+TEST(publish_writeonly_v5_cancel_releases_receive_max)
+{
+    int rc;
+    int i;
+    static MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 1;
+    test_client.server_recv_max_negotiated = 1;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 24;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    }
+    /* Reserved, ack still outstanding (returned CONTINUE). */
+    ASSERT_EQ(0, test_client.server_recv_max);
+
+    MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+
+    /* The cancel released the reserved unit rather than leaking it. */
+    ASSERT_EQ(1, test_client.server_recv_max);
+    ASSERT_NULL(test_client.firstPendResp);
+}
+#endif /* WOLFMQTT_NONBLOCK */
 #endif /* WOLFMQTT_MULTITHREAD */
 #endif /* WOLFMQTT_V5 */
 
@@ -3656,6 +3745,12 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_writeonly_v5_receive_max_quota_exhausted_rejects);
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_puback);
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject);
+#ifndef WOLFMQTT_NONBLOCK
+    RUN_TEST(publish_writeonly_v5_no_dangling_pendresp_on_success);
+#endif
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(publish_writeonly_v5_cancel_releases_receive_max);
+#endif
 #endif
 #endif
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
