@@ -1224,6 +1224,24 @@ static int MqttClient_HandlePacket(MqttClient* client,
             if (packet_type == MQTT_PACKET_TYPE_PUBLISH_REC &&
                 client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 (((MqttPublishResp*)packet_obj)->reason_code & 0x80)) {
+            #ifdef WOLFMQTT_MULTITHREAD
+                /* The QoS 2 exchange ends here with no PUBCOMP [MQTT-4.9], so
+                 * the reserved Receive Maximum unit for this packet id would be
+                 * leaked. Release it via the PUBCOMP pending response (the only
+                 * way a write-only publisher, whose thread never returns, can be
+                 * credited). Idempotent, so an ordinary waiting publisher is
+                 * unaffected. */
+                MqttPendResp* qpr = NULL;
+                if (wm_SemLock(&client->lockClient) == 0) {
+                    if (MqttClient_RespList_Find(client,
+                            MQTT_PACKET_TYPE_PUBLISH_COMP, packet_id, &qpr) &&
+                            qpr != NULL && qpr->recvQuotaStat != NULL) {
+                        MqttClient_RecvQuotaRelease_Locked(client,
+                            qpr->recvQuotaStat);
+                    }
+                    wm_SemUnlock(&client->lockClient);
+                }
+            #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PUBLISH_REJECTED);
             }
         #endif
@@ -1703,10 +1721,10 @@ wait_again:
                      * but does not wait for its own ack; release it here as this
                      * reading thread completes the terminal PUBACK / PUBCOMP,
                      * via the reserving stat recorded on the pending response.
-                     * Idempotent, so an ordinary publish that also releases in
-                     * its waiting thread is unaffected. */
-                    if (rc == MQTT_CODE_SUCCESS &&
-                            pendResp->recvQuotaStat != NULL) {
+                     * Only reached on a completed (non-error) response, so no
+                     * result gate is needed. Idempotent, so an ordinary publish
+                     * that also releases in its waiting thread is unaffected. */
+                    if (pendResp->recvQuotaStat != NULL) {
                         MqttClient_RecvQuotaRelease_Locked(client,
                             pendResp->recvQuotaStat);
                     }
@@ -2950,7 +2968,13 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     break;
             #endif
             #ifdef WOLFMQTT_MULTITHREAD
-                if (wm_SemLock(&client->lockClient) == 0) {
+                /* Leave a write-only publish's pending response in the list: a
+                 * build without WOLFMQTT_NONBLOCK reports success here without
+                 * the ack, and unlinking it now would prevent the reading thread
+                 * from completing it and releasing the reserved Receive Maximum
+                 * unit, leaking quota. The reader removes it when the ack
+                 * arrives. */
+                if (!writeOnly && wm_SemLock(&client->lockClient) == 0) {
                     MqttClient_RespList_Remove(client, &publish->pendResp);
                     wm_SemUnlock(&client->lockClient);
                 }

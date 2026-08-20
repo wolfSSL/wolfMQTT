@@ -2234,7 +2234,9 @@ TEST(publish_qos2_v5_pubrec_rejection_multithread_reader)
     /* The publisher's own struct is NOT updated on this path. */
     ASSERT_EQ(MQTT_REASON_SUCCESS, publish.resp.reason_code);
 }
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
 
+#ifdef WOLFMQTT_MULTITHREAD
 /* [MQTT-3.3.4-9] Receive Maximum bounds unacknowledged QoS>0 PUBLISH packets,
  * and MqttClient_Publish_WriteOnly must honor it like any other publish. With
  * the quota exhausted, a write-only QoS 1 publish must be refused before
@@ -2298,9 +2300,13 @@ TEST(publish_writeonly_v5_receive_max_released_on_puback)
     publish.total_len = (word32)(sizeof(payload) - 1);
     publish.buffer_len = publish.total_len;
 
-    rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
-    /* The single unit was reserved and the call returned without waiting. */
-    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    /* Drive the write-only publish to completion. It returns CONTINUE under
+     * WOLFMQTT_NONBLOCK and SUCCESS in a blocking MT build; either way the unit
+     * is reserved and outstanding until the reader processes the ack. */
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    }
     ASSERT_EQ(0, test_client.server_recv_max);
 
     /* Reading thread processes the PUBACK. */
@@ -2315,7 +2321,55 @@ TEST(publish_writeonly_v5_receive_max_released_on_puback)
     /* The reserved unit was credited back rather than leaked. */
     ASSERT_EQ(1, test_client.server_recv_max);
 }
-#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
+
+/* A write-only QoS 2 publish reserves a unit; a broker rejection at the PUBREC
+ * stage (reason >= 0x80) ends the exchange with no PUBCOMP, so the unit must
+ * still be credited back rather than leaked. */
+TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject)
+{
+    int rc;
+    int i;
+    static MqttPublish publish;
+    static byte payload[] = "hello";
+    /* v5 PUBREC: type=0x50, remain=3, packet_id=22 (0x16), reason=0x97. */
+    static const byte pubrec[] = { 0x50, 0x03, 0x00, 0x16, 0x97 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.server_recv_max = 1;
+    test_client.server_recv_max_negotiated = 1;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_2;
+    publish.packet_id = 22;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    }
+    ASSERT_EQ(0, test_client.server_recv_max);
+
+    /* Reading thread processes the rejecting PUBREC. */
+    XMEMCPY(g_canned_buf, pubrec, sizeof(pubrec));
+    g_canned_len = (int)sizeof(pubrec);
+    g_canned_pos = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    /* The reserved unit was credited back despite the rejection. */
+    ASSERT_EQ(1, test_client.server_recv_max);
+}
+#endif /* WOLFMQTT_MULTITHREAD */
 #endif /* WOLFMQTT_V5 */
 
 /* Regression test for MQTT Packet Identifier in-use collision check. The
@@ -3597,8 +3651,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(publish_qos2_v5_pubrec_rejection_multithread_reader);
+#endif
+#ifdef WOLFMQTT_MULTITHREAD
     RUN_TEST(publish_writeonly_v5_receive_max_quota_exhausted_rejects);
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_puback);
+    RUN_TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject);
 #endif
 #endif
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)

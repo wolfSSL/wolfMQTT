@@ -336,7 +336,11 @@ typedef struct _MqttMsgStat {
 
     byte isReadActive:1;
     byte isWriteActive:1;
-    byte recvQuotaHeld:1; /* v5 Receive Maximum unit reserved for this message */
+    /* v5 Receive Maximum unit reserved for this message. Its own storage unit,
+     * not a bitfield, because a reader thread may clear it (under lockClient)
+     * while the owning thread writes isReadActive/isWriteActive outside that
+     * lock; sharing a byte would make those a racy read-modify-write. */
+    byte recvQuotaHeld;
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD
