@@ -2113,17 +2113,6 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     }
 
     if (mc_connect->stat.write == MQTT_MSG_BEGIN) {
-    #if WOLFMQTT_MAX_QOS >= 2
-        /* A Clean Start resets the session, so drop any inbound QoS 2 dedup
-         * state from a prior connection; a resumed session (clean_session == 0)
-         * keeps its pending inbound QoS 2 packet ids so a server retransmit
-         * still awaiting PUBREL is not delivered to the app twice
-         * [MQTT-4.3.3-10]. */
-        if (mc_connect->clean_session) {
-            XMEMSET(client->recv_qos2_pending, 0,
-                sizeof(client->recv_qos2_pending));
-        }
-    #endif
     #ifdef WOLFMQTT_V5
         #ifdef WOLFMQTT_MULTITHREAD
         rc = wm_SemLock(&client->lockClient);
@@ -2413,6 +2402,21 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             (mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT)) {
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }
+
+#if WOLFMQTT_MAX_QOS >= 2
+    /* The server's Session Present flag, not the client's request, decides
+     * whether inbound QoS 2 dedup state carries over. Keep it only when the
+     * server resumed the session (Session Present = 1); on any fresh session -
+     * a requested Clean Start or a resume the server declined - drop stale
+     * pending packet ids so they cannot suppress a new inbound QoS 2 PUBLISH
+     * that reuses one [MQTT-4.3.3-10]. Packet ids also restart per connection,
+     * so a fresh session must start with an empty table. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            !(mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT)) {
+        XMEMSET(client->recv_qos2_pending, 0,
+            sizeof(client->recv_qos2_pending));
+    }
+#endif
 
 #ifndef WOLFMQTT_NO_TIME
     if (rc == MQTT_CODE_SUCCESS) {

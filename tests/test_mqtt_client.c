@@ -2187,9 +2187,10 @@ TEST(publish_qos2_v5_pubrec_reject_restores_receive_max)
 }
 
 #if WOLFMQTT_MAX_QOS >= 2
-/* [MQTT-4.3.3-10] A resumed session (Clean Start = 0) keeps its inbound QoS 2
- * dedup state across reconnect, so a server retransmit still awaiting PUBREL is
- * not delivered to the application a second time. */
+/* [MQTT-4.3.3-10] A session the server resumes (Clean Start = 0 answered with
+ * Session Present = 1) keeps its inbound QoS 2 dedup state across reconnect, so
+ * a server retransmit still awaiting PUBREL is not delivered to the application
+ * a second time. */
 TEST(connect_clean0_preserves_qos2_dedup)
 {
     int rc;
@@ -2247,6 +2248,43 @@ TEST(connect_clean1_clears_qos2_dedup)
     XMEMSET(&connect, 0, sizeof(connect));
     connect.keep_alive_sec = 60;
     connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, test_client.recv_qos2_pending[0]);
+}
+
+/* The server, not the client, decides whether a session resumes. A Clean Start
+ * = 0 request answered with Session Present = 0 is a fresh session, so stale
+ * inbound QoS 2 dedup state must be dropped; otherwise it would suppress a new
+ * PUBLISH that reuses one of those packet ids [MQTT-4.3.3-10]. */
+TEST(connect_resume_declined_clears_qos2_dedup)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    /* v3.1.1 CONNACK: Session Present = 0 (server declined resume), accepted. */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    /* A prior connection left an inbound QoS 2 id awaiting PUBREL. */
+    test_client.recv_qos2_pending[0] = 9;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
     connect.client_id = "test_client";
 
     rc = MQTT_CODE_CONTINUE;
@@ -3864,6 +3902,7 @@ void run_mqtt_client_tests(void)
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(connect_clean0_preserves_qos2_dedup);
     RUN_TEST(connect_clean1_clears_qos2_dedup);
+    RUN_TEST(connect_resume_declined_clears_qos2_dedup);
 #endif
     RUN_TEST(publish_v311_ack_not_misread_as_rejected);
     RUN_TEST(publish_v5_topic_alias_zero_rejected);
