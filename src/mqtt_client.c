@@ -435,6 +435,20 @@ static int MqttClient_RecvQuotaReserve(MqttClient* client,
     return reserved;
 }
 
+/* Credit one Receive Maximum unit back for this message. The caller must hold
+ * lockClient (where applicable). Idempotent via recvQuotaHeld, so a second
+ * release for the same message is a no-op. */
+static void MqttClient_RecvQuotaRelease_Locked(MqttClient* client,
+    MqttMsgStat* stat)
+{
+    if (stat->recvQuotaHeld) {
+        if (client->server_recv_max < client->server_recv_max_negotiated) {
+            client->server_recv_max++;
+        }
+        stat->recvQuotaHeld = 0;
+    }
+}
+
 static void MqttClient_RecvQuotaRelease(MqttClient* client, MqttMsgStat* stat)
 {
 #ifdef WOLFMQTT_MULTITHREAD
@@ -442,17 +456,69 @@ static void MqttClient_RecvQuotaRelease(MqttClient* client, MqttMsgStat* stat)
         return;
     }
 #endif
-    if (stat->recvQuotaHeld) {
-        if (client->server_recv_max < client->server_recv_max_negotiated) {
-            client->server_recv_max++;
-        }
-        stat->recvQuotaHeld = 0;
-    }
+    MqttClient_RecvQuotaRelease_Locked(client, stat);
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
 }
 #endif /* WOLFMQTT_V5 */
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* Inbound QoS 2 de-duplication. A subscribing client that has delivered a
+ * QoS 2 PUBLISH to the application and answered with PUBREC records its packet
+ * id until the matching PUBREL arrives, so a retransmitted PUBLISH is
+ * acknowledged again without a second delivery [MQTT-4.3.3-10]. These run on
+ * the receive path (under lockRecv), so no extra locking is required. */
+static int MqttClient_RecvQos2_Contains(const MqttClient* client,
+    word16 packet_id)
+{
+    int i;
+
+    if (client == NULL || packet_id == 0) {
+        return 0;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == packet_id) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
+{
+    int i;
+
+    if (client == NULL || packet_id == 0 ||
+            MqttClient_RecvQos2_Contains(client, packet_id)) {
+        return;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == 0) {
+            client->recv_qos2_pending[i] = packet_id;
+            return;
+        }
+    }
+    /* Table full: this id stays untracked, so a later retransmit of it may
+     * still reach the application. Delivery correctness is preserved; only the
+     * duplicate suppression is best effort under a flood of unacked QoS 2. */
+}
+
+static void MqttClient_RecvQos2_Remove(MqttClient* client, word16 packet_id)
+{
+    int i;
+
+    if (client == NULL || packet_id == 0) {
+        return;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == packet_id) {
+            client->recv_qos2_pending[i] = 0;
+            return;
+        }
+    }
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 #ifdef WOLFMQTT_MULTITHREAD
 
@@ -544,6 +610,11 @@ void MqttClient_RespList_Remove(MqttClient *client, MqttPendResp *rmResp)
         }
     }
     if (tmpResp) {
+    #ifdef WOLFMQTT_V5
+        /* Drop the reserved-quota back-reference so a recycled publish object
+         * cannot carry a stale pointer into a future pending response. */
+        tmpResp->recvQuotaStat = NULL;
+    #endif
         /* Fix up the first and last pointers */
         if (client->firstPendResp == tmpResp) {
             client->firstPendResp = tmpResp->next;
@@ -1100,6 +1171,15 @@ static int MqttClient_HandlePacket(MqttClient* client,
                 MQTT_PACKET_TYPE_PUBLISH_ACK :
                 MQTT_PACKET_TYPE_PUBLISH_REC;
             resp->packet_id = packet_id;
+        #if WOLFMQTT_MAX_QOS >= 2
+            /* Record this QoS 2 packet id as delivered and awaiting PUBREL so a
+             * retransmit is acknowledged again without a second delivery
+             * [MQTT-4.3.3-10]. A no-op for the retransmit, which is already
+             * tracked. */
+            if (packet_qos == MQTT_QOS_2) {
+                MqttClient_RecvQos2_Add(client, packet_id);
+            }
+        #endif
             break;
         }
         case MQTT_PACKET_TYPE_PUBLISH_ACK:
@@ -1149,7 +1229,39 @@ static int MqttClient_HandlePacket(MqttClient* client,
             if (packet_type == MQTT_PACKET_TYPE_PUBLISH_REC &&
                 client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 (((MqttPublishResp*)packet_obj)->reason_code & 0x80)) {
+            #ifdef WOLFMQTT_MULTITHREAD
+                /* The QoS 2 exchange ends here with no PUBCOMP [MQTT-4.9].
+                 * Complete the PUBCOMP pending response with the rejection so a
+                 * write-only publisher polling for it observes the failure
+                 * instead of spinning on CONTINUE, release the reserved unit,
+                 * and clear the back-reference so a later cancel/disconnect
+                 * cannot touch it. Idempotent for an ordinary waiting
+                 * publisher, whose own wait also surfaces the rejection. */
+                MqttPendResp* qpr = NULL;
+                if (wm_SemLock(&client->lockClient) == 0) {
+                    if (MqttClient_RespList_Find(client,
+                            MQTT_PACKET_TYPE_PUBLISH_COMP, packet_id, &qpr) &&
+                            qpr != NULL) {
+                        if (qpr->recvQuotaStat != NULL) {
+                            MqttClient_RecvQuotaRelease_Locked(client,
+                                qpr->recvQuotaStat);
+                            qpr->recvQuotaStat = NULL;
+                        }
+                        qpr->packet_ret = MQTT_CODE_ERROR_PUBLISH_REJECTED;
+                        qpr->packetDone = 1;
+                    }
+                    wm_SemUnlock(&client->lockClient);
+                }
+            #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PUBLISH_REJECTED);
+            }
+        #endif
+
+        #if WOLFMQTT_MAX_QOS >= 2
+            /* An incoming PUBREL completes the inbound QoS 2 handshake: drop the
+             * awaiting-PUBREL record so a future PUBLISH may reuse the id. */
+            if (packet_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
+                MqttClient_RecvQos2_Remove(client, packet_id);
             }
         #endif
 
@@ -1615,6 +1727,19 @@ wait_again:
                 if (wm_SemLock(&client->lockClient) == 0) {
                     pendResp->packetDone = 1;
                     pendResp->packet_ret = rc;
+                #ifdef WOLFMQTT_V5
+                    /* A write-only QoS>0 publish reserves a Receive Maximum unit
+                     * but does not wait for its own ack; release it here as this
+                     * reading thread completes the terminal PUBACK / PUBCOMP,
+                     * via the reserving stat recorded on the pending response.
+                     * Only reached on a completed (non-error) response, so no
+                     * result gate is needed. Idempotent, so an ordinary publish
+                     * that also releases in its waiting thread is unaffected. */
+                    if (pendResp->recvQuotaStat != NULL) {
+                        MqttClient_RecvQuotaRelease_Locked(client,
+                            pendResp->recvQuotaStat);
+                    }
+                #endif
                 #ifdef WOLFMQTT_DEBUG_CLIENT
                     PRINTF("PendResp Done %p", pendResp);
                 #endif
@@ -1959,9 +2084,52 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* Return 1 if the CONNECT carries an Authentication Method property, i.e. the
+ * connection is negotiating enhanced authentication [MQTT-4.12]. */
+static int MqttConnect_HasAuthMethod(const MqttConnect* mc_connect)
+{
+    const MqttProp* prop;
+
+    if (mc_connect == NULL) {
+        return 0;
+    }
+    for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_AUTH_METHOD) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* Return 1 if the CONNECT already carries a Receive Maximum property, i.e. the
+ * application picked its own inbound flow-control window. */
+static int MqttConnect_HasRecvMax(const MqttConnect* mc_connect)
+{
+    const MqttProp* prop;
+
+    if (mc_connect == NULL) {
+        return 0;
+    }
+    for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_RECEIVE_MAX) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
+#endif
+
 int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 {
     int rc;
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+    MqttProp recv_max_prop;
+    MqttProp* app_props = NULL;
+    int recv_max_added = 0;
+#endif
 
     /* Validate required arguments */
     if (client == NULL || mc_connect == NULL) {
@@ -1987,6 +2155,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             return rc;
         }
         XMEMSET(&mc_connect->ack, 0, sizeof(mc_connect->ack));
+
+        /* Record whether this connection negotiates enhanced authentication so
+         * a later MqttClient_Auth can be refused when no Authentication Method
+         * was sent [MQTT-4.12.0-1]. Recomputed each connect, so it also resets
+         * across a reconnect on the same client. */
+        client->auth_method_set =
+            (byte)MqttConnect_HasAuthMethod(mc_connect);
     #endif
         /* Warn if credentials are being sent without TLS */
     #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -2038,8 +2213,39 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         client->topic_alias_max = 0;
     #endif
 
+    #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+        /* [MQTT-3.3.4] Receive Maximum bounds the QoS 1 and QoS 2 PUBLISH
+         * packets the server may have in flight toward this client. The inbound
+         * QoS 2 de-duplication table tracks MQTT_MAX_RECV_QOS2 packet ids
+         * awaiting PUBREL; with no advertised limit a server may exceed it, and
+         * an id that no longer fits goes untracked, so a retransmit of it would
+         * reach the application a second time [MQTT-4.3.3-10]. Advertising the
+         * table size keeps a conforming server inside it. An application that
+         * supplied its own Receive Maximum keeps it - that is an explicit
+         * choice, and above MQTT_MAX_RECV_QOS2 the dedup is best effort again.
+         * The property lives on this stack frame and is linked only across the
+         * encode below, so the caller's list is unchanged on return. */
+        if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                !MqttConnect_HasRecvMax(mc_connect)) {
+            XMEMSET(&recv_max_prop, 0, sizeof(recv_max_prop));
+            recv_max_prop.type = MQTT_PROP_RECEIVE_MAX;
+            recv_max_prop.data_short = (word16)MQTT_MAX_RECV_QOS2;
+            recv_max_prop.next = mc_connect->props;
+            app_props = mc_connect->props;
+            mc_connect->props = &recv_max_prop;
+            recv_max_added = 1;
+        }
+    #endif
+
         /* Encode the connect packet */
         rc = MqttEncode_Connect(client->tx_buf, client->tx_buf_len, mc_connect);
+    #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+        /* Unlink the stack-local property before anything else walks or frees
+         * the caller's list. */
+        if (recv_max_added) {
+            mc_connect->props = app_props;
+        }
+    #endif
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
             rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_CONNECT),
@@ -2241,6 +2447,32 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CONNECT_REFUSED);
     }
 
+    /* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] A Server MUST report Session Present = 0
+     * when the Client requested Clean Session / Clean Start. A successful
+     * CONNACK that reports Session Present = 1 is then a protocol violation:
+     * refuse it rather than proceed on session state the client never had.
+     * Returning an error also leaves keep-alive disarmed below, and the caller
+     * tears the transport down as it does for a refused CONNACK. */
+    if (rc == MQTT_CODE_SUCCESS && mc_connect->clean_session &&
+            (mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT)) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+    }
+
+#if WOLFMQTT_MAX_QOS >= 2
+    /* The server's Session Present flag, not the client's request, decides
+     * whether inbound QoS 2 dedup state carries over. Keep it only when the
+     * server resumed the session (Session Present = 1); on any fresh session -
+     * a requested Clean Start or a resume the server declined - drop stale
+     * pending packet ids so they cannot suppress a new inbound QoS 2 PUBLISH
+     * that reuses one [MQTT-4.3.3-10]. Packet ids also restart per connection,
+     * so a fresh session must start with an empty table. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            !(mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT)) {
+        XMEMSET(client->recv_qos2_pending, 0,
+            sizeof(client->recv_qos2_pending));
+    }
+#endif
+
 #ifndef WOLFMQTT_NO_TIME
     if (rc == MQTT_CODE_SUCCESS) {
         /* Connection accepted: arm auto keep-alive. A v5 Server Keep Alive
@@ -2269,6 +2501,14 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 {
     int rc = MQTT_CODE_SUCCESS;
     byte msg_done;
+#if WOLFMQTT_MAX_QOS >= 2
+    /* A retransmitted QoS 2 PUBLISH still awaiting its PUBREL must be drained to
+     * keep the stream in sync, but not delivered to the application again
+     * [MQTT-4.3.3-10]. Re-derived from the packet id so it survives non-blocking
+     * re-entry into this function. */
+    int suppress_cb = (publish->qos == MQTT_QOS_2 &&
+        MqttClient_RecvQos2_Contains(client, publish->packet_id));
+#endif
 
     /* Handle packet callback and read remaining payload */
     do {
@@ -2278,7 +2518,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 
         if (publish->buffer_new) {
             /* Issue callback for new message (first time only) */
-            if (client->msg_cb) {
+            if (client->msg_cb
+            #if WOLFMQTT_MAX_QOS >= 2
+                && !suppress_cb
+            #endif
+            ) {
                 /* if using the temp publish message buffer,
                    then populate message context with client context */
                 if (publish->ctx == NULL && &client->msg.publish == publish) {
@@ -2331,7 +2575,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
                     publish->total_len) ? 1 : 0;
 
                 /* Issue callback for additional publish payload */
-                if (client->msg_cb) {
+                if (client->msg_cb
+                #if WOLFMQTT_MAX_QOS >= 2
+                    && !suppress_cb
+                #endif
+                ) {
                     rc = client->msg_cb(client, publish, publish->buffer_new,
                                         msg_done);
                     if (rc != MQTT_CODE_SUCCESS) {
@@ -2544,7 +2792,9 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
     }
 
-    /* [MQTT-3.3.2.3.4]: reject a Topic Alias over CONNACK's maximum. */
+    /* [MQTT-3.3.2.3.4]: reject a Topic Alias over CONNACK's maximum.
+     * [MQTT-3.3.4-6]: a Client-to-Server PUBLISH MUST NOT carry a
+     * Subscription Identifier. */
     if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         MqttProp* prop;
         for (prop = publish->props; prop != NULL; prop = prop->next) {
@@ -2553,7 +2803,11 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     (prop->data_short > client->topic_alias_max)) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
                 }
-                break;
+            }
+            /* The Subscription Identifier is only valid on a Server-to-Client
+             * PUBLISH the broker generates; reject a caller-supplied one. */
+            else if (prop->type == MQTT_PROP_SUBSCRIPTION_ID) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
             }
         }
     }
@@ -2571,14 +2825,22 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
 
         #ifdef WOLFMQTT_V5
             /* [MQTT-3.1.2.11.3]: atomically reserve one flow-control unit,
-             * refusing once the quota is exhausted. Released when the publish
-             * terminates. Only reached in MQTT_MSG_BEGIN, so once per logical
-             * publish. Write-only publishes are excluded: a reader thread owns
-             * their ack, so a per-object reservation cannot be released
-             * reliably across that hand-off. */
-            if (!writeOnly &&
-                client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+             * refusing once the quota is exhausted. Only reached in
+             * MQTT_MSG_BEGIN, so once per logical publish. The unit is released
+             * only on the acknowledgement, so a publish is reserved only when
+             * that ack can be tracked to completion. A write-only publish in a
+             * WOLFMQTT_MULTITHREAD build without WOLFMQTT_NONBLOCK returns
+             * success immediately, abandoning ack tracking (and the caller may
+             * free the object), so it is left unreserved there - the alternative
+             * would either over-credit an on-wire PUBLISH [MQTT-4.9] or dangle.
+             * A blocking (non-multithread) write-only still waits, and a
+             * non-blocking one keeps its pending response for the reader, so
+             * both reserve. */
+            if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                 publish->qos > MQTT_QOS_0 &&
+            #if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+                !writeOnly &&
+            #endif
                 !MqttClient_RecvQuotaReserve(client, publish))
             {
                 MqttWriteStop(client, &publish->stat);
@@ -2603,6 +2865,24 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
             #endif
                 return rc;
             }
+        #ifdef WOLFMQTT_V5
+            /* [MQTT-3.1.2-24] The whole PUBLISH must fit the Server's Maximum
+             * Packet Size. MqttPacket_Write only sees each tx_buf-sized
+             * fragment, so a streamed or oversized payload can slip past it;
+             * check the full packet once here before any byte is written.
+             * rc is fixed header + variable header + the in-buffer payload
+             * chunk (publish->intBuf_len), so (rc - intBuf_len) is the fixed
+             * plus variable header and the full size adds total_len. The
+             * comparison is ordered to avoid unsigned overflow. */
+            if (client->packet_sz_max > 0 &&
+                ((publish->total_len > client->packet_sz_max) ||
+                 (((word32)rc - publish->intBuf_len) >
+                     (client->packet_sz_max - publish->total_len)))) {
+                MqttWriteStop(client, &publish->stat);
+                MqttClient_RestoreRecvQuota(client, publish);
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+            }
+        #endif
             client->write.len = rc;
 
         #ifdef WOLFMQTT_MULTITHREAD
@@ -2616,6 +2896,14 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     /* inform other threads of expected response */
                     rc = MqttClient_RespList_Add(client, resp_type,
                         publish->packet_id, &publish->pendResp, &publish->resp);
+                #ifdef WOLFMQTT_V5
+                    /* Let the thread that completes this ack release any
+                     * reserved Receive Maximum unit, needed for a write-only
+                     * publish that does not wait for its own ack. */
+                    if (rc == 0 && publish->stat.recvQuotaHeld) {
+                        publish->pendResp.recvQuotaStat = &publish->stat;
+                    }
+                #endif
                     wm_SemUnlock(&client->lockClient);
                 }
                 if (rc != 0) {
@@ -2711,7 +2999,12 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                         publish->packet_id);
                 #ifndef WOLFMQTT_NONBLOCK
                     if (rc == MQTT_CODE_CONTINUE) {
-                        /* mark success, let other thread handle response */
+                        /* No non-blocking re-entry will complete this ack, so
+                         * report success. This build does not reserve quota for
+                         * a write-only publish (see the reserve gate above), and
+                         * the pending response is unlinked below, so nothing is
+                         * leaked and no reference to the caller's object
+                         * remains. */
                         rc = MQTT_CODE_SUCCESS;
                     }
                 #endif
@@ -2726,15 +3019,18 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                         publish->packet_id, client->cmd_timeout_ms, NULL);
 
                 #ifdef WOLFMQTT_V5
-                    /* Replenish the reserved quota unit only on a real
-                     * acknowledgement. rc is still SUCCESS here for both a clean
-                     * PUBACK/PUBCOMP and a rejecting reason code (reclassified to
-                     * PUBLISH_REJECTED just below), which both free the unit
-                     * [MQTT-4.9]. A timeout leaves the PUBLISH unacknowledged on
-                     * a still-open connection - the server keeps counting it
-                     * against Receive Maximum - so crediting here would let the
-                     * client exceed the negotiated quota. */
-                    if (rc == MQTT_CODE_SUCCESS) {
+                    /* Replenish the reserved quota unit on any real end to the
+                     * exchange, all of which free the server's unit [MQTT-4.9]:
+                     * a clean PUBACK/PUBCOMP (rc SUCCESS), a rejecting
+                     * PUBACK/PUBCOMP reason code (still SUCCESS here,
+                     * reclassified below), and a PUBREC rejection (surfaced
+                     * directly as PUBLISH_REJECTED, which without this credit
+                     * would leak a unit in a non-multithread build). A timeout
+                     * leaves the PUBLISH unacknowledged on a still-open
+                     * connection - the server keeps counting it - so it is
+                     * excluded. */
+                    if (rc == MQTT_CODE_SUCCESS ||
+                            rc == MQTT_CODE_ERROR_PUBLISH_REJECTED) {
                         MqttClient_RestoreRecvQuota(client, publish);
                     }
 
@@ -2763,6 +3059,12 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                     break;
             #endif
             #ifdef WOLFMQTT_MULTITHREAD
+                /* Remove the pending response before returning: a caller told
+                 * SUCCESS may free its publish object, so no reference to it may
+                 * remain in the list. A write-only publish under
+                 * WOLFMQTT_NONBLOCK returned CONTINUE above and broke out before
+                 * here, leaving its entry for the reading thread to complete and
+                 * remove. */
                 if (wm_SemLock(&client->lockClient) == 0) {
                     MqttClient_RespList_Remove(client, &publish->pendResp);
                     wm_SemUnlock(&client->lockClient);
@@ -3427,7 +3729,13 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
 
 int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 {
-    if (auth == NULL) {
+    if (client == NULL || auth == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    /* [MQTT-4.12.0-1] An AUTH may only be sent on a connection whose CONNECT
+     * carried an Authentication Method. Refuse otherwise so a client cannot
+     * emit an AUTH on a connection that never negotiated enhanced auth. */
+    if (client->auth_method_set == 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     return MqttClient_AuthEx(client, auth, &auth->stat,
@@ -3651,6 +3959,11 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
+            /* Do not credit any reserved Receive Maximum unit here: the PUBLISH
+             * may already be on the wire, where the server keeps counting it
+             * [MQTT-4.9], so crediting it on a local cancel could exceed the
+             * negotiated quota. The unit is released on the acknowledgement, or
+             * recovered when the connection resets server_recv_max. */
             MqttClient_RespList_Remove(client, tmpResp);
             break;
         }
@@ -3756,6 +4069,9 @@ int MqttClient_NetDisconnect(MqttClient *client)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
+            /* Reserved Receive Maximum units are not credited on disconnect
+             * (the PUBLISH may be on the wire); the next connect resets
+             * server_recv_max to the newly negotiated value. */
             MqttClient_RespList_Remove(client, tmpResp);
         }
         wm_SemUnlock(&client->lockClient);

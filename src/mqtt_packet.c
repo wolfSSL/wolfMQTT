@@ -313,13 +313,41 @@ static int MqttPacket_PublishRespReasonCodeValid(byte type, byte code)
  * it must be treated as malformed. The length is decoded by the caller
  * via MqttDecode_String so this helper takes (filter, len) rather than
  * a NUL-terminated string. */
-int MqttPacket_TopicFilterValid(const char* filter, word16 len)
+int MqttPacket_TopicFilterValid_ex(const char* filter, word16 len,
+    byte protocol_level)
 {
     word16 i;
+    word16 start = 0;
+
     if (filter == NULL || len == 0) {
         return 0;
     }
-    for (i = 0; i < len; i++) {
+
+#ifdef WOLFMQTT_V5
+    /* MQTT v5 shared subscription: $share/{ShareName}/{filter} [MQTT-4.8.2].
+     * The ShareName must be present and free of '/', '+' and '#', and a
+     * non-empty filter must follow. The trailing filter is then validated by
+     * the generic wildcard rules below. */
+    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 && len >= 7 &&
+            XMEMCMP(filter, "$share/", 7) == 0) {
+        word16 name_end = 7;
+        while (name_end < len && filter[name_end] != '/') {
+            if (filter[name_end] == '+' || filter[name_end] == '#') {
+                return 0;
+            }
+            name_end++;
+        }
+        /* Reject an empty ShareName, a missing separator, or an empty filter. */
+        if (name_end == 7 || name_end >= (word16)(len - 1)) {
+            return 0;
+        }
+        start = (word16)(name_end + 1);
+    }
+#else
+    (void)protocol_level;
+#endif
+
+    for (i = start; i < len; i++) {
         char c = filter[i];
         if (c == '#') {
             if (i != 0 && filter[i - 1] != '/') {
@@ -340,6 +368,25 @@ int MqttPacket_TopicFilterValid(const char* filter, word16 len)
     }
     return 1;
 }
+
+int MqttPacket_TopicFilterValid(const char* filter, word16 len)
+{
+    /* Default to v3.1.1 semantics, where '$share/...' is an ordinary filter
+     * with no shared-subscription constraints. */
+    return MqttPacket_TopicFilterValid_ex(filter, len,
+        MQTT_CONNECT_PROTOCOL_LEVEL_4);
+}
+
+#ifdef WOLFMQTT_V5
+/* Return 1 if the Topic Filter is an MQTT v5 shared subscription, i.e. it
+ * begins with the "$share/" prefix [MQTT-4.8.2]. Full ShareName validity is
+ * enforced by MqttPacket_TopicFilterValid_ex; this only detects the form. */
+static int MqttPacket_TopicFilterIsShared(const char* filter, word16 len)
+{
+    return (filter != NULL && len >= 7 &&
+        XMEMCMP(filter, "$share/", 7) == 0);
+}
+#endif
 
 /* Validate an MQTT PUBLISH Topic Name against [MQTT-3.3.2-2] /
  * [MQTT-4.7.1-1] (Topic Names MUST NOT contain wildcard characters '#'
@@ -2678,8 +2725,13 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
             }
             /* Reject filters the decoder would treat as malformed so the
              * encoder cannot emit an undecodable SUBSCRIBE [MQTT-4.7]. */
+        #ifdef WOLFMQTT_V5
+            if (!MqttPacket_TopicFilterValid_ex(topic->topic_filter,
+                    (word16)str_len, subscribe->protocol_level)) {
+        #else
             if (!MqttPacket_TopicFilterValid(topic->topic_filter,
                     (word16)str_len)) {
+        #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         #ifndef WOLFMQTT_NO_UTF8_VALIDATION
@@ -2766,6 +2818,13 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
              * reserved, so the encoder cannot emit an undecodable SUBSCRIBE. */
             if ((topic->sub_options & ~MQTT_SUBSCRIBE_OPTIONS_MASK) != 0 ||
                 ((topic->sub_options >> 4) & 0x03) == 0x03) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+            /* [MQTT-3.8.3-4] No Local MUST NOT be set on a Shared
+             * Subscription. */
+            if ((topic->sub_options & MQTT_SUBSCRIBE_NO_LOCAL) != 0 &&
+                    MqttPacket_TopicFilterIsShared(topic->topic_filter,
+                        (word16)XSTRLEN(topic->topic_filter))) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
             options |= (byte)(topic->sub_options & MQTT_SUBSCRIBE_OPTIONS_MASK);
@@ -2876,8 +2935,14 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             }
             /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3] Reject
              * empty filters and malformed wildcard placement. */
+        #ifdef WOLFMQTT_V5
+            if (!MqttPacket_TopicFilterValid_ex(topic->topic_filter,
+                                             filter_len,
+                                             subscribe->protocol_level)) {
+        #else
             if (!MqttPacket_TopicFilterValid(topic->topic_filter,
                                              filter_len)) {
+        #endif
                 tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 break;
             }
@@ -2901,6 +2966,14 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
                 if ((options & 0xC0) != 0 ||
                     (options & 0x03) > MQTT_QOS_2 ||
                     ((options >> 4) & 0x03) == 0x03) {
+                    tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
+                /* [MQTT-3.8.3-4] No Local MUST NOT be set on a Shared
+                 * Subscription; treat as a Protocol Error. */
+                if ((options & MQTT_SUBSCRIBE_NO_LOCAL) != 0 &&
+                        MqttPacket_TopicFilterIsShared(topic->topic_filter,
+                            filter_len)) {
                     tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                     break;
                 }
@@ -3116,8 +3189,13 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
             }
             /* Reject filters the decoder would treat as malformed so the
              * encoder cannot emit an undecodable UNSUBSCRIBE [MQTT-4.7]. */
+        #ifdef WOLFMQTT_V5
+            if (!MqttPacket_TopicFilterValid_ex(topic->topic_filter,
+                    (word16)str_len, unsubscribe->protocol_level)) {
+        #else
             if (!MqttPacket_TopicFilterValid(topic->topic_filter,
                     (word16)str_len)) {
+        #endif
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         #ifndef WOLFMQTT_NO_UTF8_VALIDATION
@@ -3290,8 +3368,14 @@ int MqttDecode_Unsubscribe(byte *rx_buf, int rx_buf_len, MqttUnsubscribe *unsubs
             /* [MQTT-4.7.3-1] / [MQTT-4.7.1-2] / [MQTT-4.7.1-3]: an
              * UNSUBSCRIBE Topic Filter must obey the same syntax rules
              * as a SUBSCRIBE Topic Filter. */
+        #ifdef WOLFMQTT_V5
+            if (!MqttPacket_TopicFilterValid_ex(topic->topic_filter,
+                                             filter_len,
+                                             unsubscribe->protocol_level)) {
+        #else
             if (!MqttPacket_TopicFilterValid(topic->topic_filter,
                                              filter_len)) {
+        #endif
                 tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 break;
             }

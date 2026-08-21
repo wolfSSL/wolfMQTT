@@ -3417,6 +3417,7 @@ WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
                     WOLFMQTT_FREE(sp->client_id);
                 }
                 WOLFMQTT_FREE(sp);
+                broker->subs_gen++;
             }
             else {
                 prev = sp;
@@ -3902,6 +3903,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
                 WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
+            broker->subs_gen++;
         }
         else {
             prev = cur;
@@ -3947,6 +3949,28 @@ static void BrokerSubs_EndClientSession(MqttBroker* broker, BrokerClient* bc)
 #endif
     }
 }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Confirm a fan-out loop's snapshotted successor is still linked in
+ * broker->subs. A peer-initiated WS LWS_CALLBACK_CLOSED delivered during a
+ * fan-out write runs BrokerSubs_RemoveClient, which frees every BrokerSub owned
+ * by the closing subscriber. That set can include the node a loop saved as
+ * next_sub, so the snapshot guards only against sub->next moving, not against
+ * next_sub itself being freed. Re-check it before the next dereference,
+ * mirroring the client-list revalidation in MqttBroker_Step. */
+static int BrokerSubs_StillLinked(const MqttBroker* broker,
+    const BrokerSub* node)
+{
+    const BrokerSub* cur = broker->subs;
+    while (cur != NULL) {
+        if (cur == node) {
+            return 1;
+        }
+        cur = cur->next;
+    }
+    return 0;
+}
+#endif
 
 static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     const char* filter, word16 filter_len, MqttQoS qos)
@@ -4031,6 +4055,11 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
         sub->filter[filter_len] = '\0';
         sub->next = broker->subs;
         broker->subs = sub;
+        /* Bump on add too so subs_gen reflects every structural change to the
+         * list, not only removals. Also narrows the ABA window where a free and
+         * a same-address add in one fan-out iteration could otherwise pass the
+         * successor-still-linked check. */
+        broker->subs_gen++;
     }
     else if (sub != NULL) {
         WOLFMQTT_FREE(sub);
@@ -4116,6 +4145,7 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
                 WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
+            broker->subs_gen++;
             if (bc->sub_count > 0) {
                 bc->sub_count--;
             }
@@ -4241,6 +4271,7 @@ static void BrokerSubs_RemoveByClientId(MqttBroker* broker,
                 WOLFMQTT_FREE(cur->client_id);
             }
             WOLFMQTT_FREE(cur);
+            broker->subs_gen++;
         }
         else {
             prev = cur;
@@ -5372,6 +5403,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
 #else
     BrokerSub* sub;
     BrokerSub* next_sub = NULL;
+    word32 subs_gen_snapshot = 0;
 #endif
 
     if (broker == NULL || topic == NULL) {
@@ -5404,8 +5436,10 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
         /* Snapshot the successor before any MqttPacket_Write: a WS fan-out
          * write can drive an lws_service spin whose re-entrant CLOSED frees
          * this client's BrokerSub nodes, so reading sub->next afterwards
-         * would dereference a freed node. */
+         * would dereference a freed node. Also snapshot the subs generation so
+         * next_sub is only re-validated when a free actually happened. */
         next_sub = sub->next;
+        subs_gen_snapshot = broker->subs_gen;
 #endif
         if (sub->client != NULL && sub->client->protocol_level != 0 &&
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -5512,6 +5546,13 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             {
                 MqttPublish out_pub;
                 int enc_rc, wr_rc;
+                /* Cache the client before the write: MqttPacket_Write can drive
+                 * a re-entrant WS close that frees this subscriber's BrokerSub
+                 * nodes (this `sub`), while the BrokerClient itself survives via
+                 * deferred removal. Reaching it through the freed `sub` after
+                 * the write would be a use-after-free; go through wc instead,
+                 * mirroring BrokerHandle_Publish. */
+                BrokerClient* wc = sub->client;
                 XMEMSET(&out_pub, 0, sizeof(out_pub));
                 out_pub.topic_name = (char*)topic;
                 out_pub.qos = eff_qos;
@@ -5523,16 +5564,16 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
                     out_pub.packet_id = BrokerNextPacketId(broker);
                 }
 #ifdef WOLFMQTT_V5
-                out_pub.protocol_level = sub->client->protocol_level;
+                out_pub.protocol_level = wc->protocol_level;
 #endif
-                enc_rc = MqttEncode_Publish(sub->client->tx_buf,
-                    BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
+                enc_rc = MqttEncode_Publish(wc->tx_buf,
+                    BROKER_CLIENT_TX_SZ(wc), &out_pub, 0);
                 if (enc_rc > 0) {
-                    wr_rc = MqttPacket_Write(&sub->client->client,
-                            sub->client->tx_buf, enc_rc);
+                    wr_rc = MqttPacket_Write(&wc->client,
+                            wc->tx_buf, enc_rc);
                     /* Scrub tx_buf unless still in-progress (CONTINUE). */
                     if (wr_rc != MQTT_CODE_CONTINUE) {
-                        BROKER_FORCE_ZERO(sub->client->tx_buf, enc_rc);
+                        BROKER_FORCE_ZERO(wc->tx_buf, enc_rc);
                     }
                 }
             }
@@ -5564,6 +5605,13 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
         }
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
+        /* The write above can drive a re-entrant WS close that frees next_sub.
+         * Only re-validate it when a subscription was actually removed during
+         * the write (generation changed), so the common case stays O(1). */
+        if (next_sub != NULL && broker->subs_gen != subs_gen_snapshot &&
+                !BrokerSubs_StillLinked(broker, next_sub)) {
+            break;
+        }
         sub = next_sub;
 #endif
     }
@@ -6208,6 +6256,32 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
             goto send_connack;
         }
+#ifdef WOLFMQTT_V5
+        /* [MQTT-3.2.2-11] A v5 Server that caps Maximum QoS below the requested
+         * Will QoS must refuse the connection, not silently downgrade the Will
+         * delivery QoS. v3.1.1 has no Maximum QoS advertisement, so it is still
+         * downgraded when the Will is stored below. */
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) {
+            WBLOG_ERR(broker,
+                "broker: LWT QoS %d exceeds max %d sock=%d",
+                (int)mc.lwt_msg->qos, WOLFMQTT_MAX_QOS, (int)bc->sock);
+            ack.return_code = MQTT_REASON_QOS_NOT_SUPPORTED;
+            goto send_connack;
+        }
+#ifndef WOLFMQTT_BROKER_RETAINED
+        /* A v5 Server that does not support retained messages must refuse a
+         * CONNECT whose Will Retain is set, not accept it while advertising
+         * Retain Available = 0 in the same CONNACK. */
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                mc.lwt_msg->retain != 0) {
+            WBLOG_ERR(broker,
+                "broker: LWT retain unsupported sock=%d", (int)bc->sock);
+            ack.return_code = MQTT_REASON_RETAIN_NOT_SUPPORTED;
+            goto send_connack;
+        }
+#endif
+#endif
     }
 #endif
 
@@ -6420,10 +6494,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
             bc->will_payload_len = wp_len;
         }
-        /* Clamp will QoS to this build's Maximum QoS. A v5 client that
-         * sent Will QoS > advertised Max QoS would already be in
-         * Protocol Error territory, but for v3.1.1 (no advertisement)
-         * we silently downgrade rather than rejecting CONNECT. */
+        /* Clamp will QoS to this build's Maximum QoS. A v5 Will over the cap
+         * was already refused above, so this only downgrades v3.1.1, which has
+         * no Maximum QoS advertisement to reject against. */
         bc->will_qos = (mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) ?
             (MqttQoS)WOLFMQTT_MAX_QOS : mc.lwt_msg->qos;
         bc->will_retain = mc.lwt_msg->retain;
@@ -7125,6 +7198,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #ifndef WOLFMQTT_STATIC_MEMORY
         BrokerSub* sub = broker->subs;
         BrokerSub* next_sub = NULL;
+        word32 subs_gen_snapshot = 0;
 #endif
         /* Fan out to matching subscribers */
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -7136,8 +7210,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             /* Snapshot the successor before any MqttPacket_Write: a fan-out
              * write can drive an lws_service spin that frees this client's
              * BrokerSub nodes re-entrantly (LWS_CALLBACK_CLOSED), so reading
-             * sub->next afterwards would dereference a freed node. */
+             * sub->next afterwards would dereference a freed node. Also snapshot
+             * the subs generation so next_sub is only re-validated when a free
+             * actually happened. */
             next_sub = sub->next;
+            subs_gen_snapshot = broker->subs_gen;
 #endif
             if (sub->client != NULL &&
                 sub->client->protocol_level != 0 &&
@@ -7368,6 +7445,14 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                             );
                     }
                 }
+            }
+            /* The write above can drive a re-entrant WS close that frees
+             * next_sub. Only re-validate it when a subscription was actually
+             * removed during the write (generation changed), so the common
+             * case stays O(1). */
+            if (next_sub != NULL && broker->subs_gen != subs_gen_snapshot &&
+                    !BrokerSubs_StillLinked(broker, next_sub)) {
+                break;
             }
             sub = next_sub;
 #endif
@@ -8507,6 +8592,7 @@ static void BrokerSubs_FreeAll(MqttBroker* broker)
             WOLFMQTT_FREE(broker->subs->client_id);
         }
         WOLFMQTT_FREE(broker->subs);
+        broker->subs_gen++;
         broker->subs = next;
     }
 #endif

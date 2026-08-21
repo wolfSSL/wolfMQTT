@@ -3632,6 +3632,124 @@ TEST(topic_filter_valid_helper_table)
     ASSERT_EQ(1, MqttPacket_TopicFilterValid("sport/tennis", 12));
 }
 
+/* [MQTT-4.8.2] v5 shared-subscription filters take the form
+ * '$share/{ShareName}/{filter}': the ShareName must be non-empty and free of
+ * '/', '+' and '#', followed by a non-empty well-formed filter. An empty
+ * ShareName ('$share//topic') is malformed. Under v3.1.1 '$share/' carries no
+ * special meaning, so the same bytes are an ordinary filter with an empty topic
+ * level, which the spec permits, and must still pass. */
+TEST(topic_filter_valid_shared_subscription)
+{
+#ifdef WOLFMQTT_V5
+    /* Well-formed shared filters are accepted. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share/g/sport", 14,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share/g/sport/#", 16,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share/g/sport/+/x", 18,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+
+    /* Empty ShareName ('$share//...') is malformed. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share//sport", 13,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* No '/' after ShareName means there is no trailing filter. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/g", 8,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* Empty trailing filter. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/g/", 9,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* A wildcard inside the ShareName is malformed. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/a+b/x", 12,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/a#/x", 11,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+    /* The trailing filter itself must be well-formed. */
+    ASSERT_EQ(0, MqttPacket_TopicFilterValid_ex("$share/g/a#b", 12,
+        MQTT_CONNECT_PROTOCOL_LEVEL_5));
+#endif
+
+    /* v3.1.1: '$share/' is not special; '$share//sport' is an ordinary filter
+     * with an empty level, which is permitted, so it must pass. */
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid_ex("$share//sport", 13,
+        MQTT_CONNECT_PROTOCOL_LEVEL_4));
+    ASSERT_EQ(1, MqttPacket_TopicFilterValid("$share//sport", 13));
+}
+
+#ifdef WOLFMQTT_V5
+/* [MQTT-3.8.3-4] The No Local option MUST NOT be set on a Shared Subscription.
+ * A v5 SUBSCRIBE encoder given No Local on a '$share/...' filter must reject the
+ * packet instead of putting the illegal combination on the wire. */
+TEST(encode_subscribe_shared_no_local_rejected)
+{
+    byte tx_buf[64];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "$share/g/sport";
+    topic.qos = MQTT_QOS_0;
+    topic.sub_options = MQTT_SUBSCRIBE_NO_LOCAL;
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Positive control: No Local on an ordinary (non-shared) filter is legal and
+ * must still encode, so the shared-subscription guard does not over-reject. */
+TEST(encode_subscribe_no_local_non_shared_accepted)
+{
+    byte tx_buf[64];
+    MqttSubscribe sub;
+    MqttTopic topic;
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "sport/tennis";
+    topic.qos = MQTT_QOS_0;
+    topic.sub_options = MQTT_SUBSCRIBE_NO_LOCAL;
+    sub.topics = &topic;
+    sub.topic_count = 1;
+    sub.packet_id = 1;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = MqttEncode_Subscribe(tx_buf, (int)sizeof(tx_buf), &sub);
+    ASSERT_TRUE(rc > 0);
+}
+
+/* Broker decode side of [MQTT-3.8.3-4]: a v5 SUBSCRIBE reaching the broker with
+ * No Local set on a '$share/...' filter must be rejected as a Protocol Error,
+ * not accepted. */
+TEST(decode_subscribe_shared_no_local_rejected)
+{
+    /* v5 SUBSCRIBE: type=0x82, remain=0x10, packet_id=1, prop_len=0,
+     * filter "$share/g/x" (len 10), options=0x04 (No Local). */
+    byte rx_buf[] = {
+        0x82, 0x10,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x0A, '$', 's', 'h', 'a', 'r', 'e', '/', 'g', '/', 'x',
+        0x04
+    };
+    MqttSubscribe sub;
+    MqttTopic topic_arr[1];
+    int rc;
+
+    XMEMSET(&sub, 0, sizeof(sub));
+    XMEMSET(topic_arr, 0, sizeof(topic_arr));
+    sub.topics = topic_arr;
+    sub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Subscribe(rx_buf, (int)sizeof(rx_buf), &sub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* [MQTT-4.7.3-1] zero-length Topic Filter rejected by SUBSCRIBE decoder. */
 TEST(decode_subscribe_empty_topic_filter_rejected)
 {
@@ -5833,6 +5951,12 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_subscribe_rejects_nul_in_filter);
     RUN_TEST(decode_subscribe_packet_id_zero_rejected);
     RUN_TEST(topic_filter_valid_helper_table);
+    RUN_TEST(topic_filter_valid_shared_subscription);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(encode_subscribe_shared_no_local_rejected);
+    RUN_TEST(encode_subscribe_no_local_non_shared_accepted);
+    RUN_TEST(decode_subscribe_shared_no_local_rejected);
+#endif
     RUN_TEST(decode_subscribe_empty_topic_filter_rejected);
     RUN_TEST(decode_subscribe_bad_hash_placement_rejected);
     RUN_TEST(decode_subscribe_hash_not_last_rejected);

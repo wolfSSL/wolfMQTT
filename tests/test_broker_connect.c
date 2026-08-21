@@ -1239,6 +1239,74 @@ static int first_disconnect_reason(const byte* buf, size_t len)
  *
  * Pre-fix the broker fanned out twice and the subscriber would see two
  * forwarded PUBLISHes, breaking exactly-once delivery. */
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* The fan-out loop re-validates a snapshotted successor only when the broker's
+ * subscription generation changed during the write, keeping the common case
+ * O(1). This pins two things: an ordinary PUBLISH is still delivered to a
+ * matching subscriber, and removing a subscription (UNSUBSCRIBE) bumps the
+ * generation, so a re-entrant free during a later fan-out is still detected. */
+TEST(fanout_subs_generation_bumped_on_unsubscribe)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int sub_pubs;
+    word32 gen_after_sub;
+    /* CONNECT subscriber "A". */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    /* CONNECT publisher "B". */
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'B'
+    };
+    /* SUBSCRIBE packet_id=1, filter "x", QoS 0. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* PUBLISH QoS 0, topic "x", payload "hi". remain = 2+1+2 = 5. */
+    static const byte publish_x[] = {
+        0x30, 0x05, 0x00, 0x01, 'x', 'h', 'i'
+    };
+    /* UNSUBSCRIBE packet_id=2, filter "x". remain = 2 + (2+1) = 5. */
+    static const byte unsubscribe_x[] = {
+        0xA2, 0x05, 0x00, 0x02, 0x00, 0x01, 'x'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The common-case fan-out delivered the PUBLISH to the subscriber. */
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    ASSERT_EQ(1, sub_pubs);
+    gen_after_sub = broker.subs_gen;
+
+    /* UNSUBSCRIBE removes the BrokerSub and must bump the generation. */
+    mock_client_input_append(0, unsubscribe_x, sizeof(unsubscribe_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(broker.subs_gen != gen_after_sub);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 TEST(qos2_duplicate_publish_dedup)
 {
     MqttBroker broker;
@@ -4224,6 +4292,97 @@ TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry)
 
 /* A Will Delay Interval above BROKER_MAX_WILL_DELAY_SEC is clamped so a
  * client cannot monopolize a deferred-will slot indefinitely. */
+#if WOLFMQTT_MAX_QOS < 2
+/* [MQTT-3.2.2-11] A v5 Server whose Maximum QoS is below the requested Will
+ * QoS must refuse the CONNECT with reason 0x9B (QoS not supported) and close,
+ * rather than silently downgrading the stored Will QoS. Only reachable in a
+ * build whose WOLFMQTT_MAX_QOS is below 2. */
+TEST(connect_v5_will_qos_exceeds_max_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* v5 CONNECT: clean + Will flag + Will QoS 2 (flags 0x16), ClientId "W",
+     * empty CONNECT and Will props, Will topic "lwt", Will payload "bye".
+     * remain = 25 (0x19). */
+    static const byte connect_wq2[] = {
+        0x10, 0x19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x16,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'W',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect_wq2, sizeof(connect_wq2));
+    run_broker_one_connect(&broker);
+
+    /* v5 CONNACK: 0x20, remain, ack flags, reason. The connection must be
+     * refused with QoS-not-supported and then closed, not accepted. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_REASON_QOS_NOT_SUPPORTED, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_MAX_QOS < 2 */
+
+#ifndef WOLFMQTT_BROKER_RETAINED
+/* A v5 Server that does not support retained messages must refuse a CONNECT
+ * whose Will Retain is set with reason 0x9A (Retain not supported) and close,
+ * rather than accepting it while advertising Retain Available = 0. */
+TEST(connect_v5_will_retain_unsupported_refused)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* v5 CONNECT: clean + Will flag + Will Retain (flags 0x26), Will QoS 0,
+     * ClientId "W", empty CONNECT and Will props, Will topic "lwt", Will
+     * payload "bye". remain = 25 (0x19). */
+    static const byte connect_wretain[] = {
+        0x10, 0x19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x26,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'W',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect_wretain, sizeof(connect_wretain));
+    run_broker_one_connect(&broker);
+
+    /* v5 CONNACK: 0x20, remain, ack flags, reason. Must be refused with
+     * Retain-not-supported and closed, not accepted. */
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_REASON_RETAIN_NOT_SUPPORTED, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED */
+
 TEST(will_delay_interval_capped)
 {
     MqttBroker broker;
@@ -4886,6 +5045,9 @@ int main(int argc, char** argv)
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
     RUN_TEST(connect_v5_emptyid_clean0_accepted);
 #endif
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(fanout_subs_generation_bumped_on_unsubscribe);
+#endif
     RUN_TEST(qos2_duplicate_publish_dedup);
     RUN_TEST(qos2_phantom_dup_publish_is_fresh);
     RUN_TEST(qos2_publish_after_pubrel_is_fresh);
@@ -5007,6 +5169,12 @@ int main(int argc, char** argv)
     defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(pending_will_publish_time_uses_min_of_delay_and_session_expiry);
     RUN_TEST(will_delay_interval_capped);
+#if WOLFMQTT_MAX_QOS < 2
+    RUN_TEST(connect_v5_will_qos_exceeds_max_refused);
+#endif
+#ifndef WOLFMQTT_BROKER_RETAINED
+    RUN_TEST(connect_v5_will_retain_unsupported_refused);
+#endif
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(puback_malformed_closes_connection);

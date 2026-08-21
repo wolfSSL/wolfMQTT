@@ -218,6 +218,21 @@ typedef struct _MqttSk {
     typedef int (*SN_ClientRegisterCb)(word16 topicId, const char* topicName, void *reg_ctx);
 #endif
 
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Max distinct inbound QoS 2 packet ids tracked awaiting PUBREL, used to
+     * suppress re-delivery of a retransmitted PUBLISH [MQTT-4.3.3-10].
+     * Override in user_settings.h to trade memory for a larger dedup window. */
+    #ifndef MQTT_MAX_RECV_QOS2
+        #define MQTT_MAX_RECV_QOS2 16
+    #endif
+    /* Also advertised as the v5 CONNECT Receive Maximum (see
+     * MqttClient_Connect), so it must be a legal value for that property:
+     * 0 is a Protocol Error [MQTT-3.1.2.11.3] and the field is 16-bit. */
+    #if (MQTT_MAX_RECV_QOS2 < 1) || (MQTT_MAX_RECV_QOS2 > 65535)
+        #error "MQTT_MAX_RECV_QOS2 must be between 1 and 65535"
+    #endif
+#endif
+
 /* Client structure */
 typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
@@ -293,6 +308,18 @@ typedef struct _MqttClient {
     word16 server_recv_max_negotiated;
     /* Max Topic Alias value; absent CONNACK means 0 [3.1.2.11.8]. */
     word16 topic_alias_max;
+    /* Set when the current connection's CONNECT carried an Authentication
+     * Method; gates MqttClient_Auth so an AUTH is never sent on a connection
+     * that never negotiated enhanced authentication [MQTT-4.12.0-1]. */
+    byte   auth_method_set;
+#endif
+
+#if WOLFMQTT_MAX_QOS >= 2
+    /* Inbound QoS 2 packet ids delivered to the application and awaiting their
+     * PUBREL. A retransmitted PUBLISH with an id still listed here is answered
+     * with PUBREC but not delivered a second time [MQTT-4.3.3-10]. Slot value 0
+     * is empty; a QoS 2 packet id is never 0. */
+    word16 recv_qos2_pending[MQTT_MAX_RECV_QOS2];
 #endif
 } MqttClient;
 
