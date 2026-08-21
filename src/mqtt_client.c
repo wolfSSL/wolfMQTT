@@ -2101,11 +2101,35 @@ static int MqttConnect_HasAuthMethod(const MqttConnect* mc_connect)
     }
     return 0;
 }
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* Return 1 if the CONNECT already carries a Receive Maximum property, i.e. the
+ * application picked its own inbound flow-control window. */
+static int MqttConnect_HasRecvMax(const MqttConnect* mc_connect)
+{
+    const MqttProp* prop;
+
+    if (mc_connect == NULL) {
+        return 0;
+    }
+    for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_RECEIVE_MAX) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 #endif
 
 int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 {
     int rc;
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+    MqttProp recv_max_prop;
+    MqttProp* app_props = NULL;
+    int recv_max_added = 0;
+#endif
 
     /* Validate required arguments */
     if (client == NULL || mc_connect == NULL) {
@@ -2189,8 +2213,39 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         client->topic_alias_max = 0;
     #endif
 
+    #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+        /* [MQTT-3.3.4] Receive Maximum bounds the QoS 1 and QoS 2 PUBLISH
+         * packets the server may have in flight toward this client. The inbound
+         * QoS 2 de-duplication table tracks MQTT_MAX_RECV_QOS2 packet ids
+         * awaiting PUBREL; with no advertised limit a server may exceed it, and
+         * an id that no longer fits goes untracked, so a retransmit of it would
+         * reach the application a second time [MQTT-4.3.3-10]. Advertising the
+         * table size keeps a conforming server inside it. An application that
+         * supplied its own Receive Maximum keeps it - that is an explicit
+         * choice, and above MQTT_MAX_RECV_QOS2 the dedup is best effort again.
+         * The property lives on this stack frame and is linked only across the
+         * encode below, so the caller's list is unchanged on return. */
+        if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                !MqttConnect_HasRecvMax(mc_connect)) {
+            XMEMSET(&recv_max_prop, 0, sizeof(recv_max_prop));
+            recv_max_prop.type = MQTT_PROP_RECEIVE_MAX;
+            recv_max_prop.data_short = (word16)MQTT_MAX_RECV_QOS2;
+            recv_max_prop.next = mc_connect->props;
+            app_props = mc_connect->props;
+            mc_connect->props = &recv_max_prop;
+            recv_max_added = 1;
+        }
+    #endif
+
         /* Encode the connect packet */
         rc = MqttEncode_Connect(client->tx_buf, client->tx_buf_len, mc_connect);
+    #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+        /* Unlink the stack-local property before anything else walks or frees
+         * the caller's list. */
+        if (recv_max_added) {
+            mc_connect->props = app_props;
+        }
+    #endif
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d), ID %d, QoS %d",
             rc, MqttPacket_TypeDesc(MQTT_PACKET_TYPE_CONNECT),

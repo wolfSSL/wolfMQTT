@@ -2044,6 +2044,10 @@ TEST(publish_qos1_v5_no_matching_subscribers_returns_success)
     ASSERT_EQ(MQTT_REASON_NO_MATCH_SUB, publish.resp.reason_code);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
+/* A QoS-capped build refuses a QoS 2 publish before it reaches the wire, so
+ * every test below that drives a QoS 2 handshake is capped to match. */
+
 /* QoS 2 completes the PUBLISH -> PUBREC -> PUBREL -> PUBCOMP handshake. A v5
  * broker can reject at the PUBCOMP with a reason code >= 0x80 (e.g. 0x92
  * Packet Identifier not found); MqttClient_Publish must surface that as
@@ -2186,7 +2190,6 @@ TEST(publish_qos2_v5_pubrec_reject_restores_receive_max)
     ASSERT_EQ(1, test_client.server_recv_max);
 }
 
-#if WOLFMQTT_MAX_QOS >= 2
 /* [MQTT-4.3.3-10] A session the server resumes (Clean Start = 0 answered with
  * Session Present = 1) keeps its inbound QoS 2 dedup state across reconnect, so
  * a server retransmit still awaiting PUBREL is not delivered to the application
@@ -2294,6 +2297,154 @@ TEST(connect_resume_declined_clears_qos2_dedup)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(0, test_client.recv_qos2_pending[0]);
 }
+
+static byte g_connect_wire[512];
+static int  g_connect_wire_len;
+
+static int mock_net_write_capture(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)timeout_ms;
+    if (buf != NULL && buf_len > 0 &&
+            g_connect_wire_len + buf_len <= (int)sizeof(g_connect_wire)) {
+        XMEMCPY(g_connect_wire + g_connect_wire_len, buf, (size_t)buf_len);
+        g_connect_wire_len += buf_len;
+    }
+    return buf_len; /* accept the whole chunk */
+}
+
+/* Point *props at the property block of the captured v5 CONNECT and return its
+ * length, or -1 if the frame is truncated. Layout: type byte, Remaining Length
+ * (VBI), 10-byte variable header ("MQTT" + level + flags + keep alive), then
+ * the Property Length (VBI) and the properties themselves. */
+static int connect_wire_props(const byte* wire, int len, const byte** props)
+{
+    int pos = 1; /* past the fixed header type byte */
+    int prop_len = 0;
+    int shift = 0;
+
+    while (pos < len && (wire[pos] & 0x80)) {
+        pos++;
+    }
+    pos++;     /* final Remaining Length byte */
+    pos += 10; /* v5 variable header */
+    while (pos < len) {
+        prop_len |= (int)(wire[pos] & 0x7F) << shift;
+        shift += 7;
+        if (!(wire[pos] & 0x80)) {
+            pos++;
+            break;
+        }
+        pos++;
+    }
+    if (pos > len || prop_len > len - pos) {
+        return -1;
+    }
+    *props = wire + pos;
+    return prop_len;
+}
+
+/* [MQTT-3.3.4] The inbound QoS 2 dedup table holds MQTT_MAX_RECV_QOS2 packet
+ * ids; without an advertised Receive Maximum a server may keep more QoS 2
+ * PUBLISHes un-PUBRELed than fit, and the ids that go untracked lose duplicate
+ * suppression [MQTT-4.3.3-10]. A v5 CONNECT must therefore carry Receive
+ * Maximum (0x21) set to the table size. */
+TEST(connect_v5_advertises_receive_max)
+{
+    int rc;
+    int i;
+    int prop_len;
+    const byte* props = NULL;
+    MqttConnect connect;
+    /* v5 CONNACK: accepted, Session Present = 0, no properties. */
+    static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    g_connect_wire_len = 0;
+    test_net.write = mock_net_write_capture;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Receive Maximum is the only property, so the block is exactly the
+     * identifier plus its two-byte value. */
+    prop_len = connect_wire_props(g_connect_wire, g_connect_wire_len, &props);
+    ASSERT_EQ(3, prop_len);
+    ASSERT_EQ(MQTT_PROP_RECEIVE_MAX, props[0]);
+    ASSERT_EQ((MQTT_MAX_RECV_QOS2 >> 8) & 0xFF, props[1]);
+    ASSERT_EQ(MQTT_MAX_RECV_QOS2 & 0xFF, props[2]);
+
+    /* The client added no property to the caller's list. */
+    ASSERT_NULL(connect.props);
+}
+
+/* An application that set its own Receive Maximum keeps it: the client must not
+ * override the explicit choice, nor emit the property twice, nor leave its own
+ * node linked into the caller's list once the CONNECT is encoded. */
+TEST(connect_v5_app_receive_max_preserved)
+{
+    int rc;
+    int i;
+    int prop_len;
+    const byte* props = NULL;
+    MqttConnect connect;
+    MqttProp app_prop;
+    /* v5 CONNACK: accepted, Session Present = 0, no properties. */
+    static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    g_connect_wire_len = 0;
+    test_net.write = mock_net_write_capture;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&app_prop, 0, sizeof(app_prop));
+    app_prop.type = MQTT_PROP_RECEIVE_MAX;
+    app_prop.data_short = 5;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+    connect.props = &app_prop;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Still a single Receive Maximum, carrying the application's value. */
+    prop_len = connect_wire_props(g_connect_wire, g_connect_wire_len, &props);
+    ASSERT_EQ(3, prop_len);
+    ASSERT_EQ(MQTT_PROP_RECEIVE_MAX, props[0]);
+    ASSERT_EQ(0, props[1]);
+    ASSERT_EQ(5, props[2]);
+
+    /* The caller's list is exactly as it was handed in. */
+    ASSERT_TRUE(connect.props == &app_prop);
+    ASSERT_NULL(app_prop.next);
+}
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* A v3.1.1 PUBACK carries no reason code, so the rejection check must not run
@@ -2324,7 +2475,8 @@ TEST(publish_v311_ack_not_misread_as_rejected)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
 }
 
-#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
+    WOLFMQTT_MAX_QOS >= 2
 /* Pins the documented WOLFMQTT_MULTITHREAD divergence for a QoS 2 PUBREC
  * rejection. A write-only publish registers a pending response for the PUBCOMP
  * and returns without reading; a separate "reading thread" (simulated here by
@@ -2387,7 +2539,7 @@ TEST(publish_qos2_v5_pubrec_rejection_multithread_reader)
     /* The publisher's own struct is NOT updated on this path. */
     ASSERT_EQ(MQTT_REASON_SUCCESS, publish.resp.reason_code);
 }
-#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK */
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK && WOLFMQTT_MAX_QOS >= 2 */
 
 #ifdef WOLFMQTT_MULTITHREAD
 /* The write-only Receive Maximum lifecycle (reserve, enforce, release) is
@@ -2484,6 +2636,7 @@ TEST(publish_writeonly_v5_receive_max_released_on_puback)
     ASSERT_EQ(1, test_client.server_recv_max);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* A write-only QoS 2 publish reserves a unit; a broker rejection at the PUBREC
  * stage (reason >= 0x80) ends the exchange with no PUBCOMP, so the unit must
  * still be credited back rather than leaked. */
@@ -2546,6 +2699,7 @@ TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject)
     ASSERT_NULL(test_client.firstPendResp->recvQuotaStat);
 #endif
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 #endif /* WOLFMQTT_NONBLOCK */
 
 #ifndef WOLFMQTT_NONBLOCK
@@ -3095,12 +3249,15 @@ TEST(wait_message_qos2_publish_acks_pubrec)
     ASSERT_EQ(9, g_last_ack_id);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* [MQTT-4.3.3-10] Until the matching PUBREL is received, a retransmitted QoS 2
  * PUBLISH must be answered with another PUBREC but MUST NOT be delivered to the
  * application a second time. Two identical QoS 2 PUBLISH frames (both packet
  * id 9, no intervening PUBREL) arrive back to back; the message callback must
  * fire exactly once while both frames are acknowledged. Pre-fix the client had
- * no inbound QoS 2 dedup and delivered the duplicate, so g_msg_cb_calls was 2. */
+ * no inbound QoS 2 dedup and delivered the duplicate, so g_msg_cb_calls was 2.
+ * The dedup this asserts is compiled out below WOLFMQTT_MAX_QOS 2, so the test
+ * is capped to match. */
 TEST(wait_message_qos2_duplicate_publish_delivered_once)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -3141,6 +3298,7 @@ TEST(wait_message_qos2_duplicate_publish_delivered_once)
     ASSERT_TRUE(g_pubresp_written);
     ASSERT_EQ(1, g_msg_cb_calls);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* The four PUBLISH-response packet types (PUBACK 4, PUBREC 5, PUBREL 6,
  * PUBCOMP 7) all decode through the same branch of MqttClient_HandlePacket, but
@@ -3895,14 +4053,16 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_qos1_v5_broker_rejection_returns_publish_rejected);
     RUN_TEST(publish_qos1_v5_success_returns_success);
     RUN_TEST(publish_qos1_v5_no_matching_subscribers_returns_success);
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(publish_qos2_v5_broker_rejection_returns_publish_rejected);
     RUN_TEST(publish_qos2_v5_success_returns_success);
     RUN_TEST(publish_qos2_v5_pubrec_rejection_returns_publish_rejected);
     RUN_TEST(publish_qos2_v5_pubrec_reject_restores_receive_max);
-#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(connect_clean0_preserves_qos2_dedup);
     RUN_TEST(connect_clean1_clears_qos2_dedup);
     RUN_TEST(connect_resume_declined_clears_qos2_dedup);
+    RUN_TEST(connect_v5_advertises_receive_max);
+    RUN_TEST(connect_v5_app_receive_max_preserved);
 #endif
     RUN_TEST(publish_v311_ack_not_misread_as_rejected);
     RUN_TEST(publish_v5_topic_alias_zero_rejected);
@@ -3919,14 +4079,17 @@ void run_mqtt_client_tests(void)
     RUN_TEST(cancel_message_retain_is_idempotent);
 #endif
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
-#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
+    WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(publish_qos2_v5_pubrec_rejection_multithread_reader);
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(publish_writeonly_v5_receive_max_quota_exhausted_rejects);
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_puback);
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(publish_writeonly_v5_receive_max_released_on_pubrec_reject);
+#endif
     RUN_TEST(publish_writeonly_v5_cancel_holds_receive_max);
 #else
     RUN_TEST(publish_writeonly_v5_no_dangling_pendresp_on_success);
@@ -3950,7 +4113,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_qos0_publish_no_ack);
     RUN_TEST(wait_message_qos1_publish_acks_puback);
     RUN_TEST(wait_message_qos2_publish_acks_pubrec);
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(wait_message_qos2_duplicate_publish_delivered_once);
+#endif
     RUN_TEST(wait_message_pubrec_emits_pubrel);
     RUN_TEST(wait_message_pubrel_emits_pubcomp);
     RUN_TEST(wait_message_puback_emits_no_ack);

@@ -225,6 +225,12 @@ typedef struct _MqttSk {
     #ifndef MQTT_MAX_RECV_QOS2
         #define MQTT_MAX_RECV_QOS2 16
     #endif
+    /* Also advertised as the v5 CONNECT Receive Maximum (see
+     * MqttClient_Connect), so it must be a legal value for that property:
+     * 0 is a Protocol Error [MQTT-3.1.2.11.3] and the field is 16-bit. */
+    #if (MQTT_MAX_RECV_QOS2 < 1) || (MQTT_MAX_RECV_QOS2 > 65535)
+        #error "MQTT_MAX_RECV_QOS2 must be between 1 and 65535"
+    #endif
 #endif
 
 /* Client structure */
