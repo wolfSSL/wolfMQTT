@@ -2815,19 +2815,31 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 #ifdef WOLFMQTT_V5
 /* Return 1 if the CONNECT carries an Authentication Method property, i.e. the
  * connection is negotiating enhanced authentication [MQTT-4.12]. */
-static int MqttConnect_HasAuthMethod(const MqttConnect* mc_connect)
+/* Record whether the CONNECT carried an Authentication Method and, if so, its
+ * value, so a later client-initiated AUTH can be required to reuse the same
+ * method [MQTT-4.12.0-1]. A value longer than MQTT_AUTH_METHOD_MAX is noted by
+ * auth_method_len but not stored, and MqttClient_Auth then refuses re-auth
+ * because it cannot verify the match. */
+static void MqttClient_StoreAuthMethod(MqttClient* client,
+    const MqttConnect* mc_connect)
 {
     const MqttProp* prop;
 
-    if (mc_connect == NULL) {
-        return 0;
-    }
-    for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+    client->auth_method_set = 0;
+    client->auth_method_len = 0;
+    for (prop = (mc_connect != NULL) ? mc_connect->props : NULL;
+         prop != NULL; prop = prop->next) {
         if (prop->type == MQTT_PROP_AUTH_METHOD) {
-            return 1;
+            client->auth_method_set = 1;
+            client->auth_method_len = prop->data_str.len;
+            if (prop->data_str.len <= MQTT_AUTH_METHOD_MAX &&
+                    prop->data_str.str != NULL) {
+                XMEMCPY(client->auth_method, prop->data_str.str,
+                    prop->data_str.len);
+            }
+            return;
         }
     }
-    return 0;
 }
 
 #if WOLFMQTT_MAX_QOS >= 2
@@ -3172,12 +3184,12 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         }
         XMEMSET(&mc_connect->ack, 0, sizeof(mc_connect->ack));
 
-        /* Record whether this connection negotiates enhanced authentication so
-         * a later MqttClient_Auth can be refused when no Authentication Method
-         * was sent [MQTT-4.12.0-1]. Recomputed each connect, so it also resets
+        /* Record whether this connection negotiates enhanced authentication and
+         * retain the Authentication Method value so a later MqttClient_Auth can
+         * be refused when no method was sent and required to reuse the same
+         * method [MQTT-4.12.0-1]. Recomputed each connect, so it also resets
          * across a reconnect on the same client. */
-        client->auth_method_set =
-            (byte)MqttConnect_HasAuthMethod(mc_connect);
+        MqttClient_StoreAuthMethod(client, mc_connect);
     #endif
         /* Warn if credentials are being sent without TLS */
     #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -5057,6 +5069,35 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
     return rc;
 }
 
+/* Return 1 only if the AUTH packet carries the same Authentication Method value
+ * that CONNECT negotiated [MQTT-4.12.0-1]. A missing method, a length or byte
+ * mismatch, or a CONNECT method too long to have been stored all fail. */
+static int MqttClient_AuthMethodMatches(const MqttClient* client,
+    const MqttAuth* auth)
+{
+    const MqttProp* prop;
+
+    if (client->auth_method_len > MQTT_AUTH_METHOD_MAX) {
+        return 0;
+    }
+    for (prop = auth->props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_AUTH_METHOD) {
+            if (prop->data_str.len != client->auth_method_len) {
+                return 0;
+            }
+            if (client->auth_method_len == 0) {
+                return 1;
+            }
+            if (prop->data_str.str == NULL) {
+                return 0;
+            }
+            return (XMEMCMP(prop->data_str.str, client->auth_method,
+                        client->auth_method_len) == 0);
+        }
+    }
+    return 0;
+}
+
 int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 {
     if (client == NULL || auth == NULL) {
@@ -5068,6 +5109,12 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
      * AUTH (type 15) does not exist below v5. */
     if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
             client->auth_method_set == 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    /* [MQTT-4.12.0-1] Re-authentication must reuse the negotiated method: refuse
+     * an AUTH whose Authentication Method differs from or is missing relative to
+     * the one CONNECT carried, so the mechanism cannot be switched mid-session. */
+    if (!MqttClient_AuthMethodMatches(client, auth)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     return MqttClient_AuthEx(client, auth, &auth->stat,

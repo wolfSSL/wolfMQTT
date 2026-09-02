@@ -1371,6 +1371,49 @@ TEST(auth_v311_session_rejected_before_write)
     MqttClient_PropsFree(auth.props);
 }
 
+/* [MQTT-4.12.0-1] Re-authentication must reuse the CONNECT Authentication
+ * Method. After a CONNECT that negotiated "SCRAM-SHA-256", an AUTH selecting a
+ * different method or omitting it must be refused before it reaches the wire. */
+TEST(auth_mismatched_method_rejected)
+{
+    int rc;
+    MqttAuth auth;
+    MqttProp* prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = run_connect_v5_with_auth_method(1);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, (int)test_client.auth_method_set);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    prop = MqttClient_PropsAdd(&auth.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_AUTH_METHOD;
+    prop->data_str.str = (char*)"PLAIN";
+    prop->data_str.len = (word16)XSTRLEN("PLAIN");
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+    MqttClient_PropsFree(auth.props);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    g_frames_written = 0;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+}
+
 /* MQTT v5: a refused CONNACK (non-zero return code) must NOT mutate long-lived
  * client state even when it carries server properties, otherwise a rejected or
  * malicious broker could shrink the client's packet-size cap or lower its QoS
@@ -7477,6 +7520,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_v5_accepts_disconnect_packet_type);
     RUN_TEST(auth_v311_session_rejected_before_write);
+    RUN_TEST(auth_mismatched_method_rejected);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_rejects_illegal_max_qos);
     RUN_TEST(connect_accepted_connack_rejects_illegal_retain_available);
