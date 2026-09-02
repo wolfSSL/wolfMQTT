@@ -565,6 +565,21 @@ static int MqttClient_RecvQos2_Contains(const MqttClient* client,
     return 0;
 }
 
+static int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client)
+{
+    int i;
+
+    if (client == NULL) {
+        return 0;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
 {
     int i;
@@ -573,15 +588,14 @@ static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
             MqttClient_RecvQos2_Contains(client, packet_id)) {
         return;
     }
+    /* A new id is only delivered after MqttClient_Publish_ReadPayload confirmed
+     * a free slot, so this loop always finds one. */
     for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
         if (client->recv_qos2_pending[i] == 0) {
             client->recv_qos2_pending[i] = packet_id;
             return;
         }
     }
-    /* Table full: this id stays untracked, so a later retransmit of it may
-     * still reach the application. Delivery correctness is preserved; only the
-     * duplicate suppression is best effort under a flood of unacked QoS 2. */
 }
 
 static void MqttClient_RecvQos2_Remove(MqttClient* client, word16 packet_id)
@@ -1697,8 +1711,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
             }
 
         #ifdef WOLFMQTT_V5
-            /* Copy response code in case changed by callback */
+            /* Copy response code in case changed by callback, then clear it on
+             * the (possibly caller-owned) publish object so a later reuse does
+             * not inherit this ack's reason, e.g. a quota rejection. */
             resp->reason_code = publish->resp.reason_code;
+            publish->resp.reason_code = MQTT_REASON_SUCCESS;
         #endif
             /* Populate information needed for ack */
             resp->packet_type = (packet_qos == MQTT_QOS_1) ?
@@ -3590,8 +3607,16 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
      * keep the stream in sync, but not delivered to the application again
      * [MQTT-4.3.3-10]. Re-derived from the packet id so it survives non-blocking
      * re-entry into this function. */
-    int suppress_cb = (publish->qos == MQTT_QOS_2 &&
+    int is_dup = (publish->qos == MQTT_QOS_2 &&
         MqttClient_RecvQos2_Contains(client, publish->packet_id));
+    /* A new QoS 2 id that cannot be recorded because the de-duplication table is
+     * full must not be delivered: its slot would go untracked and a later
+     * retransmit would reach the application a second time [MQTT-4.3.3-10]. The
+     * payload is still drained to keep the stream in sync, then the exchange is
+     * refused without a PUBREC so the sender retries once a slot is free. */
+    int untrackable = (publish->qos == MQTT_QOS_2 && !is_dup &&
+        !MqttClient_RecvQos2_HasFreeSlot(client));
+    int suppress_cb = (is_dup || untrackable);
 #endif
 
     /* Handle packet callback and read remaining payload */
@@ -3673,6 +3698,28 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             }
         }
     } while (!msg_done);
+
+#if WOLFMQTT_MAX_QOS >= 2
+    /* The new QoS 2 id could not be tracked (dedup table full) and the drained
+     * payload was not delivered. Complete the exchange so the connection is not
+     * left livelocked on a PUBLISH that is retransmitted forever. */
+    if (rc == MQTT_CODE_SUCCESS && untrackable) {
+    #ifdef WOLFMQTT_V5
+        if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Reject on the PUBREC with Quota Exceeded so the peer ends the
+             * exchange without a PUBREL and may retry once a slot frees. The
+             * 0x80 error bit makes MqttClient_HandlePacket skip tracking. */
+            publish->resp.reason_code = MQTT_REASON_QUOTA_EXCEEDED;
+        }
+        else
+    #endif
+        {
+            /* MQTT 3.1.1 PUBREC carries no reason code, so the message cannot be
+             * refused in-band. Fail fatally to drop the connection. */
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
+    }
+#endif
 
     /* No message callback registered to deliver this incoming PUBLISH. The
      * payload was drained above to keep the stream in sync, but the application
