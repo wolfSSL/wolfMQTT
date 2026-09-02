@@ -3804,14 +3804,10 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
     WBLOG_INFO(broker,
         "broker: orphan reclaimed client_id=%s queued=%d",
         BrokerLog_Sanitize(new_bc->client_id), new_bc->out_q_count);
-#ifdef WOLFMQTT_BROKER_PERSIST
-    /* The reclaimed queue is now in a LIVE BrokerClient. Persisted
-     * records for this client_id are no longer authoritative - the
-     * subscriber will receive these via the upcoming drain and ack
-     * them. Wipe the on-disk copies so a subsequent crash doesn't
-     * re-deliver them. */
-    (void)BrokerPersist_DelOutQueue(broker, new_bc->client_id);
-#endif
+    /* The durable OUTQ records are kept: each is removed only by its terminal
+     * acknowledgement (BrokerClient_OnPubAck / OnPubComp). Wiping them here
+     * would lose every unacknowledged message if the broker stopped after
+     * reclaim but before the drain re-sent and the peer acknowledged. */
     BrokerOrphan_Remove(broker, o);
     return 1;
 }
