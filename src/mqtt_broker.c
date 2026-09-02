@@ -2381,6 +2381,15 @@ static int BrokerClient_OnPubRec(BrokerClient* bc, word16 packet_id)
             (int)bc->sock, (unsigned)packet_id);
         return 0;
     }
+    /* A PUBREC belongs only to a QoS 2 exchange. One arriving for a QoS 1
+     * PUBLISH is a peer protocol error: leave the entry awaiting its PUBACK
+     * and tell the caller not to answer with a PUBREL the flow cannot back. */
+    if (e->qos != MQTT_QOS_2) {
+        WBLOG_DBG(bc->broker,
+            "broker: PUBREC for QoS %d PUBLISH sock=%d packet_id=%u",
+            (int)e->qos, (int)bc->sock, (unsigned)packet_id);
+        return -1;
+    }
     e->state = BROKER_OUTQ_PUBREL_SENT;
     /* Inflight stays counted - the delivery is still outstanding until
      * PUBCOMP returns. */
@@ -8231,8 +8240,13 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
      * PUBREL we send below is correlated to this entry; PUBCOMP from the
      * subscriber will then close it out. A spurious PUBREC (no matching
      * entry) still gets a PUBREL response for idempotency, just no
-     * queue state change. */
-    (void)BrokerClient_OnPubRec(bc, resp.packet_id);
+     * queue state change. A negative return means the PUBREC targeted a
+     * non-QoS 2 PUBLISH, a Protocol Error [MQTT-4.13.1-1]: that entry stays
+     * awaiting its PUBACK, no PUBREL is sent, and the fatal code closes the
+     * peer. */
+    if (BrokerClient_OnPubRec(bc, resp.packet_id) < 0) {
+        return MQTT_CODE_ERROR_PACKET_TYPE;
+    }
 #endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     tracked = BrokerStaticOrphan_OnPubRec(bc->broker, bc, resp.packet_id);

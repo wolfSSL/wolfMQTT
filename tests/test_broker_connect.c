@@ -7536,6 +7536,84 @@ TEST(will_qos1_routes_through_outq)
 }
 #endif /* WOLFMQTT_BROKER_WILL && !WOLFMQTT_STATIC_MEMORY */
 
+#if !defined(WOLFMQTT_STATIC_MEMORY) && (WOLFMQTT_MAX_QOS >= 2)
+/* A PUBREC belongs only to a QoS 2 exchange. One arriving for an outbound QoS 1
+ * PUBLISH must not advance that entry to PUBREL_SENT nor trigger a PUBREL: the
+ * message stays unacknowledged until its PUBACK. */
+TEST(pubrec_for_qos1_publish_not_advanced)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    word16 packet_id;
+    int i;
+    byte pubrec[] = { 0x50, 0x02, 0x00, 0x00 };
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Subscriber "S" gets one QoS 1 PUBLISH in flight, awaiting PUBACK. */
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 12; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_NOT_NULL(sub_bc->out_q_head);
+    ASSERT_EQ(MQTT_QOS_1, (int)sub_bc->out_q_head->qos);
+    ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT, sub_bc->out_q_head->state);
+    packet_id = sub_bc->out_q_head->packet_id;
+
+    /* The subscriber wrongly answers the QoS 1 PUBLISH with a PUBREC. */
+    pubrec[2] = (byte)(packet_id >> 8);
+    pubrec[3] = (byte)(packet_id & 0xFF);
+    mock_client_input_append(0, pubrec, sizeof(pubrec));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    /* Pre-fix the entry advanced to PUBREL_SENT and a PUBREL was sent while
+     * the connection stayed open. A PUBREC on a QoS 1 PUBLISH is a Protocol
+     * Error [MQTT-4.13.1-1]: no PUBREL may be sent and the peer is closed. The
+     * persistent session is orphaned with the entry still awaiting its PUBACK.
+     * sub_bc is freed by the close, so the entry is inspected via the orphan. */
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH_REL));
+    ASSERT_TRUE(g_clients[0].closed);
+    ASSERT_EQ(1, broker.orphan_session_count);
+    ASSERT_NOT_NULL(broker.orphan_sessions);
+    ASSERT_NOT_NULL(broker.orphan_sessions->out_q_head);
+    ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT,
+        broker.orphan_sessions->out_q_head->state);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_MAX_QOS >= 2 */
+
 #ifdef WOLFMQTT_BROKER_PERSIST
 static int persist_test_write_file(const char* path, const byte* data,
     word32 data_len)
@@ -9401,6 +9479,9 @@ int main(int argc, char** argv)
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_v5_max_packet_size_zero_protocol_error);
 #endif
+#endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && (WOLFMQTT_MAX_QOS >= 2)
+    RUN_TEST(pubrec_for_qos1_publish_not_advanced);
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     RUN_TEST(persist_parent_component_rejected_as_bad_argument);
