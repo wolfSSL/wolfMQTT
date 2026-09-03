@@ -6124,14 +6124,13 @@ TEST(wait_message_qos2_null_msg_cb_errors_no_ack)
 }
 
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
-/* [MQTT-4.3.3-10] The inbound QoS 2 dedup table records each delivered packet id
- * until its PUBREL, so a retransmit is acknowledged again without a second
- * delivery. When the table is full a new packet id cannot be recorded, and
- * delivering it anyway would let a later retransmit reach the application twice.
- * The client must instead complete the exchange without delivering: MQTT 3.1.1
- * has no way to refuse a PUBLISH in-band, so the connection is dropped rather
- * than left livelocked on an id that can never be tracked. */
-TEST(wait_message_qos2_full_dedup_table_v311_disconnects)
+/* [MQTT-4.3.3-10] When the inbound QoS 2 dedup table is full a new packet id
+ * cannot be recorded, and delivering it would let a later retransmit reach the
+ * application twice. The client instead drops the message but MQTT 3.1.1 still
+ * answers with a normal PUBREC and keeps the connection: the id stays suppressed
+ * on every retransmit, so it is never delivered nor duplicated, and the session
+ * is not torn down. */
+TEST(wait_message_qos2_full_dedup_table_v311_pubrec_kept_open)
 {
     int rc;
     int i;
@@ -6170,14 +6169,12 @@ TEST(wait_message_qos2_full_dedup_table_v311_disconnects)
         rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
     }
 
-    /* Pre-fix the message was delivered and a PUBREC sent while the id went
-     * untracked. Now it is not delivered, no PUBREC is sent, and the connection
-     * is torn down. */
-    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+    /* Pre-fix the untracked message was delivered. Now it is not delivered, a
+     * PUBREC is still sent, and the connection stays open. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(0, g_dedup_msg_cb_calls);
-    ASSERT_FALSE(g_pubresp_written);
-    ASSERT_EQ(0, g_frames_written);
-    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+    ASSERT_TRUE(g_pubresp_written);
+    ASSERT_NE(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
                        MQTT_CLIENT_FLAG_IS_CONNECTED));
 }
 
@@ -7702,7 +7699,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_qos0_null_msg_cb_errors);
     RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
-    RUN_TEST(wait_message_qos2_full_dedup_table_v311_disconnects);
+    RUN_TEST(wait_message_qos2_full_dedup_table_v311_pubrec_kept_open);
 #ifdef WOLFMQTT_V5
     RUN_TEST(wait_message_qos2_full_dedup_table_v5_rejects_with_pubrec);
     RUN_TEST(wait_message_ex_qos2_quota_reason_not_retained);

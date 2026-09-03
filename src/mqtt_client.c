@@ -3709,23 +3709,19 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
 
 #if WOLFMQTT_MAX_QOS >= 2
     /* The new QoS 2 id could not be tracked (dedup table full) and the drained
-     * payload was not delivered. Complete the exchange so the connection is not
-     * left livelocked on a PUBLISH that is retransmitted forever. */
+     * payload was not delivered. Acknowledge so the connection is not livelocked
+     * on an endlessly retransmitted PUBLISH; the id stays suppressed on every
+     * retransmit, so the message is dropped rather than delivered twice. */
     if (rc == MQTT_CODE_SUCCESS && untrackable) {
     #ifdef WOLFMQTT_V5
         if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
             /* Reject on the PUBREC with Quota Exceeded so the peer ends the
-             * exchange without a PUBREL and may retry once a slot frees. The
-             * 0x80 error bit makes MqttClient_HandlePacket skip tracking. */
+             * exchange without a PUBREL and may retry once a slot frees. */
             publish->resp.reason_code = MQTT_REASON_QUOTA_EXCEEDED;
         }
-        else
+        /* MQTT 3.1.1 has no in-band rejection, so it sends a normal PUBREC and
+         * keeps the connection open. */
     #endif
-        {
-            /* MQTT 3.1.1 PUBREC carries no reason code, so the message cannot be
-             * refused in-band. Fail fatally to drop the connection. */
-            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
-        }
     }
 #endif
 
