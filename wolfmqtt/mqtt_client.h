@@ -406,6 +406,10 @@ typedef struct _MqttClient {
     SN_Object    msgSN;
     SN_PingReq   pingSN; /* persistent state for a NULL SN ping request */
     byte         pingSN_busy; /* one caller at a time owns pingSN */
+    /* Persistent state for a NULL SN disconnect, so a partial write keeps its
+     * resume position across MQTT_CODE_CONTINUE like every other send. */
+    SN_Disconnect disconnectSN;
+    byte         disconnectSN_busy; /* one caller at a time owns disconnectSN */
     SN_MsgType  sn_wait_packet_type;
     word16      sn_wait_packet_id;
     SN_ClientRegisterCb reg_cb;

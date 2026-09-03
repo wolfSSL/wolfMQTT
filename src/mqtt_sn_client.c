@@ -948,6 +948,63 @@ int SN_Client_SetRegisterCallback(MqttClient *client,
     return rc;
 }
 
+#ifdef WOLFMQTT_MULTITHREAD
+/* Unlink a pending response registered for a send that will not be resumed. */
+static void SN_Client_UnlinkPendResp(MqttClient* client,
+    MqttPendResp* pendResp)
+{
+    if (pendResp != NULL && wm_SemLock(&client->lockClient) == 0) {
+        MqttClient_RespList_Remove(client, pendResp);
+        wm_SemUnlock(&client->lockClient);
+    }
+}
+#endif
+
+/* Drive the packet already encoded in tx_buf to the transport under the write
+ * ownership taken by MqttWriteStart. Returns MQTT_CODE_CONTINUE with ownership
+ * and the pending response kept, so the caller resumes here on its next call;
+ * except that when nothing reached the transport and
+ * WOLFMQTT_ALLOW_NODATA_UNLOCK is set, the writer is released, the pending
+ * response unlinked, and *stat reset to MQTT_MSG_BEGIN so the next call
+ * re-encodes. Returns MQTT_CODE_SUCCESS on completion with the writer released.
+ * On a short or failed write the writer is released, the pending response
+ * unlinked, *stat reset, and the write result returned. */
+static int SN_Client_WriteOwned(MqttClient* client, MqttMsgStat* stat
+#ifdef WOLFMQTT_MULTITHREAD
+    , MqttPendResp* pendResp
+#endif
+    )
+{
+    int xfer;
+    int rc;
+
+    /* Snapshot under ownership: once the writer is released another sender may
+     * re-encode and change client->write.len before the comparison below. */
+    xfer = client->write.len;
+    rc = MqttPacket_Write(client, client->tx_buf, xfer);
+    if (rc == MQTT_CODE_CONTINUE) {
+    #ifdef WOLFMQTT_ALLOW_NODATA_UNLOCK
+        if (client->write.total == 0) {
+            MqttWriteStop(client, stat);
+        #ifdef WOLFMQTT_MULTITHREAD
+            SN_Client_UnlinkPendResp(client, pendResp);
+        #endif
+            stat->write = MQTT_MSG_BEGIN;
+        }
+    #endif
+        return rc;
+    }
+    MqttWriteStop(client, stat);
+    if (rc != xfer) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        SN_Client_UnlinkPendResp(client, pendResp);
+    #endif
+        stat->write = MQTT_MSG_BEGIN;
+        return rc;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
 int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
 {
     int rc;
@@ -958,13 +1015,12 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
     }
 
     if (search->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &search->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
         /* Encode the search packet */
         rc = SN_Encode_SearchGW(client->tx_buf, client->tx_buf_len,
@@ -975,9 +1031,7 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
             SN_MSG_TYPE_SEARCHGW);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &search->stat);
             return rc;
         }
         client->write.len = rc;
@@ -992,26 +1046,23 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &search->stat);
             return rc; /* Error locking client */
         }
     #endif
 
+        search->stat.write = MQTT_MSG_HEADER;
+    }
+    if (search->stat.write == MQTT_MSG_HEADER) {
         /* Send search for gateway packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &search->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &search->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &search->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         search->stat.write = MQTT_MSG_WAIT;
     }
@@ -1103,13 +1154,12 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
 
         case MQTT_MSG_HEADER:
         {
-        #ifdef WOLFMQTT_MULTITHREAD
-            /* Lock send socket mutex */
-            rc = wm_SemLock(&client->lockSend);
+            /* Take write ownership; a write already in progress on this thread
+             * is reported as MQTT_CODE_CONTINUE instead of deadlocking. */
+            rc = MqttWriteStart(client, &will->stat);
             if (rc != 0) {
                 return rc;
             }
-        #endif
 
             /* Encode Will Topic */
             rc = SN_Encode_WillTopic(client->tx_buf, client->tx_buf_len,
@@ -1120,23 +1170,35 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
                 SN_MSG_TYPE_WILLTOPIC);
         #endif
             if (rc > 0) {
-                /* Send Will Topic packet */
                 client->write.len = rc;
-                rc = MqttPacket_Write(client, client->tx_buf,
-                        client->write.len);
-                if (rc == client->write.len) {
-                    rc = 0;
-                }
+                will->stat.write = MQTT_MSG_PAYLOAD;
             }
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            else {
+                MqttWriteStop(client, &will->stat);
+                will->stat.write = MQTT_MSG_BEGIN;
+                break;
+            }
+        }
+        FALL_THROUGH;
 
-        #ifdef WOLFMQTT_NONBLOCK
+        case MQTT_MSG_PAYLOAD:
+        {
+            /* Send Will Topic packet; on MQTT_CODE_CONTINUE ownership is kept
+             * and this state resumes the write rather than re-encoding. */
+            rc = SN_Client_WriteOwned(client, &will->stat
+            #ifdef WOLFMQTT_MULTITHREAD
+                , NULL
+            #endif
+                );
             if (rc == MQTT_CODE_CONTINUE) {
-                return rc; /* resume send on next call */
+                /* A zero-progress release under WOLFMQTT_ALLOW_NODATA_UNLOCK
+                 * resets to BEGIN, but the WILLTOPICREQ was already consumed:
+                 * retry from the send phase, not the request wait. */
+                if (will->stat.write == MQTT_MSG_BEGIN) {
+                    will->stat.write = MQTT_MSG_HEADER;
+                }
+                return rc;
             }
-        #endif
 
             /* reset state */
             will->stat.write = MQTT_MSG_BEGIN;
@@ -1144,7 +1206,6 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
         }
 
         case MQTT_MSG_AUTH:
-        case MQTT_MSG_PAYLOAD:
         case MQTT_MSG_PAYLOAD2:
         case MQTT_MSG_ACK:
         default:
@@ -1224,13 +1285,12 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
 
         case MQTT_MSG_HEADER:
         {
-        #ifdef WOLFMQTT_MULTITHREAD
-            /* Lock send socket mutex */
-            rc = wm_SemLock(&client->lockSend);
+            /* Take write ownership; a write already in progress on this thread
+             * is reported as MQTT_CODE_CONTINUE instead of deadlocking. */
+            rc = MqttWriteStart(client, &will->stat);
             if (rc != 0) {
                 return rc;
             }
-        #endif
             /* Encode Will Message */
             rc = SN_Encode_WillMsg(client->tx_buf,
                 client->tx_buf_len, will);
@@ -1240,34 +1300,52 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
                 SN_MSG_TYPE_WILLMSG);
         #endif
             if (rc > 0) {
-                /* Send Will Message packet */
                 client->write.len = rc;
-                rc = MqttPacket_Write(client, client->tx_buf,
-                        client->write.len);
-                if (rc == client->write.len) {
-                    rc = 0;
-                }
+                will->stat.write = MQTT_MSG_PAYLOAD;
             }
+            else {
+                CLIENT_FORCE_ZERO(client->tx_buf, client->write.len);
+                MqttWriteStop(client, &will->stat);
+                will->stat.write = MQTT_MSG_BEGIN;
+                break;
+            }
+        }
+        FALL_THROUGH;
 
-        #ifdef WOLFMQTT_NONBLOCK
+        case MQTT_MSG_PAYLOAD:
+        {
+            int xfer;
+
+            /* Send Will Message packet. The length is snapshotted under
+             * ownership so the completion check cannot be skewed by another
+             * sender once the writer is released. */
+            xfer = client->write.len;
+            rc = MqttPacket_Write(client, client->tx_buf, xfer);
             if (rc == MQTT_CODE_CONTINUE) {
-                /* Send not complete: tx_buf still holds the will payload and is
-                 * needed to resume, so do not scrub it yet. */
-            #ifdef WOLFMQTT_MULTITHREAD
-                wm_SemUnlock(&client->lockSend);
+            #ifdef WOLFMQTT_ALLOW_NODATA_UNLOCK
+                if (client->write.total == 0) {
+                    /* Nothing reached the transport: scrub and release the
+                     * writer so other operations proceed; re-encode next. */
+                    CLIENT_FORCE_ZERO(client->tx_buf, xfer);
+                    MqttWriteStop(client, &will->stat);
+                    will->stat.write = MQTT_MSG_HEADER;
+                }
             #endif
-                return rc; /* resume send on next call */
+                /* Unfinished write: tx_buf still holds the will payload and is
+                 * needed to resume, so keep ownership, do not scrub, and resume
+                 * here on the next call rather than re-encoding. */
+                return rc;
             }
-        #endif
 
             /* The encoded WILLMSG contains the will payload (potentially
-             * sensitive). Scrub tx_buf before releasing lockSend so another
+             * sensitive). Scrub tx_buf before releasing the writer so another
              * thread cannot observe residual plaintext (mirrors the mitigation
              * in MqttClient_Connect). */
-            CLIENT_FORCE_ZERO(client->tx_buf, client->write.len);
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            CLIENT_FORCE_ZERO(client->tx_buf, xfer);
+            MqttWriteStop(client, &will->stat);
+            if (rc == xfer) {
+                rc = 0;
+            }
 
             /* reset state */
             will->stat.write = MQTT_MSG_BEGIN;
@@ -1275,7 +1353,6 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
         }
 
         case MQTT_MSG_AUTH:
-        case MQTT_MSG_PAYLOAD:
         case MQTT_MSG_PAYLOAD2:
         case MQTT_MSG_ACK:
         default:
@@ -1314,13 +1391,12 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 
         mc_connect->will_done = SN_WILL_DONE_NONE;
 
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &mc_connect->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
     /* Encode the connect packet */
         rc = SN_Encode_Connect(client->tx_buf, client->tx_buf_len, mc_connect);
@@ -1330,9 +1406,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         SN_MSG_TYPE_CONNECT, 0, 0);
 #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &mc_connect->stat);
             return rc;
         }
         client->write.len = rc;
@@ -1347,26 +1421,23 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &mc_connect->stat);
             return rc; /* Error locking client */
         }
     #endif
 
+        mc_connect->stat.write = MQTT_MSG_HEADER;
+    }
+    if (mc_connect->stat.write == MQTT_MSG_HEADER) {
         /* Send connect packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &mc_connect->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &mc_connect->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &mc_connect->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         mc_connect->stat.write = MQTT_MSG_WAIT;
     }
@@ -1432,13 +1503,12 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
     }
 
     if (will->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &will->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
         /* Encode Will Topic Update */
         rc = SN_Encode_WillTopicUpdate(client->tx_buf,
@@ -1449,9 +1519,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
             SN_MSG_TYPE_WILLTOPICUPD);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &will->stat);
             return rc;
         }
         client->write.len = rc;
@@ -1466,26 +1534,23 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &will->stat);
             return rc; /* Error locking client */
         }
     #endif
 
+        will->stat.write = MQTT_MSG_HEADER;
+    }
+    if (will->stat.write == MQTT_MSG_HEADER) {
         /* Send Will Topic Update packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &will->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &will->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &will->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         will->stat.write = MQTT_MSG_WAIT;
     }
@@ -1520,14 +1585,12 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
     }
 
     if (will->stat.write == MQTT_MSG_BEGIN) {
-        int xfer = 0;
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &will->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
         /* Encode Will Message Update */
         rc = SN_Encode_WillMsgUpdate(client->tx_buf,
                 client->tx_buf_len, will);
@@ -1537,13 +1600,10 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
             SN_MSG_TYPE_WILLMSGUPD);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &will->stat);
             return rc;
         }
         client->write.len = rc;
-        xfer = client->write.len;
 
     #ifdef WOLFMQTT_MULTITHREAD
         rc = wm_SemLock(&client->lockClient);
@@ -1555,48 +1615,68 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            CLIENT_FORCE_ZERO(client->tx_buf, xfer);
-            wm_SemUnlock(&client->lockSend);
+            CLIENT_FORCE_ZERO(client->tx_buf, client->write.len);
+            MqttWriteStop(client, &will->stat);
             return rc; /* Error locking client */
         }
     #endif
 
-        /* Send Will Message Update packet. Save write.len into xfer first: the
-         * encoded WILLMSGUPD holds will->willMsg (a possibly rotated/secret will
-         * payload) in tx_buf, which must be scrubbed before lockSend is released
-         * on every return path below.
-         *
-         * This differs intentionally from MqttClient_Connect and SN_WillMessage:
-         * those keep a resume state (MQTT_MSG_HEADER) and so must NOT scrub on
-         * MQTT_CODE_CONTINUE, because tx_buf is still needed to finish a partial
-         * non-blocking send. This function has no such resume state - it re-runs
-         * this whole MQTT_MSG_BEGIN block (re-encoding tx_buf) on every call. A
-         * non-blocking partial write returns MQTT_CODE_CONTINUE, which is != xfer
-         * and therefore lands in the error branch below; scrubbing there is safe
-         * because the next call re-encodes the identical bytes before the write
-         * resumes. */
-        rc = MqttPacket_Write(client, client->tx_buf, xfer);
-        if (rc != xfer) {
-            /* Send failed (or returned MQTT_CODE_CONTINUE): scrub the will
-             * payload from tx_buf before releasing lockSend so another thread -
-             * or a later memory/core-dump inspection - cannot recover residual
-             * plaintext. */
-            CLIENT_FORCE_ZERO(client->tx_buf, xfer);
+        will->stat.write = MQTT_MSG_HEADER;
+    }
+    if (will->stat.write == MQTT_MSG_HEADER) {
+        int xfer;
+
+        /* Send Will Message Update packet. The encoded WILLMSGUPD holds
+         * will->willMsg (a possibly rotated/secret will payload), which must
+         * never stay in the shared tx_buf across an API return. So the packet
+         * is re-encoded on every pass: a partial send scrubs tx_buf before
+         * returning, the identical bytes are regenerated here, and
+         * MqttPacket_Write resumes from the preserved write offset. The length
+         * is snapshotted under ownership so the completion check cannot be
+         * skewed by another sender. */
+        rc = SN_Encode_WillMsgUpdate(client->tx_buf, client->tx_buf_len, will);
+        if (rc <= 0) {
+            MqttWriteStop(client, &will->stat);
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &will->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            SN_Client_UnlinkPendResp(client, &will->pendResp);
         #endif
+            will->stat.write = MQTT_MSG_BEGIN;
             return rc;
         }
-        /* WILLMSGUPD sent: scrub the will payload from tx_buf before releasing
-         * lockSend, for the same reason as the error path above. */
+        client->write.len = rc;
+        xfer = rc;
+        rc = MqttPacket_Write(client, client->tx_buf, xfer);
+        if (rc == MQTT_CODE_CONTINUE) {
+            /* Never leave the will payload in tx_buf between calls; the resume
+             * pass re-encodes it. */
+            CLIENT_FORCE_ZERO(client->tx_buf, xfer);
+        #ifdef WOLFMQTT_ALLOW_NODATA_UNLOCK
+            if (client->write.total == 0) {
+                /* Nothing reached the transport: release the writer and the
+                 * pending response so other operations proceed. */
+                MqttWriteStop(client, &will->stat);
+            #ifdef WOLFMQTT_MULTITHREAD
+                SN_Client_UnlinkPendResp(client, &will->pendResp);
+            #endif
+                will->stat.write = MQTT_MSG_BEGIN;
+            }
+        #endif
+            /* Unfinished write: keep ownership and the pending response and
+             * resume here on the next call. */
+            return rc;
+        }
+        /* Scrub the will payload from tx_buf before releasing the writer so
+         * another thread, or a later memory/core-dump inspection, cannot
+         * recover residual plaintext. */
         CLIENT_FORCE_ZERO(client->tx_buf, xfer);
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
+        MqttWriteStop(client, &will->stat);
+        if (rc != xfer) {
+        #ifdef WOLFMQTT_MULTITHREAD
+            SN_Client_UnlinkPendResp(client, &will->pendResp);
+        #endif
+            will->stat.write = MQTT_MSG_BEGIN;
+            return rc;
+        }
 
         will->stat.write = MQTT_MSG_WAIT;
     }
@@ -1632,13 +1712,12 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
     }
 
     if (subscribe->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &subscribe->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
         /* Encode the subscribe packet */
         rc = SN_Encode_Subscribe(client->tx_buf, client->tx_buf_len,
@@ -1649,9 +1728,7 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
             SN_MSG_TYPE_SUBSCRIBE, subscribe->qos);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &subscribe->stat);
             return rc;
         }
         client->write.len = rc;
@@ -1666,26 +1743,23 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &subscribe->stat);
             return rc; /* Error locking client */
         }
     #endif
 
+        subscribe->stat.write = MQTT_MSG_HEADER;
+    }
+    if (subscribe->stat.write == MQTT_MSG_HEADER) {
         /* Send subscribe packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &subscribe->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &subscribe->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &subscribe->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         subscribe->stat.write = MQTT_MSG_WAIT;
     }
@@ -1737,13 +1811,12 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
     {
         case MQTT_MSG_BEGIN:
         {
-        #ifdef WOLFMQTT_MULTITHREAD
-            /* Lock send socket mutex */
-            rc = wm_SemLock(&client->lockSend);
+            /* Take write ownership; a write already in progress on this thread
+             * is reported as MQTT_CODE_CONTINUE instead of deadlocking. */
+            rc = MqttWriteStart(client, &publish->stat);
             if (rc != 0) {
                 return rc;
             }
-        #endif
 
             /* Encode the publish packet */
             rc = SN_Encode_Publish(client->tx_buf, client->tx_buf_len,
@@ -1756,9 +1829,7 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
                 publish->qos);
         #endif
             if (rc <= 0) {
-            #ifdef WOLFMQTT_MULTITHREAD
-                wm_SemUnlock(&client->lockSend);
-            #endif
+                MqttWriteStop(client, &publish->stat);
                 return rc;
             }
 
@@ -1781,7 +1852,7 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
                     wm_SemUnlock(&client->lockClient);
                 }
                 if (rc != 0) {
-                    wm_SemUnlock(&client->lockSend);
+                    MqttWriteStop(client, &publish->stat);
                     return rc; /* Error locking client */
                 }
             }
@@ -1795,27 +1866,42 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
         case MQTT_MSG_PAYLOAD:
         case MQTT_MSG_PAYLOAD2:
         {
-            /* Send packet and payload */
-            rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        #ifdef WOLFMQTT_NONBLOCK
-            if (rc == MQTT_CODE_CONTINUE)
+            int xfer;
+
+            /* Send packet and payload. The length is snapshotted under
+             * ownership so the completion check cannot be skewed by another
+             * sender once the writer is released. */
+            xfer = client->write.len;
+            rc = MqttPacket_Write(client, client->tx_buf, xfer);
+            if (rc == MQTT_CODE_CONTINUE) {
+            #ifdef WOLFMQTT_ALLOW_NODATA_UNLOCK
+                if (client->write.total == 0) {
+                    /* Nothing reached the transport: release the writer so
+                     * other operations proceed; re-encode on the next call. */
+                    MqttWriteStop(client, &publish->stat);
+                #ifdef WOLFMQTT_MULTITHREAD
+                    SN_Client_UnlinkPendResp(client, &publish->pendResp);
+                #endif
+                    publish->stat.write = MQTT_MSG_BEGIN;
+                }
+            #endif
+                /* Unfinished write: keep ownership and the pending response
+                 * and resume here on the next call. */
                 return rc;
-        #endif
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            }
+            MqttWriteStop(client, &publish->stat);
 
             if (rc < 0) {
             #ifdef WOLFMQTT_MULTITHREAD
-                if (wm_SemLock(&client->lockClient) == 0) {
-                    MqttClient_RespList_Remove(client, &publish->pendResp);
-                    wm_SemUnlock(&client->lockClient);
-                }
+                SN_Client_UnlinkPendResp(client, &publish->pendResp);
             #endif
+                /* The writer was released and its state cleared, so the object
+                 * must re-encode on its next use rather than resume. */
+                publish->stat.write = MQTT_MSG_BEGIN;
                 return rc;
             }
 
-            if (rc == client->write.len) {
+            if (rc == xfer) {
                 rc = MQTT_CODE_SUCCESS;
             }
             else {
@@ -1896,13 +1982,12 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
     }
 
     if (unsubscribe->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &unsubscribe->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
         /* Encode the subscribe packet */
         rc = SN_Encode_Unsubscribe(client->tx_buf, client->tx_buf_len,
@@ -1913,9 +1998,7 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
             SN_MSG_TYPE_UNSUBSCRIBE);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &unsubscribe->stat);
             return rc;
         }
         client->write.len = rc;
@@ -1931,26 +2014,23 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &unsubscribe->stat);
             return rc; /* Error locking client */
         }
     #endif
 
+        unsubscribe->stat.write = MQTT_MSG_HEADER;
+    }
+    if (unsubscribe->stat.write == MQTT_MSG_HEADER) {
         /* Send unsubscribe packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &unsubscribe->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &unsubscribe->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &unsubscribe->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         unsubscribe->stat.write = MQTT_MSG_WAIT;
     }
@@ -1986,13 +2066,12 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
     }
 
     if (regist->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &regist->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
         /* Encode the register packet */
         rc = SN_Encode_Register(client->tx_buf, client->tx_buf_len, regist);
@@ -2002,9 +2081,7 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
             SN_MSG_TYPE_REGISTER);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &regist->stat);
             return rc;
         }
         client->write.len = rc;
@@ -2019,26 +2096,23 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &regist->stat);
             return rc; /* Error locking client */
         }
     #endif
 
+        regist->stat.write = MQTT_MSG_HEADER;
+    }
+    if (regist->stat.write == MQTT_MSG_HEADER) {
         /* Send register packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &regist->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &regist->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &regist->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         regist->stat.write = MQTT_MSG_WAIT;
     }
@@ -2125,13 +2199,12 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     }
 
     if (ping->stat.write == MQTT_MSG_BEGIN) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &ping->stat);
         if (rc != 0) {
             goto ping_done;
         }
-    #endif
 
         /* Encode the ping packet as a request */
         rc = SN_Encode_Ping(client->tx_buf, client->tx_buf_len, ping,
@@ -2142,9 +2215,7 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
             SN_MSG_TYPE_PING_REQ);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &ping->stat);
             goto ping_done;
         }
         client->write.len = rc;
@@ -2159,26 +2230,23 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
             wm_SemUnlock(&client->lockClient);
         }
         if (rc != 0) {
-            wm_SemUnlock(&client->lockSend);
+            MqttWriteStop(client, &ping->stat);
             goto ping_done; /* Error locking client */
         }
     #endif
 
+        ping->stat.write = MQTT_MSG_HEADER;
+    }
+    if (ping->stat.write == MQTT_MSG_HEADER) {
         /* Send ping req packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &ping->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &ping->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            , &ping->pendResp
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             goto ping_done;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         ping->stat.write = MQTT_MSG_WAIT;
     }
@@ -2211,9 +2279,68 @@ ping_done:
     return rc;
 }
 
+/* Per-call claim on the client-owned disconnectSN, mirroring the NULL ping's
+ * pingSN_busy: it rejects re-entry and concurrent callers for the duration of
+ * one call, while write ownership serializes the resumable send itself. */
+static int SN_Client_DisconnectInternalClaim(MqttClient *client)
+{
+#ifdef WOLFMQTT_MULTITHREAD
+    int rc;
+
+    rc = wm_SemLock(&client->lockClient);
+    if (rc == 0) {
+        if (client->disconnectSN_busy) {
+            rc = MQTT_CODE_CONTINUE;
+        }
+        else {
+            client->disconnectSN_busy = 1;
+        }
+        wm_SemUnlock(&client->lockClient);
+    }
+    return rc;
+#else
+    if (client->disconnectSN_busy) {
+        return MQTT_CODE_CONTINUE;
+    }
+    client->disconnectSN_busy = 1;
+    return MQTT_CODE_SUCCESS;
+#endif
+}
+
+static void SN_Client_DisconnectInternalRelease(MqttClient *client)
+{
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0) {
+        client->disconnectSN_busy = 0;
+        wm_SemUnlock(&client->lockClient);
+    }
+#else
+    client->disconnectSN_busy = 0;
+#endif
+}
+
 int SN_Client_Disconnect(MqttClient *client)
 {
-    return SN_Client_Disconnect_ex(client, NULL);
+    int rc;
+
+    if (client == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    rc = SN_Client_DisconnectInternalClaim(client);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    /* A plain disconnect uses the client-owned object so a partial write keeps
+     * its resume position across MQTT_CODE_CONTINUE. write == BEGIN means no
+     * exchange is active, so stale terminal state is cleared before reuse. */
+    if (client->disconnectSN.stat.write == MQTT_MSG_BEGIN) {
+        XMEMSET(&client->disconnectSN, 0, sizeof(client->disconnectSN));
+    }
+    rc = SN_Client_Disconnect_ex(client, &client->disconnectSN);
+    /* Release the per-call claim on every result, including CONTINUE, so the
+     * next invocation can resume while concurrent calls are still rejected. */
+    SN_Client_DisconnectInternalRelease(client);
+    return rc;
 }
 
 int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
@@ -2224,15 +2351,19 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     if (client == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+    if (disconnect == NULL) {
+        /* A plain disconnect goes through the guarded wrapper, which claims the
+         * client-owned disconnectSN for this call and passes it back here. */
+        return SN_Client_Disconnect(client);
+    }
 
-    if ((disconnect == NULL) || (disconnect->stat.write == MQTT_MSG_BEGIN)) {
-    #ifdef WOLFMQTT_MULTITHREAD
-        /* Lock send socket mutex */
-        rc = wm_SemLock(&client->lockSend);
+    if (disconnect->stat.write == MQTT_MSG_BEGIN) {
+        /* Take write ownership; a write already in progress on this thread is
+         * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
+        rc = MqttWriteStart(client, &disconnect->stat);
         if (rc != 0) {
             return rc;
         }
-    #endif
 
         /* Encode the disconnect packet */
         rc = SN_Encode_Disconnect(client->tx_buf, client->tx_buf_len,
@@ -2243,15 +2374,13 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
             SN_MSG_TYPE_DISCONNECT);
     #endif
         if (rc <= 0) {
-        #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-        #endif
+            MqttWriteStop(client, &disconnect->stat);
             return rc;
         }
         client->write.len = rc;
 
     #ifdef WOLFMQTT_MULTITHREAD
-        if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
+        if (disconnect->sleepTmr != 0) {
             rc = wm_SemLock(&client->lockClient);
             if (rc == 0) {
                 /* inform other threads of expected response */
@@ -2261,32 +2390,28 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
                 wm_SemUnlock(&client->lockClient);
             }
             if (rc != 0) {
-                wm_SemUnlock(&client->lockSend);
+                MqttWriteStop(client, &disconnect->stat);
                 return rc; /* Error locking client */
             }
         }
     #endif
 
+        disconnect->stat.write = MQTT_MSG_HEADER;
+    }
+    if (disconnect->stat.write == MQTT_MSG_HEADER) {
         /* Send disconnect packet */
-        rc = MqttPacket_Write(client, client->tx_buf, client->write.len);
-        if (rc != client->write.len) {
+        rc = SN_Client_WriteOwned(client, &disconnect->stat
         #ifdef WOLFMQTT_MULTITHREAD
-            wm_SemUnlock(&client->lockSend);
-            if ((disconnect != NULL) && (disconnect->sleepTmr != 0)) {
-                if (wm_SemLock(&client->lockClient) == 0) {
-                    MqttClient_RespList_Remove(client, &disconnect->pendResp);
-                    wm_SemUnlock(&client->lockClient);
-                }
-            }
+            , (disconnect->sleepTmr != 0) ? &disconnect->pendResp : NULL
         #endif
+            );
+        if (rc != MQTT_CODE_SUCCESS) {
             return rc;
         }
-    #ifdef WOLFMQTT_MULTITHREAD
-        wm_SemUnlock(&client->lockSend);
-    #endif
 
         /* Only a sleep request is acknowledged by the gateway */
-        if ((disconnect == NULL) || (disconnect->sleepTmr == 0)) {
+        if (disconnect->sleepTmr == 0) {
+            disconnect->stat.write = MQTT_MSG_BEGIN;
             return MQTT_CODE_SUCCESS;
         }
 

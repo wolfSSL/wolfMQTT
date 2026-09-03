@@ -1968,6 +1968,130 @@ TEST(sn_register_auto_reply_resumes_partial_write)
 }
 #endif
 
+#ifdef WOLFMQTT_NONBLOCK
+/* A plain SN_Client_Disconnect (NULL object) must keep its resume position
+ * across MQTT_CODE_CONTINUE through the client-owned state: a transport that
+ * accepts one byte per write still completes exactly one DISCONNECT frame,
+ * never restarting at byte zero and duplicating the prefix. */
+TEST(sn_disconnect_chunked_write_completes_exact_frame)
+{
+    static const byte disconnect_frame[] = { 0x02, SN_MSG_TYPE_DISCONNECT };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    g_mock.write_chunk = 1;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Disconnect(&g_client);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ((int)sizeof(disconnect_frame), g_mock.out_len);
+    ASSERT_MEM_EQ(disconnect_frame, g_mock.out, sizeof(disconnect_frame));
+}
+#endif
+
+/* A publish object must be reusable after a terminal write error: the failed
+ * send resets its state so the next attempt re-encodes instead of resuming a
+ * cleared, zero-length write. */
+TEST(sn_publish_reusable_after_write_error)
+{
+    SN_Publish publish;
+    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
+    rc = SN_Client_Publish(&g_client, &publish);
+    ASSERT_TRUE(rc < 0);
+
+    g_mock.write_fail_rc = 0;
+    rc = SN_Client_Publish(&g_client, &publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_mock.out_len > 0);
+}
+
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_MULTITHREAD) && \
+    !defined(WOLFMQTT_ALLOW_NODATA_UNLOCK)
+/* A request whose write returns MQTT_CODE_CONTINUE must keep write ownership
+ * and its pending response: tx_buf and client->write still describe the
+ * unfinished packet, so releasing the writer would let another sender overwrite
+ * them and resume from a stale offset. The next call must resume that same
+ * write and put exactly one packet on the wire. */
+TEST(sn_register_partial_write_retains_send_state)
+{
+    SN_Register regist;
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    XMEMSET(&regist, 0, sizeof(regist));
+    regist.topicName = "wolf/reg";
+    regist.packet_id = 7;
+    g_mock.write_continue_count = 1;
+
+    rc = SN_Client_Register(&g_client, &regist);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    /* The write is unfinished, so the request still owns the send path:
+     * pre-fix the state stayed at BEGIN and the pending response was
+     * dropped. */
+    ASSERT_EQ(MQTT_MSG_HEADER, (int)regist.stat.write);
+    ASSERT_NOT_NULL(g_client.firstPendResp);
+
+    /* Resume: the same packet completes, then the REGACK is consumed. */
+    mock_net_push(&g_mock, SN_REGACK_ACCEPTED_FRAME,
+        (int)sizeof(SN_REGACK_ACCEPTED_FRAME));
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Register(&g_client, &regist);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* Exactly one REGISTER reached the wire: an SN packet's first byte is its
+     * length, so a re-encoded or duplicated send would exceed it. */
+    ASSERT_TRUE(g_mock.out_len > 1);
+    ASSERT_EQ((int)g_mock.out[0], g_mock.out_len);
+    ASSERT_EQ(SN_MSG_TYPE_REGISTER, g_mock.out[1]);
+    ASSERT_NULL(g_client.firstPendResp);
+}
+
+/* Retaining write ownership across MQTT_CODE_CONTINUE must not deadlock a
+ * second send from the same thread: MqttWriteStart reports the in-progress
+ * write as MQTT_CODE_CONTINUE instead of blocking on the non-recursive
+ * lockSend, and the original request still resumes and completes. */
+TEST(sn_register_partial_write_second_send_not_deadlocked)
+{
+    SN_Register regist;
+    SN_PingReq ping;
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    XMEMSET(&regist, 0, sizeof(regist));
+    regist.topicName = "wolf/reg";
+    regist.packet_id = 7;
+    g_mock.write_continue_count = 1;
+    rc = SN_Client_Register(&g_client, &regist);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* A second send while the Register write is unfinished must be turned
+     * away as busy, not block forever on the lock this thread holds. */
+    XMEMSET(&ping, 0, sizeof(ping));
+    rc = SN_Client_Ping(&g_client, &ping);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    /* The original request still resumes and completes. */
+    mock_net_push(&g_mock, SN_REGACK_ACCEPTED_FRAME,
+        (int)sizeof(SN_REGACK_ACCEPTED_FRAME));
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Register(&g_client, &regist);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_NULL(g_client.firstPendResp);
+}
+#endif
+
 /* REGISTER has the same callback-before-response ordering requirement: the
  * callback runs once, then REGACK waits for the busy writer to be released. */
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
@@ -2105,12 +2229,15 @@ TEST(sn_pingreq_zero_progress_releases_writer)
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
 
-    /* A completed direct send leaves cumulative write.total populated because
-     * the MQTT-SN send path owns lockSend directly rather than using
-     * MqttWriteStop. The following response still starts with zero progress. */
+    /* A completed direct send now releases the writer through MqttWriteStop,
+     * which clears the cumulative write.total. Validate that invariant, then
+     * plant a stale nonzero total explicitly so the following zero-progress
+     * response must judge its own progress rather than inherit this value. */
     sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
     ASSERT_EQ(MQTT_CODE_SUCCESS, SN_Client_Publish(&g_client, &publish));
-    ASSERT_TRUE(g_client.write.total > 0);
+    ASSERT_EQ(0, (int)g_client.write.total);
+    ASSERT_TRUE(g_mock.out_len > 0);
+    g_client.write.total = g_mock.out_len;
     g_mock.out_len = 0;
 
     g_mock.write_zero_count = 1;
@@ -2845,6 +2972,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_qos1_no_continue);
     RUN_TEST(sn_publish_qos2_no_continue);
     RUN_TEST(sn_publish_qos0_no_pendresp);
+    RUN_TEST(sn_publish_reusable_after_write_error);
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_ping_no_continue);
@@ -2871,6 +2999,11 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(sn_publish_auto_reply_resumes_partial_write);
     RUN_TEST(sn_register_auto_reply_resumes_partial_write);
+    RUN_TEST(sn_disconnect_chunked_write_completes_exact_frame);
+#if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_ALLOW_NODATA_UNLOCK)
+    RUN_TEST(sn_register_partial_write_retains_send_state);
+    RUN_TEST(sn_register_partial_write_second_send_not_deadlocked);
+#endif
     RUN_TEST(sn_pubrec_auto_reply_resumes_partial_write);
     RUN_TEST(sn_pingreq_auto_reply_resumes_zero_progress_write);
 #endif
