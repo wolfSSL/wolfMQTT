@@ -995,7 +995,10 @@ static int SN_Client_WriteOwned(MqttClient* client, MqttMsgStat* stat
         SN_Client_UnlinkPendResp(client, pendResp);
     #endif
         stat->write = MQTT_MSG_BEGIN;
-        return rc;
+        /* A non-negative short write (e.g. 0 bytes) is not success: report a
+         * network error so callers do not advance to awaiting a reply for a
+         * packet that never fully reached the transport. */
+        return (rc >= 0) ? MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK) : rc;
     }
     return MQTT_CODE_SUCCESS;
 }
