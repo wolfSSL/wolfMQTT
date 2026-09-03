@@ -405,12 +405,12 @@ static int g_last_ack_id;
 /* Counts msg_cb invocations so a test can assert an incoming PUBLISH was (or was
  * not) delivered to the application. */
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
-static int g_msg_cb_calls;
+static int g_dedup_msg_cb_calls;
 static int mock_msg_cb(MqttClient* client, MqttMessage* message, byte msg_new,
     byte msg_done)
 {
     (void)client; (void)message; (void)msg_new; (void)msg_done;
-    g_msg_cb_calls++;
+    g_dedup_msg_cb_calls++;
     return MQTT_CODE_SUCCESS;
 }
 #endif
@@ -6150,7 +6150,7 @@ TEST(wait_message_qos2_full_dedup_table_v311_disconnects)
 #endif
     (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
     test_client.msg_cb = mock_msg_cb;
-    g_msg_cb_calls = 0;
+    g_dedup_msg_cb_calls = 0;
 
     /* Occupy every dedup slot with distinct in-flight ids awaiting PUBREL. */
     for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
@@ -6174,7 +6174,7 @@ TEST(wait_message_qos2_full_dedup_table_v311_disconnects)
      * untracked. Now it is not delivered, no PUBREC is sent, and the connection
      * is torn down. */
     ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
-    ASSERT_EQ(0, g_msg_cb_calls);
+    ASSERT_EQ(0, g_dedup_msg_cb_calls);
     ASSERT_FALSE(g_pubresp_written);
     ASSERT_EQ(0, g_frames_written);
     ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
@@ -6203,7 +6203,7 @@ TEST(wait_message_qos2_full_dedup_table_v5_rejects_with_pubrec)
     test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
     test_client.msg_cb = mock_msg_cb;
-    g_msg_cb_calls = 0;
+    g_dedup_msg_cb_calls = 0;
 
     for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
         test_client.recv_qos2_pending[i] = (word16)(i + 1);
@@ -6228,7 +6228,7 @@ TEST(wait_message_qos2_full_dedup_table_v5_rejects_with_pubrec)
      * connection stays up. connect_mock_sent[4] is the PUBREC reason byte
      * (0x50, remlen, id_hi, id_lo, reason). */
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-    ASSERT_EQ(0, g_msg_cb_calls);
+    ASSERT_EQ(0, g_dedup_msg_cb_calls);
     ASSERT_TRUE(g_pubresp_written);
     ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_REC, g_last_ack_written);
     ASSERT_EQ(MQTT_REASON_QUOTA_EXCEEDED, connect_mock_sent[4]);
@@ -6258,7 +6258,7 @@ TEST(wait_message_ex_qos2_quota_reason_not_retained)
     test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
     test_client.msg_cb = mock_msg_cb;
-    g_msg_cb_calls = 0;
+    g_dedup_msg_cb_calls = 0;
 
     for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
         test_client.recv_qos2_pending[i] = (word16)(i + 1);

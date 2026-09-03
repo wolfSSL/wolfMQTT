@@ -2972,7 +2972,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_qos1_no_continue);
     RUN_TEST(sn_publish_qos2_no_continue);
     RUN_TEST(sn_publish_qos0_no_pendresp);
+#if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     RUN_TEST(sn_publish_reusable_after_write_error);
+#endif
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_ping_no_continue);
