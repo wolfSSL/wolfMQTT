@@ -2815,11 +2815,9 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 #ifdef WOLFMQTT_V5
 /* Return 1 if the CONNECT carries an Authentication Method property, i.e. the
  * connection is negotiating enhanced authentication [MQTT-4.12]. */
-/* Record whether the CONNECT carried an Authentication Method and, if so, its
- * value, so a later client-initiated AUTH can be required to reuse the same
- * method [MQTT-4.12.0-1]. A value longer than MQTT_AUTH_METHOD_MAX is noted by
- * auth_method_len but not stored, and MqttClient_Auth then refuses re-auth
- * because it cannot verify the match. */
+/* Record the CONNECT Authentication Method (presence and value) so a later AUTH
+ * must reuse it [MQTT-4.12.0-1]. A value longer than MQTT_AUTH_METHOD_MAX sets
+ * auth_method_len but is not stored, so MqttClient_Auth refuses re-auth. */
 static void MqttClient_StoreAuthMethod(MqttClient* client,
     const MqttConnect* mc_connect)
 {
@@ -3621,11 +3619,9 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
      * re-entry into this function. */
     int is_dup = (publish->qos == MQTT_QOS_2 &&
         MqttClient_RecvQos2_Contains(client, publish->packet_id));
-    /* A new QoS 2 id that cannot be recorded because the de-duplication table is
-     * full must not be delivered: its slot would go untracked and a later
-     * retransmit would reach the application a second time [MQTT-4.3.3-10]. The
-     * payload is still drained to keep the stream in sync, then the exchange is
-     * refused without a PUBREC so the sender retries once a slot is free. */
+    /* A new QoS 2 id that will not fit the dedup table must not be delivered:
+     * untracked, its retransmit would reach the application a second time
+     * [MQTT-4.3.3-10]. Drained to stay in sync, then the exchange is refused. */
     int untrackable = (publish->qos == MQTT_QOS_2 && !is_dup &&
         !MqttClient_RecvQos2_HasFreeSlot(client));
     int suppress_cb = (is_dup || untrackable);

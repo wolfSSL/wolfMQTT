@@ -960,15 +960,10 @@ static void SN_Client_UnlinkPendResp(MqttClient* client,
 }
 #endif
 
-/* Drive the packet already encoded in tx_buf to the transport under the write
- * ownership taken by MqttWriteStart. Returns MQTT_CODE_CONTINUE with ownership
- * and the pending response kept, so the caller resumes here on its next call;
- * except that when nothing reached the transport and
- * WOLFMQTT_ALLOW_NODATA_UNLOCK is set, the writer is released, the pending
- * response unlinked, and *stat reset to MQTT_MSG_BEGIN so the next call
- * re-encodes. Returns MQTT_CODE_SUCCESS on completion with the writer released.
- * On a short or failed write the writer is released, the pending response
- * unlinked, *stat reset, and the write result returned. */
+/* Send the tx_buf packet under the ownership taken by MqttWriteStart. On
+ * MQTT_CODE_CONTINUE ownership and the pending response are kept for resume
+ * (released and reset to BEGIN only when a zero-progress ALLOW_NODATA_UNLOCK
+ * write occurred); on success/short/failed writes the writer is released. */
 static int SN_Client_WriteOwned(MqttClient* client, MqttMsgStat* stat
 #ifdef WOLFMQTT_MULTITHREAD
     , MqttPendResp* pendResp
@@ -1337,10 +1332,8 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
                 return rc;
             }
 
-            /* The encoded WILLMSG contains the will payload (potentially
-             * sensitive). Scrub tx_buf before releasing the writer so another
-             * thread cannot observe residual plaintext (mirrors the mitigation
-             * in MqttClient_Connect). */
+            /* Scrub the will payload from tx_buf before releasing the writer so
+             * another thread cannot observe residual plaintext. */
             CLIENT_FORCE_ZERO(client->tx_buf, xfer);
             MqttWriteStop(client, &will->stat);
             if (rc == xfer) {
@@ -1626,14 +1619,10 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
     if (will->stat.write == MQTT_MSG_HEADER) {
         int xfer;
 
-        /* Send Will Message Update packet. The encoded WILLMSGUPD holds
-         * will->willMsg (a possibly rotated/secret will payload), which must
-         * never stay in the shared tx_buf across an API return. So the packet
-         * is re-encoded on every pass: a partial send scrubs tx_buf before
-         * returning, the identical bytes are regenerated here, and
-         * MqttPacket_Write resumes from the preserved write offset. The length
-         * is snapshotted under ownership so the completion check cannot be
-         * skewed by another sender. */
+        /* The encoded WILLMSGUPD holds a possibly secret will payload that must
+         * not stay in tx_buf across a return, so it is re-encoded each pass:
+         * a partial send scrubs, the next pass regenerates the identical bytes,
+         * and MqttPacket_Write resumes from the preserved write offset. */
         rc = SN_Encode_WillMsgUpdate(client->tx_buf, client->tx_buf_len, will);
         if (rc <= 0) {
             MqttWriteStop(client, &will->stat);

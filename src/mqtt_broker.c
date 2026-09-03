@@ -3813,10 +3813,9 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
     WBLOG_INFO(broker,
         "broker: orphan reclaimed client_id=%s queued=%d",
         BrokerLog_Sanitize(new_bc->client_id), new_bc->out_q_count);
-    /* The durable OUTQ records are kept: each is removed only by its terminal
-     * acknowledgement (BrokerClient_OnPubAck / OnPubComp). Wiping them here
-     * would lose every unacknowledged message if the broker stopped after
-     * reclaim but before the drain re-sent and the peer acknowledged. */
+    /* Keep the durable OUTQ records: each is removed only by its terminal ack
+     * (BrokerClient_OnPubAck / OnPubComp). Wiping them here would lose every
+     * unacknowledged message if the broker stopped before those acks. */
     BrokerOrphan_Remove(broker, o);
     return 1;
 }
@@ -8240,10 +8239,8 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
      * PUBREL we send below is correlated to this entry; PUBCOMP from the
      * subscriber will then close it out. A spurious PUBREC (no matching
      * entry) still gets a PUBREL response for idempotency, just no
-     * queue state change. A negative return means the PUBREC targeted a
-     * non-QoS 2 PUBLISH, a Protocol Error [MQTT-4.13.1-1]: that entry stays
-     * awaiting its PUBACK, no PUBREL is sent, and the fatal code closes the
-     * peer. */
+     * queue state change. A negative return means a QoS 1 target, a Protocol
+     * Error [MQTT-4.13.1-1]: no PUBREL, and the fatal code closes the peer. */
     if (BrokerClient_OnPubRec(bc, resp.packet_id) < 0) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
     }
