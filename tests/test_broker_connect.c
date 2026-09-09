@@ -3187,6 +3187,131 @@ TEST(pingreq_nonzero_remain_len_closes_no_pingresp)
     MqttBroker_Free(&broker);
 }
 
+#ifdef WOLFMQTT_BROKER_WILL
+/* Shared scenario for the direct-response write-failure tests. Subscriber "S"
+ * is subscribed to "lwt"; publisher "P" holds a QoS 0 Will on that topic. Both
+ * sessions are established, then every write to P's socket fails and `pkt` is
+ * fed to P. The response named by `ack_type` still reaches the failing socket,
+ * so it is the write error - not a decode error or the keep-alive timer - that
+ * must close P and publish its Will [MQTT-3.1.2-8]. */
+static void will_fires_on_response_write_failure(const byte* pkt,
+    size_t pkt_len, byte ack_type)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    static const byte pub_connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* QoS 0 PUBLISH "lwt"/"bye" - the Will as it appears on the wire. */
+    static const byte will_publish[] = {
+        0x30, 0x08,
+        0x00, 0x03, 'l', 'w', 't',
+        'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    /* Both sessions are up and the Will has not fired. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_CONNECT_ACK));
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_FALSE(g_clients[1].closed);
+
+    g_clients[1].write_err = 1;
+    mock_client_input_append(1, pkt, pkt_len);
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The response was encoded and handed to the failing socket, so the
+     * packet itself was accepted; only its write failed. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, ack_type));
+    ASSERT_TRUE(g_clients[1].closed);
+    /* Exactly one PUBLISH reached the subscriber, and it is the Will. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(g_clients[0].out_len >= sizeof(will_publish));
+    ASSERT_MEM_EQ(will_publish,
+        g_clients[0].out_buf + g_clients[0].out_len - sizeof(will_publish),
+        sizeof(will_publish));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* [MQTT-3.1.2-8]: the Will is published when the Network Connection closes
+ * without a DISCONNECT, which includes an I/O error the Server detects. A
+ * failed PINGRESP write is such an error, so the publisher must be closed and
+ * its Will delivered rather than left connected with the failure ignored. */
+TEST(pingresp_write_failure_fires_will)
+{
+    static const byte pingreq[] = { 0xC0, 0x00 };
+    will_fires_on_response_write_failure(pingreq, sizeof(pingreq),
+        MQTT_PACKET_TYPE_PING_RESP);
+}
+
+TEST(suback_write_failure_fires_will)
+{
+    /* SUBSCRIBE to "x" at QoS 0, packet_id 2. */
+    static const byte subscribe[] = {
+        0x82, 0x06,
+        0x00, 0x02,
+        0x00, 0x01, 'x',
+        0x00
+    };
+    will_fires_on_response_write_failure(subscribe, sizeof(subscribe),
+        MQTT_PACKET_TYPE_SUBSCRIBE_ACK);
+}
+
+#if WOLFMQTT_MAX_QOS >= 1
+TEST(puback_write_failure_fires_will)
+{
+    /* QoS 1 PUBLISH "x"/"p", packet_id 3. No subscriber matches "x", so the
+     * only PUBLISH the subscriber can see is the Will. */
+    static const byte publish_qos1[] = {
+        0x32, 0x06,
+        0x00, 0x01, 'x',
+        0x00, 0x03,
+        'p'
+    };
+    will_fires_on_response_write_failure(publish_qos1, sizeof(publish_qos1),
+        MQTT_PACKET_TYPE_PUBLISH_ACK);
+}
+#endif
+#endif /* WOLFMQTT_BROKER_WILL */
+
 TEST(broker_keepalive_expires_at_exact_deadline)
 {
     MqttBroker broker;
@@ -7919,6 +8044,13 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(pingreq_valid_emits_pingresp);
     RUN_TEST(pingreq_nonzero_remain_len_closes_no_pingresp);
+#ifdef WOLFMQTT_BROKER_WILL
+    RUN_TEST(pingresp_write_failure_fires_will);
+    RUN_TEST(suback_write_failure_fires_will);
+#if WOLFMQTT_MAX_QOS >= 1
+    RUN_TEST(puback_write_failure_fires_will);
+#endif
+#endif
     RUN_TEST(broker_keepalive_expires_at_exact_deadline);
 #ifndef WOLFMQTT_V5
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);

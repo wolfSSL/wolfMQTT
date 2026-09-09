@@ -834,6 +834,19 @@ WOLFMQTT_API int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     MqttSubscribeAck *subscribe_ack);
 WOLFMQTT_API int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     MqttUnsubscribe *unsubscribe);
+/*! \brief Decode an UNSUBACK packet.
+ *
+ *  \note Per MQTT 3.1.1 section 3.11 the variable header is exactly the
+ *  two-byte Packet Identifier and there is no payload; Remaining Length must
+ *  be 2. The decoder rejects any extra trailing bytes with
+ *  MQTT_CODE_ERROR_MALFORMED_DATA. MQTT v5 section 3.11 appends a Properties
+ *  block and one Reason Code per Topic Filter - the longer form is accepted
+ *  only when unsubscribe_ack->protocol_level is
+ *  MQTT_CONNECT_PROTOCOL_LEVEL_5 or higher, so callers decoding a v5 UNSUBACK
+ *  must set that field before calling. Callers integrating against non-spec
+ *  brokers that emit extra bytes for v3.x acks must either fix the peer or
+ *  set protocol_level to 5 before calling.
+ */
 WOLFMQTT_API int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
     MqttUnsubscribeAck *unsubscribe_ack);
 WOLFMQTT_API int MqttEncode_Ping(byte *tx_buf, int tx_buf_len, MqttPing* ping);

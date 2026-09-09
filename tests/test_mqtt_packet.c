@@ -5151,7 +5151,81 @@ TEST(decode_unsuback_truncated_remain_len_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
 }
 
+/* Packet Identifier carried by the UNSUBACK length fixtures below. */
+#define TEST_UNSUBACK_PACKET_ID 0x07
+/* Remaining Length of the malformed fixture: the Packet Identifier plus one
+ * payload byte that MQTT 3.1.1 section 3.11.3 does not allow. */
+#define TEST_UNSUBACK_BAD_REMAIN_LEN (MQTT_DATA_LEN_SIZE + 1)
+
+/* MQTT 3.1.1 section 3.11.1: UNSUBACK Remaining Length is fixed at 2 (the
+ * Packet Identifier) and section 3.11.3: there is no payload. A trailing byte
+ * is malformed and must not be swallowed as part of the packet. */
+TEST(decode_unsuback_v311_extra_byte_rejected)
+{
+    byte buf[] = {
+        MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK),
+        TEST_UNSUBACK_BAD_REMAIN_LEN,
+        0x00, TEST_UNSUBACK_PACKET_ID,
+        0x00                               /* payload byte: not allowed */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
 #ifdef WOLFMQTT_V5
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Positive control for the exact-length rule: the same UNSUBACK without the
+ * trailing byte decodes, and its length is the fixed header plus the Packet
+ * Identifier and nothing else. */
+TEST(decode_unsuback_v311_exact_len_accepted)
+{
+    byte buf[] = {
+        MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK),
+        MQTT_DATA_LEN_SIZE,
+        0x00, TEST_UNSUBACK_PACKET_ID
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+#ifdef WOLFMQTT_V5
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_PACKET_HEADER_MIN_SIZE + MQTT_DATA_LEN_SIZE, rc);
+    ASSERT_EQ(TEST_UNSUBACK_PACKET_ID, ack.packet_id);
+}
+
+#ifdef WOLFMQTT_V5
+/* The exact-length rule is v3.1.1-only: at protocol level 5 the bytes after
+ * the Packet Identifier are the Property Length and the Reason Codes. */
+TEST(decode_unsuback_v5_longer_body_still_accepted)
+{
+    byte buf[] = {
+        MQTT_PACKET_TYPE_SET(MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK),
+        MQTT_DATA_LEN_SIZE + 2,            /* packet_id, props_len, 1 reason */
+        0x00, TEST_UNSUBACK_PACKET_ID,
+        0x00,                              /* props_len = 0 */
+        MQTT_REASON_SUCCESS                /* one reason code per filter */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    /* The whole packet is consumed, unlike the v3.1.1 case above. */
+    ASSERT_EQ((int)sizeof(buf), rc);
+    ASSERT_EQ(TEST_UNSUBACK_PACKET_ID, ack.packet_id);
+    ASSERT_EQ(1, ack.reason_code_count);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, ack.reason_codes[0]);
+}
+
 /* A v5 UNSUBACK carries one reason code per topic filter after the
  * properties block. The decoder must expose the count and bytes so the
  * client can detect a rejection (high-bit code), mirroring SUBSCRIBE. */
@@ -6618,7 +6692,10 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_malformed_remain_len_zero);
     RUN_TEST(decode_unsuback_malformed_remain_len_one);
     RUN_TEST(decode_unsuback_truncated_remain_len_rejected);
+    RUN_TEST(decode_unsuback_v311_extra_byte_rejected);
+    RUN_TEST(decode_unsuback_v311_exact_len_accepted);
 #ifdef WOLFMQTT_V5
+    RUN_TEST(decode_unsuback_v5_longer_body_still_accepted);
     RUN_TEST(decode_unsuback_v5_reason_codes);
     RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
 #endif

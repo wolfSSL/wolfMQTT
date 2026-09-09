@@ -912,6 +912,172 @@ TEST(auth_with_connect_method_allowed)
     MqttClient_PropsFree(auth.props);
 }
 
+/* MQTT 3.1.1 section 2.2.1 lists packet type 15 as Reserved/Forbidden; AUTH
+ * exists only from v5. A session negotiated at protocol level 4 must treat a
+ * received type-15 packet as a protocol violation [MQTT-4.8.0-1] even in a
+ * v5-capable build: the wait path reports PACKET_TYPE and tears the link down
+ * instead of decoding it as AUTH. */
+TEST(wait_message_v311_rejects_auth_packet_type)
+{
+    int rc;
+    int i;
+    /* AUTH short form: type=0xF0, remain=0 (valid in v5, reserved in v3.1.1). */
+    static const byte auth[] = { 0xF0, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, auth, sizeof(auth));
+    g_canned_len = (int)sizeof(auth);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_TYPE, rc);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.msg.stat.read);
+    ASSERT_EQ(0, test_client.msg.stat.isReadActive);
+}
+
+/* Positive control: the same bytes are a well-formed v5 AUTH (Reason Code
+ * Success, no Properties) and must still be accepted at protocol level 5. */
+TEST(wait_message_v5_accepts_auth_packet_type)
+{
+    int rc;
+    int i;
+    static const byte auth[] = { 0xF0, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, auth, sizeof(auth));
+    g_canned_len = (int)sizeof(auth);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_CLIENT_FLAG_IS_CONNECTED,
+        (int)(MqttClient_Flags(&test_client, 0, 0) &
+              MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+/* MQTT 3.1.1 section 3.14: "The DISCONNECT Packet is the final Control Packet
+ * sent from the Client to the Server" - there is no server-to-client
+ * DISCONNECT below v5, where section 3.14 first allows one. A v5-capable build
+ * must still reject it on a protocol level 4 session, matching what a build
+ * without v5 support does for the same bytes. */
+TEST(wait_message_v311_rejects_disconnect_packet_type)
+{
+    int rc;
+    int i;
+    /* DISCONNECT: type=0xE0, remain=0. */
+    static const byte disconnect[] = { 0xE0, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, disconnect, sizeof(disconnect));
+    g_canned_len = (int)sizeof(disconnect);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_TYPE, rc);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.msg.stat.read);
+    ASSERT_EQ(0, test_client.msg.stat.isReadActive);
+}
+
+/* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
+ * Code Success implied by a zero Remaining Length) and must still be accepted
+ * at protocol level 5. */
+TEST(wait_message_v5_accepts_disconnect_packet_type)
+{
+    int rc;
+    int i;
+    static const byte disconnect[] = { 0xE0, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, disconnect, sizeof(disconnect));
+    g_canned_len = (int)sizeof(disconnect);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+}
+
+/* Send side of the same rule: a protocol level 4 session must never put a
+ * type-15 packet on the wire, even when an Authentication Method was recorded
+ * (the application may pass v5 properties that a v3.1.1 CONNECT never encodes). */
+TEST(auth_v311_session_rejected_before_write)
+{
+    int rc;
+    MqttAuth auth;
+    MqttProp* prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    test_client.auth_method_set = 1;
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    prop = MqttClient_PropsAdd(&auth.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_AUTH_METHOD;
+    prop->data_str.str = (char*)"SCRAM-SHA-256";
+    prop->data_str.len = (word16)XSTRLEN("SCRAM-SHA-256");
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+
+    MqttClient_PropsFree(auth.props);
+}
+
 /* MQTT v5: a refused CONNACK (non-zero return code) must NOT mutate long-lived
  * client state even when it carries server properties, otherwise a rejected or
  * malicious broker could shrink the client's packet-size cap or lower its QoS
@@ -4964,6 +5130,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf);
     RUN_TEST(auth_without_connect_method_rejected);
     RUN_TEST(auth_with_connect_method_allowed);
+    RUN_TEST(wait_message_v311_rejects_auth_packet_type);
+    RUN_TEST(wait_message_v5_accepts_auth_packet_type);
+    RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
+    RUN_TEST(wait_message_v5_accepts_disconnect_packet_type);
+    RUN_TEST(auth_v311_session_rejected_before_write);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_rejects_illegal_max_qos);
     RUN_TEST(connect_accepted_connack_rejects_illegal_retain_available);

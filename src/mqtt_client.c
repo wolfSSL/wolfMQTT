@@ -1048,6 +1048,11 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         {
         #ifdef WOLFMQTT_V5
             MqttAuth auth, *p_auth = &auth;
+            /* Type 15 is reserved below v5 */
+            if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
+                break;
+            }
             if (packet_obj) {
                 p_auth = (MqttAuth*)packet_obj;
             }
@@ -1072,6 +1077,11 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
         {
         #ifdef WOLFMQTT_V5
             MqttDisconnect disc, *p_disc = &disc;
+            /* DISCONNECT is client-to-server only below v5 */
+            if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_TYPE);
+                break;
+            }
             if (packet_obj) {
                 p_disc = (MqttDisconnect*)packet_obj;
             }
@@ -3952,8 +3962,10 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
     }
     /* [MQTT-4.12.0-1] An AUTH may only be sent on a connection whose CONNECT
      * carried an Authentication Method. Refuse otherwise so a client cannot
-     * emit an AUTH on a connection that never negotiated enhanced auth. */
-    if (client->auth_method_set == 0) {
+     * emit an AUTH on a connection that never negotiated enhanced auth.
+     * AUTH (type 15) does not exist below v5. */
+    if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
+            client->auth_method_set == 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     return MqttClient_AuthEx(client, auth, &auth->stat,

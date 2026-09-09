@@ -3587,9 +3587,21 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
 
-    /* Validate remain_len (need at least packet_id) */
-    if (remain_len < MQTT_DATA_LEN_SIZE) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    /* MQTT 3.1.1 section 3.11.1: the variable header is exactly the two-byte
+     * Packet Identifier and there is no payload, so Remaining Length is fixed
+     * at 2. v5 section 3.11 appends Properties and Reason Codes. */
+#ifdef WOLFMQTT_V5
+    if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        if (remain_len < MQTT_DATA_LEN_SIZE) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    }
+    else
+#endif
+    {
+        if (remain_len != MQTT_DATA_LEN_SIZE) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
 
     rx_payload = &rx_buf[header_len];
