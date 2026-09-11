@@ -341,6 +341,24 @@ typedef struct _MqttMsgStat {
      * while the owning thread writes isReadActive/isWriteActive outside that
      * lock; sharing a byte would make those a racy read-modify-write. */
     byte recvQuotaHeld;
+
+    /* QoS acknowledgement staged for this wait object while its PUBLISH was
+     * read, encoded later once the send lock is held. [MQTT-4.6.0-2] requires
+     * PUBACKs to go out in the order their PUBLISHes arrived, so the response
+     * cannot sit in a field shared by every reader: another thread finishing
+     * its own read would overwrite it in the window between the read lock
+     * being dropped and the send lock being taken. Kept as the encodable
+     * fields rather than a whole MqttPublishResp, which embeds this struct.
+     * ackPacketType is MQTT_PACKET_TYPE_RESERVED when nothing is staged. */
+#ifdef WOLFMQTT_V5
+    MqttProp* ackProps;
+#endif
+    word16 ackPacketId;
+    byte   ackPacketType;
+#ifdef WOLFMQTT_V5
+    byte   ackReasonCode;
+    byte   ackProtocolLevel;
+#endif
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD
@@ -488,6 +506,16 @@ typedef struct _MqttConnect {
 #ifdef WOLFMQTT_V5
     MqttProp* props;
 #endif
+
+    /* Length of `password` in bytes. [MQTT-3.1.3.5] defines the Password as
+     * Binary Data, which may legally contain 0x00, so a NUL-terminated string
+     * cannot express every valid value. Leave 0 to keep the original
+     * behaviour of measuring `password` with XSTRLEN; set it to send binary
+     * password bytes verbatim. MqttDecode_Connect reports the wire length
+     * here. Added at the end of the struct so the offsets of the existing
+     * members are unchanged; sizeof(MqttConnect) still grows, so a caller
+     * must be rebuilt against this header rather than relinked against it. */
+    word16      password_len;
 } MqttConnect;
 
 

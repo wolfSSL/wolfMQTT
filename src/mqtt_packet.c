@@ -1428,6 +1428,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
 #endif
     MqttConnectPacket packet = MQTT_CONNECT_INIT;
     byte *tx_payload;
+    word16 password_len = 0;
 
     /* Validate required arguments */
     if (tx_buf == NULL || mc_connect == NULL || mc_connect->client_id == NULL) {
@@ -1494,6 +1495,17 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
     #endif
+        /* [MQTT-3.1.3-7] A Client that supplies a zero-byte ClientId MUST
+         * also set CleanSession to 1. There is no ClientId for a Server to
+         * key a persistent session on, so [MQTT-3.1.3-8] requires a
+         * conforming Server to answer the pairing with Identifier Rejected.
+         * Refuse to put the packet on the wire instead. MQTT 5.0 section
+         * 3.1.3.1 drops the coupling - a zero-length ClientId asks the
+         * Server to assign one - so the combination stays legal there. */
+        if (str_len == 0 && mc_connect->clean_session == 0 &&
+                mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_4) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
     }
     if (mc_connect->enable_lwt) {
@@ -1580,10 +1592,18 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
     }
     if (mc_connect->password) {
-        size_t str_len = XSTRLEN(mc_connect->password);
+        /* [MQTT-3.1.3.5] Password is Binary Data. An explicit password_len
+         * carries bytes that XSTRLEN would truncate at an embedded 0x00; 0
+         * keeps the original NUL-terminated behaviour. Computed once here and
+         * reused by the payload pass below, which must agree with what
+         * remain_len reserved. */
+        size_t str_len = (mc_connect->password_len > 0) ?
+            (size_t)mc_connect->password_len :
+            XSTRLEN(mc_connect->password);
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+        password_len = (word16)str_len;
         remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
     }
 
@@ -1684,8 +1704,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
          * and matches the decode path, which reads it as raw bytes. The length
          * bound was already enforced above. */
         tx_payload += MqttEncode_Data(tx_payload,
-            (const byte*)mc_connect->password,
-            (word16)XSTRLEN(mc_connect->password));
+            (const byte*)mc_connect->password, password_len);
     }
     (void)tx_payload;
 
@@ -1757,6 +1776,7 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
         (packet.flags & MQTT_CONNECT_FLAG_WILL_FLAG) ? 1 : 0;
     mc_connect->username = NULL;
     mc_connect->password = NULL;
+    mc_connect->password_len = 0;
 #ifdef WOLFMQTT_V5
     mc_connect->props = NULL;
     if (mc_connect->enable_lwt && mc_connect->lwt_msg != NULL) {
@@ -1999,6 +2019,11 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
             goto cleanup;
         }
         mc_connect->password = (char*)(rx_payload + tmp);
+        /* [MQTT-3.1.3.5] The Password is Binary Data and the decoded pointer
+         * is into rx_buf, which is not NUL terminated. Report the wire length
+         * so a caller re-encoding this CONNECT does not fall back to XSTRLEN
+         * and truncate at an embedded 0x00 or read past the buffer. */
+        mc_connect->password_len = plen;
         rx_payload += tmp + plen;
     }
 
@@ -2057,9 +2082,27 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
         return header_len;
     }
 
-    /* Validate remain_len */
-    if (remain_len < 2) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    /* Validate remain_len. MQTT 3.1.1 section 3.2.1 fixes the CONNACK
+     * Remaining Length at 2 - the Connect Acknowledge Flags and the Connect
+     * Return Code - and section 3.2.3 states the packet has no payload, so a
+     * larger value is a protocol violation the receiver must reject. MQTT 5.0
+     * section 3.2.2.1 appends a Properties block, so the longer form is only
+     * valid once the caller has identified the connection as v5. A NULL
+     * connect_ack takes the strict path: with no struct to carry properties,
+     * anything past the two fixed bytes cannot be consumed. */
+#ifdef WOLFMQTT_V5
+    if (connect_ack != NULL &&
+        connect_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        if (remain_len < 2) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
+    }
+    else
+#endif
+    {
+        if (remain_len != 2) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
     }
     if (rx_buf_len < header_len + remain_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
@@ -2785,6 +2828,16 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             return tmp;
         }
         rx_payload += tmp;
+
+        /* A publish response echoes the Packet Identifier of the PUBLISH it
+         * acknowledges, and [MQTT-2.3.1-1] requires that identifier to be
+         * non-zero. Zero can never name an in-flight exchange, so treat it as
+         * the protocol violation it is and let the caller close the Network
+         * Connection per [MQTT-4.8.0-1], rather than silently discarding the
+         * packet as spurious. */
+        if (publish_resp->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
 
 #ifdef WOLFMQTT_V5
         publish_resp->props = NULL;

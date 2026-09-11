@@ -46,6 +46,165 @@
       `cmd_timeout_ms`. This is the only v5 rejection surfaced on the write-only
       path; a QoS 1 PUBACK or QoS 2 PUBCOMP reason code >= 0x80 is still not
       detected there. Supersedes the v2.1.0 note below.
+    - The client now tracks the MQTT handshake separately from the transport.
+      `MqttClient_Publish`, `MqttClient_Subscribe`, `MqttClient_Unsubscribe`,
+      `MqttClient_Ping` and `MqttClient_Disconnect` return
+      `MQTT_CODE_ERROR_STAT` when called before `MqttClient_Connect` on a
+      Network Connection [MQTT-3.1.0-1], and a second `MqttClient_Connect` on
+      the same connection is refused with the same code [MQTT-3.1.0-2]. An
+      application that reconnects must call `MqttClient_NetDisconnect` first,
+      as the bundled examples already do (#590, #591)
+    - The client keeps a connection-level record of outbound Packet
+      Identifiers still awaiting their `PUBACK`, `PUBCOMP`, `SUBACK` or
+      `UNSUBACK`, in every build rather than only under
+      `WOLFMQTT_MULTITHREAD`. A new `SUBSCRIBE`, `UNSUBSCRIBE` or QoS>0
+      `PUBLISH` reusing one is refused with `MQTT_CODE_ERROR_PACKET_ID`
+      [MQTT-2.3.1-2]. Re-sending the same `PUBLISH` with `duplicate` set keeps
+      its identifier, as [MQTT-2.3.1-3] requires. The window is
+      `MQTT_MAX_SEND_INFLIGHT` (16 by default), overridable in
+      `user_settings.h` (#589, #599, #601, #605, #611, #612, #613)
+    - `MqttEncode_Connect` rejects a zero-byte ClientId paired with
+      `clean_session` 0 for MQTT v3.1.1 [MQTT-3.1.3-7]. MQTT v5.0 drops the
+      coupling and still allows it (#585)
+    - `MqttConnect` gains `password_len`. [MQTT-3.1.3.5] defines the Password
+      as Binary Data, which may contain 0x00, but the encoder measured it with
+      `XSTRLEN` and truncated at the first one. Set `password_len` to send
+      binary password bytes verbatim; leaving it 0 keeps the previous
+      NUL-terminated behaviour, so existing callers are unaffected.
+      `MqttDecode_Connect` reports the wire length here, so a decode/re-encode
+      round trip no longer falls back to `XSTRLEN` over a pointer into a
+      buffer that is not NUL terminated. The field is at the end of the
+      struct, so the offsets of the existing members are unchanged (#588)
+    - `MqttMsgStat` and `MqttConnect` grew. `MqttMsgStat` is the first member
+      of every packet object, so `sizeof` changes for all of them and an
+      application must be rebuilt against this header rather than relinked
+      against the library. `MqttClient` also grows by the
+      `MQTT_MAX_SEND_INFLIGHT` identifier table and, unless
+      `WOLFMQTT_NO_SESSION_REPLAY` is defined, the `MQTT_MAX_REPLAY_MSGS`
+      replay pool - about 1.3 KB under `WOLFMQTT_STATIC_MEMORY` at the
+      defaults, which matters most on the targets that use it.
+
+* Fixes
+    - The v3.1.1 `CONNACK` decoder accepted a Remaining Length above 2 and
+      swallowed the extra bytes; it now requires exactly 2 outside v5 (#603)
+    - `PUBACK`, `PUBREC`, `PUBREL` and `PUBCOMP` carrying Packet Identifier 0
+      were treated as spurious and ignored. They are now rejected with
+      `MQTT_CODE_ERROR_PACKET_ID`, which closes the connection
+      [MQTT-4.8.0-1] (#607)
+    - Broker: a refused `CONNACK` whose write returned `MQTT_CODE_CONTINUE`
+      was never resumed, so the client saw a truncated packet and never
+      received the return code. The connection is now held open until the
+      refusal is fully written and then closed (#592)
+    - Broker: keep-alive monitoring no longer runs while an accepted `CONNACK`
+      is still partly written, which could close the connection mid-handshake
+      in `WOLFMQTT_NONBLOCK` builds. The handshake stays bounded by
+      `BROKER_CONNECT_TIMEOUT_SEC` (#594)
+    - Broker: a QoS>0 `PUBLISH` that got some bytes out and then failed inside
+      one blocking write is now marked for retransmission, so session recovery
+      replays it with `DUP` set [MQTT-3.3.1-1] (#604)
+    - Broker: a partly written QoS 0 `PUBLISH` is dropped instead of following
+      the session into an orphan, where it was delivered a second time after
+      reconnect. QoS 0 allows no sender retry (#596). A transient
+      `MQTT_CODE_ERROR_TIMEOUT` no longer counts as such a failure: the entry
+      stays queued so the drain resumes from its offset instead of leaving a
+      truncated packet on the wire, and the drop happens at the orphan
+      hand-off
+    - WebSocket: both receive callbacks now close the connection on a
+      non-binary data frame instead of feeding its payload to the MQTT parser
+      [MQTT-6.0.0-1] (#610)
+    - Broker: static-memory fan-out now tracks the outbound QoS 1/2 Packet
+      Identifiers each subscriber has not yet acknowledged, so a new PUBLISH
+      cannot reuse one still awaiting its PUBACK or PUBCOMP [MQTT-2.3.1-4].
+      Dynamic-memory builds already derived this from the per-subscriber
+      queue. A delivery is skipped rather than sent with a reused identifier
+      when all BROKER_MAX_INFLIGHT_PER_SUB slots are outstanding (#614). The
+      slot is released when a delivery ends without an acknowledgement: an
+      encode or write failure, or a v5 subscriber rejecting the QoS 2 delivery
+      at the PUBREC stage [MQTT-4.3.3]
+    - The client now keeps unacknowledged outbound QoS > 0 messages as Session
+      state and re-sends them after a `CleanSession=0` reconnect the server
+      answers with Session Present = 1: a PUBLISH goes out again with its
+      original Packet Identifier and `DUP` set, and a QoS 2 exchange already
+      past PUBREC re-sends the PUBREL instead [MQTT-4.4.0-1],
+      [MQTT-3.3.1-1]. Replaying a PUBLISH needs its topic and payload after
+      the caller's `MqttPublish` is gone, so the client copies them into a
+      bounded pool of `MQTT_MAX_REPLAY_MSGS` entries (4 by default; under
+      `WOLFMQTT_STATIC_MEMORY` also bounded by `MQTT_MAX_REPLAY_TOPIC` and
+      `MQTT_MAX_REPLAY_PAYLOAD`). A message that does not fit, or one streamed
+      through a payload callback, is still sent but not retained. Define
+      `WOLFMQTT_NO_SESSION_REPLAY` to compile the store out (#597, #598, #602)
+    - A v5 `PUBREC` with a reason code >= 0x80 ends the QoS 2 exchange
+      [MQTT-4.3.3], so the client now releases the Packet Identifier there
+      [MQTT-2.3.1-3] and drops the message from Session state instead of
+      replaying a PUBLISH the server explicitly refused
+    - The QoS acknowledgement for a received PUBLISH is now staged on the wait
+      object rather than in a field shared by every reader. Another thread
+      completing its own read could previously overwrite it between the read
+      lock being dropped and the send lock being taken, sending the later
+      Packet Identifier twice and never the earlier one [MQTT-4.6.0-2] (#608)
+    - Session state is keyed on the ClientId itself rather than a 32-bit hash
+      of it. Two different ClientIds sharing a hash would have let one
+      identity's replay entries and QoS 2 pending ids be treated as the
+      other's, which matters when the ClientId derives from untrusted input.
+      A ClientId longer than `MQTT_MAX_SESSION_CLIENT_ID` (64 by default) is
+      not recorded, so its Session state is dropped rather than partially
+      matched [MQTT-3.1.3-2]
+    - `MqttClient_Disconnect` no longer clears the CONNECT-sent flag. It
+      writes the DISCONNECT packet but does not close the transport, so
+      clearing that flag reopened the duplicate-CONNECT guard and allowed a
+      second CONNECT on the same Network Connection [MQTT-3.1.0-2]. A separate
+      flag now refuses further packets after DISCONNECT [MQTT-3.14.4-1]
+    - `MqttClient_CancelMessage` keeps the Packet Identifier of a packet that
+      already reached the wire. The peer can still answer it, and that
+      acknowledgement would otherwise complete whatever new exchange had taken
+      the identifier over; [MQTT-2.3.1-3] makes it reusable only once the
+      acknowledgement is processed. A packet that never fully went out still
+      releases its identifier immediately
+    - Retained replay copies of topics and payloads are zeroized before being
+      freed, so application data - which may include credentials - is not left
+      in reusable heap
+    - Outbound Session state is now bound to the ClientId that created it, so
+      a client object reused under a new ClientId no longer replays the
+      previous Session's messages into the new one when the server answers
+      Session Present = 1 [MQTT-3.1.3-2]
+    - A zero-byte QoS 1/2 PUBLISH is retained for replay. Section 3.3.3 allows
+      an empty payload and [MQTT-4.4.0-1] asks for it back like any other
+      unacknowledged message; it was previously treated as a payload that
+      could not be copied
+    - A v5 PUBLISH carrying properties is no longer retained for replay. The
+      pool stores no properties, so re-sending would strip Response Topic,
+      Correlation Data and the rest - a different message from the one the
+      server is waiting on. Retaining properties for replay is not implemented
+    - A replay entry that can never be re-sent (no retained payload) is dropped
+      on reconnect instead of holding its Packet Identifier for the life of the
+      connection, since no acknowledgement will release it [MQTT-2.3.1-3]
+    - The Packet Identifier reservation now records the acknowledgement that
+      ends its exchange, so a PUBACK naming a QoS 2 identifier cannot complete
+      it early [MQTT-2.3.1-3]. The reservation and its replay record are
+      released under one lock, closing a window where a publisher could reuse
+      the identifier in between and have the old ack delete the new exchange's
+      state
+    - The replay record is created before the PUBLISH reaches the wire. In
+      `WOLFMQTT_MULTITHREAD` builds a reader thread could otherwise process the
+      acknowledgement first, leaving an already-acknowledged message retained
+      and replayed after the next reconnect
+    - `MqttClient_Publish`, `MqttClient_Subscribe`, `MqttClient_Unsubscribe`
+      and `MqttClient_Ping` are refused after `MqttClient_Disconnect`
+      [MQTT-3.14.4-1]
+    - The duplicate-CONNECT guard reads the handshake flag under `lockClient`
+      rather than through `MqttClient_Flags`, which reports "no flags set" when
+      the lock cannot be taken and would have let a second CONNECT through
+      [MQTT-3.1.0-2]
+    - `MqttClient_Connect` now resets the CONNACK wait state on the
+      `MqttConnect` object it was given. Reusing one across reconnects - what
+      the bundled examples do - left `mc_connect->ack` mid-read, so the second
+      handshake skipped the CONNACK read and handed whatever was still in
+      `rx_buf` to the PUBLISH payload handler instead of waiting for the new
+      CONNACK [MQTT-3.2.0-1]
+    - The client's inbound QoS 2 de-duplication table is now bound to the
+      ClientId that populated it. Reusing one `MqttClient` under a new
+      ClientId no longer inherits the previous Session's pending packet ids
+      when the server answers Session Present = 1 [MQTT-3.1.3-2] (#595)
 
 ### v2.1.0 (07/02/2026)
 Release 2.1.0 has been developed according to wolfSSL's development and QA

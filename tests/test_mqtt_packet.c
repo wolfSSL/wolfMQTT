@@ -1836,6 +1836,91 @@ TEST(decode_connack_truncated_partial_var_header)
     ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
 }
 
+/* MQTT 3.1.1 section 3.2.1 fixes the CONNACK Remaining Length at 2 and
+ * section 3.2.3 states "The CONNACK Packet has no payload". A CONNACK
+ * carrying a third byte is a protocol violation the receiver must reject so
+ * it closes the Network Connection per [MQTT-4.8.0-1].
+ *
+ * Wire layout, hand-built from section 3.2:
+ *   0x20        fixed header, type 2 (CONNACK), reserved flags 0
+ *   0x03        Remaining Length = 3 (must be 2)
+ *   0x00        Connect Acknowledge Flags, Session Present = 0
+ *   0x00        Connect Return Code, 0 = Connection Accepted
+ *   0xFF        extra byte the spec does not allow
+ */
+TEST(decode_connack_v311_extra_payload_rejected)
+{
+    byte buf[] = { 0x20, 0x03, 0x00, 0x00, 0xFF };
+    MqttConnectAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
+/* Positive control for the same gate: the identical prefix with the correct
+ * Remaining Length of 2 must still decode. Pins the check to the length
+ * rather than to the presence of trailing bytes in the caller's buffer. */
+TEST(decode_connack_v311_exact_remain_len_accepted)
+{
+    byte buf[] = { 0x20, 0x02, 0x00, 0x00 };
+    MqttConnectAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(4, rc);
+    ASSERT_EQ(0, ack.flags);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, ack.return_code);
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.2.2.1 appends a Properties block to the CONNACK variable
+ * header, so a v5 session must still accept Remaining Length > 2. Pins the v5
+ * arm of the gate so the v3.1.1 exact-length rule cannot regress onto v5 -
+ * the wire is remain_len = 3 = flags + reason code + props_len(0). */
+TEST(decode_connack_v5_longer_remain_len_accepted)
+{
+    byte buf[] = { 0x20, 0x03, 0x00, MQTT_REASON_SUCCESS, 0x00 };
+    MqttConnectAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(5, rc);
+    MqttProps_Free(ack.props);
+}
+#endif /* WOLFMQTT_V5 */
+
+#ifdef WOLFMQTT_V5
+/* The strict v3.1.1 length rule keys off connect_ack->protocol_level, which
+ * MqttConnectAck otherwise only carries as output. A caller that hands in a
+ * zeroed struct is therefore treated as v3.1.1, so a v5-shaped CONNACK is
+ * rejected as malformed. Pin that contract: the in-tree client always sets
+ * protocol_level first (src/mqtt_client.c), and an external caller decoding a
+ * v5 CONNACK must do the same. */
+TEST(decode_connack_v5_shape_without_protocol_level_rejected)
+{
+    byte buf[] = { 0x20, 0x03, 0x00, MQTT_REASON_SUCCESS, 0x00 };
+    MqttConnectAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ASSERT_EQ(0, (int)ack.protocol_level);
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+
+    /* Same bytes, protocol level supplied: accepted. */
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(5, rc);
+    MqttProps_Free(ack.props);
+}
+#endif /* WOLFMQTT_V5 */
+
 #ifdef WOLFMQTT_V5
 /* MQTT 5.0 section 3.2.2.3: the Property Length belongs to this CONNACK,
  * so bytes after its declared Remaining Length cannot satisfy the property
@@ -2495,6 +2580,85 @@ TEST(encode_connect_default_password_without_username)
 #endif
 }
 
+/* [MQTT-3.1.3-7] "If the Client supplies a zero-byte ClientId, the Client MUST
+ * also set CleanSession to 1." A conforming Server answers the pairing with
+ * Identifier Rejected [MQTT-3.1.3-8], so the encoder must refuse to build the
+ * packet rather than hand the caller a CONNECT it is not allowed to send. */
+TEST(encode_connect_v311_empty_client_id_without_clean_session_rejected)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "";
+    conn.clean_session = 0;
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
+/* Positive control: the pairing the spec does allow. Section 3.1.3.1 notes a
+ * Server may assign a unique ClientId when the Client sends a zero-byte one,
+ * and the CleanSession bit is 0x02 in the Connect Flags byte (section 3.1.2.4),
+ * which sits at offset 9 of the CONNECT variable header. */
+TEST(encode_connect_v311_empty_client_id_with_clean_session_accepted)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "";
+    conn.clean_session = 1;
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+    /* 0x10 type, 0x0C remaining length, then the 10-byte variable header:
+     * 00 04 'M' 'Q' 'T' 'T' 04 <flags> <keepalive hi> <keepalive lo>. */
+    ASSERT_EQ(MQTT_CONNECT_FLAG_CLEAN_SESSION, (int)tx_buf[9]);
+    /* Followed by the zero-length ClientId: 00 00. */
+    ASSERT_EQ(0, (int)tx_buf[12]);
+    ASSERT_EQ(0, (int)tx_buf[13]);
+}
+
+/* Second positive control: a non-empty ClientId with CleanSession 0 is the
+ * ordinary persistent-session CONNECT and must stay legal, so the guard keys
+ * on the pairing rather than on CleanSession alone. */
+TEST(encode_connect_v311_client_id_without_clean_session_accepted)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "test_client";
+    conn.clean_session = 0;
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(0, (int)tx_buf[9]);
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.1.3.1 drops the coupling: a zero-length Client Identifier
+ * asks the Server to assign one and carries no Clean Start requirement, so the
+ * v3.1.1 guard must not reach a v5 CONNECT. */
+TEST(encode_connect_v5_empty_client_id_without_clean_session_accepted)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "";
+    conn.clean_session = 0;
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+}
+#endif /* WOLFMQTT_V5 */
+
 TEST(encode_connect_unsupported_protocol_level)
 {
     byte tx_buf[256];
@@ -2580,6 +2744,205 @@ TEST(encode_connect_username_and_password)
  * (0xC0 0xAF is an overlong sequence Utf8WellFormed rejects). Locks in that
  * the Password field bypasses encode-side UTF-8 validation, unlike the
  * username/client_id/topic string fields. */
+/* [MQTT-3.1.3.5] the Password is "Binary Data", 0 to 65535 bytes with a
+ * two-byte length prefix, so an embedded 0x00 is legal. Without an explicit
+ * length the encoder measured it with XSTRLEN and truncated at that byte.
+ *
+ * Wire layout, hand-built from section 3.1:
+ *   10 18                  CONNECT, Remaining Length 24
+ *   00 04 4D 51 54 54      protocol name "MQTT"
+ *   04                     protocol level 4
+ *   C0                     flags: User Name + Password
+ *   00 00                  keep alive 0
+ *   00 03 63 69 64         ClientId "cid"
+ *   00 04 75 73 65 72      User Name "user"
+ *   00 03 41 00 42         Password 'A' 0x00 'B'  <- the three bytes at issue
+ */
+TEST(encode_connect_binary_password_with_len_not_truncated)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    static const char password[] = { 'A', '\0', 'B', '\0' };
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "cid";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    conn.clean_session = 1;
+    conn.username = "user";
+    conn.password = password;
+    conn.password_len = 3;
+
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+
+    /* Password field sits last: after the 10-byte variable header, the
+     * ClientId (2+3) and the User Name (2+4). */
+    {
+        int off = 2 + 10 + 2 + 3 + 2 + 4;
+        ASSERT_EQ(0x00, (int)tx_buf[off]);
+        ASSERT_EQ(0x03, (int)tx_buf[off + 1]);
+        ASSERT_EQ('A',  (int)tx_buf[off + 2]);
+        ASSERT_EQ(0x00, (int)tx_buf[off + 3]);
+        ASSERT_EQ('B',  (int)tx_buf[off + 4]);
+        ASSERT_EQ(off + 5, rc);
+    }
+}
+
+/* password_len 0 keeps the original NUL-terminated behaviour, so existing
+ * callers that never set the field are unaffected. */
+TEST(encode_connect_password_len_zero_uses_strlen)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "cid";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    conn.clean_session = 1;
+    conn.username = "user";
+    conn.password = "pw";
+
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+    {
+        int off = 2 + 10 + 2 + 3 + 2 + 4;
+        ASSERT_EQ(0x00, (int)tx_buf[off]);
+        ASSERT_EQ(0x02, (int)tx_buf[off + 1]);
+        ASSERT_EQ('p',  (int)tx_buf[off + 2]);
+        ASSERT_EQ('w',  (int)tx_buf[off + 3]);
+        ASSERT_EQ(off + 4, rc);
+    }
+}
+
+/* password_len is the Password length regardless of protocol level, so the
+ * v5 encoder must honour it too [MQTT-3.1.3.5]. Same payload shape as the
+ * v3.1.1 case plus the CONNECT Properties length byte. */
+#ifdef WOLFMQTT_V5
+TEST(encode_connect_v5_binary_password_with_len_not_truncated)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    static const char password[] = { 'A', '\0', 'B', '\0' };
+    int rc;
+    int off;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "cid";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    conn.clean_session = 1;
+    conn.username = "user";
+    conn.password = password;
+    conn.password_len = 3;
+
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+
+    /* 2 fixed header + 10 variable header + 1 property length + ClientId
+     * (2+3) + User Name (2+4). */
+    off = 2 + 10 + 1 + 2 + 3 + 2 + 4;
+    ASSERT_EQ(0x00, (int)tx_buf[off]);
+    ASSERT_EQ(0x03, (int)tx_buf[off + 1]);
+    ASSERT_EQ('A',  (int)tx_buf[off + 2]);
+    ASSERT_EQ(0x00, (int)tx_buf[off + 3]);
+    ASSERT_EQ('B',  (int)tx_buf[off + 4]);
+    ASSERT_EQ(off + 5, rc);
+}
+#endif /* WOLFMQTT_V5 */
+
+/* password_len describes `password`; with no password there is no Password
+ * field and the Password flag must stay clear, whatever the field says. */
+TEST(encode_connect_password_len_without_password_ignored)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    conn.client_id = "cid";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    conn.clean_session = 1;
+    conn.username = "user";
+    conn.password = NULL;
+    conn.password_len = 3;
+
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_TRUE(rc > 0);
+    /* 2 fixed header + 10 variable header + ClientId (2+3) + User Name (2+4),
+     * and nothing after it. */
+    ASSERT_EQ(2 + 10 + 2 + 3 + 2 + 4, rc);
+    /* [MQTT-3.1.2-20] Password Flag (bit 6) must be 0 when absent. */
+    ASSERT_EQ(0, (int)(tx_buf[9] & 0x40));
+}
+
+#ifdef WOLFMQTT_BROKER
+/* MqttDecode_Connect must report the wire Password length: the decoded
+ * pointer is into rx_buf, which is not NUL terminated, so a caller that
+ * re-encodes the CONNECT would otherwise fall back to XSTRLEN and either
+ * truncate at an embedded 0x00 or read past the buffer [MQTT-3.1.3.5]. */
+TEST(decode_connect_reports_password_len)
+{
+    byte tx_buf[256];
+    MqttConnect enc;
+    MqttConnect dec;
+    MqttMessage lwt;
+    static const char password[] = { 'A', '\0', 'B', '\0' };
+    int rc;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.client_id = "cid";
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    enc.clean_session = 1;
+    enc.username = "user";
+    enc.password = password;
+    enc.password_len = 3;
+
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &enc);
+    ASSERT_TRUE(rc > 0);
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    dec.lwt_msg = &lwt;
+    /* Pre-set it to a wrong value: the decoder must overwrite, and must also
+     * clear it when no Password is present. */
+    dec.password_len = 0xFFFF;
+    ASSERT_TRUE(MqttDecode_Connect(tx_buf, rc, &dec) > 0);
+    ASSERT_NOT_NULL(dec.password);
+    ASSERT_EQ(3, (int)dec.password_len);
+    ASSERT_EQ('A', (int)((byte*)dec.password)[0]);
+    ASSERT_EQ(0x00, (int)((byte*)dec.password)[1]);
+    ASSERT_EQ('B', (int)((byte*)dec.password)[2]);
+}
+
+/* The same CONNECT without a Password must leave password_len at 0, so a
+ * reused MqttConnect cannot carry a stale length into the next encode. */
+TEST(decode_connect_without_password_clears_password_len)
+{
+    byte tx_buf[256];
+    MqttConnect enc;
+    MqttConnect dec;
+    MqttMessage lwt;
+    int rc;
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    enc.client_id = "cid";
+    enc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    enc.clean_session = 1;
+
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &enc);
+    ASSERT_TRUE(rc > 0);
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    dec.lwt_msg = &lwt;
+    dec.password_len = 0xFFFF;
+    ASSERT_TRUE(MqttDecode_Connect(tx_buf, rc, &dec) > 0);
+    ASSERT_NULL(dec.password);
+    ASSERT_EQ(0, (int)dec.password_len);
+}
+#endif /* WOLFMQTT_BROKER */
+
 TEST(encode_connect_binary_password_accepted)
 {
     byte tx_buf[256];
@@ -4953,6 +5316,85 @@ TEST(decode_pubcomp_v311_valid)
     ASSERT_EQ(7, resp.packet_id);
 }
 
+/* [MQTT-2.3.1-1] requires the Packet Identifier of a QoS > 0 PUBLISH to be
+ * non-zero, and a publish response echoes the identifier of the PUBLISH it
+ * acknowledges (sections 3.4.2, 3.5.2, 3.6.2, 3.7.2). A zero identifier can
+ * therefore never name an in-flight exchange: it is a protocol violation, and
+ * [MQTT-4.8.0-1] requires the receiver to close the Network Connection rather
+ * than discard the packet as spurious.
+ *
+ * Wire layout, hand-built from section 3.4:
+ *   0x40        fixed header, type 4 (PUBACK), reserved flags 0
+ *   0x02        Remaining Length = 2
+ *   0x00 0x00   Packet Identifier = 0, which the spec forbids
+ */
+TEST(decode_puback_packet_id_zero_rejected)
+{
+    byte buf[] = { 0x40, 0x02, 0x00, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+}
+
+/* PUBREC, section 3.5: type 5, reserved flags 0. */
+TEST(decode_pubrec_packet_id_zero_rejected)
+{
+    byte buf[] = { 0x50, 0x02, 0x00, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_REC, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+}
+
+/* PUBREL, section 3.6: type 6, and [MQTT-3.6.1-1] fixes its reserved flags
+ * at 0010, hence 0x62 rather than 0x60. */
+TEST(decode_pubrel_packet_id_zero_rejected)
+{
+    byte buf[] = { 0x62, 0x02, 0x00, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_REL, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+}
+
+/* PUBCOMP, section 3.7: type 7, reserved flags 0. */
+TEST(decode_pubcomp_packet_id_zero_rejected)
+{
+    byte buf[] = { 0x70, 0x02, 0x00, 0x00 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_COMP, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+}
+
+/* Positive control: Packet Identifier 1 is the smallest legal value and must
+ * still decode, so the guard rejects only zero. */
+TEST(decode_puback_packet_id_one_accepted)
+{
+    byte buf[] = { 0x40, 0x02, 0x00, 0x01 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_EQ(4, rc);
+    ASSERT_EQ(1, resp.packet_id);
+}
+
 /* publish_resp == NULL takes the strict-length path even under
  * WOLFMQTT_V5: with no struct to consume reason_code/props, anything
  * beyond the Packet Identifier is unreachable extra payload. Pins the
@@ -6487,7 +6929,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connack_truncated_one_byte_buffer);
     RUN_TEST(decode_connack_truncated_no_var_header);
     RUN_TEST(decode_connack_truncated_partial_var_header);
+    RUN_TEST(decode_connack_v311_extra_payload_rejected);
+    RUN_TEST(decode_connack_v311_exact_remain_len_accepted);
 #ifdef WOLFMQTT_V5
+    RUN_TEST(decode_connack_v5_longer_remain_len_accepted);
+    RUN_TEST(decode_connack_v5_shape_without_protocol_level_rejected);
     RUN_TEST(decode_connack_v5_props_cannot_cross_packet_end);
     RUN_TEST(decode_connack_v5_rejects_bytes_after_property_block);
 #endif
@@ -6533,6 +6979,12 @@ void run_mqtt_packet_tests(void)
     /* MqttEncode_Connect */
     RUN_TEST(encode_connect_password_without_username);
     RUN_TEST(encode_connect_default_password_without_username);
+    RUN_TEST(encode_connect_v311_empty_client_id_without_clean_session_rejected);
+    RUN_TEST(encode_connect_v311_empty_client_id_with_clean_session_accepted);
+    RUN_TEST(encode_connect_v311_client_id_without_clean_session_accepted);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(encode_connect_v5_empty_client_id_without_clean_session_accepted);
+#endif
     RUN_TEST(encode_connect_unsupported_protocol_level);
 #ifdef WOLFMQTT_V5
     RUN_TEST(encode_connect_v5_password_without_username);
@@ -6540,6 +6992,16 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_connect_v5_unsupported);
 #endif
     RUN_TEST(encode_connect_username_and_password);
+    RUN_TEST(encode_connect_binary_password_with_len_not_truncated);
+    RUN_TEST(encode_connect_password_len_zero_uses_strlen);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(encode_connect_v5_binary_password_with_len_not_truncated);
+#endif
+    RUN_TEST(encode_connect_password_len_without_password_ignored);
+#ifdef WOLFMQTT_BROKER
+    RUN_TEST(decode_connect_reports_password_len);
+    RUN_TEST(decode_connect_without_password_clears_password_len);
+#endif
     RUN_TEST(encode_connect_binary_password_accepted);
     RUN_TEST(encode_connect_invalid_utf8_clientid_rejected);
     RUN_TEST(encode_connect_invalid_utf8_username_rejected);
@@ -6676,6 +7138,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_pubrel_v311_valid);
     RUN_TEST(decode_pubcomp_v311_valid);
     RUN_TEST(decode_puback_null_resp_extra_payload_rejected);
+    RUN_TEST(decode_puback_packet_id_zero_rejected);
+    RUN_TEST(decode_pubrec_packet_id_zero_rejected);
+    RUN_TEST(decode_pubrel_packet_id_zero_rejected);
+    RUN_TEST(decode_pubcomp_packet_id_zero_rejected);
+    RUN_TEST(decode_puback_packet_id_one_accepted);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_puback_v5_with_reason_code_accepted);
     RUN_TEST(decode_puback_v5_reason_code_past_buf_rejected);

@@ -268,6 +268,11 @@ static int test_ping_response_completed_during_read_lock(void)
         return 1;
     }
 
+    /* [MQTT-3.1.0-1] makes CONNECT the first packet a Client sends, so
+     * MqttClient_Ping_ex refuses to run before one. This test drives the ping
+     * path directly, so declare the post-CONNECT state it presumes. */
+    (void)MqttClient_Flags(&client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
+
     /* Model another reader delivering PINGRESP after the waiter's first
      * pending-response check but while that waiter acquires lockRecv. */
     sem_complete_on_lock = &client.lockRecv;

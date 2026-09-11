@@ -568,6 +568,12 @@ typedef struct BrokerOrphanSession {
 /* -------------------------------------------------------------------------- */
 /* Broker client tracking                                                      */
 /* -------------------------------------------------------------------------- */
+/* One outbound QoS > 0 delivery this client has not acknowledged yet. */
+typedef struct BrokerStaticOutId {
+    word16  packet_id;      /* 0 = empty slot */
+    byte    qos;            /* MqttQoS the delivery went out with */
+} BrokerStaticOutId;
+
 typedef struct BrokerClient {
 #ifdef WOLFMQTT_STATIC_MEMORY
     byte    in_use;
@@ -641,6 +647,18 @@ typedef struct BrokerClient {
     int                qos2_pending_count;
 #endif
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    /* Outbound QoS 1/2 Packet Identifiers sent to this client and not yet
+     * released by its PUBACK or PUBCOMP. [MQTT-2.3.1-4] applies the Client
+     * identifier rule to a Server sending a QoS > 0 PUBLISH, so a new one
+     * must not reuse an identifier still awaiting acknowledgement. The QoS is
+     * kept with it so a mismatched acknowledgement (a PUBACK for a QoS 2
+     * delivery, say) cannot free a slot whose PUBREC/PUBCOMP flow is still
+     * running. packet_id 0 marks an empty slot. Dynamic-memory builds derive
+     * this from the per-subscriber out_q instead, via
+     * BrokerNextPacketIdForQueue. */
+    BrokerStaticOutId out_inflight[BROKER_MAX_INFLIGHT_PER_SUB];
+#endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     /* Per-subscriber outbound publish queue. FIFO from head to tail;
      * drain pulls from head. out_q_inflight is the number of entries in
@@ -670,10 +688,15 @@ typedef struct BrokerClient {
 #endif
     byte          session_established;
 #ifndef WOLFMQTT_STATIC_MEMORY
-    /* Length of an accepted CONNACK still being written (0 = none). While
-     * nonzero, tx_buf is owned by that write and no other packet may be
-     * read from or written to this client. */
+    /* Length of a CONNACK still being written (0 = none). While nonzero,
+     * tx_buf is owned by that write and no other packet may be read from or
+     * written to this client. */
     int           connack_pending_len;
+    /* The pending CONNACK carries a non-zero return code. MQTT 3.1.1 section
+     * 3.1.4 requires the Server to send the refusal and then close the
+     * Network Connection, so the client is kept only until those bytes are
+     * fully delivered and is then dropped without becoming connected. */
+    unsigned int  connack_refused : 1;
 #endif
 } BrokerClient;
 

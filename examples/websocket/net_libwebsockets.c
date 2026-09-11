@@ -77,6 +77,19 @@ static int callback_mqtt(struct lws *wsi, enum lws_callback_reasons reason,
         net->wsi = NULL;
     }
     else if (reason == LWS_CALLBACK_CLIENT_RECEIVE) {
+        /* [MQTT-6.0.0-1] MQTT over WebSocket is carried in binary data
+         * frames: "If any other type of data frame is received the recipient
+         * MUST close the Network Connection." A text frame's payload is not
+         * an MQTT byte stream, so it must never reach the packet parser. The
+         * rule is about the frame type, not its payload, so this is checked
+         * before the empty-frame test below - an empty text frame must close
+         * the connection too. */
+        if (!lws_frame_is_binary(wsi)) {
+            lwsl_err("WebSocket non-binary data frame received "
+                     "[MQTT-6.0.0-1]\n");
+            net->status = -1;
+            return -1; /* close connection */
+        }
         if (in && len > 0) {
             /* Check if we have enough space in the buffer */
             if (net->rx_len + len <= sizeof(net->rx_buffer)) {

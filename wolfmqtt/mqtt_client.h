@@ -162,7 +162,25 @@ enum MqttClientFlags {
      * application that schedules its own ping, without changing the keep-alive
      * negotiated with the broker. Set via MqttClient_Flags before connecting.
      * Has no effect when built with WOLFMQTT_NO_TIME. */
-    MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE = 0x01 << 4
+    MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE = 0x01 << 4,
+    /* A CONNECT has been written on the current Network Connection. Tracks the
+     * MQTT handshake, which MQTT_CLIENT_FLAG_IS_CONNECTED does not: that flag
+     * means only that the transport is up. [MQTT-3.1.0-1] requires CONNECT to
+     * be the first packet a Client sends on a Network Connection and
+     * [MQTT-3.1.0-2] allows only one, so the send APIs consult this flag.
+     * Managed by the library - set by MqttClient_Connect and cleared by
+     * MqttSocket_Connect and MqttSocket_Disconnect. Applications must not set
+     * or clear it through MqttClient_Flags. */
+    MQTT_CLIENT_FLAG_CONNECT_SENT = 0x01 << 5,
+    /* A DISCONNECT has been written on the current Network Connection.
+     * [MQTT-3.14.4-1] forbids any further Control Packet on it, so the send
+     * APIs refuse one. Kept separate from MQTT_CLIENT_FLAG_CONNECT_SENT
+     * because MqttClient_Disconnect does not close the transport: clearing
+     * CONNECT_SENT instead would reopen the [MQTT-3.1.0-2] duplicate-CONNECT
+     * guard and let a second CONNECT go out on the same Network Connection.
+     * Managed by the library - set by MqttClient_Disconnect_ex and cleared by
+     * MqttSocket_Connect and MqttSocket_Disconnect. */
+    MQTT_CLIENT_FLAG_DISCONNECT_SENT = 0x01 << 6
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
@@ -233,6 +251,121 @@ typedef struct _MqttSk {
         #error "MQTT_MAX_RECV_QOS2 must be between 1 and 65535"
     #endif
 #endif
+
+/* Max distinct outbound Packet Identifiers tracked as in flight. Each new
+ * SUBSCRIBE, UNSUBSCRIBE or QoS>0 PUBLISH must use a currently unused
+ * identifier [MQTT-2.3.1-2], and it only becomes reusable once the matching
+ * SUBACK / UNSUBACK / PUBACK / PUBCOMP has been processed [MQTT-2.3.1-3].
+ * Override in user_settings.h to trade memory for a larger in-flight window. */
+#ifndef MQTT_MAX_SEND_INFLIGHT
+    #define MQTT_MAX_SEND_INFLIGHT 16
+#endif
+#if (MQTT_MAX_SEND_INFLIGHT < 1) || (MQTT_MAX_SEND_INFLIGHT > 65535)
+    #error "MQTT_MAX_SEND_INFLIGHT must be between 1 and 65535"
+#endif
+
+/* Client-side Session state for outbound QoS > 0 messages. MQTT 3.1.1
+ * section 4.1 lists "QoS 1 and QoS 2 messages which have been sent to the
+ * Server, but have not been completely acknowledged" as Session state the
+ * Client stores, and [MQTT-4.4.0-1] requires them re-sent with their original
+ * Packet Identifiers when it reconnects with CleanSession 0.
+ *
+ * Replaying a PUBLISH needs its topic and payload after the caller's
+ * MqttPublish is gone, so the client keeps its own copy. That costs memory,
+ * hence a pool sized separately from the (much cheaper) identifier table:
+ * raise MQTT_MAX_REPLAY_MSGS to retain more in-flight messages, or define
+ * WOLFMQTT_NO_SESSION_REPLAY to compile the store out entirely. A message
+ * that does not fit is still sent, just not retained for replay.
+ *
+ * A PUBREL awaiting its PUBCOMP is retained regardless of the size limits:
+ * it carries no payload, only the Packet Identifier. */
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+#ifndef MQTT_MAX_REPLAY_MSGS
+    #define MQTT_MAX_REPLAY_MSGS 4
+#endif
+/* A zero-length array is a GNU extension, not C89, and would silently disable
+ * the store rather than fail the build. Use WOLFMQTT_NO_SESSION_REPLAY to
+ * remove it deliberately. */
+#if (MQTT_MAX_REPLAY_MSGS < 1) || (MQTT_MAX_REPLAY_MSGS > 65535)
+    #error "MQTT_MAX_REPLAY_MSGS must be between 1 and 65535"
+#endif
+#ifdef WOLFMQTT_STATIC_MEMORY
+    /* Bounds of the in-struct copies when there is no allocator. */
+    #ifndef MQTT_MAX_REPLAY_TOPIC
+        #define MQTT_MAX_REPLAY_TOPIC 64
+    #endif
+    #ifndef MQTT_MAX_REPLAY_PAYLOAD
+        #define MQTT_MAX_REPLAY_PAYLOAD 256
+    #endif
+    /* The topic copy is NUL terminated, so it needs room for the terminator
+     * plus at least one character [MQTT-4.7.3-1]. */
+    #if (MQTT_MAX_REPLAY_TOPIC < 2) || (MQTT_MAX_REPLAY_TOPIC > 65536)
+        #error "MQTT_MAX_REPLAY_TOPIC must be between 2 and 65536"
+    #endif
+    #if (MQTT_MAX_REPLAY_PAYLOAD < 1)
+        #error "MQTT_MAX_REPLAY_PAYLOAD must be at least 1"
+    #endif
+#endif
+
+typedef struct _MqttReplayMsg {
+    word32  payload_len;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    char    topic[MQTT_MAX_REPLAY_TOPIC];
+    byte    payload[MQTT_MAX_REPLAY_PAYLOAD];
+#else
+    char*   topic;      /* heap-owned, NUL-terminated */
+    byte*   payload;    /* heap-owned, NULL when payload_len is 0 */
+#endif
+    word16  packet_id;  /* 0 = free slot */
+    byte    qos;
+    byte    retain;
+    /* QoS 2 has advanced past PUBREC, so the replay is a PUBREL rather than
+     * the PUBLISH [MQTT-4.4.0-1]. */
+    byte    pubrelSent;
+    /* The topic/payload copy is present. Clear when the message was too large
+     * for the pool or came from a payload callback, which has nothing to
+     * copy; such an entry can still replay a PUBREL but not a PUBLISH. */
+    byte    haveCopy;
+} MqttReplayMsg;
+#endif /* !WOLFMQTT_NO_SESSION_REPLAY */
+
+/* [MQTT-3.1.3-2] The ClientId identifies the Client and its Session. Both the
+ * inbound QoS 2 de-duplication table and the outbound Session replay store use
+ * a fingerprint of it to tell a resumed Session from a different one, so the
+ * fingerprint exists whenever either of them does. */
+#if (WOLFMQTT_MAX_QOS >= 2) || !defined(WOLFMQTT_NO_SESSION_REPLAY)
+    #define WOLFMQTT_SESSION_ID_TRACK
+    /* Bytes of the ClientId retained for that comparison. It is an exact
+     * match, not a digest: a digest of this state is attacker-relevant when
+     * the ClientId derives from untrusted input (a per-tenant or per-device
+     * name), because finding two inputs with the same short digest is cheap
+     * and would let one identity's Session state be replayed into another's.
+     * A ClientId longer than this is simply not recorded, so the next Session
+     * Present is treated as a different Session and the state is dropped -
+     * safe, at the cost of no replay for such Clients. Raise it in
+     * user_settings.h if longer ClientIds need Session replay. MQTT 3.1.1
+     * section 3.1.3.1 requires Servers to accept at least 23 bytes. */
+    #ifndef MQTT_MAX_SESSION_CLIENT_ID
+        #define MQTT_MAX_SESSION_CLIENT_ID 64
+    #endif
+    #if (MQTT_MAX_SESSION_CLIENT_ID < 23)
+        #error "MQTT_MAX_SESSION_CLIENT_ID must be at least 23"
+    #endif
+#endif
+
+/* One outbound Packet Identifier reservation. packet_id 0 marks a free slot;
+ * a Packet Identifier is never 0 [MQTT-2.3.1-1]. owner is the message object
+ * that made the reservation, so MqttClient_CancelMessage can give it back
+ * without knowing which packet type the object holds. */
+typedef struct _MqttSendId {
+    void*  owner;
+    word16 packet_id;
+    /* MqttPacketType of the acknowledgement that ends this exchange (PUBACK,
+     * PUBCOMP, SUBACK or UNSUBACK), so a different response type naming the
+     * same identifier cannot release it early [MQTT-2.3.1-3].
+     * MQTT_PACKET_TYPE_RESERVED means "any". */
+    byte   ack_type;
+} MqttSendId;
 
 /* Client structure */
 typedef struct _MqttClient {
@@ -335,6 +468,30 @@ typedef struct _MqttClient {
      * is empty; a QoS 2 packet id is never 0. */
     word16 recv_qos2_pending[MQTT_MAX_RECV_QOS2];
 #endif
+#ifdef WOLFMQTT_SESSION_ID_TRACK
+    /* The ClientId whose Session state this client holds - the inbound QoS 2
+     * pending ids and the outbound replay pool. A Session Present answer for a
+     * different ClientId is a different Session and must not inherit either
+     * [MQTT-3.1.3-2]. Length 0 means no Session is recorded. */
+    char   session_client_id[MQTT_MAX_SESSION_CLIENT_ID];
+    word16 session_client_id_len;
+#endif
+
+    /* Outbound Packet Identifiers written on the current Network Connection
+     * and not yet released by their acknowledgement. Cleared when a connection
+     * starts or ends, since the client keeps no outbound session state across
+     * one. */
+    MqttSendId send_inflight[MQTT_MAX_SEND_INFLIGHT];
+
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+    /* Unacknowledged outbound QoS > 0 messages retained for [MQTT-4.4.0-1]
+     * replay after a CleanSession 0 reconnect. */
+    MqttReplayMsg replay[MQTT_MAX_REPLAY_MSGS];
+    /* Next replay slot to send; MQTT_MAX_REPLAY_MSGS when none is pending.
+     * Kept on the client so a nonblocking replay can resume where it left
+     * off. */
+    int replayIdx;
+#endif
 } MqttClient;
 
 #ifdef WOLFMQTT_SN
@@ -411,8 +568,12 @@ WOLFMQTT_API int MqttClient_SetPropertyCallback(
  *  \return     MQTT_CODE_SUCCESS if the broker accepted the connection,
                 MQTT_CODE_ERROR_CONNECT_REFUSED if the broker returned a
                 non-zero CONNACK return_code (check
-                connect->ack.return_code for the specific reason), or
-                another MQTT_CODE_ERROR_* for transport/protocol failures
+                connect->ack.return_code for the specific reason),
+                MQTT_CODE_ERROR_STAT if a CONNECT has already been sent on
+                this Network Connection - close it with
+                MqttClient_NetDisconnect before connecting again
+                [MQTT-3.1.0-2] - or another MQTT_CODE_ERROR_* for
+                transport/protocol failures
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Connect(
@@ -441,8 +602,12 @@ WOLFMQTT_API int MqttClient_Connect(
                 MQTT_CODE_ERROR_SERVER_PROP if the request violates a
                 CONNACK-advertised v5 server property before sending (QoS above
                 Maximum QoS, Retain unavailable, Topic Alias above the server
-                maximum, or Receive Maximum quota exhausted), or
-                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
+                maximum, or Receive Maximum quota exhausted),
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
+                awaiting its acknowledgement [MQTT-2.3.1-2],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish_WriteOnly
     \sa         MqttClient_Publish_ex
  */
@@ -505,8 +670,12 @@ WOLFMQTT_API int MqttClient_Publish_ex(
                 >= 0x80 is NOT detected on this path and the publish appears
                 successful. Use MqttClient_Publish/_ex when reliable v5
                 broker-rejection detection for QoS>0 is required.
- *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking) or
-                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
+                awaiting its acknowledgement [MQTT-2.3.1-2],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
     \sa         MqttClient_Publish
     \sa         MqttClient_Publish_ex
     \sa         MqttClient_WaitMessage_ex
@@ -528,7 +697,12 @@ WOLFMQTT_API int MqttClient_Publish_WriteOnly(
                 received but one or more filters were rejected (inspect each
                 subscribe->topics[i].return_code for the per-filter result;
                 v3.1.1 rejection is 0x80, v5 rejection is any reason_code
-                >= 0x80), or another MQTT_CODE_ERROR_* for transport/protocol
+                >= 0x80),
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
+                awaiting its acknowledgement [MQTT-2.3.1-2],
+                or another MQTT_CODE_ERROR_* for transport/protocol
                 failures (see enum MqttPacketResponseCodes).
  */
 WOLFMQTT_API int MqttClient_Subscribe(
@@ -541,8 +715,12 @@ WOLFMQTT_API int MqttClient_Subscribe(
  *  \param      client      Pointer to MqttClient structure
  *  \param      unsubscribe Pointer to MqttUnsubscribe structure initialized
                             with topic list.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS,
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
+                awaiting its acknowledgement [MQTT-2.3.1-2],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Unsubscribe(
     MqttClient *client,
@@ -552,8 +730,10 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
                 Ping Response packet
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS,
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Ping(
     MqttClient *client);
@@ -564,8 +744,10 @@ WOLFMQTT_API int MqttClient_Ping(
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      ping        Pointer to MqttPing structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS,
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping);
 
@@ -607,8 +789,10 @@ WOLFMQTT_API int MqttClient_PropsFree(
  *  \note This is a non-blocking function that will try and send using
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS,
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Disconnect(
     MqttClient *client);
@@ -619,8 +803,10 @@ WOLFMQTT_API int MqttClient_Disconnect(
                 MqttNet.write
  *  \param      client      Pointer to MqttClient structure
  *  \param      disconnect  Pointer to MqttDisconnect structure. NULL is valid.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     MQTT_CODE_SUCCESS,
+                MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
+                Network Connection [MQTT-3.1.0-1],
+                or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Disconnect_ex(
     MqttClient *client,
