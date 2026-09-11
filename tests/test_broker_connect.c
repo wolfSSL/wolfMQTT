@@ -1433,6 +1433,89 @@ TEST(connect_v5_emptyid_clean0_accepted)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+TEST(unsubscribe_v5_reason_codes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int rc;
+    MqttUnsubscribeAck ack;
+    /* CONNECT subscriber "A". */
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+    /* SUBSCRIBE packet_id=1, filter "x", QoS 0, properties length 0. */
+    static const byte subscribe_x[] = {
+        0x82, 0x07,             /* Fixed header, remaining length 7. */
+        0x00, 0x01,             /* Packet Identifier 1. */
+        0x00,                   /* Properties length 0 (MQTT 5). */
+        0x00, 0x01, 'x', 0x00  /* Filter "x", QoS 0. */
+    };
+    /* UNSUBSCRIBE packet_id=2, filter "x", properties length 0. */
+    static const byte unsubscribe_x[] = {
+        0xA2, 0x06, 0x00, 0x02, 0x00, 0x00, 0x01, 'x'
+    };
+    /* UNSUBSCRIBE packet_id=3, filter "y", properties length 0. */
+    static const byte unsubscribe_y[] = {
+        0xA2, 0x06, 0x00, 0x03, 0x00, 0x00, 0x01, 'y'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Discard the CONNECT/SUBACK bytes so the next captured stream contains
+     * only the UNSUBACK being checked. */
+    ASSERT_FALSE(g_clients[0].closed);
+    g_clients[0].out_len = 0;
+
+    /* Filter "x" will be successfuly unsubscribed. */
+    mock_client_input_append(0, unsubscribe_x, sizeof(unsubscribe_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Confirms reason code is RMQTT_REASON_SUCCESS. */
+    ASSERT_TRUE(g_clients[0].out_len > 0);
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(g_clients[0].out_buf,
+        (int)g_clients[0].out_len, &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(2, ack.packet_id);
+    ASSERT_EQ(1, ack.reason_code_count);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, ack.reason_codes[0]);
+
+    /* Filter "y" was never subscribed.
+     * Reason code should be MQTT_REASON_NO_SUB_EXIST. */
+    g_clients[0].out_len = 0;
+    mock_client_input_append(0, unsubscribe_y, sizeof(unsubscribe_y));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(g_clients[0].out_buf,
+        (int)g_clients[0].out_len, &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(3, ack.packet_id);
+    ASSERT_EQ(1, ack.reason_code_count);
+    ASSERT_EQ(MQTT_REASON_NO_SUB_EXIST, ack.reason_codes[0]);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* -------------------------------------------------------------------------- */
@@ -9090,6 +9173,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
     RUN_TEST(connect_v5_emptyid_clean0_accepted);
+    RUN_TEST(unsubscribe_v5_reason_codes);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(fanout_subs_generation_bumped_on_unsubscribe);
