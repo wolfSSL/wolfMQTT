@@ -103,6 +103,7 @@ typedef struct MockNet {
                                 * write) */
     int         write_chunk;   /* maximum bytes accepted per write */
     int         write_zero_count; /* zero-progress writes before accepting */
+    int         write_zero_type; /* zero only for this MQTT-SN packet type */
     int         write_continue_count; /* async continuations before accepting */
 
     int         read_calls;
@@ -236,7 +237,8 @@ static int mock_write(void *ctx, const byte* buf, int buf_len, int timeout_ms)
         net->write_continue_count--;
         return MQTT_CODE_CONTINUE;
     }
-    if (net->write_zero_count > 0) {
+    if (net->write_zero_count > 0 && (net->write_zero_type == 0 ||
+            (buf_len > 1 && buf[1] == net->write_zero_type))) {
         net->write_zero_count--;
         return 0;
     }
@@ -2638,6 +2640,59 @@ TEST(sn_unsubscribe_crossthread_unsuback_routing)
 
 #endif /* WOLFMQTT_NONBLOCK || WOLFMQTT_MULTITHREAD */
 
+#ifndef WOLFMQTT_NONBLOCK
+TEST(sn_connect_willmsg_zero_write_returns_network_error)
+{
+    SN_Connect mc;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME, (int)sizeof(WILLMSGREQ_FRAME));
+    sn_will_setup_connect(&mc);
+    g_mock.write_zero_count = 1;
+    g_mock.write_zero_type = SN_MSG_TYPE_WILLMSG;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_NO_PENDRESP();
+}
+
+TEST(sn_willmsgupd_zero_write_returns_network_error)
+{
+    SN_Will will;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    XMEMSET(&will, 0, sizeof(will));
+    will.willMsg = (byte*)"offline";
+    will.willMsgLen = 7;
+    g_mock.write_zero_count = 1;
+
+    rc = SN_Client_WillMsgUpdate(&g_client, &will);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_NO_PENDRESP();
+}
+
+TEST(sn_publish_qos1_zero_write_returns_network_error)
+{
+    SN_Publish publish;
+    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    sn_publish_setup(&publish, &topic_id, MQTT_QOS_1);
+    g_mock.write_zero_count = 1;
+
+    rc = SN_Client_Publish(&g_client, &publish);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_NO_PENDRESP();
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
 /* ============================================================================
  * SN ping pending-response lifecycle tests (use-after-scope regression, #3132)
  *
@@ -2974,6 +3029,11 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_qos0_no_pendresp);
 #if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
     RUN_TEST(sn_publish_reusable_after_write_error);
+#endif
+#ifndef WOLFMQTT_NONBLOCK
+    RUN_TEST(sn_connect_willmsg_zero_write_returns_network_error);
+    RUN_TEST(sn_willmsgupd_zero_write_returns_network_error);
+    RUN_TEST(sn_publish_qos1_zero_write_returns_network_error);
 #endif
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);

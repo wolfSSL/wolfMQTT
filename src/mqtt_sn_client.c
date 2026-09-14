@@ -1342,6 +1342,9 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
             if (rc == xfer) {
                 rc = 0;
             }
+            else if (rc >= 0) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+            }
 
             /* reset state */
             will->stat.write = MQTT_MSG_BEGIN;
@@ -1667,7 +1670,8 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
             SN_Client_UnlinkPendResp(client, &will->pendResp);
         #endif
             will->stat.write = MQTT_MSG_BEGIN;
-            return rc;
+            return (rc >= 0) ?
+                MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK) : rc;
         }
 
         will->stat.write = MQTT_MSG_WAIT;
@@ -1883,22 +1887,18 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             }
             MqttWriteStop(client, &publish->stat);
 
-            if (rc < 0) {
+            if (rc != xfer) {
             #ifdef WOLFMQTT_MULTITHREAD
                 SN_Client_UnlinkPendResp(client, &publish->pendResp);
             #endif
                 /* The writer was released and its state cleared, so the object
                  * must re-encode on its next use rather than resume. */
                 publish->stat.write = MQTT_MSG_BEGIN;
-                return rc;
+                return (rc >= 0) ?
+                    MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK) : rc;
             }
 
-            if (rc == xfer) {
-                rc = MQTT_CODE_SUCCESS;
-            }
-            else {
-                rc = -1;
-            }
+            rc = MQTT_CODE_SUCCESS;
 
             /* if not expecting a reply, the reset state and exit */
             if ((publish->qos == MQTT_QOS_0) ||

@@ -6124,13 +6124,10 @@ TEST(wait_message_qos2_null_msg_cb_errors_no_ack)
 }
 
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
-/* [MQTT-4.3.3-10] When the inbound QoS 2 dedup table is full a new packet id
- * cannot be recorded, and delivering it would let a later retransmit reach the
- * application twice. The client instead drops the message but MQTT 3.1.1 still
- * answers with a normal PUBREC and keeps the connection: the id stays suppressed
- * on every retransmit, so it is never delivered nor duplicated, and the session
- * is not torn down. */
-TEST(wait_message_qos2_full_dedup_table_v311_pubrec_kept_open)
+/* [MQTT-4.3.3-10] A new QoS 2 packet id cannot be delivered when the full
+ * dedup table cannot record it. MQTT 3.1.1 cannot reject the PUBLISH in-band,
+ * so report an error without sending a successful PUBREC. */
+TEST(wait_message_qos2_full_dedup_table_v311_errors_no_ack)
 {
     int rc;
     int i;
@@ -6169,12 +6166,11 @@ TEST(wait_message_qos2_full_dedup_table_v311_pubrec_kept_open)
         rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
     }
 
-    /* Pre-fix the untracked message was delivered. Now it is not delivered, a
-     * PUBREC is still sent, and the connection stays open. */
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
     ASSERT_EQ(0, g_dedup_msg_cb_calls);
-    ASSERT_TRUE(g_pubresp_written);
-    ASSERT_NE(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+    ASSERT_FALSE(g_pubresp_written);
+    ASSERT_EQ(0, g_frames_written);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
                        MQTT_CLIENT_FLAG_IS_CONNECTED));
 }
 
@@ -7699,7 +7695,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_qos0_null_msg_cb_errors);
     RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
-    RUN_TEST(wait_message_qos2_full_dedup_table_v311_pubrec_kept_open);
+    RUN_TEST(wait_message_qos2_full_dedup_table_v311_errors_no_ack);
 #ifdef WOLFMQTT_V5
     RUN_TEST(wait_message_qos2_full_dedup_table_v5_rejects_with_pubrec);
     RUN_TEST(wait_message_ex_qos2_quota_reason_not_retained);
