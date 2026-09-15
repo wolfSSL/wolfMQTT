@@ -4404,7 +4404,7 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     return rc;
 }
 
-static bool BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
+static int BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
     const char* filter, word16 filter_len)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -4427,7 +4427,7 @@ static bool BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             if (bc->sub_count > 0) {
                 bc->sub_count--;
             }
-            return true;
+            return 1;
         }
     }
 #else
@@ -4456,13 +4456,13 @@ static bool BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             if (bc->sub_count > 0) {
                 bc->sub_count--;
             }
-            return true;
+            return 1;
         }
         prev = cur;
         cur = next;
     }
 #endif
-    return false;
+    return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -7517,13 +7517,17 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
     for (i = 0; i < unsub.topic_count && i < MAX_MQTT_TOPICS; i++) {
         const char* f = unsub.topics[i].topic_filter;
         word16 flen = 0;
-        bool removed = false;
+#ifdef WOLFMQTT_V5
+        int removed = 0;
+#endif
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            removed = BrokerSubs_Remove(broker, bc, f, flen);
 #ifdef WOLFMQTT_V5
+            removed = BrokerSubs_Remove(broker, bc, f, flen);
             if (removed) reasons[i] = MQTT_REASON_SUCCESS;
             else reasons[i] = MQTT_REASON_NO_SUB_EXIST;
+#else
+            BrokerSubs_Remove(broker, bc, f, flen);
 #endif
         }
 #ifdef WOLFMQTT_V5

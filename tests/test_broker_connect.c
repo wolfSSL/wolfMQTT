@@ -1480,13 +1480,13 @@ TEST(unsubscribe_v5_reason_codes)
     ASSERT_FALSE(g_clients[0].closed);
     g_clients[0].out_len = 0;
 
-    /* Filter "x" will be successfuly unsubscribed. */
+    /* Filter "x" will be successfully unsubscribed. */
     mock_client_input_append(0, unsubscribe_x, sizeof(unsubscribe_x));
     for (i = 0; i < 16; i++) {
         MqttBroker_Step(&broker);
     }
 
-    /* Confirms reason code is RMQTT_REASON_SUCCESS. */
+    /* Confirms reason code is MQTT_REASON_SUCCESS. */
     ASSERT_TRUE(g_clients[0].out_len > 0);
     XMEMSET(&ack, 0, sizeof(ack));
     ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
