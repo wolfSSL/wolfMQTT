@@ -1394,9 +1394,10 @@ TEST(decode_publish_topic_contains_u0000_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted only when
- * paired with a Topic Alias property. Wire: PUBLISH QoS 0, remain=7,
- * topic_len=0, props_len=3, TOPIC_ALIAS(35)=1, payload "x". */
+/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is valid at the wire
+ * level when paired with a Topic Alias. The decoder accepts it; the client
+ * layer decides whether it can resolve the alias. Wire: PUBLISH QoS 0,
+ * remain=7, topic_len=0, props_len=3, TOPIC_ALIAS(35)=1, payload "x". */
 TEST(decode_publish_v5_empty_topic_with_alias_accepted)
 {
     byte buf[] = { 0x30, 0x07, 0x00, 0x00, 0x03, 0x23, 0x00, 0x01, 'x' };
@@ -1408,6 +1409,26 @@ TEST(decode_publish_v5_empty_topic_with_alias_accepted)
     rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, pub.topic_name_len);
+    MqttProps_Free(pub.props);
+}
+
+/* A non-empty Topic Name paired with a Topic Alias is a valid v5 PUBLISH that
+ * establishes or updates the alias mapping; the decoder accepts it at the wire
+ * level. Wire: PUBLISH QoS 0, remain=9, topic "ta", props_len=3,
+ * TOPIC_ALIAS(35)=1, payload "x". */
+TEST(decode_publish_v5_topic_alias_with_topic_accepted)
+{
+    byte buf[] = { 0x30, 0x09, 0x00, 0x02, 't', 'a', 0x03,
+                   0x23, 0x00, 0x01, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(2, pub.topic_name_len);
+    ASSERT_TRUE(pub.props != NULL);
     MqttProps_Free(pub.props);
 }
 
@@ -6941,6 +6962,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_topic_contains_u0000_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_publish_v5_empty_topic_with_alias_accepted);
+    RUN_TEST(decode_publish_v5_topic_alias_with_topic_accepted);
     RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
     RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
     RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);

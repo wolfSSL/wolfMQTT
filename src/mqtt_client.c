@@ -26,6 +26,13 @@
 
 #include "wolfmqtt/mqtt_client.h"
 
+/* Mirror the shared property-pool cap from mqtt_packet.c; a build overriding it
+ * via CFLAGS defines it for this file too. Bounds caller-property traversal
+ * here the same way MqttEncode_Props does. */
+#ifndef MQTT_MAX_PROPS
+#define MQTT_MAX_PROPS 30
+#endif
+
 /* Secure memory zeroing - uses volatile pointer to prevent the compiler
  * from optimizing away the stores (dead-store elimination).
  * Declared WOLFMQTT_LOCAL in mqtt_client.h so the MQTT-SN client can reuse it
@@ -1404,7 +1411,23 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
-                if (doProps) {
+                if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    MqttProp* prop;
+                    for (prop = p_publish->props; prop != NULL;
+                            prop = prop->next) {
+                        /* The client advertises Topic Alias Maximum 0 and keeps
+                         * no inbound alias table, so it can neither resolve nor
+                         * record an alias; reject rather than deliver an
+                         * unresolved topic. */
+                        if (prop->type == MQTT_PROP_TOPIC_ALIAS) {
+                            MqttProps_Free(p_publish->props);
+                            p_publish->props = NULL;
+                            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                            break;
+                        }
+                    }
+                }
+                if (rc >= 0 && doProps) {
                     /* Retain returned properties until the message callback. */
                     int tmp = Handle_Props(client, p_publish->props,
                                            (packet_obj != NULL),
@@ -3099,6 +3122,10 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     MqttProp* app_props = NULL;
     int recv_max_added = 0;
 #endif
+#ifdef WOLFMQTT_V5
+    MqttProp* ta_prop;
+    int ta_count;
+#endif
 
     /* Validate required arguments */
     if (client == NULL || mc_connect == NULL) {
@@ -3237,6 +3264,22 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         client->server_recv_max = 65535;
         client->server_recv_max_negotiated = 65535;
         client->topic_alias_max = 0;
+
+        /* The client does not resolve inbound Topic Aliases, so it must not
+         * advertise the capability: clamp any caller-supplied Topic Alias
+         * Maximum to 0 so a conforming server never sends one. The traversal is
+         * bounded like MqttEncode_Props so a cyclic list cannot spin here; a
+         * list longer than the cap is rejected by MqttEncode_Connect below. */
+        ta_count = 0;
+        for (ta_prop = mc_connect->props; ta_prop != NULL;
+                ta_prop = ta_prop->next) {
+            if (++ta_count > MQTT_MAX_PROPS) {
+                break;
+            }
+            if (ta_prop->type == MQTT_PROP_TOPIC_ALIAS_MAX) {
+                ta_prop->data_short = 0;
+            }
+        }
     #endif
 
     #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
