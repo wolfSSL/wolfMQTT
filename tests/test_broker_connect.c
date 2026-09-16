@@ -1400,6 +1400,93 @@ TEST(connect_v5_emptyid_assigned_id_emitted)
     MqttBroker_Free(&broker);
 }
 
+/* Build a v5 CONNECT with an empty ClientId and n_props minimal User
+ * Properties. Returns the packet length, or 0 if it would not fit in out_sz. */
+static size_t build_v5_connect_emptyid_userprops(byte* out, size_t out_sz,
+    int n_props)
+{
+    static const byte one_prop[] = {
+        0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v'  /* User Property "k"="v" */
+    };
+    word32 props_len = (word32)n_props * (word32)sizeof(one_prop);
+    byte props_len_vbi[5];
+    int props_len_sz;
+    word32 remain;
+    byte remain_vbi[5];
+    int remain_sz;
+    size_t pos = 0;
+    int i;
+
+    props_len_sz = MqttEncode_Vbi(props_len_vbi, props_len);
+    remain = 6 + 1 + 1 + 2 + (word32)props_len_sz + props_len + 2;
+    remain_sz = MqttEncode_Vbi(remain_vbi, remain);
+    if ((size_t)(1 + remain_sz) + remain > out_sz) {
+        return 0;
+    }
+
+    out[pos++] = 0x10;                       /* CONNECT */
+    XMEMCPY(out + pos, remain_vbi, (size_t)remain_sz);
+    pos += (size_t)remain_sz;
+    out[pos++] = 0x00; out[pos++] = 0x04;
+    out[pos++] = 'M'; out[pos++] = 'Q'; out[pos++] = 'T'; out[pos++] = 'T';
+    out[pos++] = 0x05;                       /* protocol level 5 */
+    out[pos++] = 0x02;                       /* Clean Start */
+    out[pos++] = 0x00; out[pos++] = 0x3C;    /* keepalive 60 */
+    XMEMCPY(out + pos, props_len_vbi, (size_t)props_len_sz);
+    pos += (size_t)props_len_sz;
+    for (i = 0; i < n_props; i++) {
+        XMEMCPY(out + pos, one_prop, sizeof(one_prop));
+        pos += sizeof(one_prop);
+    }
+    out[pos++] = 0x00; out[pos++] = 0x00;    /* empty ClientId */
+    return pos;
+}
+
+/* Mirror the library's shared property-pool cap (mqtt_packet.c); a build that
+ * overrides it via CFLAGS defines it for this file too. */
+#ifndef MQTT_MAX_PROPS
+    #define MQTT_MAX_PROPS 30
+#endif
+
+/* A v5 CONNECT with an empty ClientId that also fills the shared property pool
+ * with User Properties must still receive its mandatory Assigned Client
+ * Identifier in CONNACK: the decoded CONNECT properties are released before the
+ * CONNACK properties are built. */
+TEST(connect_v5_emptyid_assigned_id_survives_prop_pool_pressure)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    byte connect[MQTT_MAX_PROPS * 7 + 64];
+    size_t connect_len;
+    word16 assigned_id_len;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    connect_len = build_v5_connect_emptyid_userprops(connect, sizeof(connect),
+        MQTT_MAX_PROPS);
+    ASSERT_TRUE(connect_len > 0);
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+
+    /* CONNACK must be accepted and carry the Assigned Client Identifier as its
+     * first property (see connect_v5_emptyid_assigned_id_emitted for layout). */
+    ASSERT_TRUE(g_out_len >= 8);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, g_out_buf[3]);
+    ASSERT_EQ(MQTT_PROP_ASSIGNED_CLIENT_ID, g_out_buf[5]);
+    assigned_id_len = (word16)((g_out_buf[6] << 8) | g_out_buf[7]);
+    ASSERT_TRUE(assigned_id_len > 5);
+    ASSERT_TRUE((size_t)8 + assigned_id_len <= g_out_len);
+    ASSERT_EQ(0, XMEMCMP(&g_out_buf[8], "auto-", 5));
+    ASSERT_FALSE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* v5: empty ClientId + Clean Start = 0 must also be accepted. v5 dropped
  * [MQTT-3.1.3-8]; the protocol_level<5 predicate in the broker's rejection
  * gate must keep this case out of the refuse path. Pins that the v5 escape
@@ -9475,6 +9562,7 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
+    RUN_TEST(connect_v5_emptyid_assigned_id_survives_prop_pool_pressure);
     RUN_TEST(connect_v5_emptyid_clean0_accepted);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
