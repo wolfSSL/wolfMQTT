@@ -367,6 +367,15 @@ typedef struct _MqttSendId {
     byte   ack_type;
 } MqttSendId;
 
+#ifdef WOLFMQTT_V5
+    /* Max CONNECT Authentication Method bytes retained to enforce reuse by a
+     * later AUTH [MQTT-4.12.0-1]; a longer method cannot be verified so re-auth
+     * is refused. Override in user_settings.h for longer names. */
+    #ifndef MQTT_AUTH_METHOD_MAX
+        #define MQTT_AUTH_METHOD_MAX 32
+    #endif
+#endif
+
 /* Client structure */
 typedef struct _MqttClient {
     word32       flags; /* MqttClientFlags */
@@ -396,6 +405,10 @@ typedef struct _MqttClient {
     SN_Object    msgSN;
     SN_PingReq   pingSN; /* persistent state for a NULL SN ping request */
     byte         pingSN_busy; /* one caller at a time owns pingSN */
+    /* Persistent state for a NULL SN disconnect, so a partial write keeps its
+     * resume position across MQTT_CODE_CONTINUE like every other send. */
+    SN_Disconnect disconnectSN;
+    byte         disconnectSN_busy; /* one caller at a time owns disconnectSN */
     SN_MsgType  sn_wait_packet_type;
     word16      sn_wait_packet_id;
     SN_ClientRegisterCb reg_cb;
@@ -491,6 +504,14 @@ typedef struct _MqttClient {
      * Kept on the client so a nonblocking replay can resume where it left
      * off. */
     int replayIdx;
+#endif
+
+#ifdef WOLFMQTT_V5
+    /* CONNECT Authentication Method, retained so a later AUTH must reuse it
+     * [MQTT-4.12.0-1]. auth_method_len is the full length; when it exceeds
+     * MQTT_AUTH_METHOD_MAX the value is not stored and re-auth is refused. */
+    word16 auth_method_len;
+    byte   auth_method[MQTT_AUTH_METHOD_MAX];
 #endif
 } MqttClient;
 

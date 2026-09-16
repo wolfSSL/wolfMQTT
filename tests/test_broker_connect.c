@@ -7536,6 +7536,84 @@ TEST(will_qos1_routes_through_outq)
 }
 #endif /* WOLFMQTT_BROKER_WILL && !WOLFMQTT_STATIC_MEMORY */
 
+#if !defined(WOLFMQTT_STATIC_MEMORY) && (WOLFMQTT_MAX_QOS >= 2)
+/* A PUBREC belongs only to a QoS 2 exchange. One arriving for an outbound QoS 1
+ * PUBLISH must not advance that entry to PUBREL_SENT nor trigger a PUBREL: the
+ * message stays unacknowledged until its PUBACK. */
+TEST(pubrec_for_qos1_publish_not_advanced)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    word16 packet_id;
+    int i;
+    byte pubrec[] = { 0x50, 0x02, 0x00, 0x00 };
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Subscriber "S" gets one QoS 1 PUBLISH in flight, awaiting PUBACK. */
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 12; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_NOT_NULL(sub_bc->out_q_head);
+    ASSERT_EQ(MQTT_QOS_1, (int)sub_bc->out_q_head->qos);
+    ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT, sub_bc->out_q_head->state);
+    packet_id = sub_bc->out_q_head->packet_id;
+
+    /* The subscriber wrongly answers the QoS 1 PUBLISH with a PUBREC. */
+    pubrec[2] = (byte)(packet_id >> 8);
+    pubrec[3] = (byte)(packet_id & 0xFF);
+    mock_client_input_append(0, pubrec, sizeof(pubrec));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    /* Pre-fix the entry advanced to PUBREL_SENT and a PUBREL was sent while
+     * the connection stayed open. A PUBREC on a QoS 1 PUBLISH is a Protocol
+     * Error [MQTT-4.13.1-1]: no PUBREL may be sent and the peer is closed. The
+     * persistent session is orphaned with the entry still awaiting its PUBACK.
+     * sub_bc is freed by the close, so the entry is inspected via the orphan. */
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH_REL));
+    ASSERT_TRUE(g_clients[0].closed);
+    ASSERT_EQ(1, broker.orphan_session_count);
+    ASSERT_NOT_NULL(broker.orphan_sessions);
+    ASSERT_NOT_NULL(broker.orphan_sessions->out_q_head);
+    ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT,
+        broker.orphan_sessions->out_q_head->state);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_MAX_QOS >= 2 */
+
 #ifdef WOLFMQTT_BROKER_PERSIST
 static int persist_test_write_file(const char* path, const byte* data,
     word32 data_len)
@@ -7694,6 +7772,19 @@ static BrokerOutPub* persist_order_make_out(const char* topic, MqttQoS qos,
     out->state = BROKER_OUTQ_QUEUED;
     out->protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
     return out;
+}
+
+/* Counts deletions of durable outbound-queue records so a test can assert an
+ * orphan reclaim does not wipe them. */
+static int g_reclaim_outq_del;
+static int persist_reclaim_kv_del(void* ctx, byte ns, const byte* key,
+    word16 key_len)
+{
+    (void)ctx; (void)key; (void)key_len;
+    if (ns == BROKER_PERSIST_NS_OUTQ) {
+        g_reclaim_outq_del++;
+    }
+    return MQTT_CODE_SUCCESS;
 }
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -7904,6 +7995,92 @@ TEST(persist_mixed_qos_queue_preserves_fifo)
     ASSERT_TRUE(XSTRCMP("t", orphan->out_q_tail->topic) == 0);
 
     MqttBroker_Free(&restored);
+}
+
+/* An orphan reclaim must keep the durable outbound-queue records: each is
+ * removed only by its own terminal acknowledgement. Wiping them at reclaim
+ * loses every unacknowledged QoS message if the broker restarts after the
+ * reclaim but before the resumed session acknowledges. */
+TEST(orphan_reclaim_keeps_persisted_outq)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    PersistOrderStore store;
+    BrokerClient* sub_bc;
+    int i;
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&store, 0, sizeof(store));
+    hooks.kv_put = persist_order_put;
+    hooks.kv_get = persist_order_get;
+    hooks.kv_del = persist_reclaim_kv_del;
+    hooks.kv_iter = persist_order_iter;
+    hooks.ctx = &store;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    hooks.derive_key = persist_order_derive_key;
+#endif
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Persistent subscriber "S" subscribes; publisher "P" sends one QoS 1
+     * message. The subscriber never PUBACKs, so it stays persisted and
+     * unacknowledged. */
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 12; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_NOT_NULL(sub_bc->out_q_head);
+
+    /* Drop the subscriber so its session is orphaned; BrokerOrphan_Take
+     * shadow-writes the unacknowledged QoS 1 message to durable storage. */
+    sub_bc->connected = 0;
+    g_clients[0].read_err = 1;
+    (void)MqttBroker_Step(&broker);
+    ASSERT_EQ(1, broker.orphan_session_count);
+    ASSERT_EQ(1, store.outq_count);
+
+    /* Reconnect the same persistent client id, which reclaims the orphan. The
+     * reclaim must not delete the durable OUTQ records. */
+    g_reclaim_outq_del = 0;
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    for (i = 0; i < 12; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(0, broker.orphan_session_count);
+    ASSERT_EQ(0, g_reclaim_outq_del);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
 }
 
 TEST(persist_restore_packet_id_wrap_preserves_fifo)
@@ -9303,6 +9480,9 @@ int main(int argc, char** argv)
     RUN_TEST(connect_v5_max_packet_size_zero_protocol_error);
 #endif
 #endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && (WOLFMQTT_MAX_QOS >= 2)
+    RUN_TEST(pubrec_for_qos1_publish_not_advanced);
+#endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     RUN_TEST(persist_parent_component_rejected_as_bad_argument);
     RUN_TEST(persist_iter_skips_fifo_without_blocking);
@@ -9312,6 +9492,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
     #endif
     RUN_TEST(persist_mixed_qos_queue_preserves_fifo);
+    RUN_TEST(orphan_reclaim_keeps_persisted_outq);
 #endif
     RUN_TEST(persist_stream_only_hooks_rejected);
     RUN_TEST(persist_mixed_kv_and_stream_hooks_accepted);

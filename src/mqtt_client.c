@@ -565,6 +565,21 @@ static int MqttClient_RecvQos2_Contains(const MqttClient* client,
     return 0;
 }
 
+static int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client)
+{
+    int i;
+
+    if (client == NULL) {
+        return 0;
+    }
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        if (client->recv_qos2_pending[i] == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
 {
     int i;
@@ -573,15 +588,14 @@ static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
             MqttClient_RecvQos2_Contains(client, packet_id)) {
         return;
     }
+    /* A new id is only delivered after MqttClient_Publish_ReadPayload confirmed
+     * a free slot, so this loop always finds one. */
     for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
         if (client->recv_qos2_pending[i] == 0) {
             client->recv_qos2_pending[i] = packet_id;
             return;
         }
     }
-    /* Table full: this id stays untracked, so a later retransmit of it may
-     * still reach the application. Delivery correctness is preserved; only the
-     * duplicate suppression is best effort under a flood of unacked QoS 2. */
 }
 
 static void MqttClient_RecvQos2_Remove(MqttClient* client, word16 packet_id)
@@ -1697,8 +1711,11 @@ static int MqttClient_HandlePacket(MqttClient* client,
             }
 
         #ifdef WOLFMQTT_V5
-            /* Copy response code in case changed by callback */
+            /* Copy response code in case changed by callback, then clear it on
+             * the (possibly caller-owned) publish object so a later reuse does
+             * not inherit this ack's reason, e.g. a quota rejection. */
             resp->reason_code = publish->resp.reason_code;
+            publish->resp.reason_code = MQTT_REASON_SUCCESS;
         #endif
             /* Populate information needed for ack */
             resp->packet_type = (packet_qos == MQTT_QOS_1) ?
@@ -2798,19 +2815,29 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 #ifdef WOLFMQTT_V5
 /* Return 1 if the CONNECT carries an Authentication Method property, i.e. the
  * connection is negotiating enhanced authentication [MQTT-4.12]. */
-static int MqttConnect_HasAuthMethod(const MqttConnect* mc_connect)
+/* Record the CONNECT Authentication Method (presence and value) so a later AUTH
+ * must reuse it [MQTT-4.12.0-1]. A value longer than MQTT_AUTH_METHOD_MAX sets
+ * auth_method_len but is not stored, so MqttClient_Auth refuses re-auth. */
+static void MqttClient_StoreAuthMethod(MqttClient* client,
+    const MqttConnect* mc_connect)
 {
     const MqttProp* prop;
 
-    if (mc_connect == NULL) {
-        return 0;
-    }
-    for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+    client->auth_method_set = 0;
+    client->auth_method_len = 0;
+    for (prop = (mc_connect != NULL) ? mc_connect->props : NULL;
+         prop != NULL; prop = prop->next) {
         if (prop->type == MQTT_PROP_AUTH_METHOD) {
-            return 1;
+            client->auth_method_set = 1;
+            client->auth_method_len = prop->data_str.len;
+            if (prop->data_str.len <= MQTT_AUTH_METHOD_MAX &&
+                    prop->data_str.str != NULL) {
+                XMEMCPY(client->auth_method, prop->data_str.str,
+                    prop->data_str.len);
+            }
+            return;
         }
     }
-    return 0;
 }
 
 #if WOLFMQTT_MAX_QOS >= 2
@@ -3155,12 +3182,12 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         }
         XMEMSET(&mc_connect->ack, 0, sizeof(mc_connect->ack));
 
-        /* Record whether this connection negotiates enhanced authentication so
-         * a later MqttClient_Auth can be refused when no Authentication Method
-         * was sent [MQTT-4.12.0-1]. Recomputed each connect, so it also resets
+        /* Record whether this connection negotiates enhanced authentication and
+         * retain the Authentication Method value so a later MqttClient_Auth can
+         * be refused when no method was sent and required to reuse the same
+         * method [MQTT-4.12.0-1]. Recomputed each connect, so it also resets
          * across a reconnect on the same client. */
-        client->auth_method_set =
-            (byte)MqttConnect_HasAuthMethod(mc_connect);
+        MqttClient_StoreAuthMethod(client, mc_connect);
     #endif
         /* Warn if credentials are being sent without TLS */
     #ifdef WOLFMQTT_DEBUG_CLIENT
@@ -3590,8 +3617,14 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
      * keep the stream in sync, but not delivered to the application again
      * [MQTT-4.3.3-10]. Re-derived from the packet id so it survives non-blocking
      * re-entry into this function. */
-    int suppress_cb = (publish->qos == MQTT_QOS_2 &&
+    int is_dup = (publish->qos == MQTT_QOS_2 &&
         MqttClient_RecvQos2_Contains(client, publish->packet_id));
+    /* A new QoS 2 id that will not fit the dedup table must not be delivered:
+     * untracked, its retransmit would reach the application a second time
+     * [MQTT-4.3.3-10]. Drained to stay in sync, then the exchange is refused. */
+    int untrackable = (publish->qos == MQTT_QOS_2 && !is_dup &&
+        !MqttClient_RecvQos2_HasFreeSlot(client));
+    int suppress_cb = (is_dup || untrackable);
 #endif
 
     /* Handle packet callback and read remaining payload */
@@ -3673,6 +3706,25 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             }
         }
     } while (!msg_done);
+
+#if WOLFMQTT_MAX_QOS >= 2
+    /* The new QoS 2 id could not be tracked (dedup table full) and the drained
+     * payload was not delivered. MQTT 3.1.1 cannot reject the PUBLISH in-band,
+     * so fail without sending a successful PUBREC. */
+    if (rc == MQTT_CODE_SUCCESS && untrackable) {
+    #ifdef WOLFMQTT_V5
+        if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Reject on the PUBREC with Quota Exceeded so the peer ends the
+             * exchange without a PUBREL and may retry once a slot frees. */
+            publish->resp.reason_code = MQTT_REASON_QUOTA_EXCEEDED;
+        }
+        else
+    #endif
+        {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
+    }
+#endif
 
     /* No message callback registered to deliver this incoming PUBLISH. The
      * payload was drained above to keep the stream in sync, but the application
@@ -5010,6 +5062,35 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
     return rc;
 }
 
+/* Return 1 only if the AUTH packet carries the same Authentication Method value
+ * that CONNECT negotiated [MQTT-4.12.0-1]. A missing method, a length or byte
+ * mismatch, or a CONNECT method too long to have been stored all fail. */
+static int MqttClient_AuthMethodMatches(const MqttClient* client,
+    const MqttAuth* auth)
+{
+    const MqttProp* prop;
+
+    if (client->auth_method_len > MQTT_AUTH_METHOD_MAX) {
+        return 0;
+    }
+    for (prop = auth->props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_AUTH_METHOD) {
+            if (prop->data_str.len != client->auth_method_len) {
+                return 0;
+            }
+            if (client->auth_method_len == 0) {
+                return 1;
+            }
+            if (prop->data_str.str == NULL) {
+                return 0;
+            }
+            return (XMEMCMP(prop->data_str.str, client->auth_method,
+                        client->auth_method_len) == 0);
+        }
+    }
+    return 0;
+}
+
 int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
 {
     if (client == NULL || auth == NULL) {
@@ -5021,6 +5102,12 @@ int MqttClient_Auth(MqttClient *client, MqttAuth* auth)
      * AUTH (type 15) does not exist below v5. */
     if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
             client->auth_method_set == 0) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    /* [MQTT-4.12.0-1] Re-authentication must reuse the negotiated method: refuse
+     * an AUTH whose Authentication Method differs from or is missing relative to
+     * the one CONNECT carried, so the mechanism cannot be switched mid-session. */
+    if (!MqttClient_AuthMethodMatches(client, auth)) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     return MqttClient_AuthEx(client, auth, &auth->stat,

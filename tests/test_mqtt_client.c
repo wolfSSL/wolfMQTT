@@ -402,6 +402,19 @@ static int g_ack_id_count;
  * test can confirm the client echoed the id of the PUBLISH it is acknowledging. */
 static int g_last_ack_id;
 
+/* Counts msg_cb invocations so a test can assert an incoming PUBLISH was (or was
+ * not) delivered to the application. */
+#if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
+static int g_dedup_msg_cb_calls;
+static int mock_msg_cb(MqttClient* client, MqttMessage* message, byte msg_new,
+    byte msg_done)
+{
+    (void)client; (void)message; (void)msg_new; (void)msg_done;
+    g_dedup_msg_cb_calls++;
+    return MQTT_CODE_SUCCESS;
+}
+#endif
+
 static int mock_net_write_accept(void *context, const byte* buf, int buf_len,
     int timeout_ms)
 {
@@ -1356,6 +1369,49 @@ TEST(auth_v311_session_rejected_before_write)
     ASSERT_EQ(0, g_frames_written);
 
     MqttClient_PropsFree(auth.props);
+}
+
+/* [MQTT-4.12.0-1] Re-authentication must reuse the CONNECT Authentication
+ * Method. After a CONNECT that negotiated "SCRAM-SHA-256", an AUTH selecting a
+ * different method or omitting it must be refused before it reaches the wire. */
+TEST(auth_mismatched_method_rejected)
+{
+    int rc;
+    MqttAuth auth;
+    MqttProp* prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = run_connect_v5_with_auth_method(1);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, (int)test_client.auth_method_set);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    prop = MqttClient_PropsAdd(&auth.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_AUTH_METHOD;
+    prop->data_str.str = (char*)"PLAIN";
+    prop->data_str.len = (word16)XSTRLEN("PLAIN");
+
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+    MqttClient_PropsFree(auth.props);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    g_frames_written = 0;
+
+    rc = MqttClient_Auth(&test_client, &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
 }
 
 /* MQTT v5: a refused CONNACK (non-zero return code) must NOT mutate long-lived
@@ -6067,6 +6123,163 @@ TEST(wait_message_qos2_null_msg_cb_errors_no_ack)
     ASSERT_FALSE(g_pubresp_written);
 }
 
+#if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
+/* [MQTT-4.3.3-10] A new QoS 2 packet id cannot be delivered when the full
+ * dedup table cannot record it. MQTT 3.1.1 cannot reject the PUBLISH in-band,
+ * so report an error without sending a successful PUBREC. */
+TEST(wait_message_qos2_full_dedup_table_v311_errors_no_ack)
+{
+    int rc;
+    int i;
+    word16 new_id = (word16)(MQTT_MAX_RECV_QOS2 + 1);
+    /* v3.1.1 QoS2 PUBLISH: type|qos2=0x34, remain=7, topic "a" (0x0001 'a'),
+     * packet_id filled below, payload "hi". new_id is one past the ids used to
+     * fill the table, so it is a genuinely new, untrackable exchange. */
+    byte publish_qos2[] = { 0x34, 0x07, 0x00, 0x01, 'a', 0x00, 0x00, 'h', 'i' };
+    publish_qos2[5] = (byte)(new_id >> 8);
+    publish_qos2[6] = (byte)(new_id & 0xFF);
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_client.msg_cb = mock_msg_cb;
+    g_dedup_msg_cb_calls = 0;
+
+    /* Occupy every dedup slot with distinct in-flight ids awaiting PUBREL. */
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        test_client.recv_qos2_pending[i] = (word16)(i + 1);
+    }
+
+    g_pubresp_written = 0;
+    g_frames_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_qos2, sizeof(publish_qos2));
+    g_canned_len = (int)sizeof(publish_qos2);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+    ASSERT_EQ(0, g_dedup_msg_cb_calls);
+    ASSERT_FALSE(g_pubresp_written);
+    ASSERT_EQ(0, g_frames_written);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+#ifdef WOLFMQTT_V5
+/* The MQTT 5 counterpart keeps the connection: an untrackable new QoS 2 id is
+ * refused on the PUBREC with Quota Exceeded (0x97), so the peer ends the
+ * exchange and may retry once a tracking slot frees. The message is still not
+ * delivered to the application. */
+TEST(wait_message_qos2_full_dedup_table_v5_rejects_with_pubrec)
+{
+    int rc;
+    int i;
+    word16 new_id = (word16)(MQTT_MAX_RECV_QOS2 + 1);
+    /* v5 QoS2 PUBLISH: type|qos2=0x34, remain=8, topic "a" (0x0001 'a'),
+     * packet_id filled below, prop_len=0, payload "hi". */
+    byte publish_qos2[] = { 0x34, 0x08, 0x00, 0x01, 'a', 0x00, 0x00, 0x00,
+                            'h', 'i' };
+    publish_qos2[5] = (byte)(new_id >> 8);
+    publish_qos2[6] = (byte)(new_id & 0xFF);
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_client.msg_cb = mock_msg_cb;
+    g_dedup_msg_cb_calls = 0;
+
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        test_client.recv_qos2_pending[i] = (word16)(i + 1);
+    }
+
+    g_pubresp_written = 0;
+    g_last_ack_written = MQTT_PACKET_TYPE_RESERVED;
+    connect_mock_xfer = 0;
+    XMEMSET(connect_mock_sent, 0, sizeof(connect_mock_sent));
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_qos2, sizeof(publish_qos2));
+    g_canned_len = (int)sizeof(publish_qos2);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    /* Not delivered, but a PUBREC carrying Quota Exceeded is sent and the
+     * connection stays up. connect_mock_sent[4] is the PUBREC reason byte
+     * (0x50, remlen, id_hi, id_lo, reason). */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, g_dedup_msg_cb_calls);
+    ASSERT_TRUE(g_pubresp_written);
+    ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_REC, g_last_ack_written);
+    ASSERT_EQ(MQTT_REASON_QUOTA_EXCEEDED, connect_mock_sent[4]);
+    ASSERT_NE(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+/* The quota-rejection reason is written into the publish object to reach the
+ * outgoing PUBREC. On a caller-owned MqttObject (the public WaitMessage_ex path)
+ * it must be cleared afterwards, or a later PUBLISH reusing the object would
+ * inherit the rejection and send a spurious negative PUBREC. */
+TEST(wait_message_ex_qos2_quota_reason_not_retained)
+{
+    int rc;
+    int i;
+    MqttObject obj;
+    word16 new_id = (word16)(MQTT_MAX_RECV_QOS2 + 1);
+    /* v5 QoS2 PUBLISH for a new, untrackable id: type|qos2=0x34, remain=8,
+     * topic "a", packet_id, prop_len=0, "hi". */
+    byte publish_qos2[] = { 0x34, 0x08, 0x00, 0x01, 'a', 0x00, 0x00, 0x00,
+                            'h', 'i' };
+    publish_qos2[5] = (byte)(new_id >> 8);
+    publish_qos2[6] = (byte)(new_id & 0xFF);
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_client.msg_cb = mock_msg_cb;
+    g_dedup_msg_cb_calls = 0;
+
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        test_client.recv_qos2_pending[i] = (word16)(i + 1);
+    }
+
+    XMEMSET(&obj, 0, sizeof(obj));
+    connect_mock_xfer = 0;
+    XMEMSET(connect_mock_sent, 0, sizeof(connect_mock_sent));
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_qos2, sizeof(publish_qos2));
+    g_canned_len = (int)sizeof(publish_qos2);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage_ex(&test_client, &obj, TEST_CMD_TIMEOUT_MS);
+    }
+
+    /* The PUBREC carried Quota Exceeded, but the caller object must not retain
+     * it (pre-fix it stayed 0x97 and leaked into the next reuse). */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(MQTT_REASON_QUOTA_EXCEEDED, connect_mock_sent[4]);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, obj.publish.resp.reason_code);
+}
+#endif /* WOLFMQTT_V5 */
+#endif /* WOLFMQTT_MAX_QOS >= 2 && MQTT_MAX_RECV_QOS2 < 65535 */
+
 #ifdef WOLFMQTT_V5
 /* #6217 property-leak regression: a v5 incoming PUBLISH carrying properties must
  * not leak its retained property list when there is no msg_cb. The decoder keeps
@@ -7300,6 +7513,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_v5_accepts_disconnect_packet_type);
     RUN_TEST(auth_v311_session_rejected_before_write);
+    RUN_TEST(auth_mismatched_method_rejected);
     RUN_TEST(connect_refused_connack_preserves_v5_defaults);
     RUN_TEST(connect_accepted_connack_rejects_illegal_max_qos);
     RUN_TEST(connect_accepted_connack_rejects_illegal_retain_available);
@@ -7480,6 +7694,13 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_qos1_null_msg_cb_errors_no_ack);
     RUN_TEST(wait_message_qos0_null_msg_cb_errors);
     RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
+#if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
+    RUN_TEST(wait_message_qos2_full_dedup_table_v311_errors_no_ack);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(wait_message_qos2_full_dedup_table_v5_rejects_with_pubrec);
+    RUN_TEST(wait_message_ex_qos2_quota_reason_not_retained);
+#endif
+#endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(wait_message_v5_props_null_msg_cb_frees_props);
     RUN_TEST(wait_message_v5_empty_topic_with_alias_delivered);
