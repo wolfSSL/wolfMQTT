@@ -916,6 +916,12 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
         {
             case MQTT_DATA_TYPE_BYTE:
             {
+                /* Every MQTT 5 Byte property is Boolean-valued (0 or 1);
+                 * Maximum QoS shares the same {0,1} domain. Reject any other
+                 * value so the encoder never emits a Protocol Error. */
+                if (cur_prop->data_byte > 1) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 if (buf != NULL) {
                     *(buf++) = cur_prop->data_byte;
                 }

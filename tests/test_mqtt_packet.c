@@ -6395,6 +6395,45 @@ TEST(encode_props_duplicate_repeatability)
     ASSERT_TRUE(rc > 0);
 }
 
+/* Every MQTT 5 Byte property is Boolean-valued: its only legal values are 0 and
+ * 1 (Maximum QoS uses the same {0,1} domain, absence signals QoS 2). The
+ * encoder must reject any other value so it cannot emit a property a peer
+ * treats as a Protocol Error. Exercised in the length pass (buf == NULL). */
+TEST(encode_props_boolean_byte_out_of_range_rejected)
+{
+    MqttProp prop;
+    int rc;
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_REQ_RESP_INFO;
+    prop.data_byte = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_RETAIN_AVAIL;
+    prop.data_byte = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_MAX_QOS;
+    prop.data_byte = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    /* A legal value still encodes. */
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_RETAIN_AVAIL;
+    prop.data_byte = 1;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_TRUE(rc > 0);
+}
+
 /* ============================================================================
  * MqttEncode/Decode_Auth roundtrip
  *
@@ -7221,6 +7260,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_props_string_invalid_utf8_rejected);
     RUN_TEST(encode_props_user_prop_invalid_utf8_rejected);
     RUN_TEST(encode_props_duplicate_repeatability);
+    RUN_TEST(encode_props_boolean_byte_out_of_range_rejected);
     RUN_TEST(auth_v5_cont_auth_roundtrip);
     RUN_TEST(auth_v5_reauth_roundtrip);
     RUN_TEST(auth_v5_reauth_decodes_without_error);
