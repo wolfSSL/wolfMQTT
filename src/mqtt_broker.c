@@ -7788,8 +7788,26 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
-    /* Fan-out is skipped for QoS 2 duplicates: subscribers already received
-     * the application message from the original PUBLISH ([MQTT-4.3.3]). */
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED) && \
+        WOLFMQTT_MAX_QOS >= 2
+    /* [MQTT-4.3.3] Only a v5 failure PUBREC releases the QoS 2 packet id for
+     * reuse, so on a rejected retained store drop the dedup entry added above
+     * for v5 clients only; a v3 client completes the handshake normally and a
+     * leftover entry would misread its next reuse as a duplicate. */
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            retain_rc != MQTT_CODE_SUCCESS && pub.qos == MQTT_QOS_2) {
+        BrokerInboundQos2_Remove(bc, pub.packet_id);
+    }
+#endif
+
+    /* Skip fan-out for a QoS 2 duplicate (already delivered [MQTT-4.3.3]) and
+     * for a v5 QoS 1/2 publish whose retained store was rejected (negatively
+     * acknowledged below). A v3 client cannot be told of the failure and
+     * QoS 0 has no ack path, so both are still forwarded best-effort. */
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+    if (bc->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
+            retain_rc == MQTT_CODE_SUCCESS || pub.qos == MQTT_QOS_0)
+#endif
     if (
     #if WOLFMQTT_MAX_QOS >= 2
         !qos2_duplicate &&

@@ -4155,6 +4155,215 @@ TEST(broker_retained_clock_rollback_not_expired)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+/* A v5 QoS 2 retained PUBLISH the broker cannot store is answered with a
+ * failure PUBREC. The rejected message is not delivered (its topic subscriber
+ * sees nothing) and, per [MQTT-4.3.3], its packet id is released: a later
+ * reuse of that id is a fresh delivery, not a silently discarded duplicate. */
+TEST(qos2_retained_store_failure_releases_packet_id)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    byte fill[8];
+    int fail_topic_pubs;
+    int reuse_topic_pubs;
+    int pub_pubrecs;
+
+    /* v3.1.1 subscriber "A" on "z", the rejected publish's topic. */
+    static const byte connect_sub_z[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'A'
+    };
+    static const byte subscribe_z[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'z', 0x02
+    };
+    /* v3.1.1 subscriber "C" on "x", the reused-id publish's topic. */
+    static const byte connect_sub_x[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'C'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x02
+    };
+    /* v5 publisher "B". */
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'B'
+    };
+    /* v3.1.1 filler "F" used to exhaust the retained store. */
+    static const byte connect_fill[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'F'
+    };
+    /* v5 QoS 2 retained PUBLISH, packet_id=7, topic "z", payload "first".
+     * remain = topic(3) + id(2) + props(1) + payload(5) = 11 */
+    static const byte publish_retain[] = {
+        0x35, 0x0B, 0x00, 0x01, 'z', 0x00, 0x07, 0x00,
+        'f', 'i', 'r', 's', 't'
+    };
+    /* v5 QoS 2 PUBLISH reusing packet_id=7, topic "x", payload "second".
+     * remain = topic(3) + id(2) + props(1) + payload(6) = 12 */
+    static const byte publish_reuse[] = {
+        0x34, 0x0C, 0x00, 0x01, 'x', 0x00, 0x07, 0x00,
+        's', 'e', 'c', 'o', 'n', 'd'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(4);
+    mock_client_input_append(0, connect_sub_z, sizeof(connect_sub_z));
+    mock_client_input_append(0, subscribe_z, sizeof(subscribe_z));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(2, connect_fill, sizeof(connect_fill));
+    mock_client_input_append(3, connect_sub_x, sizeof(connect_sub_x));
+    mock_client_input_append(3, subscribe_x, sizeof(subscribe_x));
+    /* Fill the retained store to its cap with distinct QoS 0 topics so the
+     * next retained store is rejected. */
+    for (i = 0; i < BROKER_MAX_RETAINED; i++) {
+        fill[0] = 0x31;                        /* PUBLISH, retain=1, QoS 0 */
+        fill[1] = 0x06;                        /* remain = 6 */
+        fill[2] = 0x00; fill[3] = 0x03;        /* topic len 3 */
+        fill[4] = 'r';
+        fill[5] = (byte)('0' + (i / 10));
+        fill[6] = (byte)('0' + (i % 10));
+        fill[7] = 'x';                         /* payload */
+        mock_client_input_append(2, fill, sizeof(fill));
+    }
+    for (i = 0; i < BROKER_MAX_RETAINED + 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
+
+    /* The publisher's QoS 2 retained PUBLISH cannot be stored, so it is
+     * rejected with a failure PUBREC, not forwarded, and its packet id is
+     * released. */
+    mock_client_input_append(1, publish_retain, sizeof(publish_retain));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    /* The rejected topic was not stored. */
+    ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
+
+    /* Reusing the released packet id is a fresh delivery, not a duplicate. */
+    mock_client_input_append(1, publish_reuse, sizeof(publish_reuse));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    fail_topic_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    reuse_topic_pubs = count_packets_of_type(g_clients[3].out_buf,
+        g_clients[3].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    pub_pubrecs = count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
+
+    /* The rejected publish is not forwarded, while the reused-id publish is;
+     * pre-fix these were reversed (rejected delivered, reuse dropped as a
+     * duplicate). Each inbound QoS 2 PUBLISH still got one PUBREC. */
+    ASSERT_EQ(0, fail_topic_pubs);
+    ASSERT_EQ(1, reuse_topic_pubs);
+    ASSERT_EQ(2, pub_pubrecs);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 && WOLFMQTT_MAX_QOS >= 2 */
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* A v3.1.1 publisher cannot be told a retained store was rejected: PUBACK and
+ * PUBREC carry no reason code, so the broker must keep delivering the live
+ * message and complete the QoS 2 handshake rather than silently dropping it. */
+TEST(qos2_retained_store_failure_v311_still_delivers)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    byte fill[8];
+    int sub_pubs;
+    int pub_pubrecs;
+    int pub_pubcomps;
+
+    /* v3.1.1 subscriber "A", subscribes to "x" at QoS 2. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'A'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x02
+    };
+    /* v3.1.1 publisher "B". */
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    /* v3.1.1 filler "F" used to exhaust the retained store. */
+    static const byte connect_fill[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'F'
+    };
+    /* v3.1.1 QoS 2 retained PUBLISH, packet_id=7, topic "x", payload "live".
+     * remain = topic(3) + id(2) + payload(4) = 9 */
+    static const byte publish_retain[] = {
+        0x35, 0x09, 0x00, 0x01, 'x', 0x00, 0x07,
+        'l', 'i', 'v', 'e'
+    };
+    static const byte pubrel[] = {
+        0x62, 0x02, 0x00, 0x07
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(2, connect_fill, sizeof(connect_fill));
+    for (i = 0; i < BROKER_MAX_RETAINED; i++) {
+        fill[0] = 0x31;                        /* PUBLISH, retain=1, QoS 0 */
+        fill[1] = 0x06;                        /* remain = 6 */
+        fill[2] = 0x00; fill[3] = 0x03;        /* topic len 3 */
+        fill[4] = 'r';
+        fill[5] = (byte)('0' + (i / 10));
+        fill[6] = (byte)('0' + (i % 10));
+        fill[7] = 'x';                         /* payload */
+        mock_client_input_append(2, fill, sizeof(fill));
+    }
+    for (i = 0; i < BROKER_MAX_RETAINED + 32; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(BROKER_MAX_RETAINED, broker.retained_count);
+
+    /* Retained store is full, so this PUBLISH cannot be retained, but the v3
+     * publisher must still see it fanned out and the handshake complete. */
+    mock_client_input_append(1, publish_retain, sizeof(publish_retain));
+    mock_client_input_append(1, pubrel, sizeof(pubrel));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    sub_pubs = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    pub_pubrecs = count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC);
+    pub_pubcomps = count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_COMP);
+
+    ASSERT_EQ(1, sub_pubs);     /* live message still delivered */
+    ASSERT_EQ(1, pub_pubrecs);
+    ASSERT_EQ(1, pub_pubcomps); /* handshake completes normally */
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
@@ -9340,6 +9549,12 @@ int main(int argc, char** argv)
 #if defined(WOLFMQTT_BROKER_RETAINED) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_retained_list_capped);
     RUN_TEST(broker_retained_clock_rollback_not_expired);
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(qos2_retained_store_failure_releases_packet_id);
+#endif
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(qos2_retained_store_failure_v311_still_delivers);
+#endif
     RUN_TEST(broker_retained_scrub_after_completed_write);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(retained_short_write_preserves_following_delivery);
