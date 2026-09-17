@@ -1,0 +1,87 @@
+name: Feature Combination Build Check
+
+# Compiles the library sources under feature-macro combinations that the
+# autotools jobs never configure, so a header that only builds in the default
+# combination fails here rather than in a user's port.
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '*' ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            defs: ""
+          - name: no-stdio
+            defs: "-DWOLFMQTT_NO_STDIO"
+          - name: no-stdio-v5-sn
+            defs: "-DWOLFMQTT_NO_STDIO -DWOLFMQTT_V5 -DWOLFMQTT_SN"
+          - name: no-stdio-broker
+            defs: "-DWOLFMQTT_NO_STDIO -DWOLFMQTT_BROKER"
+          - name: no-stdio-broker-v5-multithread
+            defs: "-DWOLFMQTT_NO_STDIO -DWOLFMQTT_BROKER -DWOLFMQTT_V5 -DWOLFMQTT_MULTITHREAD"
+          - name: custom-printf-broker
+            defs: "-DWOLFMQTT_NO_STDIO -DWOLFMQTT_BROKER -DWOLFMQTT_CUSTOM_PRINTF -DPRINTF(f,...)=user_printf(f,##__VA_ARGS__)"
+          - name: broker-no-log
+            defs: "-DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_NO_LOG"
+          - name: no-error-strings
+            defs: "-DWOLFMQTT_NO_ERROR_STRINGS"
+          - name: custom-printf
+            defs: "-DWOLFMQTT_CUSTOM_PRINTF -DPRINTF(f,...)=user_printf(f,##__VA_ARGS__)"
+          - name: custom-malloc
+            defs: "-DWOLFMQTT_CUSTOM_MALLOC -DWOLFMQTT_MALLOC(s)=user_malloc(s) -DWOLFMQTT_FREE(p)=user_free(p)"
+          - name: session-id-track-forced
+            defs: "-DWOLFMQTT_SESSION_ID_TRACK"
+          - name: capped-qos-no-replay
+            defs: "-DWOLFMQTT_MAX_QOS=1 -DWOLFMQTT_NO_SESSION_REPLAY"
+          - name: capped-qos-no-replay-forced-track
+            defs: "-DWOLFMQTT_MAX_QOS=1 -DWOLFMQTT_NO_SESSION_REPLAY -DWOLFMQTT_SESSION_ID_TRACK"
+          - name: v5-sn-multithread-nonblock
+            defs: "-DWOLFMQTT_V5 -DWOLFMQTT_SN -DWOLFMQTT_MULTITHREAD -DWOLFMQTT_NONBLOCK"
+          - name: v5-static-memory
+            defs: "-DWOLFMQTT_V5 -DWOLFMQTT_STATIC_MEMORY"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # WOLFMQTT_USER_SETTINGS keeps the generated wolfmqtt/options.h out of
+      # the build, so each combination is exactly the macros listed above.
+      # The declarations satisfy the custom-printf and custom-malloc ports.
+      - name: Write user_settings.h
+        run: |
+          cat > user_settings.h <<'EOF'
+          extern int   user_printf(const char* fmt, ...);
+          extern void* user_malloc(unsigned long size);
+          extern void  user_free(void* ptr);
+          EOF
+
+      # DEFS goes through the environment rather than being spliced into the
+      # command, so the parentheses in the function-like macros reach gcc
+      # instead of being parsed by the shell.
+      #
+      # Every job here is a non-TLS build because ENABLE_MQTT_TLS is simply
+      # not defined; there is no opt-out macro to pass. TLS combinations are
+      # covered by the autotools workflows.
+      - name: Compile sources
+        env:
+          DEFS: ${{ matrix.defs }}
+        run: |
+          for src in src/*.c; do
+            echo "=== ${{ matrix.name }}: $src"
+            gcc -c -Werror -Wall -Wextra -I. \
+              -DWOLFMQTT_USER_SETTINGS $DEFS \
+              "$src" -o /dev/null
+          done

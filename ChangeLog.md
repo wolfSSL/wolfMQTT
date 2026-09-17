@@ -205,6 +205,30 @@
       ClientId that populated it. Reusing one `MqttClient` under a new
       ClientId no longer inherits the previous Session's pending packet ids
       when the server answers Session Present = 1 [MQTT-3.1.3-2] (#595)
+    - `WOLFMQTT_NO_STDIO` builds failed to compile because the default
+      `WOLFMQTT_MALLOC` / `WOLFMQTT_FREE` expand to `malloc()` / `free()` but
+      `<stdlib.h>` was only included alongside `<stdio.h>`. The header is now
+      included with the allocator defaults that need it, which also fixes
+      `WOLFMQTT_CUSTOM_PRINTF` ports such as MPLAB Harmony, and a port that
+      supplies both macros no longer pulls it in for the allocator. The
+      default `XATOI` needs `atoi` from the same header, so it is included
+      with that macro too (#619)
+    - `WOLFMQTT_CUSTOM_MALLOC` without `WOLFMQTT_MALLOC` and `WOLFMQTT_FREE`
+      now fails in the header with a message naming both macros, instead of an
+      implicit declaration reported from inside `mqtt_client.c` (#619)
+    - `<string.h>` is no longer pulled in for `WOLFMQTT_CUSTOM_STRING` ports.
+      It was previously included alongside `<stdio.h>` whatever the setting, so
+      such a port picked up the standard string declarations by accident; it
+      must now supply its own string macros and any headers those need (#619)
+    - `WOLFMQTT_SESSION_ID_TRACK` is derived from `WOLFMQTT_MAX_QOS` and
+      `WOLFMQTT_NO_SESSION_REPLAY`, so a build that also defined it on the
+      command line hit a macro redefinition, fatal under `-Werror`. Such a
+      define is now discarded rather than redefining the macro (#619)
+    - `WOLFMQTT_NO_STDIO` broker builds failed to compile because the log
+      calls drop their arguments once `PRINTF` is a no-op, leaving the log
+      string sanitizer with no callers. `WOLFMQTT_NO_STDIO` now implies
+      `WOLFMQTT_BROKER_NO_LOG`, except where `WOLFMQTT_CUSTOM_PRINTF` supplies
+      a working sink (#619)
 
 ### v2.1.0 (07/02/2026)
 Release 2.1.0 has been developed according to wolfSSL's development and QA

@@ -332,7 +332,12 @@ typedef struct _MqttReplayMsg {
 /* [MQTT-3.1.3-2] The ClientId identifies the Client and its Session. Both the
  * inbound QoS 2 de-duplication table and the outbound Session replay store use
  * a fingerprint of it to tell a resumed Session from a different one, so the
- * fingerprint exists whenever either of them does. */
+ * fingerprint exists whenever either of them does. Derived from those two
+ * settings rather than set by hand: a command-line or user_settings.h define
+ * is discarded here, since on its own it would redefine the macro and select
+ * a build that records a fingerprint nothing reads. Use WOLFMQTT_MAX_QOS and
+ * WOLFMQTT_NO_SESSION_REPLAY to control it. */
+#undef WOLFMQTT_SESSION_ID_TRACK
 #if (WOLFMQTT_MAX_QOS >= 2) || !defined(WOLFMQTT_NO_SESSION_REPLAY)
     #define WOLFMQTT_SESSION_ID_TRACK
     /* Bytes of the ClientId retained for that comparison. It is an exact

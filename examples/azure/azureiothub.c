@@ -542,9 +542,9 @@ int azureiothub_test(MQTTCtx *mqttCtx)
                 }
             } while (1);
         }
+    #ifdef WOLFMQTT_NO_TIME
         FALL_THROUGH;
 
-    #ifdef WOLFMQTT_NO_TIME
         /* Manual keep-alive ping. With automatic keep-alive compiled in, the
          * core client sends PINGREQ itself and WMQ_WAIT_MSG never breaks out to
          * this state, so it is only compiled for WOLFMQTT_NO_TIME builds. */
