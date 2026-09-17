@@ -52,7 +52,7 @@ jobs:
           - name: v5-sn-multithread-nonblock
             defs: "-DWOLFMQTT_V5 -DWOLFMQTT_SN -DWOLFMQTT_MULTITHREAD -DWOLFMQTT_NONBLOCK"
           - name: v5-static-memory
-            defs: "-DWOLFMQTT_V5 -DWOLFMQTT_USE_STATIC_MEMORY"
+            defs: "-DWOLFMQTT_V5 -DWOLFMQTT_STATIC_MEMORY"
 
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +71,10 @@ jobs:
       # DEFS goes through the environment rather than being spliced into the
       # command, so the parentheses in the function-like macros reach gcc
       # instead of being parsed by the shell.
+      #
+      # Every job here is a non-TLS build because ENABLE_MQTT_TLS is simply
+      # not defined; there is no opt-out macro to pass. TLS combinations are
+      # covered by the autotools workflows.
       - name: Compile sources
         env:
           DEFS: ${{ matrix.defs }}
@@ -78,6 +82,6 @@ jobs:
           for src in src/*.c; do
             echo "=== ${{ matrix.name }}: $src"
             gcc -c -Werror -Wall -Wextra -I. \
-              -DWOLFMQTT_USER_SETTINGS -DWOLFMQTT_NO_TLS $DEFS \
+              -DWOLFMQTT_USER_SETTINGS $DEFS \
               "$src" -o /dev/null
           done

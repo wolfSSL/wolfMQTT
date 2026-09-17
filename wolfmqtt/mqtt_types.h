@@ -296,11 +296,12 @@ enum MqttPacketResponseCodes {
     #endif
 #endif
 
-/* XMEMCHR backstop. Standard builds and existing custom-string ports
- * (which already pull in <string.h> via other paths) keep building
- * without changes. Custom-string ports that intentionally avoid
- * <string.h> get an explicit #error directing them to define XMEMCHR
- * themselves, instead of a confusing missing-header diagnostic. */
+/* XMEMCHR backstop. Standard builds keep building without changes: the
+ * <string.h> above declares memchr alongside the other defaults. A
+ * custom-string port supplies its own string macros and whatever headers
+ * those need - no wolfMQTT header includes <string.h> for it - so leaving
+ * XMEMCHR undefined gets an explicit #error directing it to define XMEMCHR
+ * itself, instead of a confusing missing-header diagnostic. */
 #ifndef XMEMCHR
     #ifdef WOLFMQTT_CUSTOM_STRING
         #error "WOLFMQTT_CUSTOM_STRING set: please define XMEMCHR"
