@@ -1477,6 +1477,23 @@ TEST(decode_publish_v5_topic_alias_zero_rejected)
     ASSERT_NULL(pub.props);
 }
 
+/* A Byte property value other than 0 or 1 is a Protocol Error and must be
+ * rejected at decode, symmetric with MqttEncode_Props, so a decoded property
+ * always re-encodes. Wire: PUBLISH QoS 0, topic "t", props_len=2,
+ * PAYLOAD_FORMAT_IND(1)=2. */
+TEST(decode_publish_v5_byte_property_out_of_range_rejected)
+{
+    byte buf[] = { 0x30, 0x07, 0x00, 0x01, 't', 0x02, 0x01, 0x02, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_NULL(pub.props);
+}
+
 /* [MQTT-3.3.2-14] A Response Topic is a Topic Name and MUST NOT contain
  * wildcards. Wire: PUBLISH QoS 0, topic "t", props_len=6, RESP_TOPIC(8)="a/#". */
 TEST(decode_publish_v5_response_topic_wildcard_rejected)
@@ -6966,6 +6983,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
     RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
     RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
+    RUN_TEST(decode_publish_v5_byte_property_out_of_range_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(decode_publish_v5_property_count_capped);

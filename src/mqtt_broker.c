@@ -7600,9 +7600,6 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     byte* payload = NULL;
     char* topic = NULL;
     MqttQoS eff_qos;
-#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
-    int retain_rc = MQTT_CODE_SUCCESS;
-#endif
 #if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
 #endif
@@ -7801,37 +7798,20 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 int ret_rc = BrokerRetained_Store(broker, topic, payload,
                     pub.total_len, pub.qos, expiry);
                 if (ret_rc != MQTT_CODE_SUCCESS) {
+                    /* Retaining is best-effort: a store failure (table full,
+                     * oversized payload, transient alloc) does not reject the
+                     * PUBLISH. The message is still delivered live and
+                     * acknowledged; only the retained copy is not kept. */
                     WBLOG_ERR(broker, "Retained store failed: %s",
                         MqttClient_ReturnCodeToString(ret_rc));
                 }
-#ifdef WOLFMQTT_V5
-                retain_rc = ret_rc;
-#endif
             }
         }
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
-#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED) && \
-        WOLFMQTT_MAX_QOS >= 2
-    /* [MQTT-4.3.3] Only a v5 failure PUBREC releases the QoS 2 packet id for
-     * reuse, so on a rejected retained store drop the dedup entry added above
-     * for v5 clients only; a v3 client completes the handshake normally and a
-     * leftover entry would misread its next reuse as a duplicate. */
-    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
-            retain_rc != MQTT_CODE_SUCCESS && pub.qos == MQTT_QOS_2) {
-        BrokerInboundQos2_Remove(bc, pub.packet_id);
-    }
-#endif
-
-    /* Skip fan-out for a QoS 2 duplicate (already delivered [MQTT-4.3.3]) and
-     * for a v5 QoS 1/2 publish whose retained store was rejected (negatively
-     * acknowledged below). A v3 client cannot be told of the failure and
-     * QoS 0 has no ack path, so both are still forwarded best-effort. */
-#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
-    if (bc->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
-            retain_rc == MQTT_CODE_SUCCESS || pub.qos == MQTT_QOS_0)
-#endif
+    /* Fan-out is skipped for QoS 2 duplicates: subscribers already received the
+     * application message from the original PUBLISH ([MQTT-4.3.3]). */
     if (
     #if WOLFMQTT_MAX_QOS >= 2
         !qos2_duplicate &&
@@ -8147,13 +8127,6 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_V5
         resp.protocol_level = bc->protocol_level;
         resp.reason_code = MQTT_REASON_SUCCESS;
-        /* A retained-store failure must not be ACKed as success: tell the
-         * publisher the quota was exceeded [MQTT-3.4.2]. */
-#ifdef WOLFMQTT_BROKER_RETAINED
-        if (retain_rc != MQTT_CODE_SUCCESS) {
-            resp.reason_code = MQTT_REASON_QUOTA_EXCEEDED;
-        }
-#endif
         resp.props = NULL;
 #endif
         rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),

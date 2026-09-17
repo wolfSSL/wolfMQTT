@@ -29,6 +29,20 @@
       previous manual keep-alive loop under `WOLFMQTT_NO_TIME` (#501)
 
 * API / Behavior Changes
+    - The broker now treats retaining a message as best-effort. When a
+      `RETAIN=1` PUBLISH cannot be stored (retained table full, oversized
+      payload, or allocation failure), the message is still delivered to all
+      current subscribers and acknowledged with success at every QoS and
+      protocol level; only the retained copy is skipped, and the skip is logged.
+      This matches Mosquitto and replaces the previous inconsistent handling
+      that could drop delivery on a retained-store failure. See `BROKER.md`.
+    - The client rejects an inbound v5 PUBLISH that carries a Topic Alias and no
+      longer advertises a nonzero Topic Alias Maximum in `CONNECT`. Inbound
+      alias resolution is not implemented, so the client advertises Topic Alias
+      Maximum 0 and a server that sends an alias anyway is treated as a protocol
+      error. Outbound Topic Alias (client to server) is unchanged. An
+      application that supplies a nonzero `MQTT_PROP_TOPIC_ALIAS_MAX` now gets
+      `MQTT_CODE_ERROR_PROPERTY` from `MqttClient_Connect`.
     - A v5 `CONNECT` now advertises `Receive Maximum` set to
       `MQTT_MAX_RECV_QOS2` (16 by default) unless the application supplied its
       own `MQTT_PROP_RECEIVE_MAX`. This bounds the QoS 1 and QoS 2 PUBLISH

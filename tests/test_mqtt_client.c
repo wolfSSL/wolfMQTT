@@ -537,15 +537,13 @@ TEST(connect_clears_tx_buf_credentials)
 #ifdef WOLFMQTT_V5
 /* The client cannot resolve inbound Topic Aliases, so MqttClient_Connect must
  * not advertise the capability: a caller-supplied nonzero Topic Alias Maximum
- * is clamped to 0 in the CONNECT it sends. */
-TEST(connect_clamps_inbound_topic_alias_max)
+ * is rejected before any CONNECT is sent, rather than advertised and then
+ * contradicted when the server's aliased PUBLISH is refused. */
+TEST(connect_rejects_nonzero_inbound_topic_alias_max)
 {
     int rc;
     MqttConnect connect;
     MqttProp ta_max_prop;
-    /* CONNECT property wire bytes: TOPIC_ALIAS_MAX(0x22) + 2-byte value. */
-    static const byte alias_max_five[] = { 0x22, 0x00, 0x05 };
-    static const byte alias_max_zero[] = { 0x22, 0x00, 0x00 };
 
     rc = test_init_client();
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
@@ -566,17 +564,16 @@ TEST(connect_clamps_inbound_topic_alias_max)
     connect.props = &ta_max_prop;
 
     rc = MqttClient_Connect(&test_client, &connect);
-    /* The read mock cannot deliver a CONNECT_ACK, so the call returns an error
-     * after the CONNECT is written and captured. */
-    ASSERT_NE(MQTT_CODE_SUCCESS, rc);
-    ASSERT_TRUE(connect_mock_xfer > 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    /* Rejected before the transport was touched. */
+    ASSERT_EQ(0, connect_mock_xfer);
 
-    /* The advertised maximum was clamped: the nonzero value never reached the
-     * wire, and a zero value did. */
-    ASSERT_FALSE(buf_contains(connect_mock_sent, connect_mock_xfer,
-                             (const char*)alias_max_five, 3));
-    ASSERT_TRUE(buf_contains(connect_mock_sent, connect_mock_xfer,
-                             (const char*)alias_max_zero, 3));
+    /* A zero (or absent) Topic Alias Maximum is accepted and does reach the
+     * write path. */
+    ta_max_prop.data_short = 0;
+    rc = MqttClient_Connect(&test_client, &connect);
+    ASSERT_NE(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_TRUE(connect_mock_xfer > 0);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -2220,7 +2217,9 @@ TEST(publish_v5_within_max_packet_size_allowed)
 
 /* MQTT 5.0 section 3.2.2.3.4: Maximum QoS can only be 0 or 1. Feed an
  * independently constructed CONNACK containing 2 and require the client to
- * reject the connection instead of normalizing the invalid wire value. */
+ * reject the connection instead of normalizing the invalid wire value. The
+ * out-of-range Byte value is now caught in MqttDecode_Props at the wire
+ * boundary (MQTT_CODE_ERROR_PROPERTY). */
 TEST(connect_accepted_connack_rejects_illegal_max_qos)
 {
     int rc;
@@ -2253,14 +2252,14 @@ TEST(connect_accepted_connack_rejects_illegal_max_qos)
         rc = MqttClient_Connect(&test_client, &connect);
     }
 
-    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
-    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_EQ(WOLFMQTT_MAX_QOS, test_client.max_qos);
 }
 
 /* MQTT 5.0 section 3.2.2.3.5: Retain Available can only be 0 or 1. Feed an
  * independently constructed CONNACK containing 2 and require a protocol
- * failure rather than accepting it as Retain Available=1. */
+ * failure rather than accepting it as Retain Available=1. The out-of-range
+ * Byte value is now caught in MqttDecode_Props (MQTT_CODE_ERROR_PROPERTY). */
 TEST(connect_accepted_connack_rejects_illegal_retain_available)
 {
     int rc;
@@ -2294,8 +2293,7 @@ TEST(connect_accepted_connack_rejects_illegal_retain_available)
         rc = MqttClient_Connect(&test_client, &connect);
     }
 
-    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
-    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_EQ(1, test_client.retain_avail);
 }
 #endif /* WOLFMQTT_V5 */
@@ -7582,7 +7580,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(second_connect_on_same_network_connection_rejected);
     RUN_TEST(connect_clears_tx_buf_credentials);
 #ifdef WOLFMQTT_V5
-    RUN_TEST(connect_clamps_inbound_topic_alias_max);
+    RUN_TEST(connect_rejects_nonzero_inbound_topic_alias_max);
 #endif
     RUN_TEST(connect_accepted_connack_returns_success);
     RUN_TEST(connect_clean_session_present_mismatch_refused);

@@ -276,7 +276,7 @@ The following v5.0 specification features are supported by the wolfMQTT client:
 * Maximum packet size
 * Server assigned client identifier
 * Subscription ID
-* Topic Alias
+* Topic Alias (outbound PUBLISH only; inbound aliases are rejected because the client advertises a Topic Alias Maximum of 0)
 
 The v5 enabled wolfMQTT client was tested with the following MQTT v5 brokers:
 * Mosquitto
