@@ -7518,21 +7518,21 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
         const char* f = unsub.topics[i].topic_filter;
         word16 flen = 0;
 #ifdef WOLFMQTT_V5
-        int removed = 0;
+        reasons[i] = MQTT_REASON_TOPIC_FILTER_INVALID;
 #endif
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
 #ifdef WOLFMQTT_V5
-            removed = BrokerSubs_Remove(broker, bc, f, flen);
-            if (removed) reasons[i] = MQTT_REASON_SUCCESS;
-            else reasons[i] = MQTT_REASON_NO_SUB_EXIST;
+            if (BrokerSubs_Remove(broker, bc, f, flen)) {
+                reasons[i] = MQTT_REASON_SUCCESS;
+            }
+            else {
+                reasons[i] = MQTT_REASON_NO_SUB_EXIST;
+            }
 #else
             BrokerSubs_Remove(broker, bc, f, flen);
 #endif
         }
-#ifdef WOLFMQTT_V5
-        else reasons[i] = MQTT_REASON_TOPIC_FILTER_INVALID;
-#endif
     }
 
     XMEMSET(&ack, 0, sizeof(ack));
