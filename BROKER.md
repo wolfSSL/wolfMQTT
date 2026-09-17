@@ -111,6 +111,17 @@ When built with `WOLFMQTT_STATIC_MEMORY`, the broker uses fixed-size arrays inst
 | `BROKER_TIMEOUT_MS` | 1000 | `select()` timeout |
 | `BROKER_LISTEN_BACKLOG` | 128 | Listen queue depth |
 
+Retaining a message is best-effort. A `RETAIN=1` PUBLISH whose retained copy
+cannot be stored (the retained table is full at `BROKER_MAX_RETAINED`, the
+payload exceeds `BROKER_MAX_PAYLOAD_LEN`, or an allocation fails) is still
+delivered to every current subscriber and acknowledged with success at any QoS
+or protocol level. Only the retained copy is skipped, so a later subscriber will
+not receive that message until the topic is published again with room to store
+it. The skipped retained copy is logged broker-side. This matches how servers
+such as Mosquitto treat a full retained store: live delivery is never sacrificed
+to retention. Raise `BROKER_MAX_RETAINED` (or `BROKER_MAX_PAYLOAD_LEN`) if
+retained-topic capacity matters for your deployment.
+
 The static offline queue is broker-owned fixed storage. Its dominant RAM cost
 is approximately `sessions * messages * (topic length + data length)` bytes,
 plus queue metadata. A new persistent CONNECT is refused when all session slots

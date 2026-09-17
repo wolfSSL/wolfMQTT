@@ -127,10 +127,6 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_TYPE_MAX, MQTT_DATA_TYPE_NONE, 0 }
 };
 
-/* Maximum number of active properties - overridable */
-#ifndef MQTT_MAX_PROPS
-#define MQTT_MAX_PROPS 30
-#endif
 
 /* WOLFMQTT_DYN_PROP allows property allocation using malloc */
 #ifndef WOLFMQTT_DYN_PROP
@@ -916,6 +912,12 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
         {
             case MQTT_DATA_TYPE_BYTE:
             {
+                /* Every MQTT 5 Byte property is Boolean-valued (0 or 1);
+                 * Maximum QoS shares the same {0,1} domain. Reject any other
+                 * value so the encoder never emits a Protocol Error. */
+                if (cur_prop->data_byte > 1) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 if (buf != NULL) {
                     *(buf++) = cur_prop->data_byte;
                 }
@@ -1165,11 +1167,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                 tmp++;
                 total++;
                 prop_len--;
-                /* [MQTT-3.1.2-28/29] Request Response/Problem Information
-                 * MUST be 0 or 1; any other value is a Protocol Error. */
-                if ((cur_prop->type == MQTT_PROP_REQ_RESP_INFO ||
-                        cur_prop->type == MQTT_PROP_REQ_PROB_INFO) &&
-                        cur_prop->data_byte > 1) {
+                /* Every MQTT 5 Byte property is Boolean-valued (0 or 1), and
+                 * Maximum QoS shares the same {0,1} domain; any other value is
+                 * a Protocol Error. Mirrors MqttEncode_Props so a decoded
+                 * property always re-encodes. */
+                if (cur_prop->data_byte > 1) {
                     rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 }
                 break;

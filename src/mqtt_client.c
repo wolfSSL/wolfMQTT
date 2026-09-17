@@ -1404,7 +1404,24 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_publish->packet_id;
             #ifdef WOLFMQTT_V5
-                if (doProps) {
+                if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    MqttProp* prop;
+                    for (prop = p_publish->props; prop != NULL;
+                            prop = prop->next) {
+                        /* The client advertises Topic Alias Maximum 0 and keeps
+                         * no inbound alias table, so it can neither resolve nor
+                         * record an alias; reject rather than deliver an
+                         * unresolved topic. */
+                        if (prop->type == MQTT_PROP_TOPIC_ALIAS) {
+                            MqttProps_Free(p_publish->props);
+                            p_publish->props = NULL;
+                            rc = MQTT_TRACE_ERROR(
+                                    MQTT_CODE_ERROR_MALFORMED_DATA);
+                            break;
+                        }
+                    }
+                }
+                if (rc >= 0 && doProps) {
                     /* Retain returned properties until the message callback. */
                     int tmp = Handle_Props(client, p_publish->props,
                                            (packet_obj != NULL),
@@ -3099,11 +3116,36 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     MqttProp* app_props = NULL;
     int recv_max_added = 0;
 #endif
+#ifdef WOLFMQTT_V5
+    MqttProp* ta_prop;
+    int ta_count;
+#endif
 
     /* Validate required arguments */
     if (client == NULL || mc_connect == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+
+#ifdef WOLFMQTT_V5
+    /* The client does not resolve inbound Topic Aliases, so it must not
+     * advertise the capability. Reject a nonzero caller-supplied Topic Alias
+     * Maximum before sending CONNECT rather than advertising support it cannot
+     * honor and then rejecting the server's aliased PUBLISH. The scan is
+     * bounded like MqttEncode_Props so a cyclic list cannot spin. */
+    if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        ta_count = 0;
+        for (ta_prop = mc_connect->props; ta_prop != NULL;
+                ta_prop = ta_prop->next) {
+            if (++ta_count > MQTT_MAX_PROPS) {
+                break;
+            }
+            if (ta_prop->type == MQTT_PROP_TOPIC_ALIAS_MAX &&
+                    ta_prop->data_short != 0) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+            }
+        }
+    }
+#endif
 
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
     if (mc_connect->stat.write == MQTT_MSG_PAYLOAD) {

@@ -534,6 +534,49 @@ TEST(connect_clears_tx_buf_credentials)
     }
 }
 
+#ifdef WOLFMQTT_V5
+/* The client cannot resolve inbound Topic Aliases, so MqttClient_Connect must
+ * not advertise the capability: a caller-supplied nonzero Topic Alias Maximum
+ * is rejected before any CONNECT is sent, rather than advertised and then
+ * contradicted when the server's aliased PUBLISH is refused. */
+TEST(connect_rejects_nonzero_inbound_topic_alias_max)
+{
+    int rc;
+    MqttConnect connect;
+    MqttProp ta_max_prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    connect_mock_xfer = 0;
+    XMEMSET(connect_mock_sent, 0, sizeof(connect_mock_sent));
+    test_net.write = mock_net_write_accept;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+    XMEMSET(&ta_max_prop, 0, sizeof(ta_max_prop));
+    ta_max_prop.type = MQTT_PROP_TOPIC_ALIAS_MAX;
+    ta_max_prop.data_short = 5;
+    ta_max_prop.next = NULL;
+    connect.props = &ta_max_prop;
+
+    rc = MqttClient_Connect(&test_client, &connect);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    /* Rejected before the transport was touched. */
+    ASSERT_EQ(0, connect_mock_xfer);
+
+    /* A zero (or absent) Topic Alias Maximum is accepted and does reach the
+     * write path. */
+    ta_max_prop.data_short = 0;
+    rc = MqttClient_Connect(&test_client, &connect);
+    ASSERT_NE(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_TRUE(connect_mock_xfer > 0);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* Serves a pre-staged response packet (e.g. a SUBACK) one chunk per read so a
  * full client request/response round-trip can run against the mock net. */
 static byte g_canned_buf[64];
@@ -2174,7 +2217,9 @@ TEST(publish_v5_within_max_packet_size_allowed)
 
 /* MQTT 5.0 section 3.2.2.3.4: Maximum QoS can only be 0 or 1. Feed an
  * independently constructed CONNACK containing 2 and require the client to
- * reject the connection instead of normalizing the invalid wire value. */
+ * reject the connection instead of normalizing the invalid wire value. The
+ * out-of-range Byte value is now caught in MqttDecode_Props at the wire
+ * boundary (MQTT_CODE_ERROR_PROPERTY). */
 TEST(connect_accepted_connack_rejects_illegal_max_qos)
 {
     int rc;
@@ -2207,14 +2252,14 @@ TEST(connect_accepted_connack_rejects_illegal_max_qos)
         rc = MqttClient_Connect(&test_client, &connect);
     }
 
-    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
-    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_EQ(WOLFMQTT_MAX_QOS, test_client.max_qos);
 }
 
 /* MQTT 5.0 section 3.2.2.3.5: Retain Available can only be 0 or 1. Feed an
  * independently constructed CONNACK containing 2 and require a protocol
- * failure rather than accepting it as Retain Available=1. */
+ * failure rather than accepting it as Retain Available=1. The out-of-range
+ * Byte value is now caught in MqttDecode_Props (MQTT_CODE_ERROR_PROPERTY). */
 TEST(connect_accepted_connack_rejects_illegal_retain_available)
 {
     int rc;
@@ -2248,8 +2293,7 @@ TEST(connect_accepted_connack_rejects_illegal_retain_available)
         rc = MqttClient_Connect(&test_client, &connect);
     }
 
-    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP, rc);
-    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, connect.ack.return_code);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_EQ(1, test_client.retain_avail);
 }
 #endif /* WOLFMQTT_V5 */
@@ -6410,10 +6454,12 @@ TEST(wait_message_timeout_preserves_partial_vbi)
 #endif /* WOLFMQTT_NONBLOCK */
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 section 3.3.2.3.4 permits an empty Topic Name when a nonzero Topic
- * Alias property supplies the topic. This fixed wire fixture reaches the
+/* The client advertises Topic Alias Maximum 0 and keeps no inbound alias table,
+ * so an empty Topic Name paired with a Topic Alias is a non-conforming server
+ * PUBLISH that cannot be resolved; it must be rejected, not delivered to the
+ * callback with a zero-length topic. This fixed wire fixture reaches the
  * preliminary packet decode used by MqttClient_WaitMessage. */
-TEST(wait_message_v5_empty_topic_with_alias_delivered)
+TEST(wait_message_v5_empty_topic_with_alias_rejected)
 {
     int rc;
     int i;
@@ -6438,8 +6484,42 @@ TEST(wait_message_v5_empty_topic_with_alias_delivered)
         rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
     }
 
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_msg_cb_calls);
+}
+
+/* The client advertises Topic Alias Maximum 0, so any inbound Topic Alias, even
+ * on a non-empty Topic Name, is a non-conforming server PUBLISH. The client
+ * keeps no alias table and must reject it rather than accept the alias. Wire:
+ * PUBLISH QoS 0, remain=9, topic "ta", props_len=3, TOPIC_ALIAS(35)=1,
+ * payload "x". */
+TEST(wait_message_v5_topic_alias_with_topic_rejected)
+{
+    int rc;
+    int i;
+    static const byte publish_v5[] = {
+        0x30, 0x09, 0x00, 0x02, 't', 'a', 0x03, 0x23, 0x00, 0x01, 'x'
+    };
+
+    rc = test_init_client();
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-    ASSERT_TRUE(g_msg_cb_calls > 0);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_v5, sizeof(publish_v5));
+    g_canned_len = (int)sizeof(publish_v5);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_msg_cb_calls);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -7499,6 +7579,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_after_connect_allowed);
     RUN_TEST(second_connect_on_same_network_connection_rejected);
     RUN_TEST(connect_clears_tx_buf_credentials);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(connect_rejects_nonzero_inbound_topic_alias_max);
+#endif
     RUN_TEST(connect_accepted_connack_returns_success);
     RUN_TEST(connect_clean_session_present_mismatch_refused);
     RUN_TEST(connect_resume_session_present_accepted);
@@ -7703,7 +7786,8 @@ void run_mqtt_client_tests(void)
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(wait_message_v5_props_null_msg_cb_frees_props);
-    RUN_TEST(wait_message_v5_empty_topic_with_alias_delivered);
+    RUN_TEST(wait_message_v5_empty_topic_with_alias_rejected);
+    RUN_TEST(wait_message_v5_topic_alias_with_topic_rejected);
 #endif
     RUN_TEST(wait_message_qos1_with_msg_cb_delivers_and_acks);
 #ifdef WOLFMQTT_NONBLOCK

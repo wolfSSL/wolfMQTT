@@ -1394,9 +1394,10 @@ TEST(decode_publish_topic_contains_u0000_rejected)
 }
 
 #ifdef WOLFMQTT_V5
-/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is permitted only when
- * paired with a Topic Alias property. Wire: PUBLISH QoS 0, remain=7,
- * topic_len=0, props_len=3, TOPIC_ALIAS(35)=1, payload "x". */
+/* MQTT v5 section 3.3.2.3.4: a zero-length Topic Name is valid at the wire
+ * level when paired with a Topic Alias. The decoder accepts it; the client
+ * layer decides whether it can resolve the alias. Wire: PUBLISH QoS 0,
+ * remain=7, topic_len=0, props_len=3, TOPIC_ALIAS(35)=1, payload "x". */
 TEST(decode_publish_v5_empty_topic_with_alias_accepted)
 {
     byte buf[] = { 0x30, 0x07, 0x00, 0x00, 0x03, 0x23, 0x00, 0x01, 'x' };
@@ -1408,6 +1409,26 @@ TEST(decode_publish_v5_empty_topic_with_alias_accepted)
     rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, pub.topic_name_len);
+    MqttProps_Free(pub.props);
+}
+
+/* A non-empty Topic Name paired with a Topic Alias is a valid v5 PUBLISH that
+ * establishes or updates the alias mapping; the decoder accepts it at the wire
+ * level. Wire: PUBLISH QoS 0, remain=9, topic "ta", props_len=3,
+ * TOPIC_ALIAS(35)=1, payload "x". */
+TEST(decode_publish_v5_topic_alias_with_topic_accepted)
+{
+    byte buf[] = { 0x30, 0x09, 0x00, 0x02, 't', 'a', 0x03,
+                   0x23, 0x00, 0x01, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(2, pub.topic_name_len);
+    ASSERT_TRUE(pub.props != NULL);
     MqttProps_Free(pub.props);
 }
 
@@ -1453,6 +1474,23 @@ TEST(decode_publish_v5_topic_alias_zero_rejected)
     pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+}
+
+/* A Byte property value other than 0 or 1 is a Protocol Error and must be
+ * rejected at decode, symmetric with MqttEncode_Props, so a decoded property
+ * always re-encodes. Wire: PUBLISH QoS 0, topic "t", props_len=2,
+ * PAYLOAD_FORMAT_IND(1)=2. */
+TEST(decode_publish_v5_byte_property_out_of_range_rejected)
+{
+    byte buf[] = { 0x30, 0x07, 0x00, 0x01, 't', 0x02, 0x01, 0x02, 'x' };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_NULL(pub.props);
 }
 
@@ -6395,6 +6433,45 @@ TEST(encode_props_duplicate_repeatability)
     ASSERT_TRUE(rc > 0);
 }
 
+/* Every MQTT 5 Byte property is Boolean-valued: its only legal values are 0 and
+ * 1 (Maximum QoS uses the same {0,1} domain, absence signals QoS 2). The
+ * encoder must reject any other value so it cannot emit a property a peer
+ * treats as a Protocol Error. Exercised in the length pass (buf == NULL). */
+TEST(encode_props_boolean_byte_out_of_range_rejected)
+{
+    MqttProp prop;
+    int rc;
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_REQ_RESP_INFO;
+    prop.data_byte = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_RETAIN_AVAIL;
+    prop.data_byte = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_MAX_QOS;
+    prop.data_byte = 2;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    /* A legal value still encodes. */
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_RETAIN_AVAIL;
+    prop.data_byte = 1;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_TRUE(rc > 0);
+}
+
 /* ============================================================================
  * MqttEncode/Decode_Auth roundtrip
  *
@@ -6902,9 +6979,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_topic_contains_u0000_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_publish_v5_empty_topic_with_alias_accepted);
+    RUN_TEST(decode_publish_v5_topic_alias_with_topic_accepted);
     RUN_TEST(decode_publish_v5_empty_topic_no_alias_rejected);
     RUN_TEST(decode_publish_v5_subscription_id_zero_rejected);
     RUN_TEST(decode_publish_v5_topic_alias_zero_rejected);
+    RUN_TEST(decode_publish_v5_byte_property_out_of_range_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(decode_publish_v5_property_count_capped);
@@ -7221,6 +7300,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_props_string_invalid_utf8_rejected);
     RUN_TEST(encode_props_user_prop_invalid_utf8_rejected);
     RUN_TEST(encode_props_duplicate_repeatability);
+    RUN_TEST(encode_props_boolean_byte_out_of_range_rejected);
     RUN_TEST(auth_v5_cont_auth_roundtrip);
     RUN_TEST(auth_v5_reauth_roundtrip);
     RUN_TEST(auth_v5_reauth_decodes_without_error);

@@ -361,10 +361,11 @@ int mqttclient_test(MQTTCtx *mqttCtx)
         prop->data_int = (word32)mqttCtx->max_packet_size;
     }
     {
-        /* Topic Alias Maximum */
+        /* Topic Alias Maximum. Advertise 0: the client does not resolve inbound
+         * Topic Aliases, so a conforming server must not send any. */
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
         prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
-        prop->data_short = mqttCtx->topic_alias_max;
+        prop->data_short = 0;
     }
     if (mqttCtx->clean_session == 0) {
         /* Session expiry interval */

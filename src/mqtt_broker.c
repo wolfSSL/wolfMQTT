@@ -7114,6 +7114,19 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
 #ifdef WOLFMQTT_V5
     ack.props = NULL;
+
+    /* Release the decoded CONNECT and Will properties before building the
+     * CONNACK: they share the fixed property pool, and a CONNECT carrying many
+     * User Properties would otherwise exhaust it and drop the mandatory
+     * Assigned Client Identifier added below. */
+    if (mc.props != NULL) {
+        (void)MqttProps_Free(mc.props);
+        mc.props = NULL;
+    }
+    if (lwt.props != NULL) {
+        (void)MqttProps_Free(lwt.props);
+        lwt.props = NULL;
+    }
 #endif
 
 #ifdef WOLFMQTT_V5
@@ -7131,6 +7144,17 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
                 prop->data_str.str = bc->client_id;
                 prop->data_str.len = (word16)XSTRLEN(bc->client_id);
+            }
+            else {
+                /* [MQTT-3.1.3-6] An empty-ClientId client must be told its
+                 * assigned id; refuse rather than accept an unusable connection
+                 * when the property pool cannot hold it. Clear the effective
+                 * session expiry first so the refused connection tears its
+                 * tentative session down instead of orphaning an unreachable
+                 * one that could evict a valid session at capacity. */
+                bc->session_expiry_sec = 0;
+                ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+                goto send_connack;
             }
         }
 
@@ -7576,9 +7600,6 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     byte* payload = NULL;
     char* topic = NULL;
     MqttQoS eff_qos;
-#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
-    int retain_rc = MQTT_CODE_SUCCESS;
-#endif
 #if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
 #endif
@@ -7777,19 +7798,20 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 int ret_rc = BrokerRetained_Store(broker, topic, payload,
                     pub.total_len, pub.qos, expiry);
                 if (ret_rc != MQTT_CODE_SUCCESS) {
+                    /* Retaining is best-effort: a store failure (table full,
+                     * oversized payload, transient alloc) does not reject the
+                     * PUBLISH. The message is still delivered live and
+                     * acknowledged; only the retained copy is not kept. */
                     WBLOG_ERR(broker, "Retained store failed: %s",
                         MqttClient_ReturnCodeToString(ret_rc));
                 }
-#ifdef WOLFMQTT_V5
-                retain_rc = ret_rc;
-#endif
             }
         }
     }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
-    /* Fan-out is skipped for QoS 2 duplicates: subscribers already received
-     * the application message from the original PUBLISH ([MQTT-4.3.3]). */
+    /* Fan-out is skipped for QoS 2 duplicates: subscribers already received the
+     * application message from the original PUBLISH ([MQTT-4.3.3]). */
     if (
     #if WOLFMQTT_MAX_QOS >= 2
         !qos2_duplicate &&
@@ -8105,13 +8127,6 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_V5
         resp.protocol_level = bc->protocol_level;
         resp.reason_code = MQTT_REASON_SUCCESS;
-        /* A retained-store failure must not be ACKed as success: tell the
-         * publisher the quota was exceeded [MQTT-3.4.2]. */
-#ifdef WOLFMQTT_BROKER_RETAINED
-        if (retain_rc != MQTT_CODE_SUCCESS) {
-            resp.reason_code = MQTT_REASON_QUOTA_EXCEEDED;
-        }
-#endif
         resp.props = NULL;
 #endif
         rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),

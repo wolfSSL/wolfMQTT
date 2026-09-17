@@ -48,6 +48,16 @@
 #define MAX_MQTT_TOPICS      12
 #endif
 
+/* Maximum number of MQTT v5 properties in one packet, and the size of the
+ * shared property pool. Also bounds property-list traversal outside the pool
+ * allocator. Override in user_settings.h to trade memory for a larger set. */
+#ifndef MQTT_MAX_PROPS
+#define MQTT_MAX_PROPS       30
+#endif
+#if (MQTT_MAX_PROPS < 1) || (MQTT_MAX_PROPS > 65535)
+    #error "MQTT_MAX_PROPS must be between 1 and 65535"
+#endif
+
 /* WOLFMQTT_NO_UTF8_VALIDATION
  *   Define to disable RFC 3629 UTF-8 well-formedness validation on the
  *   encode side (MqttEncode_Utf8Ok). Decode-side validation in

@@ -364,7 +364,7 @@ int sub_client(MQTTCtx *mqttCtx)
         /* Topic Alias Maximum */
         MqttProp* prop = MqttClient_PropsAdd(&mqttCtx->connect.props);
         prop->type = MQTT_PROP_TOPIC_ALIAS_MAX;
-        prop->data_short = mqttCtx->topic_alias_max;
+        prop->data_short = 0;
     }
     if (mqttCtx->clean_session == 0) {
         /* Session expiry interval */
