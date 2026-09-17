@@ -1618,6 +1618,9 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
     SocketContext *sock = (SocketContext*)context;
     MQTTCtx* mqttCtx;
     int rc;
+    /* SOCK_SEND returns ssize_t on POSIX; hold the result at that width so the
+     * checks below run before any narrowing to int. */
+    long sent;
     SOERROR_T so_error = 0;
 #ifndef WOLFMQTT_NO_TIMEOUT
     struct timeval tv;
@@ -1663,12 +1666,12 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             sizeof(tv));
 #endif
 
-    rc = (int)SOCK_SEND(sock->fd, buf, buf_len, 0);
+    sent = (long)SOCK_SEND(sock->fd, buf, buf_len, 0);
     #if defined(WOLFMQTT_DEBUG_SOCKET)
-    PRINTF("info: SOCK_SEND(%d) returned %d, buf_len is %d",
-           buf_len, rc, buf_len);
+    PRINTF("info: SOCK_SEND(%d) returned %ld, buf_len is %d",
+           buf_len, sent, buf_len);
     #endif
-    if (rc == -1) {
+    if (sent < 0) {
         {
             /* Get error */
             GET_SOCK_ERROR(sock->fd, SOL_SOCKET, SO_ERROR, so_error);
@@ -1690,6 +1693,14 @@ static int NetWrite(void *context, const byte* buf, int buf_len,
             rc = MQTT_CODE_ERROR_NETWORK;
             PRINTF("NetWrite: Error %d", so_error);
         }
+    }
+    else {
+        /* Never report more than the caller asked to write; guards against a
+         * platform send() that claims more than the requested length. */
+        if (sent > (long)buf_len) {
+            sent = (long)buf_len;
+        }
+        rc = (int)sent;
     }
 
     (void)timeout_ms;
@@ -1754,6 +1765,9 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
     /* Loop until buf_len has been read, error or timeout */
     while (bytes < buf_len) {
         int do_read = 0;
+        /* SOCK_RECV returns ssize_t on POSIX; hold the result at that width so
+         * the checks below run before any narrowing to int. */
+        long recvd;
 
     #ifndef WOLFMQTT_NO_TIMEOUT
         #ifdef WOLFMQTT_NONBLOCK
@@ -1819,24 +1833,25 @@ static int NetRead_ex(void *context, byte* buf, int buf_len,
         if (do_read) {
             /* Try and read number of buf_len provided,
              * minus what's already been read */
-            rc = (int)SOCK_RECV(sock->fd,
+            recvd = (long)SOCK_RECV(sock->fd,
                            &buf[bytes],
                            buf_len - bytes,
                            flags);
             #if defined(WOLFMQTT_DEBUG_SOCKET)
-            PRINTF("info: SOCK_RECV(%d) returned %d, buf_len - bytes is %d",
-                   bytes, rc, buf_len - bytes);
+            PRINTF("info: SOCK_RECV(%d) returned %ld, buf_len - bytes is %d",
+                   bytes, recvd, buf_len - bytes);
             #endif
-            if (rc <= 0) {
+            if (recvd <= 0) {
                 rc = -1;
                 goto exit; /* Error */
             }
             else {
                 /* Clamp return value: defensive check against
                  * platform API returning more than requested */
-                if (rc > buf_len - bytes) {
-                    rc = buf_len - bytes;
+                if (recvd > (long)(buf_len - bytes)) {
+                    recvd = (long)(buf_len - bytes);
                 }
+                rc = (int)recvd;
                 bytes += rc; /* Data */
     #ifdef ENABLE_MQTT_TLS
                 if (MqttClient_Flags(&mqttCtx->client, 0, 0)

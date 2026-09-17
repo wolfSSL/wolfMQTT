@@ -1740,6 +1740,11 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     if (client == NULL || rx_buf == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+    /* Every fixed header this function reads is either 2 bytes (length in the
+     * first byte) or 4 (SN_PACKET_LEN_IND, length in the next two), so a buffer
+     * that clears this check holds any header MQTT_PK_BEGIN builds below. A
+     * resume that enters at a later state carries header_len from an earlier
+     * call and is bounded where it is used, not here. */
     if (rx_buf_len < MQTT_PACKET_HEADER_MIN_SIZE + MQTT_DATA_LEN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
@@ -1766,9 +1771,6 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
             if (rx_buf[0] == SN_PACKET_LEN_IND){
                 /* Read length stored in first three bytes, type in fourth */
-                if (len + MQTT_DATA_LEN_SIZE > rx_buf_len) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-                }
                 if (MqttClient_Flags(client,0,0) & MQTT_CLIENT_FLAG_IS_DTLS) {
                     rc = MqttSocket_Read(client, rx_buf+len, 2, timeout_ms);
                     if (rc < 0) {
@@ -1821,7 +1823,10 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                     client->packet.remain_len = 0;
                 }
 
-                /* Make sure it does not overflow rx_buf */
+                /* Make sure it does not overflow rx_buf. header_len is
+                 * carried in client state across calls, so a resume that
+                 * enters here can hold a length the caller's buffer cannot
+                 * cover; the entry check above does not bound it. */
                 if (rx_buf_len < client->packet.header_len) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
                 }
