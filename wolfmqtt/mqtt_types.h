@@ -316,6 +316,8 @@ enum MqttPacketResponseCodes {
     #ifndef WOLFMQTT_FREE
         #define WOLFMQTT_FREE(p)    {void* xp = (p); if((xp)) free((xp));}
     #endif
+#elif !defined(WOLFMQTT_MALLOC) || !defined(WOLFMQTT_FREE)
+    #error "WOLFMQTT_CUSTOM_MALLOC set: please define WOLFMQTT_MALLOC and WOLFMQTT_FREE"
 #endif
 
 #ifndef WOLFMQTT_PACK
@@ -375,9 +377,9 @@ enum MqttPacketResponseCodes {
         #endif
     #endif
 
+    #include <stdlib.h>
+    #include <string.h>
     #ifndef WOLFMQTT_NO_STDIO
-        #include <stdlib.h>
-        #include <string.h>
         #include <stdio.h>
     #else
         #undef PRINTF

@@ -334,7 +334,11 @@ typedef struct _MqttReplayMsg {
  * a fingerprint of it to tell a resumed Session from a different one, so the
  * fingerprint exists whenever either of them does. */
 #if (WOLFMQTT_MAX_QOS >= 2) || !defined(WOLFMQTT_NO_SESSION_REPLAY)
-    #define WOLFMQTT_SESSION_ID_TRACK
+    #ifndef WOLFMQTT_SESSION_ID_TRACK
+        #define WOLFMQTT_SESSION_ID_TRACK
+    #endif
+#endif
+#ifdef WOLFMQTT_SESSION_ID_TRACK
     /* Bytes of the ClientId retained for that comparison. It is an exact
      * match, not a digest: a digest of this state is attacker-relevant when
      * the ClientId derives from untrusted input (a per-tenant or per-device
