@@ -210,7 +210,9 @@
       `<stdlib.h>` was only included alongside `<stdio.h>`. The header is now
       included with the allocator defaults that need it, which also fixes
       `WOLFMQTT_CUSTOM_PRINTF` ports such as MPLAB Harmony, and a port that
-      supplies both macros still pulls in no libc header (#619)
+      supplies both macros no longer pulls it in for the allocator. The
+      default `XATOI` needs `atoi` from the same header, so it is included
+      with that macro too (#619)
     - `WOLFMQTT_CUSTOM_MALLOC` without `WOLFMQTT_MALLOC` and `WOLFMQTT_FREE`
       now fails in the header with a message naming both macros, instead of an
       implicit declaration reported from inside `mqtt_client.c` (#619)

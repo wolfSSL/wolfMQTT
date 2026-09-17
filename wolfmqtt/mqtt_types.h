@@ -279,6 +279,11 @@ enum MqttPacketResponseCodes {
         #define XMEMCMP(s1,s2,n)    memcmp((s1),(s2),(n))
     #endif
     #ifndef XATOI
+        /* atoi is declared in <stdlib.h>, not the <string.h> above. The
+         * allocator backstop further down includes that header only when its
+         * own defaults are needed, so a port supplying WOLFMQTT_MALLOC and
+         * WOLFMQTT_FREE would otherwise leave the default XATOI undeclared. */
+        #include <stdlib.h>
         #define XATOI(s)            atoi((s))
     #endif
     #ifndef XISALNUM
