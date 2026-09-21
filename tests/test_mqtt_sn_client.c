@@ -103,11 +103,17 @@ typedef struct MockNet {
                                 * write) */
     int         write_chunk;   /* maximum bytes accepted per write */
     int         write_zero_count; /* zero-progress writes before accepting */
+    int         read_zero_count;  /* zero-progress reads before delivering */
     int         write_zero_type; /* zero only for this MQTT-SN packet type */
     int         write_continue_count; /* async continuations before accepting */
 
     int         read_calls;
     int         write_calls;
+    int         peek_calls;
+    int         peek_limit;    /* if nonzero, peek() fails once this many
+                                * calls have been made, so a caller that
+                                * spins on an unconsumed datagram is caught
+                                * instead of hanging the suite */
 } MockNet;
 
 #ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
@@ -296,6 +302,13 @@ static int mock_read(void *ctx, byte* buf, int buf_len, int timeout_ms)
         return MQTT_CODE_CONTINUE;
     }
 
+    /* Simulate a read callback that makes no progress. The frame is left in
+     * place, matching a transport that returned without delivering bytes. */
+    if (net->read_zero_count > 0) {
+        net->read_zero_count--;
+        return 0;
+    }
+
     avail = net->in_len[net->in_idx] - net->in_off;
     n = (buf_len < avail) ? buf_len : avail;
     XMEMCPY(buf, &net->in_frame[net->in_idx][net->in_off], (size_t)n);
@@ -310,15 +323,21 @@ static int mock_read(void *ctx, byte* buf, int buf_len, int timeout_ms)
     return n;
 }
 
-/* peek is required by MqttSocket for the non-DTLS SN path, but the datagram
- * (IS_DTLS) path used by these tests never calls it. Provide a non-consuming
- * implementation for completeness. */
+/* peek is required by MqttSocket for the non-DTLS SN path. The datagram
+ * (IS_DTLS) tests never call it, but the non-DTLS tests do, so this is a real
+ * non-consuming implementation. peek_limit optionally trips it after a set
+ * number of calls, turning a spin on an unconsumed datagram into a test
+ * failure rather than a hung suite. */
 static int mock_peek(void *ctx, byte* buf, int buf_len, int timeout_ms)
 {
     MockNet* net = (MockNet*)ctx;
     int avail, n;
     (void)timeout_ms;
 
+    net->peek_calls++;
+    if (net->peek_limit > 0 && net->peek_calls > net->peek_limit) {
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
     if (net->in_idx >= net->in_count) {
         return MQTT_CODE_CONTINUE;
     }
@@ -2995,6 +3014,168 @@ static void test_sn_nondtls_reads_full_frames(void)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
 }
 
+/* The MQTT-SN Length field counts itself, so the shortest legal frame is the
+ * two byte Length plus MsgType. A frame that claims fewer bytes than the
+ * header just parsed is malformed and must be rejected. On the non-DTLS
+ * transport the header is only peeked, so a zero Length used to return zero
+ * having consumed nothing at all. */
+TEST(sn_packet_read_rejects_undersized_length)
+{
+    static const byte zero_len_frame[] = { 0x00, 0x00 };
+    static const byte zero_len_ext_frame[] = {
+        SN_PACKET_LEN_IND, 0x00, 0x00, SN_MSG_TYPE_PING_RESP
+    };
+    const byte* frames[] = { zero_len_frame, zero_len_ext_frame };
+    const int frame_lens[] = {
+        (int)sizeof(zero_len_frame), (int)sizeof(zero_len_ext_frame)
+    };
+    byte guarded[8];
+    int datagram;
+    int frame_idx;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+
+    for (datagram = 0; datagram <= 1; datagram++) {
+        for (frame_idx = 0; frame_idx < 2; frame_idx++) {
+            XMEMSET(&g_client.packet, 0, sizeof(g_client.packet));
+            mock_net_init(&g_mock, &g_net, 0);
+            mock_net_push(&g_mock, frames[frame_idx], frame_lens[frame_idx]);
+            (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS,
+                datagram ? MQTT_CLIENT_FLAG_IS_DTLS : 0);
+            XMEMSET(guarded, 0xA5, sizeof(guarded));
+
+            rc = SN_Packet_Read(&g_client, &guarded[1],
+                (int)sizeof(guarded) - 2, 0);
+            ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+            ASSERT_EQ(0xA5, guarded[0]);
+            ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+            /* The malformed datagram must be consumed on every transport,
+             * otherwise a later wait re-reads it and the session is wedged. */
+            ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+        }
+    }
+}
+
+/* A two byte datagram with a zero Length field used to leave SN_Client_WaitType
+ * spinning: the peek reported no payload to consume, SN_Packet_Read returned
+ * zero, and the wait loop treated that as "no match yet" and peeked the very
+ * same datagram again. The mock trips peek() after a small number of calls so
+ * a regression fails the suite instead of hanging it. */
+TEST(sn_nondtls_zero_length_frame_does_not_spin)
+{
+    static const byte zero_len_frame[] = { 0x00, 0x00 };
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    /* Clear the datagram flag so the reader takes the non-DTLS peek path. */
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+    g_mock.peek_limit = 16;
+    mock_net_push(&g_mock, zero_len_frame, (int)sizeof(zero_len_frame));
+
+    rc = sn_ping_pump(NULL, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_TRUE(g_mock.peek_calls <= g_mock.peek_limit);
+    /* The bad datagram must be drained, otherwise every later wait returns the
+     * same error and the connection is wedged by one spoofed packet. */
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+}
+
+/* A resume at MQTT_PK_READ_HEAD does not carry the frame length across calls,
+ * so the non-DTLS branch has no body to read and produces no packet data. That
+ * must surface as a transport failure: returning zero would leave the caller
+ * with nothing to decode and send it around the wait loop on the same state. */
+TEST(sn_packet_read_zero_length_resume_errors)
+{
+    byte guarded[6];
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    /* Clear the datagram flag so the resume takes the non-DTLS branch. */
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+    g_client.packet.stat = MQTT_PK_READ_HEAD;
+    g_client.packet.header_len = 2;
+    XMEMSET(guarded, 0xA5, sizeof(guarded));
+
+    rc = SN_Packet_Read(&g_client, &guarded[1], 4, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(0xA5, guarded[0]);
+    ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+}
+
+#ifndef WOLFMQTT_NONBLOCK
+/* A read callback that returns zero makes no progress. The blocking
+ * MqttSocket_Read passes that zero straight back, so SN_Packet_Read must
+ * report a transport failure instead of a zero length that SN_Client_WaitType
+ * would treat as "no match yet" and wait on again. Mirrors the zero-progress
+ * write tests above. */
+TEST(sn_zero_read_returns_network_error)
+{
+    byte guarded[6];
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    /* Clear the datagram flag so the header is peeked and the armed zero
+     * lands on the body read rather than on the header. */
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+    g_mock.peek_limit = 16;
+    g_mock.read_zero_count = 1;
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+    XMEMSET(guarded, 0xA5, sizeof(guarded));
+
+    /* The packet layer converts the zero itself, so the failure reaches
+     * MqttPacket_HandleNetError and any registered disconnect callback with
+     * it. Called directly, because the guard in SN_Client_WaitType would
+     * otherwise mask a packet layer that still returned the zero. */
+    rc = SN_Packet_Read(&g_client, &guarded[1], 4, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(0xA5, guarded[0]);
+    ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+
+    /* And the wait loop surfaces it to the caller instead of looping. */
+    XMEMSET(&g_client.packet, 0, sizeof(g_client.packet));
+    mock_net_init(&g_mock, &g_net, 0);
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+    g_mock.peek_limit = 16;
+    g_mock.read_zero_count = 1;
+    mock_net_push(&g_mock, PINGRESP_FRAME, (int)sizeof(PINGRESP_FRAME));
+
+    rc = sn_ping_pump(NULL, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_TRUE(g_mock.peek_calls <= g_mock.peek_limit);
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
+#ifndef WOLFMQTT_NONBLOCK
+/* The drain of a malformed datagram can itself make no progress. A blocking
+ * read callback returns that as zero, which is not negative, so it must not be
+ * mistaken for a consumed datagram: the frame is still queued and a later wait
+ * would read it again. Report the transport failure rather than a malformed
+ * frame. Non-blocking builds return a short drain as MQTT_CODE_CONTINUE, which
+ * the caller retries until the drain completes, so this is blocking only. */
+TEST(sn_undersized_length_failed_drain_returns_network_error)
+{
+    static const byte zero_len_frame[] = { 0x00, 0x00 };
+    byte guarded[6];
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    /* Clear the datagram flag so the header is peeked and needs draining. */
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+    g_mock.read_zero_count = 1;
+    mock_net_push(&g_mock, zero_len_frame, (int)sizeof(zero_len_frame));
+    XMEMSET(guarded, 0xA5, sizeof(guarded));
+
+    rc = SN_Packet_Read(&g_client, &guarded[1], 4, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    /* The datagram really is still queued, which is what makes reporting a
+     * malformed frame here wrong. */
+    ASSERT_EQ(0, g_mock.in_idx);
+    ASSERT_EQ(0xA5, guarded[0]);
+    ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
 #endif /* WOLFMQTT_SN */
 
 /* ============================================================================
@@ -3044,6 +3225,13 @@ int main(int argc, char** argv)
     RUN_TEST(sn_packet_read_bounds_fixed_header);
     RUN_TEST(sn_packet_read_rejects_header_past_buffer);
     RUN_TEST(sn_nondtls_reads_full_frames);
+    RUN_TEST(sn_packet_read_rejects_undersized_length);
+    RUN_TEST(sn_nondtls_zero_length_frame_does_not_spin);
+    RUN_TEST(sn_packet_read_zero_length_resume_errors);
+#ifndef WOLFMQTT_NONBLOCK
+    RUN_TEST(sn_zero_read_returns_network_error);
+    RUN_TEST(sn_undersized_length_failed_drain_returns_network_error);
+#endif
 #ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
     RUN_TEST(sn_mt_only_callback_continue_releases_reader);
     RUN_TEST(sn_mt_only_concurrent_null_ping_preserves_pending_response);
