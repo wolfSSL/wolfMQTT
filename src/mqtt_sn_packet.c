@@ -1816,6 +1816,13 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                     if (rc < 0) {
                         return MqttPacket_HandleNetError(client, rc);
                     }
+                    if (rc != len) {
+                        /* The datagram is still queued, so reporting a
+                         * malformed frame would hide a packet that a later
+                         * wait reads again. Report the transport failure. */
+                        return MqttPacket_HandleNetError(client,
+                                 MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
+                    }
                 }
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }

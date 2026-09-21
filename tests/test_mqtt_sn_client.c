@@ -3146,6 +3146,36 @@ TEST(sn_zero_read_returns_network_error)
 }
 #endif /* !WOLFMQTT_NONBLOCK */
 
+#ifndef WOLFMQTT_NONBLOCK
+/* The drain of a malformed datagram can itself make no progress. A blocking
+ * read callback returns that as zero, which is not negative, so it must not be
+ * mistaken for a consumed datagram: the frame is still queued and a later wait
+ * would read it again. Report the transport failure rather than a malformed
+ * frame. Non-blocking builds return a short drain as MQTT_CODE_CONTINUE, which
+ * the caller retries until the drain completes, so this is blocking only. */
+TEST(sn_undersized_length_failed_drain_returns_network_error)
+{
+    static const byte zero_len_frame[] = { 0x00, 0x00 };
+    byte guarded[6];
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    /* Clear the datagram flag so the header is peeked and needs draining. */
+    (void)MqttClient_Flags(&g_client, MQTT_CLIENT_FLAG_IS_DTLS, 0);
+    g_mock.read_zero_count = 1;
+    mock_net_push(&g_mock, zero_len_frame, (int)sizeof(zero_len_frame));
+    XMEMSET(guarded, 0xA5, sizeof(guarded));
+
+    rc = SN_Packet_Read(&g_client, &guarded[1], 4, 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    /* The datagram really is still queued, which is what makes reporting a
+     * malformed frame here wrong. */
+    ASSERT_EQ(0, g_mock.in_idx);
+    ASSERT_EQ(0xA5, guarded[0]);
+    ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
 #endif /* WOLFMQTT_SN */
 
 /* ============================================================================
@@ -3200,6 +3230,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_packet_read_zero_length_resume_errors);
 #ifndef WOLFMQTT_NONBLOCK
     RUN_TEST(sn_zero_read_returns_network_error);
+    RUN_TEST(sn_undersized_length_failed_drain_returns_network_error);
 #endif
 #ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
     RUN_TEST(sn_mt_only_callback_continue_releases_reader);
