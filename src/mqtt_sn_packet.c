@@ -1803,6 +1803,22 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 total_len = rx_buf[0];
                 client->packet.header_len = len;
             }
+
+            /* The Length field counts itself, so a frame that claims fewer
+             * bytes than the header just parsed is malformed. The non-DTLS
+             * path only peeked the header, so such a frame would consume
+             * nothing and the caller would wait on it again forever. */
+            if (total_len < client->packet.header_len) {
+                if ((MqttClient_Flags(client,0,0) &
+                        MQTT_CLIENT_FLAG_IS_DTLS) == 0) {
+                    /* Consume the peeked datagram so it cannot be re-read */
+                    rc = MqttSocket_Read(client, rx_buf, len, timeout_ms);
+                    if (rc < 0) {
+                        return MqttPacket_HandleNetError(client, rc);
+                    }
+                }
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
         }
         FALL_THROUGH;
 
@@ -1856,6 +1872,12 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
                 rc = MqttSocket_Read(client, &rx_buf[idx],
                         client->packet.remain_len, timeout_ms);
                 if (rc <= 0) {
+                    if (rc == 0) {
+                        /* A zero length body read cannot make progress, so
+                         * report a transport failure rather than a zero the
+                         * caller would wait on again. */
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+                    }
                     return MqttPacket_HandleNetError(client, rc);
                 }
                 remain_read = rc;
@@ -1874,6 +1896,14 @@ int SN_Packet_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     /* Return read length */
     if (remain_read > rx_buf_len) {
         remain_read = rx_buf_len;
+    }
+    if (remain_read <= 0) {
+        /* No packet data was produced, so there is nothing for the caller to
+         * decode and repeating the wait would repeat this same result. This
+         * covers a resume at MQTT_PK_READ_HEAD, where the length is not
+         * carried across calls and the non-DTLS branch has nothing to read. */
+        return MqttPacket_HandleNetError(client,
+                 MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK));
     }
     return remain_read;
 }

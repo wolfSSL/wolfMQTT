@@ -708,6 +708,13 @@ wait_again:
             /* Wait for packet */
             rc = SN_Packet_Read(client, client->rx_buf, client->rx_buf_len,
                     timeout_ms);
+            /* SN_Packet_Read reports a transport failure rather than a zero
+             * length, so this only backstops a future path that returns zero.
+             * A zero gives the decoder nothing and would send the wait loop
+             * around again on the same state, so refuse it here. */
+            if (rc == 0) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+            }
             /* handle failure */
             if (rc <= 0) {
             #ifdef WOLFMQTT_NONBLOCK
