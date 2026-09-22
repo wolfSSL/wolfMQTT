@@ -4404,6 +4404,10 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     return rc;
 }
 
+/* Remove the subscription owned by 'bc' whose Topic Filter matches exactly.
+ * Returns 1 if a matching subscription was found and removed, 0 if this
+ * client had no matching subscription. Note this is a boolean result, not
+ * the MQTT_CODE_SUCCESS(0) / negative-error convention used elsewhere. */
 static int BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
     const char* filter, word16 filter_len)
 {
@@ -7518,7 +7522,7 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
         const char* f = unsub.topics[i].topic_filter;
         word16 flen = 0;
 #ifdef WOLFMQTT_V5
-        reasons[i] = MQTT_REASON_TOPIC_FILTER_INVALID;
+        reasons[i] = MQTT_REASON_UNSPECIFIED_ERR;
 #endif
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
