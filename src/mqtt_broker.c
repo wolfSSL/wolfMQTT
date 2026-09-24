@@ -1999,6 +1999,22 @@ static void BrokerClient_FreeOutQueue(BrokerClient* bc)
     bc->out_q_pending_len = 0;
 }
 
+/* A write can service this same client's close callback before it returns -
+ * the WebSocket transport runs lws_service inline - and that hands the whole
+ * outbound queue to the Session carrier. Entries the drain is walking were
+ * reached from bc->out_q_head, so an empty head while one is still held means
+ * the carrier owns them now: they must not be unlinked, freed, or re-linked
+ * into bc. Returns non-zero when the drain has to stop for that reason. */
+static int BrokerClient_OutQueueMoved(BrokerClient* bc, int enc_len)
+{
+    if (bc->out_q_head != NULL) {
+        return 0;
+    }
+    bc->out_q_pending_len = 0;
+    BROKER_FORCE_ZERO(bc->tx_buf, enc_len);
+    return 1;
+}
+
 /* Send as many QUEUED entries from out_q as the inflight cap allows.
  *
  * Ordering: walks from out_q_head, never reorders. Already-sent entries
@@ -2059,6 +2075,9 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
                         return MQTT_CODE_ERROR_SYSTEM;
                     }
                     wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, rel_rc);
+                    if (BrokerClient_OutQueueMoved(bc, rel_rc)) {
+                        return sent;
+                    }
                     if (wr_rc == MQTT_CODE_CONTINUE) {
                         bc->out_q_pending_len = rel_rc;
                         return wr_rc;
@@ -2152,6 +2171,9 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
         {
             int wr_rc;
             wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
+            if (BrokerClient_OutQueueMoved(bc, enc_rc)) {
+                return sent;
+            }
             /* Scrub the forwarded PUBLISH (which may carry a replayed will or
              * an application payload) once the buffer is idle. Skip only the
              * MQTT_CODE_CONTINUE case, where a non-blocking or TLS-async send
