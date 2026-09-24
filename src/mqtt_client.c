@@ -797,6 +797,24 @@ static void MqttClient_Replay_AddSafe(MqttClient* client, MqttPublish* publish)
 #endif
 }
 
+/* Unlike the other wrappers this one reports a lock failure. Skipping the
+ * reset would leave the previous Session's messages retained, and a later
+ * reconnect would replay them into a Session they do not belong to. */
+static int MqttClient_Replay_ResetSafe(MqttClient* client)
+{
+#ifdef WOLFMQTT_MULTITHREAD
+    int rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#endif
+    MqttClient_Replay_Reset(client);
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    return MQTT_CODE_SUCCESS;
+}
+
 static void MqttClient_Replay_RemoveSafe(MqttClient* client, word16 packet_id)
 {
 #ifdef WOLFMQTT_MULTITHREAD
@@ -861,8 +879,12 @@ static int MqttClient_SendIds_Find(const MqttClient* client, word16 packet_id)
  * MQTT_CODE_SUCCESS when it was free (or when isRetransmit says this is a
  * re-send of the same Control Packet, which [MQTT-2.3.1-3] requires to keep
  * its original identifier), and MQTT_CODE_ERROR_PACKET_ID when it is still
- * awaiting its acknowledgement. */
-static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
+ * awaiting its acknowledgement.
+ *
+ * The _Locked form is for a caller that already holds client->lockClient - the
+ * Session resume walks the replay pool under it - since the semaphore is not
+ * recursive. */
+static int MqttClient_SendIdReserve_Locked(MqttClient* client, word16 packet_id,
     void* owner, int isRetransmit, MqttPacketType ack_type)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -871,12 +893,6 @@ static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
     if (packet_id == 0) {
         return MQTT_CODE_SUCCESS; /* nothing to track */
     }
-#ifdef WOLFMQTT_MULTITHREAD
-    rc = wm_SemLock(&client->lockClient);
-    if (rc != MQTT_CODE_SUCCESS) {
-        return rc;
-    }
-#endif
     i = MqttClient_SendIds_Find(client, packet_id);
     if (i >= 0) {
         /* Only a re-send of the same Control Packet may keep an identifier
@@ -906,6 +922,25 @@ static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
          * packets in flight, so the check is best effort past that point -
          * raise MQTT_MAX_SEND_INFLIGHT to widen the window. */
     }
+    return rc;
+}
+
+static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
+    void* owner, int isRetransmit, MqttPacketType ack_type)
+{
+    int rc;
+
+    if (packet_id == 0) {
+        return MQTT_CODE_SUCCESS; /* nothing to track */
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#endif
+    rc = MqttClient_SendIdReserve_Locked(client, packet_id, owner,
+        isRetransmit, ack_type);
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
@@ -3594,8 +3629,14 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * into it would inject one Session's messages into another. */
         if (!(mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ||
                 !session_id_matched) {
-            /* A fresh Session starts with no outbound state to re-send. */
-            MqttClient_Replay_Reset(client);
+            /* A fresh Session starts with no outbound state to re-send.
+             * Under the client lock: a send thread may be replacing a slot's
+             * topic and payload through MqttClient_Replay_AddSafe at the same
+             * moment, and both sides free what they find there. */
+            rc = MqttClient_Replay_ResetSafe(client);
+            if (rc != MQTT_CODE_SUCCESS) {
+                return rc;
+            }
         }
         else {
             int i;
@@ -3603,7 +3644,14 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             /* The server resumed the Session, so these messages are still in
              * flight as far as it is concerned: keep their Packet Identifiers
              * reserved (MqttClient_Connect cleared the table above) and
-             * re-send them [MQTT-4.4.0-1]. */
+             * re-send them [MQTT-4.4.0-1]. Walked under the client lock for
+             * the same reason as the reset above. */
+#ifdef WOLFMQTT_MULTITHREAD
+            rc = wm_SemLock(&client->lockClient);
+            if (rc != MQTT_CODE_SUCCESS) {
+                return rc;
+            }
+#endif
             for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
                 if (client->replay[i].packet_id == 0) {
                     continue;
@@ -3617,7 +3665,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
                     MqttClient_Replay_FreeSlot(&client->replay[i]);
                     continue;
                 }
-                (void)MqttClient_SendIdReserve(client,
+                (void)MqttClient_SendIdReserve_Locked(client,
                     client->replay[i].packet_id, &client->replay[i], 1,
                     client->replay[i].pubrelSent ?
                         MQTT_PACKET_TYPE_PUBLISH_COMP :
@@ -3625,6 +3673,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
                             MQTT_PACKET_TYPE_PUBLISH_COMP :
                             MQTT_PACKET_TYPE_PUBLISH_ACK));
             }
+#ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockClient);
+#endif
             client->replayIdx = 0;
             mc_connect->stat.write = MQTT_MSG_PAYLOAD;
             rc = MqttClient_ReplaySession(client, mc_connect);
@@ -5335,6 +5386,57 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     PRINTF("Cancel Msg: %p", msg);
 #endif
 
+#ifdef WOLFMQTT_MULTITHREAD
+    /* Remove any pending responses expected. Runs before the resets below so
+     * that a refusal leaves the message exactly as it was found.
+     *
+     * A reading thread claims an entry with packetProcessing while it decodes
+     * the response into the packet_obj this message owns, having dropped
+     * lockClient first. Success is the caller's signal to release or reuse the
+     * object, so it is withheld while that claim stands; the entry stays
+     * listed and the caller retries until the reader marks it done. */
+    rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+
+    for (tmpResp = client->firstPendResp;
+         tmpResp != NULL;
+         tmpResp = tmpResp->next)
+    {
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("\tMsg: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
+            tmpResp, tmpResp->packet_obj,
+            MqttPacket_TypeDesc(tmpResp->packet_type),
+            tmpResp->packet_type, tmpResp->packet_id,
+            tmpResp->packetProcessing, tmpResp->packetDone);
+    #endif
+        if ((size_t)tmpResp->packet_obj == (size_t)msg ||
+            (size_t)tmpResp - OFFSETOF(MqttMessage, pendResp) == (size_t)msg) {
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("Found Cancel Msg: %p (obj %p), Type %s (%d), ID %d, "
+                   "InProc %d, Done %d",
+                tmpResp, tmpResp->packet_obj,
+                MqttPacket_TypeDesc(tmpResp->packet_type),
+                tmpResp->packet_type, tmpResp->packet_id,
+                tmpResp->packetProcessing, tmpResp->packetDone);
+        #endif
+            if (tmpResp->packetProcessing && !tmpResp->packetDone) {
+                wm_SemUnlock(&client->lockClient);
+                return MQTT_CODE_CONTINUE;
+            }
+            /* Do not credit any reserved Receive Maximum unit here: the PUBLISH
+             * may already be on the wire, where the server keeps counting it
+             * [MQTT-4.9], so crediting it on a local cancel could exceed the
+             * negotiated quota. The unit is released on the acknowledgement, or
+             * recovered when the connection resets server_recv_max. */
+            MqttClient_RespList_Remove(client, tmpResp);
+            break;
+        }
+    }
+    wm_SemUnlock(&client->lockClient);
+#endif /* WOLFMQTT_MULTITHREAD */
+
     /* Whether this message's packet finished going out. MQTT_MSG_WAIT is only
      * reached once the whole Control Packet has been written. */
     onWire = (mms_stat->write == MQTT_MSG_WAIT) ? 1 : 0;
@@ -5376,46 +5478,6 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
      * recovered when the next connect resets the quota. */
     mms_stat->recvQuotaHeld = 0;
 #endif
-
-#ifdef WOLFMQTT_MULTITHREAD
-    /* Remove any pending responses expected */
-    rc = wm_SemLock(&client->lockClient);
-    if (rc != MQTT_CODE_SUCCESS) {
-        return rc;
-    }
-
-    for (tmpResp = client->firstPendResp;
-         tmpResp != NULL;
-         tmpResp = tmpResp->next)
-    {
-    #ifdef WOLFMQTT_DEBUG_CLIENT
-        PRINTF("\tMsg: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
-            tmpResp, tmpResp->packet_obj,
-            MqttPacket_TypeDesc(tmpResp->packet_type),
-            tmpResp->packet_type, tmpResp->packet_id,
-            tmpResp->packetProcessing, tmpResp->packetDone);
-    #endif
-        if ((size_t)tmpResp->packet_obj == (size_t)msg ||
-            (size_t)tmpResp - OFFSETOF(MqttMessage, pendResp) == (size_t)msg) {
-        #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("Found Cancel Msg: %p (obj %p), Type %s (%d), ID %d, "
-                   "InProc %d, Done %d",
-                tmpResp, tmpResp->packet_obj,
-                MqttPacket_TypeDesc(tmpResp->packet_type),
-                tmpResp->packet_type, tmpResp->packet_id,
-                tmpResp->packetProcessing, tmpResp->packetDone);
-        #endif
-            /* Do not credit any reserved Receive Maximum unit here: the PUBLISH
-             * may already be on the wire, where the server keeps counting it
-             * [MQTT-4.9], so crediting it on a local cancel could exceed the
-             * negotiated quota. The unit is released on the acknowledgement, or
-             * recovered when the connection resets server_recv_max. */
-            MqttClient_RespList_Remove(client, tmpResp);
-            break;
-        }
-    }
-    wm_SemUnlock(&client->lockClient);
-#endif /* WOLFMQTT_MULTITHREAD */
 
     /* cancel any active flags / locks */
     if (mms_stat->isReadActive) {
