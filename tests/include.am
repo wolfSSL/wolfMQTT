@@ -14,7 +14,8 @@ tests_unit_tests_SOURCES = \
     src/mqtt_socket.c \
     src/mqtt_sn_client.c \
     src/mqtt_sn_packet.c
-tests_unit_tests_CPPFLAGS = -I$(top_srcdir) $(AM_CPPFLAGS)
+tests_unit_tests_CPPFLAGS = -I$(top_srcdir) \
+    -include $(top_srcdir)/tests/test_client_alloc.h $(AM_CPPFLAGS)
 tests_unit_tests_LDADD = $(PTHREAD_LIBS)
 
 # Property-lock lifecycle tests. Build mqtt_packet.c directly with injected
@@ -44,6 +45,7 @@ endif
 
 # Test framework headers
 noinst_HEADERS += tests/unit_test.h tests/test_broker_alloc.h \
+                  tests/test_client_alloc.h \
                   tests/test_mqtt_props_config.h tests/test_mqtt_curl_config.h
 
 # MQTT-SN packet decoder tests. The SN_Decode_* routines are WOLFMQTT_LOCAL
