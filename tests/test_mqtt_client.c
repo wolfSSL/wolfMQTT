@@ -1783,6 +1783,72 @@ TEST(cancel_message_retain_is_idempotent)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(4, test_client.server_recv_max);
 }
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
+    (WOLFMQTT_MAX_QOS >= 1)
+/* A write-only publish leaves its response for another thread to process. That
+ * reader claims the pending entry with packetProcessing, then drops the client
+ * lock and decodes the peer's answer into the packet_obj this message owns.
+ *
+ * Reporting success to a cancel during that window would be wrong: the caller
+ * reads success as permission to release or reuse the request, and the decode
+ * is still writing through it. The claim is honoured instead - the entry stays
+ * listed, the message is left exactly as it was found, and the caller retries
+ * until the reader marks the response done. */
+TEST(cancel_refuses_message_while_response_decodes)
+{
+    int rc;
+    int i;
+    int write_state;
+    /* static so the registered pendResp does not point into freed stack after
+     * the test returns. */
+    static MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 31;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    }
+    /* The PUBLISH is out and its acknowledgement is registered for whichever
+     * thread reads it. */
+    ASSERT_TRUE(test_client.firstPendResp == &publish.pendResp);
+    ASSERT_EQ(0, (int)publish.pendResp.packetProcessing);
+    write_state = (int)publish.stat.write;
+
+    /* A reader claims the entry, exactly as MqttClient_WaitType does before it
+     * drops the client lock to decode. */
+    publish.pendResp.packetProcessing = 1;
+
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    /* Still listed, so the reader's pointers stay good, and untouched, so the
+     * retry starts from the same place. */
+    ASSERT_TRUE(test_client.firstPendResp == &publish.pendResp);
+    ASSERT_EQ(write_state, (int)publish.stat.write);
+
+    /* Once the reader is done with the object the cancel completes. */
+    publish.pendResp.packetDone = 1;
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_NULL(test_client.firstPendResp);
+    ASSERT_EQ(MQTT_MSG_BEGIN, (int)publish.stat.write);
+}
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK && MAX_QOS >= 1 */
 #endif /* WOLFMQTT_MULTITHREAD || WOLFMQTT_NONBLOCK */
 
 /* A QoS>0 v5 publish that fails on the wire (unsent) must give its reserved
@@ -7741,6 +7807,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(cancel_message_retains_recv_quota_on_wire);
     RUN_TEST(cancel_message_retain_is_idempotent);
     RUN_TEST(cancel_message_reuse_does_not_bypass_recv_quota);
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
+    (WOLFMQTT_MAX_QOS >= 1)
+    RUN_TEST(cancel_refuses_message_while_response_decodes);
+#endif
 #endif
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
