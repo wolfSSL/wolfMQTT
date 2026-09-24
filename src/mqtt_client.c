@@ -5335,6 +5335,57 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     PRINTF("Cancel Msg: %p", msg);
 #endif
 
+#ifdef WOLFMQTT_MULTITHREAD
+    /* Remove any pending responses expected. Runs before the resets below so
+     * that a refusal leaves the message exactly as it was found.
+     *
+     * A reading thread claims an entry with packetProcessing while it decodes
+     * the response into the packet_obj this message owns, having dropped
+     * lockClient first. Success is the caller's signal to release or reuse the
+     * object, so it is withheld while that claim stands; the entry stays
+     * listed and the caller retries until the reader marks it done. */
+    rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+
+    for (tmpResp = client->firstPendResp;
+         tmpResp != NULL;
+         tmpResp = tmpResp->next)
+    {
+    #ifdef WOLFMQTT_DEBUG_CLIENT
+        PRINTF("\tMsg: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
+            tmpResp, tmpResp->packet_obj,
+            MqttPacket_TypeDesc(tmpResp->packet_type),
+            tmpResp->packet_type, tmpResp->packet_id,
+            tmpResp->packetProcessing, tmpResp->packetDone);
+    #endif
+        if ((size_t)tmpResp->packet_obj == (size_t)msg ||
+            (size_t)tmpResp - OFFSETOF(MqttMessage, pendResp) == (size_t)msg) {
+        #ifdef WOLFMQTT_DEBUG_CLIENT
+            PRINTF("Found Cancel Msg: %p (obj %p), Type %s (%d), ID %d, "
+                   "InProc %d, Done %d",
+                tmpResp, tmpResp->packet_obj,
+                MqttPacket_TypeDesc(tmpResp->packet_type),
+                tmpResp->packet_type, tmpResp->packet_id,
+                tmpResp->packetProcessing, tmpResp->packetDone);
+        #endif
+            if (tmpResp->packetProcessing && !tmpResp->packetDone) {
+                wm_SemUnlock(&client->lockClient);
+                return MQTT_CODE_CONTINUE;
+            }
+            /* Do not credit any reserved Receive Maximum unit here: the PUBLISH
+             * may already be on the wire, where the server keeps counting it
+             * [MQTT-4.9], so crediting it on a local cancel could exceed the
+             * negotiated quota. The unit is released on the acknowledgement, or
+             * recovered when the connection resets server_recv_max. */
+            MqttClient_RespList_Remove(client, tmpResp);
+            break;
+        }
+    }
+    wm_SemUnlock(&client->lockClient);
+#endif /* WOLFMQTT_MULTITHREAD */
+
     /* Whether this message's packet finished going out. MQTT_MSG_WAIT is only
      * reached once the whole Control Packet has been written. */
     onWire = (mms_stat->write == MQTT_MSG_WAIT) ? 1 : 0;
@@ -5376,46 +5427,6 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
      * recovered when the next connect resets the quota. */
     mms_stat->recvQuotaHeld = 0;
 #endif
-
-#ifdef WOLFMQTT_MULTITHREAD
-    /* Remove any pending responses expected */
-    rc = wm_SemLock(&client->lockClient);
-    if (rc != MQTT_CODE_SUCCESS) {
-        return rc;
-    }
-
-    for (tmpResp = client->firstPendResp;
-         tmpResp != NULL;
-         tmpResp = tmpResp->next)
-    {
-    #ifdef WOLFMQTT_DEBUG_CLIENT
-        PRINTF("\tMsg: %p (obj %p), Type %s (%d), ID %d, InProc %d, Done %d",
-            tmpResp, tmpResp->packet_obj,
-            MqttPacket_TypeDesc(tmpResp->packet_type),
-            tmpResp->packet_type, tmpResp->packet_id,
-            tmpResp->packetProcessing, tmpResp->packetDone);
-    #endif
-        if ((size_t)tmpResp->packet_obj == (size_t)msg ||
-            (size_t)tmpResp - OFFSETOF(MqttMessage, pendResp) == (size_t)msg) {
-        #ifdef WOLFMQTT_DEBUG_CLIENT
-            PRINTF("Found Cancel Msg: %p (obj %p), Type %s (%d), ID %d, "
-                   "InProc %d, Done %d",
-                tmpResp, tmpResp->packet_obj,
-                MqttPacket_TypeDesc(tmpResp->packet_type),
-                tmpResp->packet_type, tmpResp->packet_id,
-                tmpResp->packetProcessing, tmpResp->packetDone);
-        #endif
-            /* Do not credit any reserved Receive Maximum unit here: the PUBLISH
-             * may already be on the wire, where the server keeps counting it
-             * [MQTT-4.9], so crediting it on a local cancel could exceed the
-             * negotiated quota. The unit is released on the acknowledgement, or
-             * recovered when the connection resets server_recv_max. */
-            MqttClient_RespList_Remove(client, tmpResp);
-            break;
-        }
-    }
-    wm_SemUnlock(&client->lockClient);
-#endif /* WOLFMQTT_MULTITHREAD */
 
     /* cancel any active flags / locks */
     if (mms_stat->isReadActive) {
