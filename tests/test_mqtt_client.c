@@ -48,6 +48,47 @@ static MqttNet test_net;
 static byte test_tx_buf[TEST_TX_BUF_SIZE];
 static byte test_rx_buf[TEST_RX_BUF_SIZE];
 
+/* The suite routes the library's allocator through here (see
+ * tests/test_client_alloc.h) so a test can watch one specific allocation and
+ * record the state the library was in when it released it. Everything else is
+ * a straight pass-through. */
+static void* g_free_watch_ptr;
+static int g_free_watch_count;
+static int g_free_watch_lock_count;
+
+void* wolfmqtt_test_client_malloc(size_t size)
+{
+    return malloc(size);
+}
+
+/* How many times the client lock is held right now, or -1 where the build
+ * keeps no count to read. */
+static int test_client_lock_depth(void)
+{
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
+    !defined(WOLFMQTT_NO_COND_SIGNAL)
+    return test_client.lockClient.lockCount;
+#else
+    return -1;
+#endif
+}
+
+void wolfmqtt_test_client_free(void* ptr)
+{
+    if (ptr != NULL && ptr == g_free_watch_ptr) {
+        g_free_watch_count++;
+        g_free_watch_lock_count = test_client_lock_depth();
+    }
+    free(ptr);
+}
+
+UT_MAYBE_UNUSED static void test_client_watch_free(void* ptr)
+{
+    g_free_watch_ptr = ptr;
+    g_free_watch_count = 0;
+    g_free_watch_lock_count = -1;
+}
+
 /* Mock network callbacks - just return errors since we're not actually
  * connecting to anything */
 static int mock_net_connect(void *context, const char* host, word16 port,
@@ -3371,6 +3412,59 @@ TEST(reconnect_without_session_present_replays_nothing)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(1, g_frames_written); /* the CONNECT only */
 }
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
+    !defined(WOLFMQTT_NO_COND_SIGNAL)
+/* Discarding the retained copies releases the topic and payload of every
+ * slot. A send thread reaches those same slots through the replay store's
+ * lock-taking wrapper while the connection is being re-established - the
+ * client admits send calls once CONNECT has reached the transport - and both
+ * sides free what they find there. So the discard has to hold the client lock
+ * as well, or the two can free the same buffer or leave one pointing at
+ * memory the other released.
+ *
+ * The POSIX lock keeps its own depth, and the allocator hook samples it at the
+ * moment the slot's topic is released, which is the access that has to be
+ * covered. */
+TEST(fresh_session_reset_frees_replay_under_client_lock)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    /* The unacknowledged PUBLISH is retained, so the discard has a real
+     * allocation to release. */
+    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+    ASSERT_NOT_NULL(test_client.replay[0].topic);
+    test_client_watch_free(test_client.replay[0].topic);
+
+    /* Session Present = 0 is a different Session, so nothing is carried. */
+    rc = run_reconnect(&connect, 0);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+
+    /* It really was released on this path, exactly once. */
+    ASSERT_EQ(1, g_free_watch_count);
+    /* And under the client lock. */
+    ASSERT_EQ(1, g_free_watch_lock_count);
+
+    test_client_watch_free(NULL);
+}
+#endif
 
 /* A completed exchange leaves Session state, so an acknowledged PUBLISH is
  * not replayed [MQTT-4.4.0-1] covers unacknowledged messages only. */
@@ -7706,6 +7800,10 @@ void run_mqtt_client_tests(void)
 #if !defined(WOLFMQTT_NO_SESSION_REPLAY) && WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(reconnect_replays_unacked_qos1_publish);
     RUN_TEST(reconnect_without_session_present_replays_nothing);
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
+    !defined(WOLFMQTT_NO_COND_SIGNAL)
+    RUN_TEST(fresh_session_reset_frees_replay_under_client_lock);
+#endif
     RUN_TEST(reconnect_does_not_replay_acked_publish);
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(reconnect_replays_unacked_pubrel);
