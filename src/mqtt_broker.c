@@ -5892,6 +5892,13 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
         (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
         (unsigned)bc->will_payload_len);
 
+    /* Claim the Will before fan-out. A fan-out write can service this client's
+     * close callback inline, which re-enters here; the claim makes that nested
+     * call return at the has_will check above, so this frame stays the single
+     * owner of the topic and payload it lends to the encoder below and the
+     * Will is published once. */
+    bc->has_will = 0;
+
     BrokerClient_PublishWillImmediate(broker, bc->will_topic,
         bc->will_payload, bc->will_payload_len, bc->will_qos,
         bc->will_retain);

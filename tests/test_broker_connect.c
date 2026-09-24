@@ -2126,7 +2126,118 @@ TEST(will_fanout_survives_reentrant_sub_free)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* A Will is published by fanning it out to matching subscribers, and only
+ * cleared once that returns. A write inside the fan-out can service the
+ * owner's own close callback - the WebSocket transport runs lws_service
+ * inline - and that callback publishes the Will of the client that just
+ * closed. It must find nothing left to publish: the fan-out below is still
+ * lending the topic and payload to the encoder, and a nested publish would
+ * both deliver the Will a second time and free those buffers underneath it.
+ *
+ * The hook samples the ownership flag the nested path tests, from inside the
+ * first Will delivery. */
+static BrokerClient* g_will_owner;
+static int g_will_claimed_during_fanout;
+static int g_will_topic_live_during_fanout;
+static void sample_will_state_mid_write(void)
+{
+    if (g_will_owner == NULL) {
+        return;
+    }
+    g_will_claimed_during_fanout = !g_will_owner->has_will;
+    g_will_topic_live_during_fanout = (g_will_owner->will_topic != NULL);
+}
+
+TEST(takeover_will_claimed_before_fanout)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* Subscribers "A" and "B", CleanSession=1. */
+    static const byte connect_a[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    static const byte connect_b[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'B'
+    };
+    /* SUBSCRIBE packet_id=1, filter "w", QoS 0. */
+    static const byte subscribe_w[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'w', 0x00
+    };
+    /* v3.1.1 CONNECT for "W" carrying a Will: flags 0x06 = CleanSession +
+     * Will Flag, Will Topic "w", Will Payload "bye". Remaining Length 21. */
+    static const byte connect_w_will[] = {
+        0x10, 0x15, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'W',
+        0x00, 0x01, 'w',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* Second CONNECT with the same ClientId takes the Session over, which
+     * publishes the old connection's Will. */
+    static const byte connect_w_dup[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'W'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_a, sizeof(connect_a));
+    mock_client_input_append(0, subscribe_w, sizeof(subscribe_w));
+    mock_client_input_append(1, connect_b, sizeof(connect_b));
+    mock_client_input_append(1, subscribe_w, sizeof(subscribe_w));
+    mock_client_input_append(2, connect_w_will, sizeof(connect_w_will));
+    for (i = 0; i < 24; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    g_will_owner = find_broker_client(&broker, "W");
+    ASSERT_NOT_NULL(g_will_owner);
+    ASSERT_EQ(1, (int)g_will_owner->has_will);
+    ASSERT_NOT_NULL(g_will_owner->will_topic);
+    /* Nothing has been published yet, so the hook below cannot be consumed by
+     * an earlier delivery. */
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    g_will_claimed_during_fanout = -1;
+    g_will_topic_live_during_fanout = -1;
+    g_write_publish_hook = sample_will_state_mid_write;
+
+    mock_client_input_append(3, connect_w_dup, sizeof(connect_w_dup));
+    g_clients_active = 4;
+    for (i = 0; i < 24; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    /* The Will really was fanned out, so the sample is meaningful. */
+    ASSERT_NULL(g_write_publish_hook);
+
+    /* Claimed before the first write: a close callback delivered during the
+     * fan-out returns without republishing or freeing anything. */
+    ASSERT_EQ(1, g_will_claimed_during_fanout);
+    /* And the buffers the fan-out is lending out are still owned, so the
+     * encoder is reading live memory. */
+    ASSERT_EQ(1, g_will_topic_live_during_fanout);
+
+    /* Exactly one copy reaches each subscriber [MQTT-3.1.2-8]. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    g_will_owner = NULL;
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_BROKER_WILL */
+
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 TEST(qos2_duplicate_publish_dedup)
@@ -9888,6 +9999,7 @@ int main(int argc, char** argv)
     RUN_TEST(fanout_survives_reentrant_sub_free);
 #ifdef WOLFMQTT_BROKER_WILL
     RUN_TEST(will_fanout_survives_reentrant_sub_free);
+    RUN_TEST(takeover_will_claimed_before_fanout);
 #endif
 #endif
     RUN_TEST(qos2_duplicate_publish_dedup);
