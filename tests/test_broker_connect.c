@@ -63,6 +63,8 @@ static void* g_capture_alloc_ptr;
 static byte g_capture_freed[64];
 static size_t g_capture_freed_len;
 static int g_capture_free_seen;
+static void* g_free_watch_ptr;
+static int g_free_watch_count;
 
 void* wolfmqtt_test_broker_malloc(size_t size)
 {
@@ -93,6 +95,9 @@ void wolfmqtt_test_broker_free(void* ptr)
 {
     if (ptr != NULL) {
         g_alloc_free_count++;
+        if (ptr == g_free_watch_ptr) {
+            g_free_watch_count++;
+        }
         if (ptr == g_capture_alloc_ptr) {
             g_capture_freed_len = g_capture_alloc_size;
             XMEMCPY(g_capture_freed, ptr, g_capture_freed_len);
@@ -107,6 +112,21 @@ unsigned long wolfmqtt_test_broker_time_s(void)
 {
     return g_broker_time_s;
 }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Count frees of one specific allocation, so a test can assert on the fate of
+ * a single object rather than on a total that unrelated activity moves. */
+static void broker_test_watch_free(void* ptr)
+{
+    g_free_watch_ptr = ptr;
+    g_free_watch_count = 0;
+}
+
+static int broker_test_watched_frees(void)
+{
+    return g_free_watch_count;
+}
+#endif
 
 #ifndef WOLFMQTT_STATIC_MEMORY
 static void broker_test_fail_alloc_after(int successful_allocations)
@@ -1892,6 +1912,142 @@ TEST(fanout_survives_reentrant_sub_free)
     }
 
     g_fanout_broker = NULL;
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* The outbound drain holds a queue entry across the write that sends it. That
+ * write can service this client's own close callback before it returns - the
+ * WebSocket transport runs lws_service inline - and the callback hands the
+ * whole queue to the carrier that keeps the Session alive while the client is
+ * gone. The entry the drain is holding belongs to that carrier from then on.
+ *
+ * BrokerSubs_OrphanClient performs the hand-off through file-local helpers, so
+ * the hook below stages the same ownership transfer directly: the queue moves
+ * to a carrier and the client's own queue fields are cleared, which is what
+ * stops its teardown from freeing the entries a second time. */
+static MqttBroker* g_handoff_broker;
+static BrokerClient* g_handoff_client;
+static void handoff_out_queue_mid_write(void)
+{
+    MqttBroker* broker = g_handoff_broker;
+    BrokerClient* bc = g_handoff_client;
+    BrokerOrphanSession* o;
+    size_t id_len;
+
+    if (broker == NULL || bc == NULL || bc->client_id == NULL ||
+            bc->out_q_head == NULL) {
+        return;
+    }
+    o = (BrokerOrphanSession*)WOLFMQTT_MALLOC(sizeof(*o));
+    if (o == NULL) {
+        return;
+    }
+    XMEMSET(o, 0, sizeof(*o));
+    id_len = XSTRLEN(bc->client_id);
+    o->client_id = (char*)WOLFMQTT_MALLOC(id_len + 1);
+    if (o->client_id == NULL) {
+        WOLFMQTT_FREE(o);
+        return;
+    }
+    XMEMCPY(o->client_id, bc->client_id, id_len + 1);
+    o->protocol_level = bc->protocol_level;
+    o->session_expiry_sec = bc->session_expiry_sec;
+    o->orphan_since = wolfmqtt_test_broker_time_s();
+
+    /* Watch the entry the drain is holding, so the test can tell whether the
+     * drain went on to free memory the carrier owns. */
+    broker_test_watch_free(bc->out_q_head);
+
+    o->out_q_head     = bc->out_q_head;
+    o->out_q_tail     = bc->out_q_tail;
+    o->out_q_count    = bc->out_q_count;
+    o->out_q_inflight = bc->out_q_inflight;
+    bc->out_q_head     = NULL;
+    bc->out_q_tail     = NULL;
+    bc->out_q_count    = 0;
+    bc->out_q_inflight = 0;
+
+    o->next = broker->orphan_sessions;
+    broker->orphan_sessions = o;
+    broker->orphan_session_count++;
+}
+
+TEST(drain_stops_when_session_handoff_takes_queue)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    BrokerOrphanSession* o;
+    int i;
+    /* Publisher "P". */
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* Subscriber "S" with CleanSession=0, so the Session it owns is the kind
+     * that survives a close and has a carrier to move the queue into. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id=1, filter "x", granted QoS 0: the delivery the
+     * drain completes and then unlinks. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* QoS 0 PUBLISH, topic "x", payload "ABC". */
+    static const byte publish_x[] = {
+        0x30, 0x06, 0x00, 0x01, 'x', 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    ASSERT_NULL(sub_bc->out_q_head);
+
+    broker_test_watch_free(NULL);
+    g_handoff_broker = &broker;
+    g_handoff_client = sub_bc;
+    g_write_publish_hook = handoff_out_queue_mid_write;
+
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&broker);
+
+    /* The hand-off really did run from inside the write. */
+    ASSERT_NULL(g_write_publish_hook);
+
+    /* The carrier holds the queue it took. */
+    o = broker.orphan_sessions;
+    ASSERT_NOT_NULL(o);
+    ASSERT_EQ(1, broker.orphan_session_count);
+    ASSERT_EQ(1, o->out_q_count);
+    ASSERT_NOT_NULL(o->out_q_head);
+
+    /* The drain must not free an entry it no longer owns. */
+    ASSERT_EQ(0, broker_test_watched_frees());
+
+    /* And it must leave no trace of that entry on the client. */
+    ASSERT_EQ(0, sub_bc->out_q_count);
+    ASSERT_EQ(0, sub_bc->out_q_inflight);
+    ASSERT_NULL(sub_bc->out_q_head);
+    ASSERT_NULL(sub_bc->out_q_tail);
+    ASSERT_EQ(0, sub_bc->out_q_pending_len);
+
+    g_handoff_broker = NULL;
+    g_handoff_client = NULL;
+    broker_test_watch_free(NULL);
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
@@ -9749,6 +9905,7 @@ int main(int argc, char** argv)
     RUN_TEST(online_qos1_flood_disconnects_slow_v311_subscriber);
     RUN_TEST(online_qos1_at_cap_keeps_subscriber);
     RUN_TEST(outbound_packet_ids_are_scoped_per_session);
+    RUN_TEST(drain_stops_when_session_handoff_takes_queue);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(outbound_queue_short_write_resumes_on_next_step);
 #ifdef WOLFMQTT_BROKER_RETAINED
