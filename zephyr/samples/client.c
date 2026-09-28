@@ -32,6 +32,22 @@ int main(void)
 
     mqttCtx.test_mode = 1;
 
+#if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
+    /* QEMU reaches the broker at 192.0.2.2, while the test certificate
+     * identifies it as localhost. Select that DNS identity for SNI and
+     * certificate verification before sending MQTT credentials. */
+    {
+        static char app_name[] = "mqttclient";
+        static char sni_option[] = "-S";
+        static char peer_name[] = "localhost";
+        char* tls_args[] = { app_name, sni_option, peer_name };
+
+        if (mqtt_parse_args(&mqttCtx, 3, tls_args) != 0) {
+            return EXIT_FAILURE;
+        }
+    }
+#endif
+
     /* Set port as configured in scripts/broker_test/mosquitto.conf */
 #if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
     mqttCtx.port = 18883;
