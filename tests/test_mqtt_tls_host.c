@@ -67,10 +67,31 @@ static int tls_test_write(void* context, const byte* buf, int len,
 {
     TlsTestNet* net = (TlsTestNet*)context;
     int rc;
+    int flags = 0;
 
     (void)timeout_ms;
-    rc = (int)send(net->fd, buf, (size_t)len, 0);
+#ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL;
+#endif
+    rc = (int)send(net->fd, buf, (size_t)len, flags);
     return rc > 0 ? rc : MQTT_CODE_ERROR_NETWORK;
+}
+
+/* A rejected identity closes the client socket while wolfSSL_accept may
+ * still be sending the server flight. Report EPIPE to wolfSSL instead of
+ * letting SIGPIPE terminate the regression process on Linux. */
+static int tls_test_server_write(WOLFSSL* ssl, char* buf, int len, void* ctx)
+{
+    int fd = *(int*)ctx;
+    int flags = 0;
+    int rc;
+
+    (void)ssl;
+#ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL;
+#endif
+    rc = (int)send(fd, buf, (size_t)len, flags);
+    return rc > 0 ? rc : WOLFSSL_CBIO_ERR_GENERAL;
 }
 
 static int tls_test_disconnect(void* context)
@@ -185,11 +206,13 @@ static int tls_test_host(const char* host, const char* identity,
                 WOLFSSL_FILETYPE_PEM) != WOLFSSL_SUCCESS) {
         goto cleanup;
     }
+    wolfSSL_CTX_SetIOSend(server_ctx, tls_test_server_write);
     server.ssl = wolfSSL_new(server_ctx);
     if (server.ssl == NULL ||
             wolfSSL_set_fd(server.ssl, sockets[1]) != WOLFSSL_SUCCESS) {
         goto cleanup;
     }
+    wolfSSL_SetIOWriteCtx(server.ssl, &sockets[1]);
 
     net.context = &client_net;
     net.connect = tls_test_connect;
