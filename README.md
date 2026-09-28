@@ -54,6 +54,11 @@ cmake .. -DWITH_WOLFSSL_TREE=/path/to/wolfssl/
 cmake --build .
 ```
 
+TLS builds require wolfSSL 5.9.1 or newer. TLS connections to IP addresses
+require wolfSSL built with `WOLFSSL_IP_ALT_NAME` to verify the certificate's
+IP address subject alternative name; otherwise they fail before the handshake.
+Legacy numeric IP spellings, bracketed IPv6, and scoped IPv6 are rejected.
+
 Additional CMake options:
 * `-DWOLFMQTT_UNIT_TESTS=no` disables the `wolfmqtt_unit_tests` target (default `yes`). The target is only added when wolfMQTT is the top-level project, so downstream consumers using `add_subdirectory()` are unaffected.
 

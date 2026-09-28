@@ -665,6 +665,7 @@ int mqtt_tls_cb(MqttClient* client)
     if (client->tls.ctx) {
         wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_PEER,
                 mqtt_tls_verify_cb);
+        /* MqttSocket_Connect checks the requested host on this TLS session. */
 
         /* default to success */
         rc = WOLFSSL_SUCCESS;
@@ -770,6 +771,26 @@ int mqtt_tls_cb(MqttClient* client)
             }
         }
 #endif /* HAVE_PQC */
+    #ifdef HAVE_SNI
+        if (rc == WOLFSSL_SUCCESS && mTlsSniHostName != NULL) {
+            /* The explicit SNI host selects the broker certificate, so use
+             * the same identity for its verification. */
+            if (client->tls.ssl == NULL) {
+                client->tls.ssl = wolfSSL_new(client->tls.ctx);
+            }
+            if (client->tls.ssl == NULL) {
+                rc = WOLFSSL_FAILURE;
+            }
+            else {
+                rc = wolfSSL_check_domain_name(client->tls.ssl,
+                    mTlsSniHostName);
+                if (rc == WOLFSSL_SUCCESS) {
+                    (void)MqttClient_Flags(client, 0,
+                        MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME);
+                }
+            }
+        }
+    #endif
     }
 
 #if defined(NO_CERT) || defined(NO_FILESYSTEM)

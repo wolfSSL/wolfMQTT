@@ -130,6 +130,7 @@ tests/fuzz/broker_fuzz
 tests/fuzz/corpus/
 tests/test_broker_connect
 tests/test_broker_connect_static
+tests/test_mqtt_tls_host
 tests/test_mqtt_sn
 tests/test_mqtt_sn_client
 tests/test_mqtt_sn_client_st_only

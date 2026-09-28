@@ -91,6 +91,30 @@ if (WOLFMQTT_TLS)
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 endif()
 
+if(WOLFMQTT_TLS)
+    include(CheckCSourceCompiles)
+    if(WITH_WOLFSSL)
+        set(CMAKE_REQUIRED_INCLUDES "${WITH_WOLFSSL}/include")
+    elseif(WITH_WOLFSSL_TREE)
+        set(CMAKE_REQUIRED_INCLUDES "${WITH_WOLFSSL_TREE}")
+    elseif(WOLFSSL_FOUND)
+        set(CMAKE_REQUIRED_INCLUDES "${WOLFSSL_INCLUDE_DIRS}")
+    elseif(TARGET wolfssl::wolfssl)
+        set(CMAKE_REQUIRED_LIBRARIES wolfssl::wolfssl)
+    endif()
+    unset(WOLFMQTT_WOLFSSL_MIN_VERSION CACHE)
+    check_c_source_compiles("#include <wolfssl/version.h>
+        #if !defined(LIBWOLFSSL_VERSION_HEX) || LIBWOLFSSL_VERSION_HEX < 0x05009001
+        #error wolfMQTT TLS requires wolfSSL 5.9.1 or newer
+        #endif
+        int main(void) { return 0; }" WOLFMQTT_WOLFSSL_MIN_VERSION)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_LIBRARIES)
+    if(NOT WOLFMQTT_WOLFSSL_MIN_VERSION)
+        message(FATAL_ERROR "wolfMQTT TLS requires wolfSSL 5.9.1 or newer")
+    endif()
+endif()
+
 add_option("WOLFMQTT_SN"
            "Enable MQTT-SN support"
            "no" "yes;no")
@@ -308,8 +332,8 @@ endif(WIN32)
 target_include_directories(wolfmqtt
     PUBLIC
     $<INSTALL_INTERFACE:include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     )
 
 
@@ -370,10 +394,22 @@ if(WOLFMQTT_UNIT_TESTS AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
         tests/test_mqtt_packet.c
         tests/test_mqtt_client.c
     )
-    target_include_directories(wolfmqtt_unit_tests
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(wolfmqtt_unit_tests BEFORE PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(wolfmqtt_unit_tests wolfmqtt)
     add_test(NAME wolfmqtt_unit_tests COMMAND wolfmqtt_unit_tests)
+
+    if(UNIX AND WOLFMQTT_TLS)
+        find_package(Threads REQUIRED)
+        add_executable(wolfmqtt_tls_host_tests tests/test_mqtt_tls_host.c)
+        target_include_directories(wolfmqtt_tls_host_tests BEFORE PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR})
+        target_compile_definitions(wolfmqtt_tls_host_tests PRIVATE
+            WOLFMQTT_TEST_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/certs")
+        target_link_libraries(wolfmqtt_tls_host_tests wolfmqtt Threads::Threads)
+        add_test(NAME wolfmqtt_tls_host_tests COMMAND wolfmqtt_tls_host_tests)
+        set_tests_properties(wolfmqtt_tls_host_tests PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 ####################################################
