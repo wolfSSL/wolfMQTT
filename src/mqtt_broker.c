@@ -2158,6 +2158,9 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
              * still references bc->tx_buf. */
             if (wr_rc == MQTT_CODE_CONTINUE) {
                 bc->out_q_pending_len = enc_rc;
+                if (cur->qos == MQTT_QOS_0 && bc->client.write.pos > 0) {
+                    cur->partial_send = 1;
+                }
                 if (cur->qos > MQTT_QOS_0 && bc->client.write.pos > 0) {
                     /* This PUBLISH has been attempted on the current
                      * connection. If the partial write later fails and the
@@ -2171,6 +2174,9 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
             bc->out_q_pending_len = 0;
             BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
             if (wr_rc != enc_rc) {
+                if (cur->qos == MQTT_QOS_0 && bc->client.write.pos > 0) {
+                    cur->partial_send = 1;
+                }
                 /* Socket dropped (EPIPE/ECONNRESET/etc). Leave this
                  * entry in QUEUED state, do not advance, do not bump
                  * inflight. The broker's read path will detect the
@@ -3597,6 +3603,34 @@ WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
     BrokerOrphan_Remove(broker, o);
 }
 
+/* MQTT 3.1.1 section 4.3.1: QoS 0 is not retried after a PUBLISH has
+ * started on a connection. The marker belongs to the queue entry, so a
+ * later direct write cannot hide it or implicate a different entry. */
+static void BrokerClient_DropPartialQos0(BrokerClient* bc)
+{
+    BrokerOutPub* cur = bc->out_q_head;
+    BrokerOutPub* prev = NULL;
+
+    while (cur != NULL) {
+        if (cur->qos == MQTT_QOS_0 && cur->partial_send) {
+            if (prev == NULL) {
+                bc->out_q_head = cur->next;
+            }
+            else {
+                prev->next = cur->next;
+            }
+            if (bc->out_q_tail == cur) {
+                bc->out_q_tail = prev;
+            }
+            bc->out_q_count--;
+            BrokerOutPub_Free(cur);
+            break;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+}
+
 /* Allocate or recycle an orphan slot, then transfer the persistent
  * state of bc into it. Subs already point at NULL (caller handled);
  * the out_q on bc is unlinked from bc before this returns so
@@ -3656,38 +3690,9 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
      * the Session and section 4.3.1 forbids a retry. Drop it here rather than
      * let it follow the orphan and be delivered a second time after reconnect.
      *
-     * client.write.pos is the offset into the entry the drain was writing,
-     * which is the first one still in BROKER_OUTQ_QUEUED - not necessarily
-     * out_q_head. BrokerClient_DrainOutQueue walks past entries in
-     * PUBLISH_SENT / PUBREL_SENT (QoS > 0 awaiting an acknowledgement), and
-     * those stay linked ahead of it. */
-    if (bc->client.write.pos > 0) {
-        BrokerOutPub* partial = bc->out_q_head;
-        BrokerOutPub* partial_prev = NULL;
-
-        while (partial != NULL && partial->state != BROKER_OUTQ_QUEUED) {
-            partial_prev = partial;
-            partial = partial->next;
-        }
-        if (partial != NULL && partial->qos == MQTT_QOS_0) {
-            if (partial_prev == NULL) {
-                bc->out_q_head = partial->next;
-            }
-            else {
-                partial_prev->next = partial->next;
-            }
-            if (bc->out_q_tail == partial) {
-                bc->out_q_tail = partial_prev;
-            }
-            bc->out_q_count--;
-            WBLOG_DBG(broker,
-                "broker: dropping partially sent qos0 topic=%s client_id=%s",
-                BrokerLog_Sanitize(partial->topic),
-                BrokerLog_Sanitize(bc->client_id));
-            BrokerOutPub_Free(partial);
-            bc->client.write.pos = 0;
-        }
-    }
+     * The per-entry marker is set by BrokerClient_DrainOutQueue. Shared
+     * client.write.pos may instead belong to a direct broker response. */
+    BrokerClient_DropPartialQos0(bc);
 
     /* Move out_q ownership. bc->out_q_* must be cleared so
      * BrokerClient_FreeOutQueue (called from BrokerClient_Free)
@@ -3788,6 +3793,9 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
         BrokerOutPub* e = new_bc->out_q_head;
         int retx = 0;
         while (e != NULL) {
+#ifdef WOLFMQTT_V5
+            e->protocol_level = new_bc->protocol_level;
+#endif
             if (e->state == BROKER_OUTQ_PUBLISH_SENT) {
                 e->state = BROKER_OUTQ_QUEUED;
                 e->retransmit_dup = 1;
@@ -6948,31 +6956,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #ifndef WOLFMQTT_STATIC_MEMORY
                 /* [MQTT-4.4.0-1] Keep pending and in-flight deliveries in the
                  * resumed Session before freeing the old connection. */
-                if (old->client.write.pos > 0) {
-                    BrokerOutPub* partial = old->out_q_head;
-                    BrokerOutPub* prev = NULL;
-
-                    while (partial != NULL &&
-                            partial->state != BROKER_OUTQ_QUEUED) {
-                        prev = partial;
-                        partial = partial->next;
-                    }
-                    /* MQTT 3.1.1 section 4.3.1: do not retry a partly
-                     * transmitted QoS 0 PUBLISH on the new connection. */
-                    if (partial != NULL && partial->qos == MQTT_QOS_0) {
-                        if (prev == NULL) {
-                            old->out_q_head = partial->next;
-                        }
-                        else {
-                            prev->next = partial->next;
-                        }
-                        if (old->out_q_tail == partial) {
-                            old->out_q_tail = prev;
-                        }
-                        old->out_q_count--;
-                        BrokerOutPub_Free(partial);
-                    }
-                }
+                BrokerClient_DropPartialQos0(old);
                 if (old->out_q_head != NULL) {
                     BrokerOutPub* e;
 

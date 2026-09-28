@@ -5803,6 +5803,68 @@ TEST(takeover_drops_partial_qos0_after_unacked_qos1)
     MqttBroker_Free(&broker);
 }
 
+/* A partial direct PINGRESP does not mark an unrelated queued QoS 0
+ * PUBLISH as sent. MQTT 3.1.1 section 4.1 permits the pending message
+ * to follow the surviving Session. */
+TEST(takeover_keeps_qos0_behind_partial_direct_write)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* old;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C, 0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    static const byte publish_x[] = {
+        0x30, 0x06, 0x00, 0x01, 'x', 'A', 'B', 'C'
+    };
+    static const byte ping_req[] = { 0xC0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    old = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(old);
+
+    g_clients[1].write_limit_once = 1;
+    mock_client_input_append(1, ping_req, sizeof(ping_req));
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&broker);
+    ASSERT_EQ(1, old->out_q_count);
+    ASSERT_EQ(MQTT_QOS_0, old->out_q_head->qos);
+    ASSERT_EQ(0, old->out_q_head->partial_send);
+    ASSERT_TRUE(old->client.write.pos > 0);
+    ASSERT_EQ((int)sizeof(ping_req), old->direct_pending_len);
+
+    g_clients[1].write_continue = 1;
+    mock_client_input_append(2, connect_sub, sizeof(connect_sub));
+    g_clients_active = 3;
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[2].out_buf,
+        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* A QoS 1 PUBLISH whose transport write starts but fails before completion has
  * still been attempted. If the persistent Session reconnects, the broker must
  * re-deliver it with DUP=1 and the same Packet Identifier [MQTT-3.3.1-1]. */
@@ -6304,6 +6366,71 @@ TEST(takeover_resumes_outbound_qos2_pubrel)
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 #ifdef WOLFMQTT_V5
+/* MQTT 5.0 [MQTT-4.4.0-1] does not authorize retrying a QoS 0 PUBLISH.
+ * The takeover DISCONNECT may complete a direct write and reset the shared
+ * write offset, but the queue entry still records its attempted send. */
+TEST(takeover_v5_disconnect_does_not_replay_partial_qos0)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* old;
+    size_t old_len_before;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+    /* MQTT 5 CONNECT: Clean Start=0, Session Expiry Interval=60. */
+    static const byte connect_sub[] = {
+        0x10, 0x13, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C, 0x05,
+        0x11, 0x00, 0x00, 0x00, 0x3C, 0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'x', 0x00
+    };
+    static const byte publish_x[] = {
+        0x30, 0x06, 0x00, 0x01, 'x', 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    old = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(old);
+    old_len_before = g_clients[1].out_len;
+    g_clients[1].write_limit_once = 1;
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&broker);
+    ASSERT_EQ(1, old->out_q_count);
+    ASSERT_EQ(1, old->out_q_head->partial_send);
+    ASSERT_EQ(1, old->client.write.pos);
+    ASSERT_EQ(1, g_clients[1].out_len - old_len_before);
+
+    mock_client_input_append(2, connect_sub, sizeof(connect_sub));
+    g_clients_active = 3;
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    /* The takeover DISCONNECT finished a direct write from offset 1;
+     * the old QoS 0 PUBLISH did not finish before the takeover. */
+    ASSERT_EQ(3, g_clients[1].out_len - old_len_before);
+    ASSERT_EQ(0, count_packets_of_type(g_clients[2].out_buf,
+        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_EQ(0, find_broker_client(&broker, "S")->out_q_count);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* MQTT 5.0 section 3.3.2.3 adds Property Length to PUBLISH; the Session's
  * deliveries use the resumed connection's packet format. */
 TEST(takeover_outbound_publish_uses_resumed_protocol)
@@ -6313,6 +6440,7 @@ TEST(takeover_outbound_publish_uses_resumed_protocol)
     BrokerClient* old;
     word16 packet_id;
     int direction;
+    int path;
     int i;
     static const byte connect_v311[] = {
         0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
@@ -6344,9 +6472,11 @@ TEST(takeover_outbound_publish_uses_resumed_protocol)
         0x3A, 0x07, 0x00, 0x01, 'x', 0x00, 0x00, 0x00, 'A'
     };
 
-    for (direction = 0; direction < 2; direction++) {
+    for (path = 0; path < 4; path++) {
         const byte* expected;
         size_t expected_len;
+
+        direction = path % 2;
 
         install_mock_net(&net);
         XMEMSET(&broker, 0, sizeof(broker));
@@ -6374,6 +6504,17 @@ TEST(takeover_outbound_publish_uses_resumed_protocol)
         ASSERT_NOT_NULL(old->out_q_head);
         packet_id = old->out_q_head->packet_id;
         ASSERT_NE(0, packet_id);
+
+        if (path >= 2) {
+            /* Exercise BrokerOrphan_Reclaim as well as live takeover.
+             * [MQTT-4.4.0-1] keeps the unacknowledged PUBLISH in either
+             * resumed Session, encoded for the new protocol level. */
+            g_clients[0].read_err = 1;
+            for (i = 0; i < 4; i++) {
+                (void)MqttBroker_Step(&broker);
+            }
+            ASSERT_NOT_NULL(find_orphan_session(&broker, "S"));
+        }
 
         if (direction == 0) {
             mock_client_input_append(2, connect_v5, sizeof(connect_v5));
@@ -10127,6 +10268,7 @@ int main(int argc, char** argv)
     RUN_TEST(outbound_qos0_transient_timeout_not_replayed_on_reconnect);
     RUN_TEST(outbound_qos0_partial_behind_unacked_qos1_not_replayed);
     RUN_TEST(takeover_drops_partial_qos0_after_unacked_qos1);
+    RUN_TEST(takeover_keeps_qos0_behind_partial_direct_write);
     RUN_TEST(outbound_partial_failure_reconnect_sets_dup);
 #endif
 #if !defined(WOLFMQTT_NONBLOCK) && !defined(WOLFMQTT_STATIC_MEMORY)
@@ -10204,6 +10346,7 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(takeover_outbound_publish_uses_resumed_protocol);
+    RUN_TEST(takeover_v5_disconnect_does_not_replay_partial_qos0);
 #endif
 #endif
     RUN_TEST(connack_session_present_clear_on_clean_session_reconnect);

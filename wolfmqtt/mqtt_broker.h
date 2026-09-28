@@ -516,6 +516,7 @@ typedef struct BrokerOutPub {
      * MqttPublish.duplicate=1 on first re-send, as required by
      * MQTT-4.4.0-1, then clears the flag. */
     byte    retransmit_dup; /* 0 or 1 */
+    byte    partial_send;   /* QoS 0 PUBLISH started on the old socket */
     WOLFMQTT_BROKER_TIME_T enq_time;
     word64  enqueue_seq;    /* persistent FIFO order within this session */
     word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
