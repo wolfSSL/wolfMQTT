@@ -6333,6 +6333,15 @@ static int BrokerSend_Disconnect(BrokerClient* bc, byte reason_code)
         bc->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         return 0;
     }
+    /* MQTT 5.0 section 2.1.1: a new frame cannot continue another packet. */
+    if (bc->client.write.pos != 0
+#ifndef WOLFMQTT_STATIC_MEMORY
+            || bc->out_q_pending_len != 0 || bc->direct_pending_len != 0 ||
+            bc->connack_pending_len != 0
+#endif
+            ) {
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
 
     XMEMSET(&disc, 0, sizeof(disc));
     disc.protocol_level = bc->protocol_level;

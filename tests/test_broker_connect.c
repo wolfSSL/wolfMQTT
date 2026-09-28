@@ -6367,10 +6367,9 @@ TEST(takeover_resumes_outbound_qos2_pubrel)
 
 #ifdef WOLFMQTT_V5
 #ifdef WOLFMQTT_NONBLOCK
-/* MQTT 5.0 [MQTT-4.4.0-1] does not authorize retrying a QoS 0 PUBLISH.
- * The takeover DISCONNECT may complete a direct write and reset the shared
- * write offset, but the queue entry still records its attempted send. */
-TEST(takeover_v5_disconnect_does_not_replay_partial_qos0)
+/* MQTT 5.0 section 2.1.1 forbids splicing DISCONNECT into a PUBLISH;
+ * [MQTT-4.4.0-1] does not authorize retrying a partial QoS 0 delivery. */
+TEST(takeover_v5_partial_qos0_closes_without_splicing)
 {
     MqttBroker broker;
     MqttBrokerNet net;
@@ -6421,9 +6420,9 @@ TEST(takeover_v5_disconnect_does_not_replay_partial_qos0)
     for (i = 0; i < 16; i++) {
         (void)MqttBroker_Step(&broker);
     }
-    /* The takeover DISCONNECT finished a direct write from offset 1;
-     * the old QoS 0 PUBLISH did not finish before the takeover. */
-    ASSERT_EQ(3, g_clients[1].out_len - old_len_before);
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_EQ(1, g_clients[1].out_len - old_len_before);
+    ASSERT_EQ(0x30, g_clients[1].out_buf[old_len_before]);
     ASSERT_EQ(0, count_packets_of_type(g_clients[2].out_buf,
         g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH));
     ASSERT_EQ(0, find_broker_client(&broker, "S")->out_q_count);
@@ -6543,6 +6542,11 @@ TEST(takeover_outbound_publish_uses_resumed_protocol)
         ASSERT_MEM_EQ(expected,
             g_clients[2].out_buf + g_clients[2].out_len - expected_len,
             expected_len);
+        if (path == 1) {
+            ASSERT_EQ(MQTT_REASON_SESSION_TAKEN_OVER,
+                first_disconnect_reason(g_clients[0].out_buf,
+                    g_clients[0].out_len));
+        }
 
         MqttBroker_Stop(&broker);
         MqttBroker_Free(&broker);
@@ -10349,7 +10353,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(takeover_outbound_publish_uses_resumed_protocol);
 #ifdef WOLFMQTT_NONBLOCK
-    RUN_TEST(takeover_v5_disconnect_does_not_replay_partial_qos0);
+    RUN_TEST(takeover_v5_partial_qos0_closes_without_splicing);
 #endif
 #endif
 #endif
