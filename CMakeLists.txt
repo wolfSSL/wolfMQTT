@@ -91,30 +91,6 @@ if (WOLFMQTT_TLS)
     list(APPEND WOLFMQTT_DEFINITIONS "-DENABLE_MQTT_TLS")
 endif()
 
-if(WOLFMQTT_TLS)
-    include(CheckCSourceCompiles)
-    if(WITH_WOLFSSL)
-        set(CMAKE_REQUIRED_INCLUDES "${WITH_WOLFSSL}/include")
-    elseif(WITH_WOLFSSL_TREE)
-        set(CMAKE_REQUIRED_INCLUDES "${WITH_WOLFSSL_TREE}")
-    elseif(WOLFSSL_FOUND)
-        set(CMAKE_REQUIRED_INCLUDES "${WOLFSSL_INCLUDE_DIRS}")
-    elseif(TARGET wolfssl::wolfssl)
-        set(CMAKE_REQUIRED_LIBRARIES wolfssl::wolfssl)
-    endif()
-    unset(WOLFMQTT_WOLFSSL_MIN_VERSION CACHE)
-    check_c_source_compiles("#include <wolfssl/version.h>
-        #if !defined(LIBWOLFSSL_VERSION_HEX) || LIBWOLFSSL_VERSION_HEX < 0x05009001
-        #error wolfMQTT TLS requires wolfSSL 5.9.1 or newer
-        #endif
-        int main(void) { return 0; }" WOLFMQTT_WOLFSSL_MIN_VERSION)
-    unset(CMAKE_REQUIRED_INCLUDES)
-    unset(CMAKE_REQUIRED_LIBRARIES)
-    if(NOT WOLFMQTT_WOLFSSL_MIN_VERSION)
-        message(FATAL_ERROR "wolfMQTT TLS requires wolfSSL 5.9.1 or newer")
-    endif()
-endif()
-
 add_option("WOLFMQTT_SN"
            "Enable MQTT-SN support"
            "no" "yes;no")

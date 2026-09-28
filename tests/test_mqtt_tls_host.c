@@ -212,7 +212,8 @@ static int tls_test_host(const char* host, const char* identity,
         (void)MqttClient_NetDisconnect(&client);
     }
     if (connect_rc != expected) {
-        PRINTF("  TLS host %s: expected %d, got %d, TLS error %d", host,
+        PRINTF("  TLS host %s: expected %d, got %d, TLS error %d",
+            host != NULL ? host : "(null)",
             expected, connect_rc, client.tls.lastError);
         goto cleanup;
     }
@@ -261,6 +262,14 @@ int main(void)
     if (rc == 0) {
         rc = tls_test_host("0x7f.0.0.1", NULL, 0,
             MQTT_CODE_ERROR_TLS_CONNECT);
+    }
+    /* A digit-leading DNS label is valid when the whole name is not a
+     * legacy numeric address (RFC 1123 section 2.1). */
+    if (rc == 0) {
+        rc = tls_test_host("0x0.st", NULL, 0, MQTT_CODE_SUCCESS);
+    }
+    if (rc == 0) {
+        rc = tls_test_host(NULL, NULL, 0, MQTT_CODE_ERROR_TLS_CONNECT);
     }
     if (rc == 0) {
         rc = tls_test_host("127.1", NULL, 0,

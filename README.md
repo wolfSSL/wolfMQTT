@@ -54,9 +54,10 @@ cmake .. -DWITH_WOLFSSL_TREE=/path/to/wolfssl/
 cmake --build .
 ```
 
-TLS builds require wolfSSL 5.9.1 or newer. TLS connections to IP addresses
-require wolfSSL built with `WOLFSSL_IP_ALT_NAME` to verify the certificate's
-IP address subject alternative name; otherwise they fail before the handshake.
+TLS connections to IP addresses require wolfSSL 5.9.1 or newer built with
+`WOLFSSL_IP_ALT_NAME` to verify the certificate's IP address subject alternative
+name; otherwise they fail before the handshake. DNS name verification also
+works with older wolfSSL releases.
 Legacy numeric IP spellings, bracketed IPv6, and scoped IPv6 are rejected.
 
 Additional CMake options:

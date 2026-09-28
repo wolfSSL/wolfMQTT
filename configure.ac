@@ -174,14 +174,6 @@ then
 
 AC_CHECK_LIB([wolfssl],[wolfCrypt_Init],,[AC_MSG_ERROR([libwolfssl is required and wasn't found on the system. It can be obtained from https://www.wolfssl.com/download.html/.])])
 
-AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
-#include <wolfssl/version.h>
-#if !defined(LIBWOLFSSL_VERSION_HEX) || LIBWOLFSSL_VERSION_HEX < 0x05009001
-    #error wolfMQTT TLS requires wolfSSL 5.9.1 or newer
-#endif
-int main(void) { return 0; }
-]])], [], [AC_MSG_ERROR([wolfMQTT TLS requires wolfSSL 5.9.1 or newer])])
-
 fi
 
 

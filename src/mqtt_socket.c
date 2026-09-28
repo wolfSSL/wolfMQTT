@@ -46,10 +46,6 @@
 
 /* Public Functions */
 #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
-#if !defined(LIBWOLFSSL_VERSION_HEX) || LIBWOLFSSL_VERSION_HEX < 0x05009001
-    #error "wolfMQTT TLS requires wolfSSL 5.9.1 or newer"
-#endif
-
 /* Return 1 for an IP literal, 0 for a DNS name, or -1 for an ambiguous
  * numeric address. Network resolvers accept legacy IPv4 spellings such as
  * 0x7f.0.0.1; these must not be authenticated as DNS names. */
@@ -60,6 +56,8 @@ static int MqttSocket_HostType(const char* host)
     int has_colon = 0;
     int dots = 0;
     int digits = 0;
+    int hex_address = 0;
+    int hex_only = 1;
     unsigned int value = 0;
 
     if (host == NULL || *host == '\0') {
@@ -74,7 +72,13 @@ static int MqttSocket_HostType(const char* host)
         }
         if (*p == '0' && (p == host || p[-1] == '.') &&
                 (p[1] == 'x' || p[1] == 'X')) {
-            return -1;
+            hex_address = 1;
+        }
+        if (!((*p >= '0' && *p <= '9') ||
+                (*p >= 'a' && *p <= 'f') ||
+                (*p >= 'A' && *p <= 'F') ||
+                *p == 'x' || *p == 'X' || *p == '.')) {
+            hex_only = 0;
         }
         if ((*p < '0' || *p > '9') && *p != '.') {
             numeric = 0;
@@ -83,6 +87,9 @@ static int MqttSocket_HostType(const char* host)
     }
     if (has_colon) {
         return 1;
+    }
+    if (hex_address && hex_only) {
+        return -1;
     }
     if (!numeric) {
         return 0;
@@ -568,7 +575,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
 
         /* Verify the server identity against the destination before sending
          * MQTT credentials over the TLS connection. */
-        if (host != NULL && !(MqttClient_Flags(client, 0, 0) &
+        if (!(MqttClient_Flags(client, 0, 0) &
                 MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME)) {
             int host_type = MqttSocket_HostType(host);
 
@@ -576,10 +583,11 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 rc = WOLFSSL_FAILURE;
             }
             else if (host_type > 0) {
-#ifdef WOLFSSL_IP_ALT_NAME
+#if defined(WOLFSSL_IP_ALT_NAME) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05009001
                 rc = wolfSSL_check_ip_address(client->tls.ssl, host);
 #else
-                /* This wolfSSL build cannot match binary iPAddress SANs. */
+                /* This wolfSSL build cannot verify an IP address SAN. */
                 rc = WOLFSSL_FAILURE;
 #endif
             }
