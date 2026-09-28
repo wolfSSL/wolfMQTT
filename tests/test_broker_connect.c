@@ -6366,6 +6366,7 @@ TEST(takeover_resumes_outbound_qos2_pubrel)
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 #ifdef WOLFMQTT_V5
+#ifdef WOLFMQTT_NONBLOCK
 /* MQTT 5.0 [MQTT-4.4.0-1] does not authorize retrying a QoS 0 PUBLISH.
  * The takeover DISCONNECT may complete a direct write and reset the shared
  * write offset, but the queue entry still records its attempted send. */
@@ -6430,6 +6431,7 @@ TEST(takeover_v5_disconnect_does_not_replay_partial_qos0)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_NONBLOCK */
 
 /* MQTT 5.0 section 3.3.2.3 adds Property Length to PUBLISH; the Session's
  * deliveries use the resumed connection's packet format. */
@@ -10346,7 +10348,9 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(takeover_outbound_publish_uses_resumed_protocol);
+#ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(takeover_v5_disconnect_does_not_replay_partial_qos0);
+#endif
 #endif
 #endif
     RUN_TEST(connack_session_present_clear_on_clean_session_reconnect);
