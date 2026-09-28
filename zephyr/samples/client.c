@@ -22,6 +22,36 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttclient/mqttclient.h"
 
+#if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/rtc.h>
+#include <zephyr/posix/time.h>
+#include <zephyr/sys/timeutil.h>
+
+static int mqtt_init_tls_clock(void)
+{
+    const struct device* rtc = DEVICE_DT_GET(DT_ALIAS(rtc));
+    struct rtc_time date;
+    struct timespec now;
+
+    if (!device_is_ready(rtc) || rtc_get_time(rtc, &date) != 0) {
+        return -1;
+    }
+    /* The QEMU CMOS RTC stores a two-digit year. Its test certificates are
+     * issued in 2026, so interpret that value in the 2000s. */
+    if (date.tm_year < 100) {
+        date.tm_year += 100;
+    }
+    now.tv_sec = timeutil_timegm(rtc_time_to_tm(&date));
+    now.tv_nsec = date.tm_nsec;
+    if (now.tv_sec == (time_t)-1) {
+        return -1;
+    }
+    return clock_settime(CLOCK_REALTIME, &now);
+}
+#endif
+
 int main(void)
 {
     int rc;
@@ -31,6 +61,11 @@ int main(void)
     mqtt_init_ctx(&mqttCtx);
 
 #if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
+    if (mqtt_init_tls_clock() != 0) {
+        PRINTF("Could not set the clock for TLS certificate validation");
+        return EXIT_FAILURE;
+    }
+
     /* QEMU reaches the broker at 192.0.2.2, while the test certificate
      * identifies it as localhost. Select that DNS identity for SNI and
      * certificate verification before sending MQTT credentials. */
