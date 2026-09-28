@@ -27,6 +27,7 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/rtc.h>
 #include <zephyr/posix/time.h>
+#include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/timeutil.h>
 
 static int mqtt_init_tls_clock(void)
@@ -34,8 +35,20 @@ static int mqtt_init_tls_clock(void)
     const struct device* rtc = DEVICE_DT_GET(DT_ALIAS(rtc));
     struct rtc_time date;
     struct timespec now;
+    uint8_t rtc_control;
 
-    if (!device_is_ready(rtc) || rtc_get_time(rtc, &date) != 0) {
+    if (!device_is_ready(rtc)) {
+        return -1;
+    }
+    /* Zephyr 3.4's MC146818 driver subtracts one from the raw month before
+     * BCD decoding it, which fails from October onward. Select binary mode
+     * on QEMU's RTC so the driver reads every month correctly. */
+    sys_out8(0x0b, DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 0));
+    rtc_control = sys_in8(DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 1));
+    sys_out8(0x0b, DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 0));
+    sys_out8(rtc_control | 0x04, DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 1));
+
+    if (rtc_get_time(rtc, &date) != 0) {
         return -1;
     }
     /* The QEMU CMOS RTC stores a two-digit year. Its test certificates are
