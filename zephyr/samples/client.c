@@ -29,6 +29,7 @@
 #include <zephyr/posix/time.h>
 #include <zephyr/sys/sys_io.h>
 #include <zephyr/sys/timeutil.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
 
 static int mqtt_init_tls_clock(void)
 {
@@ -61,7 +62,12 @@ static int mqtt_init_tls_clock(void)
     if (now.tv_sec == (time_t)-1) {
         return -1;
     }
-    return clock_settime(CLOCK_REALTIME, &now);
+    if (clock_settime(CLOCK_REALTIME, &now) != 0) {
+        return -1;
+    }
+    /* wolfSSL's Zephyr z_time reads the RTC directly and interprets QEMU's
+     * two-digit year as 1926. Use the corrected system clock for cert dates. */
+    return wc_SetTimeCb(time);
 }
 #endif
 

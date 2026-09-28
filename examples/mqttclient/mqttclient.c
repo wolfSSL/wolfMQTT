@@ -688,6 +688,11 @@ disconn:
         MqttClient_ReturnCodeToString(rc), rc);
 
 exit:
+    /* Early setup and socket failures do not pass through disconn. */
+    if (rc != MQTT_CODE_SUCCESS &&
+            mqttCtx->return_code == MQTT_CODE_SUCCESS) {
+        mqttCtx->return_code = rc;
+    }
 
     /* Free resources */
     if (mqttCtx->tx_buf) WOLFMQTT_FREE(mqttCtx->tx_buf);
