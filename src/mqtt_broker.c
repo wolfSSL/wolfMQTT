@@ -6945,6 +6945,64 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                     > 0) {
                     session_present = 1;
                 }
+#ifndef WOLFMQTT_STATIC_MEMORY
+                /* [MQTT-4.4.0-1] Keep pending and in-flight deliveries in the
+                 * resumed Session before freeing the old connection. */
+                if (old->client.write.pos > 0) {
+                    BrokerOutPub* partial = old->out_q_head;
+                    BrokerOutPub* prev = NULL;
+
+                    while (partial != NULL &&
+                            partial->state != BROKER_OUTQ_QUEUED) {
+                        prev = partial;
+                        partial = partial->next;
+                    }
+                    /* MQTT 3.1.1 section 4.3.1: do not retry a partly
+                     * transmitted QoS 0 PUBLISH on the new connection. */
+                    if (partial != NULL && partial->qos == MQTT_QOS_0) {
+                        if (prev == NULL) {
+                            old->out_q_head = partial->next;
+                        }
+                        else {
+                            prev->next = partial->next;
+                        }
+                        if (old->out_q_tail == partial) {
+                            old->out_q_tail = prev;
+                        }
+                        old->out_q_count--;
+                        BrokerOutPub_Free(partial);
+                    }
+                }
+                if (old->out_q_head != NULL) {
+                    BrokerOutPub* e;
+
+                    bc->out_q_head = old->out_q_head;
+                    bc->out_q_tail = old->out_q_tail;
+                    bc->out_q_count = old->out_q_count;
+                    bc->out_q_inflight = 0;
+                    old->out_q_head = NULL;
+                    old->out_q_tail = NULL;
+                    old->out_q_count = 0;
+                    old->out_q_inflight = 0;
+
+                    for (e = bc->out_q_head; e != NULL; e = e->next) {
+#ifdef WOLFMQTT_V5
+                        e->protocol_level = bc->protocol_level;
+#endif
+                        if (e->state == BROKER_OUTQ_PUBLISH_SENT) {
+                            e->state = BROKER_OUTQ_QUEUED;
+                            e->retransmit_dup = 1;
+                        }
+#if WOLFMQTT_MAX_QOS >= 2
+                        else if (e->state == BROKER_OUTQ_PUBREL_SENT) {
+                            e->retransmit_dup = 1;
+                            bc->out_q_inflight++;
+                        }
+#endif
+                    }
+                    session_present = 1;
+                }
+#endif
             #if WOLFMQTT_MAX_QOS >= 2
                 /* Carry inbound QoS2 dedup state so a retransmit after the
                  * takeover is still recognized, but only from a surviving
