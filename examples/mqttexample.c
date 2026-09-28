@@ -640,6 +640,9 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
     }
     return 1;
 #else
+    /* NO_FILESYSTEM loads an embedded CA buffer in mqtt_tls_cb. Enforce its
+     * verification result even though ca_file is unused in that build. */
+#if !defined(NO_FILESYSTEM) || defined(NO_CERT)
     /* With no CA configured there is no trust anchor to validate against
      * (getting-started/demo mode), so accept and warn. When a CA is provided
      * the chain-validation result is enforced so a bad certificate
@@ -648,6 +651,7 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
         PRINTF("  Warning: no CA configured, skipping server authentication");
         return 1;
     }
+#endif
     return preverify;
 #endif
 }
