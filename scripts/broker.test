@@ -2,6 +2,8 @@
 
 # wolfMQTT Broker Test Suite
 # Uses only wolfMQTT tools (mqttclient, mqtt-pub, mqtt-sub) - no external dependencies
+# Persistence requires private directories, regardless of the caller's umask.
+umask 077
 
 broker_bin="src/mqtt_broker"
 client_bin="examples/mqttclient/mqttclient"
