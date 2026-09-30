@@ -353,8 +353,8 @@ if (WOLFMQTT_BROKER)
     add_executable(mqtt_broker src/mqtt_broker.c)
     target_link_libraries(mqtt_broker wolfmqtt)
     target_include_directories(mqtt_broker PRIVATE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 endif()
 
 add_option("WOLFMQTT_UNIT_TESTS"
@@ -377,7 +377,8 @@ if(WOLFMQTT_UNIT_TESTS AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 
     if(UNIX AND WOLFMQTT_TLS)
         find_package(Threads REQUIRED)
-        add_executable(wolfmqtt_tls_host_tests tests/test_mqtt_tls_host.c)
+        add_executable(wolfmqtt_tls_host_tests tests/test_mqtt_tls_host.c
+            examples/mqttexample.c examples/mqttnet.c examples/mqttport.c)
         target_include_directories(wolfmqtt_tls_host_tests BEFORE PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR})
         target_compile_definitions(wolfmqtt_tls_host_tests PRIVATE

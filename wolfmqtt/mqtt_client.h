@@ -183,7 +183,10 @@ enum MqttClientFlags {
     MQTT_CLIENT_FLAG_DISCONNECT_SENT = 0x01 << 6,
     /* TLS callback configured a certificate identity on client->tls.ssl.
      * Set only after wolfSSL_check_domain_name/check_ip_address succeeds. */
-    MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME = 0x01 << 7
+    MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME = 0x01 << 7,
+    /* Library-created VERIFY_NONE context. Managed by the library so TLS
+     * retries retain the default verification policy. */
+    MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX = 0x01 << 8
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
@@ -905,8 +908,9 @@ WOLFMQTT_API int MqttClient_IsMessageActive(
  *  Will perform the MqttTlsCb callback if use_tls is non-zero value
  *  \param      client      Pointer to MqttClient structure
  *  \param      host        Broker DNS name or IP address. TLS checks the peer
- *                          certificate against this value; use a fully
- *                          qualified DNS name for portable verification.
+ *                          certificate against this value when the callback
+ *                          supplies a TLS context. Use a fully qualified DNS
+ *                          name for portable verification.
  *  \param      port        Optional custom port. If zero will use defaults
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \param      use_tls     If non-zero value will connect with and use TLS for

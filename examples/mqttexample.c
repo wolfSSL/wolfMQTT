@@ -656,6 +656,25 @@ static int mqtt_tls_verify_cb(int preverify, WOLFSSL_X509_STORE_CTX* store)
 #endif
 }
 
+#ifdef HAVE_SNI
+/* RFC 6066 section 3 excludes IP literals from SNI HostName. */
+static int mqtt_tls_sni_is_name(const char* name)
+{
+    const char* p;
+    int nonnumeric = 0;
+
+    for (p = name; *p != '\0'; p++) {
+        if (*p == ':' || *p == '[' || *p == ']' || *p == '%') {
+            return 0;
+        }
+        if ((*p < '0' || *p > '9') && *p != '.') {
+            nonnumeric = 1;
+        }
+    }
+    return nonnumeric;
+}
+#endif
+
 /* Use this callback to setup TLS certificates and verify callbacks */
 int mqtt_tls_cb(MqttClient* client)
 {
@@ -742,8 +761,14 @@ int mqtt_tls_cb(MqttClient* client)
 #endif /* !NO_CERT */
 #ifdef HAVE_SNI
         if ((rc == WOLFSSL_SUCCESS) && (mTlsSniHostName != NULL)) {
-            rc = wolfSSL_CTX_UseSNI(client->tls.ctx, WOLFSSL_SNI_HOST_NAME,
+            if (mqtt_tls_sni_is_name(mTlsSniHostName)) {
+                rc = wolfSSL_CTX_UseSNI(client->tls.ctx, WOLFSSL_SNI_HOST_NAME,
                     mTlsSniHostName, (word16) XSTRLEN(mTlsSniHostName));
+            }
+            else if (sock->mqttCtx->host == NULL ||
+                    XSTRCMP(mTlsSniHostName, sock->mqttCtx->host) != 0) {
+                rc = WOLFSSL_FAILURE;
+            }
             if (rc != WOLFSSL_SUCCESS) {
                 PRINTF("UseSNI failed");
             }
@@ -776,7 +801,9 @@ int mqtt_tls_cb(MqttClient* client)
         }
 #endif /* HAVE_PQC */
     #ifdef HAVE_SNI
-        if (rc == WOLFSSL_SUCCESS && mTlsSniHostName != NULL) {
+        if (rc == WOLFSSL_SUCCESS && mTlsSniHostName != NULL &&
+                (sock->mqttCtx->host == NULL ||
+                 XSTRCMP(mTlsSniHostName, sock->mqttCtx->host) != 0)) {
             /* The explicit SNI host selects the broker certificate, so use
              * the same identity for its verification. */
             if (client->tls.ssl == NULL) {

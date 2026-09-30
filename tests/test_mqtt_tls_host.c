@@ -27,11 +27,20 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+#ifdef HAVE_SNI
+    #include "examples/mqttexample.h"
+    #include "examples/mqttnet.h"
+#endif
+
 #define TEST_CERT_FILE WOLFMQTT_TEST_CERT_DIR "/tls-host-test-cert.pem"
 #define TEST_KEY_FILE  WOLFMQTT_TEST_CERT_DIR "/client-key.pem"
 
 typedef struct TlsTestNet {
+#ifdef HAVE_SNI
+    SocketContext sock;
+#endif
     int fd;
+    int read_continue;
 } TlsTestNet;
 
 typedef struct TlsTestServer {
@@ -58,6 +67,10 @@ static int tls_test_read(void* context, byte* buf, int len, int timeout_ms)
     int rc;
 
     (void)timeout_ms;
+    if (net->read_continue) {
+        net->read_continue = 0;
+        return MQTT_CODE_CONTINUE;
+    }
     rc = (int)recv(net->fd, buf, (size_t)len, 0);
     return rc > 0 ? rc : MQTT_CODE_ERROR_NETWORK;
 }
@@ -144,6 +157,33 @@ static int tls_test_setup_client(MqttClient* client)
     return rc;
 }
 
+static int tls_test_no_context(MqttClient* client)
+{
+    (void)client;
+    return WOLFSSL_SUCCESS;
+}
+
+#ifdef HAVE_SNI
+static int tls_test_setup_example(MqttClient* client)
+{
+    SocketContext* sock = (SocketContext*)client->net->context;
+    char* args[8];
+
+    args[0] = (char*)"mqttclient";
+    args[1] = (char*)"-h";
+    args[2] = (char*)sock->mqttCtx->host;
+    args[3] = (char*)"-t";
+    args[4] = (char*)"-A";
+    args[5] = (char*)TEST_CERT_FILE;
+    args[6] = (char*)"-S";
+    args[7] = (char*)g_tls_test_identity;
+    if (mqtt_parse_args(sock->mqttCtx, 8, args) != 0) {
+        return WOLFSSL_FAILURE;
+    }
+    return mqtt_tls_cb(client);
+}
+#endif
+
 static void* tls_test_server_run(void* arg)
 {
     TlsTestServer* server = (TlsTestServer*)arg;
@@ -152,12 +192,15 @@ static void* tls_test_server_run(void* arg)
     return NULL;
 }
 
-static int tls_test_host(const char* host, const char* identity,
-    int precreate, int expected)
+static int tls_test_host_with_cb(const char* host, const char* identity,
+    int precreate, int expected, MqttTlsCb cb)
 {
     MqttClient client;
     MqttNet net;
     TlsTestNet client_net;
+#ifdef HAVE_SNI
+    MQTTCtx example_ctx;
+#endif
     TlsTestServer server;
     WOLFSSL_CTX* server_ctx = NULL;
     pthread_t thread;
@@ -169,11 +212,20 @@ static int tls_test_host(const char* host, const char* identity,
     int thread_started = 0;
     int rc = 1;
     int connect_rc;
+    int attempts = 0;
 
     XMEMSET(&client, 0, sizeof(client));
     XMEMSET(&net, 0, sizeof(net));
     XMEMSET(&server, 0, sizeof(server));
+#ifdef HAVE_SNI
+    XMEMSET(&client_net.sock, 0, sizeof(client_net.sock));
+    mqtt_init_ctx(&example_ctx);
+    example_ctx.app_name = "mqttclient";
+    example_ctx.host = host;
+    client_net.sock.mqttCtx = &example_ctx;
+#endif
     client_net.fd = -1;
+    client_net.read_continue = cb == NULL || cb == tls_test_no_context;
     g_tls_test_identity = identity;
     g_tls_test_precreate = precreate;
     timeout.tv_sec = 3;
@@ -229,10 +281,16 @@ static int tls_test_host(const char* host, const char* identity,
     }
     thread_started = 1;
 
-    connect_rc = MqttClient_NetConnect(&client, host, 8883, 3000, 1,
-        tls_test_setup_client);
+    do {
+        connect_rc = MqttClient_NetConnect(&client, host, 8883, 3000, 1, cb);
+    } while (connect_rc == MQTT_CODE_CONTINUE && ++attempts < 8);
     if (connect_rc == MQTT_CODE_SUCCESS) {
         (void)MqttClient_NetDisconnect(&client);
+    }
+    if (connect_rc == MQTT_CODE_ERROR_TLS_CONNECT &&
+            client.tls.lastError == 0) {
+        PRINTF("  TLS rejection has no diagnostic");
+        goto cleanup;
     }
     if (connect_rc != expected) {
         PRINTF("  TLS host %s: expected %d, got %d, TLS error %d",
@@ -243,6 +301,9 @@ static int tls_test_host(const char* host, const char* identity,
     rc = 0;
 
 cleanup:
+#ifdef HAVE_SNI
+    mqtt_free_ctx(&example_ctx);
+#endif
     g_tls_test_identity = NULL;
     g_tls_test_precreate = 0;
     (void)tls_test_disconnect(&client_net);
@@ -262,6 +323,13 @@ cleanup:
         (void)close(sockets[1]);
     }
     return rc;
+}
+
+static int tls_test_host(const char* host, const char* identity,
+    int precreate, int expected)
+{
+    return tls_test_host_with_cb(host, identity, precreate, expected,
+        tls_test_setup_client);
 }
 
 int main(void)
@@ -315,9 +383,16 @@ int main(void)
     if (rc == 0) {
         rc = tls_test_host("127.0.0.1", NULL, 0, MQTT_CODE_SUCCESS);
     }
+    if (rc == 0) {
+        rc = tls_test_host("::1", NULL, 0, MQTT_CODE_SUCCESS);
+    }
 #else
     if (rc == 0) {
         rc = tls_test_host("127.0.0.1", NULL, 0,
+            MQTT_CODE_ERROR_TLS_CONNECT);
+    }
+    if (rc == 0) {
+        rc = tls_test_host("::1", NULL, 0,
             MQTT_CODE_ERROR_TLS_CONNECT);
     }
 #endif
@@ -340,6 +415,44 @@ int main(void)
         rc = tls_test_host("example.com", "other.example.com", 1,
             MQTT_CODE_ERROR_TLS_CONNECT);
     }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("127.0.0.1", NULL, 0,
+            MQTT_CODE_SUCCESS, NULL);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("other.example.com", NULL, 0,
+            MQTT_CODE_SUCCESS, NULL);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("0x7f.0.0.1", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_no_context);
+    }
+#ifdef HAVE_SNI
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("example.com", "", 0,
+            MQTT_CODE_SUCCESS, tls_test_setup_example);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("0x7f.0.0.1", "", 0,
+            MQTT_CODE_ERROR_TLS_CONNECT, tls_test_setup_example);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("proxy.example.net", "example.com", 0,
+            MQTT_CODE_SUCCESS, tls_test_setup_example);
+    }
+#if defined(WOLFSSL_IP_ALT_NAME) && \
+    defined(LIBWOLFSSL_VERSION_HEX) && LIBWOLFSSL_VERSION_HEX >= 0x05009001
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("127.0.0.1", "", 0,
+            MQTT_CODE_SUCCESS, tls_test_setup_example);
+    }
+#else
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("127.0.0.1", "", 0,
+            MQTT_CODE_ERROR_TLS_CONNECT, tls_test_setup_example);
+    }
+#endif
+#endif /* HAVE_SNI */
     (void)wolfSSL_Cleanup();
     PRINTF("tls_host_verification: %s", rc == 0 ? "PASS" : "FAIL");
     return rc;

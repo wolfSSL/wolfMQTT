@@ -20,7 +20,8 @@ tests_unit_tests_LDADD = $(PTHREAD_LIBS)
 # Exercise peer-name verification with a trusted local certificate and an
 # in-process TLS server. No external broker or network access is required.
 check_PROGRAMS += tests/test_mqtt_tls_host
-tests_test_mqtt_tls_host_SOURCES = tests/test_mqtt_tls_host.c
+tests_test_mqtt_tls_host_SOURCES = tests/test_mqtt_tls_host.c \
+    examples/mqttexample.c examples/mqttnet.c examples/mqttport.c
 tests_test_mqtt_tls_host_CPPFLAGS = -I$(top_srcdir) \
     -DWOLFMQTT_TEST_CERT_DIR='"$(abs_top_srcdir)/certs"' $(AM_CPPFLAGS)
 tests_test_mqtt_tls_host_LDADD = src/libwolfmqtt.la $(PTHREAD_LIBS)

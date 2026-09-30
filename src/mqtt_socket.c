@@ -537,6 +537,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 goto exit;
             }
             wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_NONE, 0);
+            MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX);
         #ifdef WOLFMQTT_DEBUG_SOCKET
             PRINTF("Warning: TLS set to VERIFY_NONE. Use MqttClient_SetTlsCb "
                 "to set peer verification in production");
@@ -576,11 +577,12 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
         /* Verify the server identity against the destination before sending
          * MQTT credentials over the TLS connection. */
         if (!(MqttClient_Flags(client, 0, 0) &
-                MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME)) {
+                (MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME |
+                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX))) {
             int host_type = MqttSocket_HostType(host);
 
             if (host_type < 0) {
-                rc = WOLFSSL_FAILURE;
+                rc = BAD_FUNC_ARG;
             }
             else if (host_type > 0) {
 #if defined(WOLFSSL_IP_ALT_NAME) && defined(LIBWOLFSSL_VERSION_HEX) && \
@@ -588,13 +590,14 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 rc = wolfSSL_check_ip_address(client->tls.ssl, host);
 #else
                 /* This wolfSSL build cannot verify an IP address SAN. */
-                rc = WOLFSSL_FAILURE;
+                rc = NOT_COMPILED_IN;
 #endif
             }
             else {
                 rc = wolfSSL_check_domain_name(client->tls.ssl, host);
             }
             if (rc != WOLFSSL_SUCCESS) {
+                client->tls.lastError = rc < 0 ? rc : BAD_FUNC_ARG;
                 rc = MQTT_CODE_ERROR_TLS_CONNECT;
                 goto exit;
             }
@@ -619,7 +622,10 @@ exit:
     #endif
         int errnum = 0;
         if (client->tls.ssl) {
-            errnum = wolfSSL_get_error(client->tls.ssl, 0);
+            errnum = client->tls.lastError;
+            if (errnum == 0) {
+                errnum = wolfSSL_get_error(client->tls.ssl, 0);
+            }
             if (   errnum == WOLFSSL_ERROR_WANT_READ
                 || errnum == WOLFSSL_ERROR_WANT_WRITE
             #ifdef WOLFSSL_ASYNC_CRYPT
@@ -679,7 +685,8 @@ int MqttSocket_Disconnect(MqttClient *client)
         #endif
         MqttClient_Flags(client,
                 (MQTT_CLIENT_FLAG_IS_TLS | MQTT_CLIENT_FLAG_IS_DTLS |
-                 MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME), 0);
+                 MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME |
+                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX), 0);
     #endif
 
         /* Make sure socket is closed */

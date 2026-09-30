@@ -6185,18 +6185,29 @@ TEST(connack_session_present_set_on_takeover)
 }
 
 #ifndef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_BROKER_PERSIST
+static int takeover_setup_persist(MqttBroker* broker,
+    MqttBrokerPersistHooks* hooks);
+static int kv_outq_count(void);
+#endif
+
 /* [MQTT-4.4.0-1] A resumed Session retains pending and unacknowledged
  * QoS 1 deliveries, including their Packet Identifiers. */
-TEST(takeover_resumes_outbound_qos1_queue)
+static void takeover_resumes_outbound_qos1_queue(int persist)
 {
     MqttBroker broker;
     MqttBrokerNet net;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    MqttBrokerPersistHooks hooks;
+#endif
     BrokerClient* old;
     BrokerClient* resumed;
     PublishInfo info;
     word16 first_id;
     word16 second_id;
     byte puback[] = { 0x40, 0x02, 0x00, 0x00 };
+    int old_idx = 0;
+    int resume_idx = 2;
     int i;
     static const byte connect_sub[] = {
         0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
@@ -6220,6 +6231,13 @@ TEST(takeover_resumes_outbound_qos1_queue)
     install_mock_net(&net);
     XMEMSET(&broker, 0, sizeof(broker));
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    }
+#else
+    (void)persist;
+#endif
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
     reset_mock_clients(2);
     mock_client_input_append(0, connect_sub, sizeof(connect_sub));
@@ -6247,52 +6265,106 @@ TEST(takeover_resumes_outbound_qos1_queue)
     second_id = old->out_q_tail->packet_id;
     ASSERT_NE(0, first_id);
     ASSERT_NE(first_id, second_id);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        /* Disconnect and reclaim first so the live Session carries records
+         * previously committed by the orphan persistence path. */
+        old->connected = 0;
+        g_clients[0].read_err = 1;
+        for (i = 0; i < 8; i++) {
+            (void)MqttBroker_Step(&broker);
+        }
+        ASSERT_EQ(2, kv_outq_count());
+        mock_client_input_append(2, connect_sub, sizeof(connect_sub));
+        g_clients_active = 3;
+        for (i = 0; i < 16; i++) {
+            (void)MqttBroker_Step(&broker);
+        }
+        ASSERT_EQ(0, broker.orphan_session_count);
+        old_idx = 2;
+        resume_idx = 3;
+    }
+#endif
 
-    mock_client_input_append(2, connect_sub, sizeof(connect_sub));
-    g_clients_active = 3;
+    mock_client_input_append(resume_idx, connect_sub, sizeof(connect_sub));
+    g_clients_active = resume_idx + 1;
     for (i = 0; i < 16; i++) {
         (void)MqttBroker_Step(&broker);
     }
-    ASSERT_TRUE(g_clients[0].closed);
-    ASSERT_EQ(0x01, g_clients[2].out_buf[2]);
+    ASSERT_TRUE(g_clients[old_idx].closed);
+    ASSERT_EQ(0x01, g_clients[resume_idx].out_buf[2]);
     resumed = find_broker_client(&broker, "S");
     ASSERT_NOT_NULL(resumed);
     ASSERT_EQ(2, resumed->out_q_count);
     ASSERT_EQ(first_id, resumed->out_q_head->packet_id);
     ASSERT_EQ(second_id, resumed->out_q_tail->packet_id);
-    info = first_publish_info(g_clients[2].out_buf, g_clients[2].out_len);
+    info = first_publish_info(g_clients[resume_idx].out_buf,
+        g_clients[resume_idx].out_len);
     ASSERT_TRUE(info.found);
     ASSERT_EQ(0x3A, info.first_byte);
     ASSERT_EQ(first_id, info.packet_id);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(2, kv_outq_count());
+    }
+#endif
 
     puback[2] = (byte)(first_id >> 8);
     puback[3] = (byte)first_id;
-    mock_client_input_append(2, puback, sizeof(puback));
+    mock_client_input_append(resume_idx, puback, sizeof(puback));
     for (i = 0; i < 8; i++) {
         (void)MqttBroker_Step(&broker);
     }
     ASSERT_EQ(1, resumed->out_q_count);
     ASSERT_EQ(second_id, resumed->out_q_head->packet_id);
     ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT, resumed->out_q_head->state);
-    ASSERT_EQ(2, count_packets_of_type(g_clients[2].out_buf,
-        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_EQ(2, count_packets_of_type(g_clients[resume_idx].out_buf,
+        g_clients[resume_idx].out_len, MQTT_PACKET_TYPE_PUBLISH));
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(1, kv_outq_count());
+    }
+#endif
+
+    puback[2] = (byte)(second_id >> 8);
+    puback[3] = (byte)second_id;
+    mock_client_input_append(resume_idx, puback, sizeof(puback));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(0, resumed->out_q_count);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(0, kv_outq_count());
+    }
+#endif
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
 
+TEST(takeover_resumes_outbound_qos1_queue)
+{
+    takeover_resumes_outbound_qos1_queue(0);
+}
+
 #if WOLFMQTT_MAX_QOS >= 2
 /* [MQTT-4.4.0-1] A resumed QoS 2 delivery continues from PUBREL with its
  * original Packet Identifier. */
-TEST(takeover_resumes_outbound_qos2_pubrel)
+static void takeover_resumes_outbound_qos2_pubrel(int persist)
 {
     MqttBroker broker;
     MqttBrokerNet net;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    MqttBrokerPersistHooks hooks;
+#endif
     BrokerClient* old;
     BrokerClient* resumed;
     word16 packet_id;
     byte pubrec[] = { 0x50, 0x02, 0x00, 0x00 };
     byte pubcomp[] = { 0x70, 0x02, 0x00, 0x00 };
+    int old_idx = 0;
+    int resume_idx = 2;
     int i;
     static const byte connect_sub[] = {
         0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
@@ -6313,6 +6385,13 @@ TEST(takeover_resumes_outbound_qos2_pubrel)
     install_mock_net(&net);
     XMEMSET(&broker, 0, sizeof(broker));
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    }
+#else
+    (void)persist;
+#endif
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
     reset_mock_clients(2);
     mock_client_input_append(0, connect_sub, sizeof(connect_sub));
@@ -6336,9 +6415,27 @@ TEST(takeover_resumes_outbound_qos2_pubrel)
         (void)MqttBroker_Step(&broker);
     }
     ASSERT_EQ(BROKER_OUTQ_PUBREL_SENT, old->out_q_head->state);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        old->connected = 0;
+        g_clients[0].read_err = 1;
+        for (i = 0; i < 8; i++) {
+            (void)MqttBroker_Step(&broker);
+        }
+        ASSERT_EQ(1, kv_outq_count());
+        mock_client_input_append(2, connect_sub, sizeof(connect_sub));
+        g_clients_active = 3;
+        for (i = 0; i < 16; i++) {
+            (void)MqttBroker_Step(&broker);
+        }
+        ASSERT_EQ(0, broker.orphan_session_count);
+        old_idx = 2;
+        resume_idx = 3;
+    }
+#endif
 
-    mock_client_input_append(2, connect_sub, sizeof(connect_sub));
-    g_clients_active = 3;
+    mock_client_input_append(resume_idx, connect_sub, sizeof(connect_sub));
+    g_clients_active = resume_idx + 1;
     for (i = 0; i < 16; i++) {
         (void)MqttBroker_Step(&broker);
     }
@@ -6348,20 +6445,36 @@ TEST(takeover_resumes_outbound_qos2_pubrel)
     ASSERT_EQ(1, resumed->out_q_inflight);
     ASSERT_EQ(packet_id, resumed->out_q_head->packet_id);
     ASSERT_EQ(BROKER_OUTQ_PUBREL_SENT, resumed->out_q_head->state);
-    ASSERT_EQ(1, count_packets_of_type(g_clients[2].out_buf,
-        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH_REL));
+    ASSERT_TRUE(g_clients[old_idx].closed);
+    ASSERT_EQ(1, count_packets_of_type(g_clients[resume_idx].out_buf,
+        g_clients[resume_idx].out_len, MQTT_PACKET_TYPE_PUBLISH_REL));
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(1, kv_outq_count());
+    }
+#endif
 
     pubcomp[2] = (byte)(packet_id >> 8);
     pubcomp[3] = (byte)packet_id;
-    mock_client_input_append(2, pubcomp, sizeof(pubcomp));
+    mock_client_input_append(resume_idx, pubcomp, sizeof(pubcomp));
     for (i = 0; i < 8; i++) {
         (void)MqttBroker_Step(&broker);
     }
     ASSERT_EQ(0, resumed->out_q_count);
     ASSERT_EQ(0, resumed->out_q_inflight);
+#ifdef WOLFMQTT_BROKER_PERSIST
+    if (persist) {
+        ASSERT_EQ(0, kv_outq_count());
+    }
+#endif
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
+}
+
+TEST(takeover_resumes_outbound_qos2_pubrel)
+{
+    takeover_resumes_outbound_qos2_pubrel(0);
 }
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
@@ -9730,11 +9843,9 @@ TEST(persist_put_rejects_existing_temp_symlink)
  * through the mock net above against an in-RAM MqttBrokerPersistHooks, then
  * assert on the record count the backend holds. They are the only tests here
  * that move the clock - nothing can expire while it is pinned. */
-#if defined(WOLFMQTT_BROKER_PERSIST) && defined(WOLFMQTT_BROKER_RETAINED) && \
-    defined(WOLFMQTT_V5)
-
 /* Fixed-size so the backend behaves the same in both allocation profiles.
  * Sized past 3 * BROKER_MAX_RETAINED for the backlog test. */
+#ifdef WOLFMQTT_BROKER_PERSIST
 #define KV_MAX_RECS   80
 #define KV_MAX_BLOB   512
 
@@ -9855,6 +9966,52 @@ static int kv_sync(void* ctx)
     return 0;
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+static int kv_outq_count(void)
+{
+    int i;
+    int count = 0;
+
+    for (i = 0; i < KV_MAX_RECS; i++) {
+        if (g_kv[i].in_use && g_kv[i].ns == BROKER_PERSIST_NS_OUTQ) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static int takeover_setup_persist(MqttBroker* broker,
+    MqttBrokerPersistHooks* hooks)
+{
+    kv_reset();
+    XMEMSET(hooks, 0, sizeof(*hooks));
+    hooks->kv_put = kv_put;
+    hooks->kv_get = kv_get;
+    hooks->kv_del = kv_del;
+    hooks->kv_iter = kv_iter;
+    hooks->sync = kv_sync;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    hooks->derive_key = persist_order_derive_key;
+#endif
+    return MqttBroker_SetPersistHooks(broker, hooks);
+}
+
+TEST(persist_takeover_resumes_outbound_qos1_queue)
+{
+    takeover_resumes_outbound_qos1_queue(1);
+}
+
+#if WOLFMQTT_MAX_QOS >= 2
+TEST(persist_takeover_resumes_outbound_qos2_pubrel)
+{
+    takeover_resumes_outbound_qos2_pubrel(1);
+}
+#endif
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+#endif /* WOLFMQTT_BROKER_PERSIST */
+
+#if defined(WOLFMQTT_BROKER_PERSIST) && defined(WOLFMQTT_BROKER_RETAINED) && \
+    defined(WOLFMQTT_V5)
 static int retained_recs(void)
 {
     int i, n = 0;
@@ -10475,6 +10632,12 @@ int main(int argc, char** argv)
     RUN_TEST(pubrec_for_qos1_publish_not_advanced);
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
+    #ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(persist_takeover_resumes_outbound_qos1_queue);
+        #if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(persist_takeover_resumes_outbound_qos2_pubrel);
+        #endif
+    #endif
     RUN_TEST(persist_parent_component_rejected_as_bad_argument);
     RUN_TEST(persist_iter_skips_fifo_without_blocking);
 #ifndef WOLFMQTT_STATIC_MEMORY

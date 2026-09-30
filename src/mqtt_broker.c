@@ -3606,7 +3606,7 @@ WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
 /* MQTT 3.1.1 section 4.3.1: QoS 0 is not retried after a PUBLISH has
  * started on a connection. The marker belongs to the queue entry, so a
  * later direct write cannot hide it or implicate a different entry. */
-static void BrokerClient_DropPartialQos0(BrokerClient* bc)
+static void BrokerClient_DropPartialQos0(MqttBroker* broker, BrokerClient* bc)
 {
     BrokerOutPub* cur = bc->out_q_head;
     BrokerOutPub* prev = NULL;
@@ -3623,11 +3623,45 @@ static void BrokerClient_DropPartialQos0(BrokerClient* bc)
                 bc->out_q_tail = prev;
             }
             bc->out_q_count--;
+            WBLOG_INFO(broker,
+                "broker: drop partial QoS0 client_id=%s",
+                BrokerLog_Sanitize(bc->client_id));
             BrokerOutPub_Free(cur);
             break;
         }
         prev = cur;
         cur = cur->next;
+    }
+}
+
+/* [MQTT-4.4.0-1] Resume unacknowledged deliveries with their Packet
+ * Identifiers. PUBREL remains in flight while it awaits PUBCOMP. */
+static void BrokerClient_ResumeOutQueue(MqttBroker* broker, BrokerClient* bc)
+{
+    BrokerOutPub* e;
+    int retx = 0;
+
+    bc->out_q_inflight = 0;
+    for (e = bc->out_q_head; e != NULL; e = e->next) {
+#ifdef WOLFMQTT_V5
+        e->protocol_level = bc->protocol_level;
+#endif
+        if (e->state == BROKER_OUTQ_PUBLISH_SENT) {
+            e->state = BROKER_OUTQ_QUEUED;
+            e->retransmit_dup = 1;
+            retx++;
+        }
+#if WOLFMQTT_MAX_QOS >= 2
+        else if (e->state == BROKER_OUTQ_PUBREL_SENT) {
+            e->retransmit_dup = 1;
+            bc->out_q_inflight++;
+        }
+#endif
+    }
+    if (retx > 0) {
+        WBLOG_INFO(broker,
+            "broker: session resume queued retransmit=%d client_id=%s",
+            retx, BrokerLog_Sanitize(bc->client_id));
     }
 }
 
@@ -3692,7 +3726,7 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
      *
      * The per-entry marker is set by BrokerClient_DrainOutQueue. Shared
      * client.write.pos may instead belong to a direct broker response. */
-    BrokerClient_DropPartialQos0(bc);
+    BrokerClient_DropPartialQos0(broker, bc);
 
     /* Move out_q ownership. bc->out_q_* must be cleared so
      * BrokerClient_FreeOutQueue (called from BrokerClient_Free)
@@ -3782,42 +3816,7 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
     o->qos2_pending       = NULL;
     o->qos2_pending_count = 0;
 #endif
-    /* MQTT-4.4.0-1: any message that was previously in-flight on the old
-     * session is re-sent on resume. PUBLISH_SENT -> QUEUED with
-     * retransmit_dup so the drain re-sends the PUBLISH with DUP=1.
-     * PUBREL_SENT stays PUBREL_SENT but is also flagged retransmit_dup so
-     * the drain re-sends a fresh PUBREL (same packet_id; PUBREL carries no
-     * DUP flag) - the subscriber will not re-send PUBREC, so the broker
-     * must drive the PUBREL/PUBCOMP completion itself. */
-    {
-        BrokerOutPub* e = new_bc->out_q_head;
-        int retx = 0;
-        while (e != NULL) {
-#ifdef WOLFMQTT_V5
-            e->protocol_level = new_bc->protocol_level;
-#endif
-            if (e->state == BROKER_OUTQ_PUBLISH_SENT) {
-                e->state = BROKER_OUTQ_QUEUED;
-                e->retransmit_dup = 1;
-                retx++;
-            }
-            else if (e->state == BROKER_OUTQ_PUBREL_SENT) {
-                /* Still in flight by definition - the prior session was
-                 * awaiting PUBCOMP. Restore the inflight count (zeroed
-                 * above) so the Receive Maximum / BROKER_MAX_INFLIGHT_PER_SUB
-                 * cap stays accurate, and flag it so the drain re-sends the
-                 * PUBREL on resume. */
-                e->retransmit_dup = 1;
-                new_bc->out_q_inflight++;
-            }
-            e = e->next;
-        }
-        if (retx > 0) {
-            WBLOG_INFO(broker,
-                "broker: orphan reclaim queued retransmit=%d client_id=%s",
-                retx, BrokerLog_Sanitize(new_bc->client_id));
-        }
-    }
+    BrokerClient_ResumeOutQueue(broker, new_bc);
     WBLOG_INFO(broker,
         "broker: orphan reclaimed client_id=%s queued=%d",
         BrokerLog_Sanitize(new_bc->client_id), new_bc->out_q_count);
@@ -6965,10 +6964,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #ifndef WOLFMQTT_STATIC_MEMORY
                 /* [MQTT-4.4.0-1] Keep pending and in-flight deliveries in the
                  * resumed Session before freeing the old connection. */
-                BrokerClient_DropPartialQos0(old);
+                BrokerClient_DropPartialQos0(broker, old);
                 if (old->out_q_head != NULL) {
-                    BrokerOutPub* e;
-
                     bc->out_q_head = old->out_q_head;
                     bc->out_q_tail = old->out_q_tail;
                     bc->out_q_count = old->out_q_count;
@@ -6978,21 +6975,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                     old->out_q_count = 0;
                     old->out_q_inflight = 0;
 
-                    for (e = bc->out_q_head; e != NULL; e = e->next) {
-#ifdef WOLFMQTT_V5
-                        e->protocol_level = bc->protocol_level;
-#endif
-                        if (e->state == BROKER_OUTQ_PUBLISH_SENT) {
-                            e->state = BROKER_OUTQ_QUEUED;
-                            e->retransmit_dup = 1;
-                        }
-#if WOLFMQTT_MAX_QOS >= 2
-                        else if (e->state == BROKER_OUTQ_PUBREL_SENT) {
-                            e->retransmit_dup = 1;
-                            bc->out_q_inflight++;
-                        }
-#endif
-                    }
+                    BrokerClient_ResumeOutQueue(broker, bc);
                     session_present = 1;
                 }
 #endif
