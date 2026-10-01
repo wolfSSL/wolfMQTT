@@ -4415,7 +4415,11 @@ static int BrokerSubs_Add(MqttBroker* broker, BrokerClient* bc,
     return rc;
 }
 
-static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
+/* Remove the subscription owned by 'bc' whose Topic Filter matches exactly.
+ * Returns 1 if a matching subscription was found and removed, 0 if this
+ * client had no matching subscription. Note this is a boolean result, not
+ * the MQTT_CODE_SUCCESS(0) / negative-error convention used elsewhere. */
+static int BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
     const char* filter, word16 filter_len)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -4438,7 +4442,7 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             if (bc->sub_count > 0) {
                 bc->sub_count--;
             }
-            return;
+            return 1;
         }
     }
 #else
@@ -4467,12 +4471,13 @@ static void BrokerSubs_Remove(MqttBroker* broker, BrokerClient* bc,
             if (bc->sub_count > 0) {
                 bc->sub_count--;
             }
-            return;
+            return 1;
         }
         prev = cur;
         cur = next;
     }
 #endif
+    return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -7578,13 +7583,22 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
     for (i = 0; i < unsub.topic_count && i < MAX_MQTT_TOPICS; i++) {
         const char* f = unsub.topics[i].topic_filter;
         word16 flen = 0;
+#ifdef WOLFMQTT_V5
+        reasons[i] = MQTT_REASON_UNSPECIFIED_ERR;
+#endif
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-            BrokerSubs_Remove(broker, bc, f, flen);
-        }
 #ifdef WOLFMQTT_V5
-        reasons[i] = MQTT_REASON_SUCCESS;
+            if (BrokerSubs_Remove(broker, bc, f, flen)) {
+                reasons[i] = MQTT_REASON_SUCCESS;
+            }
+            else {
+                reasons[i] = MQTT_REASON_NO_SUB_EXIST;
+            }
+#else
+            BrokerSubs_Remove(broker, bc, f, flen);
 #endif
+        }
     }
 
     XMEMSET(&ack, 0, sizeof(ack));
