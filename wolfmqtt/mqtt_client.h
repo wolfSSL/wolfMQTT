@@ -186,7 +186,10 @@ enum MqttClientFlags {
     MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME = 0x01 << 7,
     /* Library-created VERIFY_NONE context. Managed by the library so TLS
      * retries retain the default verification policy. */
-    MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX = 0x01 << 8
+    MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX = 0x01 << 8,
+    /* Skip host identity setup when the callback disables authentication.
+     * Does not change wolfSSL's certificate verification policy. */
+    MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK = 0x01 << 9
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
@@ -919,6 +922,8 @@ WOLFMQTT_API int MqttClient_IsMessageActive(
                             context certificate checking. To use a certificate
                             identity other than host, set it on client->tls.ssl
                             and set MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME.
+                            Callbacks that disable server authentication must
+                            set MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

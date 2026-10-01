@@ -59,7 +59,18 @@ with `WOLFSSL_IP_ALT_NAME` to verify the certificate's IP address subject
 alternative name; otherwise they fail before the handshake. DNS name
 verification also works with older wolfSSL releases.
 Legacy numeric IP spellings, bracketed IPv6, and scoped IPv6 are rejected.
+wolfSSL 5.9.2 and newer also reject single-label DNS names other than
+`localhost` during identity setup. Use a fully qualified DNS name for
+portable verified connections.
 The library's default `VERIFY_NONE` context skips these identity checks.
+Application TLS callbacks that disable server authentication, either with
+`WOLFSSL_VERIFY_NONE` or a verification callback that accepts all certificates,
+must set `MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK` with `MqttClient_Flags`.
+The flag skips host identity setup only; it does not change wolfSSL's
+certificate verification policy. Set it on each new connection, since
+disconnect clears it. The example sets it for `-t` without `-A` and for
+`WOLFMQTT_ALLOW_INSECURE_TLS`. Without that override, embedded CA builds
+still verify the peer.
 
 Compatibility change: TLS callbacks that configure their own certificate
 identity on `client->tls.ssl` must also set

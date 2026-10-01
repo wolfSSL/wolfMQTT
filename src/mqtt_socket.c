@@ -578,7 +578,8 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
          * MQTT credentials over the TLS connection. */
         if (!(MqttClient_Flags(client, 0, 0) &
                 (MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME |
-                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX))) {
+                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX |
+                 MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK))) {
             int host_type = MqttSocket_HostType(host);
 
             if (host_type < 0) {
@@ -686,7 +687,8 @@ int MqttSocket_Disconnect(MqttClient *client)
         MqttClient_Flags(client,
                 (MQTT_CLIENT_FLAG_IS_TLS | MQTT_CLIENT_FLAG_IS_DTLS |
                  MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME |
-                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX), 0);
+                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX |
+                 MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK), 0);
     #endif
 
         /* Make sure socket is closed */

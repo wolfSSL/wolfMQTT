@@ -963,10 +963,12 @@ WOLFMQTT_LOCAL int BrokerPersist_PutSubs(MqttBroker* broker,
 WOLFMQTT_LOCAL int BrokerPersist_DelSubs(MqttBroker* broker,
     const char* client_id);
 
+#ifdef WOLFMQTT_BROKER_RETAINED
 WOLFMQTT_LOCAL int BrokerPersist_PutRetained(MqttBroker* broker,
     const struct BrokerRetainedMsg* rm);
 WOLFMQTT_LOCAL int BrokerPersist_DelRetained(MqttBroker* broker,
     const char* topic);
+#endif
 
 WOLFMQTT_LOCAL int BrokerPersist_PutOutPub(MqttBroker* broker,
     const char* client_id, const struct BrokerOutPub* e);

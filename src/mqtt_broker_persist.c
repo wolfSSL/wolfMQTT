@@ -111,19 +111,19 @@
 
 /* Big-endian numeric writers (no host-byte-order dependency in the
  * stored bytes, so a record written on x86 can be read on any platform). */
-static WC_INLINE void wmqb_w_u16(byte* p, word16 v)
+static INLINE void wmqb_w_u16(byte* p, word16 v)
 {
     p[0] = (byte)((v >> 8) & 0xFF);
     p[1] = (byte)(v & 0xFF);
 }
-static WC_INLINE void wmqb_w_u32(byte* p, word32 v)
+static INLINE void wmqb_w_u32(byte* p, word32 v)
 {
     p[0] = (byte)((v >> 24) & 0xFF);
     p[1] = (byte)((v >> 16) & 0xFF);
     p[2] = (byte)((v >> 8) & 0xFF);
     p[3] = (byte)(v & 0xFF);
 }
-static WC_INLINE void wmqb_w_u64(byte* p, word64 v)
+static INLINE void wmqb_w_u64(byte* p, word64 v)
 {
     p[0] = (byte)((v >> 56) & 0xFF);
     p[1] = (byte)((v >> 48) & 0xFF);
@@ -134,16 +134,16 @@ static WC_INLINE void wmqb_w_u64(byte* p, word64 v)
     p[6] = (byte)((v >> 8) & 0xFF);
     p[7] = (byte)(v & 0xFF);
 }
-static WC_INLINE word16 wmqb_r_u16(const byte* p)
+static INLINE word16 wmqb_r_u16(const byte* p)
 {
     return (word16)(((word16)p[0] << 8) | (word16)p[1]);
 }
-static WC_INLINE word32 wmqb_r_u32(const byte* p)
+static INLINE word32 wmqb_r_u32(const byte* p)
 {
     return ((word32)p[0] << 24) | ((word32)p[1] << 16) |
            ((word32)p[2] << 8) | (word32)p[3];
 }
-static WC_INLINE word64 wmqb_r_u64(const byte* p)
+static INLINE word64 wmqb_r_u64(const byte* p)
 {
     return ((word64)p[0] << 56) | ((word64)p[1] << 48) |
            ((word64)p[2] << 40) | ((word64)p[3] << 32) |
@@ -169,7 +169,7 @@ static void wmqb_write_header(byte* buf, word16 rec_kind, word32 body_len)
 /* Validate header against this build's schema. Returns 0 on match,
  * negative on magic or version mismatch. Body length is returned via
  * out_body_len. */
-static WC_INLINE int wmqb_read_header(const byte* buf, word32 buf_len,
+static INLINE int wmqb_read_header(const byte* buf, word32 buf_len,
     word16 expect_kind, word32* out_body_len)
 {
     word32 body_len;
@@ -850,6 +850,7 @@ int BrokerPersist_DelSubs(MqttBroker* broker, const char* client_id)
  *    20+N M     payload
  *
  * Key is the topic bytes. */
+#ifdef WOLFMQTT_BROKER_RETAINED
 int BrokerPersist_PutRetained(MqttBroker* broker,
     const struct BrokerRetainedMsg* rm)
 {
@@ -911,6 +912,7 @@ int BrokerPersist_DelRetained(MqttBroker* broker, const char* topic)
     return wmqb_kv_del_commit(broker, BROKER_PERSIST_NS_RETAINED,
         (const byte*)topic, (word16)XSTRLEN(topic));
 }
+#endif /* WOLFMQTT_BROKER_RETAINED */
 
 /* OUTQ key encoding:  client_id_bytes || 0x00 || packet_id_be(2 bytes).
  * The trailing 0x00 separator + fixed-width packet_id keep the key
@@ -1517,6 +1519,7 @@ static BrokerOrphanSession* wmqb_restore_find_orphan(MqttBroker* broker,
 }
 #endif /* WOLFMQTT_STATIC_MEMORY */
 
+#ifdef WOLFMQTT_BROKER_RETAINED
 /* NS_RETAINED body prefix: qos(1) _reserved(1) store_time(8) expiry(4)
  * topic_len(2). */
 #define WMQB_RETAINED_BODY_MIN (1 + 1 + 8 + 4 + 2)
@@ -1815,6 +1818,8 @@ static void wmqb_restore_purge_expired_retained(MqttBroker* broker)
             "left in store");
     }
 }
+
+#endif /* WOLFMQTT_BROKER_RETAINED */
 
 /* Allocate orphan subs from a decoded NS_SUBS blob. The blob key carries
  * the client_id - subs created here have client=NULL, client_id set;

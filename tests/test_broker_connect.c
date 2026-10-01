@@ -8271,6 +8271,7 @@ TEST(orphan_expire_sweep_backward_clock_keeps_session)
     MqttBrokerNet net;
     int i;
     BrokerOrphanSession* o;
+#ifdef WOLFMQTT_V5
     /* Client "K3": clean=0, Session Expiry=60 (persistent session, so a
      * backward clock jump must not sweep it), one sub -> orphan. */
     static const byte connect_k3[] = {
@@ -8287,6 +8288,22 @@ TEST(orphan_expire_sweep_backward_clock_keeps_session)
         0x00, 0x01, 'k',
         0x00
     };
+#else
+    /* MQTT 3.1.1 sections 3.1.2/3.1.3: level 4, clean=0, ClientId K3.
+     * Section 3.8.2/3.8.3: packet ID 1, filter k, QoS 0, no Properties. */
+    static const byte connect_k3[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x02, 'K', '3'
+    };
+    static const byte subscribe_k3[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'k',
+        0x00
+    };
+#endif
     static const byte disconnect0[] = { 0xE0, 0x00 };
 
     install_mock_net(&net);
@@ -9845,7 +9862,8 @@ TEST(persist_put_rejects_existing_temp_symlink)
  * that move the clock - nothing can expire while it is pinned. */
 /* Fixed-size so the backend behaves the same in both allocation profiles.
  * Sized past 3 * BROKER_MAX_RETAINED for the backlog test. */
-#ifdef WOLFMQTT_BROKER_PERSIST
+#if defined(WOLFMQTT_BROKER_PERSIST) && (!defined(WOLFMQTT_STATIC_MEMORY) || \
+    (defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_V5)))
 #define KV_MAX_RECS   80
 #define KV_MAX_BLOB   512
 
@@ -10008,7 +10026,7 @@ TEST(persist_takeover_resumes_outbound_qos2_pubrel)
 }
 #endif
 #endif /* !WOLFMQTT_STATIC_MEMORY */
-#endif /* WOLFMQTT_BROKER_PERSIST */
+#endif /* Persistence backend users */
 
 #if defined(WOLFMQTT_BROKER_PERSIST) && defined(WOLFMQTT_BROKER_RETAINED) && \
     defined(WOLFMQTT_V5)

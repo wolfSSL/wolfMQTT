@@ -163,7 +163,23 @@ static int tls_test_no_context(MqttClient* client)
     return WOLFSSL_SUCCESS;
 }
 
+static int tls_test_no_verify(MqttClient* client)
+{
+    client->tls.ctx = wolfSSL_CTX_new(wolfSSLv23_client_method());
+    if (client->tls.ctx == NULL) {
+        return WOLFSSL_FAILURE;
+    }
+    wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_NONE, NULL);
+    (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK);
+    return WOLFSSL_SUCCESS;
+}
+
 #ifdef HAVE_SNI
+static int tls_test_setup_example_no_ca(MqttClient* client)
+{
+    return mqtt_tls_cb(client);
+}
+
 static int tls_test_setup_example(MqttClient* client)
 {
     SocketContext* sock = (SocketContext*)client->net->context;
@@ -276,6 +292,9 @@ static int tls_test_host_with_cb(const char* host, const char* identity,
         goto cleanup;
     }
     client_inited = 1;
+#ifdef HAVE_SNI
+    client.ctx = &example_ctx;
+#endif
     if (pthread_create(&thread, NULL, tls_test_server_run, &server) != 0) {
         goto cleanup;
     }
@@ -286,6 +305,11 @@ static int tls_test_host_with_cb(const char* host, const char* identity,
     } while (connect_rc == MQTT_CODE_CONTINUE && ++attempts < 8);
     if (connect_rc == MQTT_CODE_SUCCESS) {
         (void)MqttClient_NetDisconnect(&client);
+        if (MqttClient_Flags(&client, 0, 0) &
+                MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK) {
+            PRINTF("  TLS host-check opt-out survived disconnect");
+            goto cleanup;
+        }
     }
     if (connect_rc == MQTT_CODE_ERROR_TLS_CONNECT &&
             client.tls.lastError == 0) {
@@ -427,7 +451,35 @@ int main(void)
         rc = tls_test_host_with_cb("0x7f.0.0.1", NULL, 0,
             MQTT_CODE_SUCCESS, tls_test_no_context);
     }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("127.0.0.1", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_no_verify);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("mosquitto", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_no_verify);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("0x7f.0.0.1", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_no_verify);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb(NULL, NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_no_verify);
+    }
 #ifdef HAVE_SNI
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("127.0.0.1", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_setup_example_no_ca);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("mosquitto", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_setup_example_no_ca);
+    }
+    if (rc == 0) {
+        rc = tls_test_host_with_cb("0x7f.0.0.1", NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_setup_example_no_ca);
+    }
     if (rc == 0) {
         rc = tls_test_host_with_cb("example.com", "", 0,
             MQTT_CODE_SUCCESS, tls_test_setup_example);
