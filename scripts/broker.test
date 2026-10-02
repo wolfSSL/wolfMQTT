@@ -2,6 +2,8 @@
 
 # wolfMQTT Broker Test Suite
 # Uses only wolfMQTT tools (mqttclient, mqtt-pub, mqtt-sub) - no external dependencies
+# Persistence requires private directories, regardless of the caller's umask.
+umask 077
 
 broker_bin="src/mqtt_broker"
 client_bin="examples/mqttclient/mqttclient"
@@ -466,7 +468,7 @@ if [ "$has_tls" = "yes" ]; then
         -c scripts/broker_test/server-cert.pem \
         -K scripts/broker_test/server-key.pem
 
-    ./$client_bin -T -h 127.0.0.1 -p $port -n "test/tls" -t \
+    ./$client_bin -T -h localhost -p $port -n "test/tls" -t \
         -A scripts/broker_test/ca-cert.pem -C 5000 \
         >"${TMP_DIR}/t6.log" 2>&1
     if [ $? -eq 0 ]; then
@@ -485,7 +487,7 @@ if [ "$has_tls" = "yes" ]; then
             -K scripts/broker_test/server-key.pem \
             -A certs/client-cert.pem
 
-        ./$client_bin -T -h 127.0.0.1 -p $port -n "test/mtls_rsa" -t \
+        ./$client_bin -T -h localhost -p $port -n "test/mtls_rsa" -t \
             -A scripts/broker_test/ca-cert.pem \
             -c certs/client-cert.pem -K certs/client-key.pem -C 5000 \
             >"${TMP_DIR}/t7.log" 2>&1
@@ -508,7 +510,7 @@ if [ "$has_tls" = "yes" ]; then
             -K scripts/broker_test/server-key.pem \
             -A certs/client-ecc-cert.pem
 
-        ./$client_bin -T -h 127.0.0.1 -p $port -n "test/mtls_ecc" -t \
+        ./$client_bin -T -h localhost -p $port -n "test/mtls_ecc" -t \
             -A scripts/broker_test/ca-cert.pem \
             -c certs/client-ecc-cert.pem -K certs/ecc-client-key.pem -C 5000 \
             >"${TMP_DIR}/t8.log" 2>&1
@@ -533,7 +535,7 @@ if [ "$has_tls" = "yes" ]; then
 
     # TLS subscriber on secure port
     rm -f "${TMP_DIR}/t10a_sub.ready"
-    timeout 10 ./$sub_bin -T -h 127.0.0.1 -p $port_tls -n "test/dualport" -t \
+    timeout 10 ./$sub_bin -T -h localhost -p $port_tls -n "test/dualport" -t \
         -A scripts/broker_test/ca-cert.pem -i "tls_sub" \
         -R "${TMP_DIR}/t10a_sub.ready" >"${TMP_DIR}/t10a_sub.log" 2>&1 &
     T10A_SUB_PID=$!
@@ -565,7 +567,7 @@ if [ "$has_tls" = "yes" ]; then
     TEST_PIDS+=($T10B_SUB_PID)
     wait_for_file "${TMP_DIR}/t10b_sub.ready" 5
     # TLS publisher on secure port
-    ./$pub_bin -T -h 127.0.0.1 -p $port_tls -n "test/dualport2" \
+    ./$pub_bin -T -h localhost -p $port_tls -n "test/dualport2" \
         -m "tls_to_plain" -t -A scripts/broker_test/ca-cert.pem \
         >"${TMP_DIR}/t10b_pub.log" 2>&1
     sleep 0.2
@@ -586,7 +588,7 @@ if [ "$has_tls" = "yes" ]; then
     ./$client_bin -T -h 127.0.0.1 -p $port -n "test/dual_plain" -C 5000 \
         >"${TMP_DIR}/t10c_plain.log" 2>&1
     T10C_PLAIN_RC=$?
-    ./$client_bin -T -h 127.0.0.1 -p $port_tls -n "test/dual_tls" -t \
+    ./$client_bin -T -h localhost -p $port_tls -n "test/dual_tls" -t \
         -A scripts/broker_test/ca-cert.pem -C 5000 \
         >"${TMP_DIR}/t10c_tls.log" 2>&1
     T10C_TLS_RC=$?

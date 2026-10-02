@@ -46,6 +46,75 @@
 
 /* Public Functions */
 #if defined(ENABLE_MQTT_TLS) && !defined(ENABLE_MQTT_CURL)
+/* Return 1 for an IP literal, 0 for a DNS name, or -1 for an ambiguous
+ * numeric address. Network resolvers accept legacy IPv4 spellings such as
+ * 0x7f.0.0.1; these must not be authenticated as DNS names. */
+static int MqttSocket_HostType(const char* host)
+{
+    const char* p = host;
+    int numeric = 1;
+    int has_colon = 0;
+    int dots = 0;
+    int digits = 0;
+    int hex_address = 0;
+    int hex_only = 1;
+    unsigned int value = 0;
+
+    if (host == NULL || *host == '\0') {
+        return -1;
+    }
+    while (*p != '\0') {
+        if (*p == '[' || *p == ']' || *p == '%') {
+            return -1;
+        }
+        if (*p == ':') {
+            has_colon = 1;
+        }
+        if (*p == '0' && (p == host || p[-1] == '.') &&
+                (p[1] == 'x' || p[1] == 'X')) {
+            hex_address = 1;
+        }
+        if (!((*p >= '0' && *p <= '9') ||
+                (*p >= 'a' && *p <= 'f') ||
+                (*p >= 'A' && *p <= 'F') ||
+                *p == 'x' || *p == 'X' || *p == '.')) {
+            hex_only = 0;
+        }
+        if ((*p < '0' || *p > '9') && *p != '.') {
+            numeric = 0;
+        }
+        p++;
+    }
+    if (has_colon) {
+        return 1;
+    }
+    if (hex_address && hex_only) {
+        return -1;
+    }
+    if (!numeric) {
+        return 0;
+    }
+    for (p = host; *p != '\0'; p++) {
+        if (*p == '.') {
+            if (digits == 0 || ++dots > 3) {
+                return -1;
+            }
+            digits = 0;
+            value = 0;
+        }
+        else {
+            if (digits == 0 && *p == '0' && p[1] >= '0' && p[1] <= '9') {
+                return -1;
+            }
+            value = value * 10U + (unsigned int)(*p - '0');
+            if (++digits > 3 || value > 255U) {
+                return -1;
+            }
+        }
+    }
+    return (dots == 3 && digits > 0) ? 1 : -1;
+}
+
 int MqttSocket_TlsSocketReceive(WOLFSSL* ssl, char *buf, int sz,
     void *ptr)
 {
@@ -468,6 +537,7 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
                 goto exit;
             }
             wolfSSL_CTX_set_verify(client->tls.ctx, WOLFSSL_VERIFY_NONE, 0);
+            MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX);
         #ifdef WOLFMQTT_DEBUG_SOCKET
             PRINTF("Warning: TLS set to VERIFY_NONE. Use MqttClient_SetTlsCb "
                 "to set peer verification in production");
@@ -504,6 +574,36 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             wolfSSL_SetCertCbCtx(client->tls.ssl, client->ctx);
         }
 
+        /* Verify the server identity against the destination before sending
+         * MQTT credentials over the TLS connection. */
+        if (!(MqttClient_Flags(client, 0, 0) &
+                (MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME |
+                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX |
+                 MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK))) {
+            int host_type = MqttSocket_HostType(host);
+
+            if (host_type < 0) {
+                rc = BAD_FUNC_ARG;
+            }
+            else if (host_type > 0) {
+#if defined(WOLFSSL_IP_ALT_NAME) && defined(LIBWOLFSSL_VERSION_HEX) && \
+    LIBWOLFSSL_VERSION_HEX >= 0x05009001
+                rc = wolfSSL_check_ip_address(client->tls.ssl, host);
+#else
+                /* This wolfSSL build cannot verify an IP address SAN. */
+                rc = NOT_COMPILED_IN;
+#endif
+            }
+            else {
+                rc = wolfSSL_check_domain_name(client->tls.ssl, host);
+            }
+            if (rc != WOLFSSL_SUCCESS) {
+                client->tls.lastError = rc < 0 ? rc : BAD_FUNC_ARG;
+                rc = MQTT_CODE_ERROR_TLS_CONNECT;
+                goto exit;
+            }
+        }
+
         MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_IS_TLS);
         rc = wolfSSL_connect(client->tls.ssl);
         if (rc != WOLFSSL_SUCCESS) {
@@ -523,7 +623,10 @@ exit:
     #endif
         int errnum = 0;
         if (client->tls.ssl) {
-            errnum = wolfSSL_get_error(client->tls.ssl, 0);
+            errnum = client->tls.lastError;
+            if (errnum == 0) {
+                errnum = wolfSSL_get_error(client->tls.ssl, 0);
+            }
             if (   errnum == WOLFSSL_ERROR_WANT_READ
                 || errnum == WOLFSSL_ERROR_WANT_WRITE
             #ifdef WOLFSSL_ASYNC_CRYPT
@@ -582,7 +685,10 @@ int MqttSocket_Disconnect(MqttClient *client)
         }
         #endif
         MqttClient_Flags(client,
-                (MQTT_CLIENT_FLAG_IS_TLS | MQTT_CLIENT_FLAG_IS_DTLS), 0);
+                (MQTT_CLIENT_FLAG_IS_TLS | MQTT_CLIENT_FLAG_IS_DTLS |
+                 MQTT_CLIENT_FLAG_TLS_CUSTOM_PEER_NAME |
+                 MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX |
+                 MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK), 0);
     #endif
 
         /* Make sure socket is closed */

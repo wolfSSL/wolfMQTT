@@ -22,6 +22,55 @@
 #include "wolfmqtt/mqtt_client.h"
 #include "examples/mqttclient/mqttclient.h"
 
+#if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/drivers/rtc.h>
+#include <zephyr/posix/time.h>
+#include <zephyr/sys/sys_io.h>
+#include <zephyr/sys/timeutil.h>
+#include <wolfssl/wolfcrypt/asn_public.h>
+
+static int mqtt_init_tls_clock(void)
+{
+    const struct device* rtc = DEVICE_DT_GET(DT_ALIAS(rtc));
+    struct rtc_time date;
+    struct timespec now;
+    uint8_t rtc_control;
+
+    if (!device_is_ready(rtc)) {
+        return -1;
+    }
+    /* Zephyr 3.4's MC146818 driver subtracts one from the raw month before
+     * BCD decoding it, which fails from October onward. Select binary mode
+     * on QEMU's RTC so the driver reads every month correctly. */
+    sys_out8(0x0b, DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 0));
+    rtc_control = sys_in8(DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 1));
+    sys_out8(0x0b, DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 0));
+    sys_out8(rtc_control | 0x04, DT_REG_ADDR_BY_IDX(DT_ALIAS(rtc), 1));
+
+    if (rtc_get_time(rtc, &date) != 0) {
+        return -1;
+    }
+    /* The QEMU CMOS RTC stores a two-digit year. Its test certificates are
+     * issued in 2026, so interpret that value in the 2000s. */
+    if (date.tm_year < 100) {
+        date.tm_year += 100;
+    }
+    now.tv_sec = timeutil_timegm(rtc_time_to_tm(&date));
+    now.tv_nsec = date.tm_nsec;
+    if (now.tv_sec == (time_t)-1) {
+        return -1;
+    }
+    if (clock_settime(CLOCK_REALTIME, &now) != 0) {
+        return -1;
+    }
+    /* wolfSSL's Zephyr z_time reads the RTC directly and interprets QEMU's
+     * two-digit year as 1926. Use the corrected system clock for cert dates. */
+    return wc_SetTimeCb(time);
+}
+#endif
+
 int main(void)
 {
     int rc;
@@ -29,6 +78,27 @@ int main(void)
 
     /* init defaults */
     mqtt_init_ctx(&mqttCtx);
+
+#if defined(WOLFMQTT_DEFAULT_TLS) && (WOLFMQTT_DEFAULT_TLS == 1)
+    if (mqtt_init_tls_clock() != 0) {
+        PRINTF("Could not set the clock for TLS certificate validation");
+        return EXIT_FAILURE;
+    }
+
+    /* QEMU reaches the broker at 192.0.2.2, while the test certificate
+     * identifies it as localhost. Select that DNS identity for SNI and
+     * certificate verification before sending MQTT credentials. */
+    {
+        static char app_name[] = "mqttclient";
+        static char sni_option[] = "-S";
+        static char peer_name[] = "localhost";
+        char* tls_args[] = { app_name, sni_option, peer_name };
+
+        if (mqtt_parse_args(&mqttCtx, 3, tls_args) != 0) {
+            return EXIT_FAILURE;
+        }
+    }
+#endif
 
     mqttCtx.test_mode = 1;
 

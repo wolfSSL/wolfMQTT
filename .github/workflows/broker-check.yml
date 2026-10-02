@@ -107,6 +107,14 @@ jobs:
           - name: "Broker with persist + static memory"
             cflags: "-DWOLFMQTT_STATIC_MEMORY"
             wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist"
+          - name: "Broker with persist (v3.1.1)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-broker-persist"
+            check_units: "yes"
+          - name: "Broker with persist (no retained)"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --disable-broker-retained"
+            check_units: "yes"
 
     steps:
     - name: Install dependencies
@@ -129,6 +137,10 @@ jobs:
       run: ./configure ${{ matrix.wolfmqtt_opts }} CFLAGS="${{ matrix.cflags }}"
     - name: wolfmqtt make
       run: make
+
+    - name: "Run unit tests (${{ matrix.name }})"
+      if: matrix.check_units == 'yes'
+      run: make check check_SCRIPTS=
 
     - name: "Run broker tests (${{ matrix.name }})"
       if: matrix.skip_broker_test != 'yes'

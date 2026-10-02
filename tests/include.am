@@ -17,6 +17,16 @@ tests_unit_tests_SOURCES = \
 tests_unit_tests_CPPFLAGS = -I$(top_srcdir) $(AM_CPPFLAGS)
 tests_unit_tests_LDADD = $(PTHREAD_LIBS)
 
+# Exercise peer-name verification with a trusted local certificate and an
+# in-process TLS server. No external broker or network access is required.
+check_PROGRAMS += tests/test_mqtt_tls_host
+tests_test_mqtt_tls_host_SOURCES = tests/test_mqtt_tls_host.c \
+    examples/mqttexample.c examples/mqttnet.c examples/mqttport.c
+tests_test_mqtt_tls_host_CPPFLAGS = -I$(top_srcdir) \
+    -DWOLFMQTT_TEST_CERT_DIR='"$(abs_top_srcdir)/certs"' $(AM_CPPFLAGS)
+tests_test_mqtt_tls_host_LDADD = src/libwolfmqtt.la $(PTHREAD_LIBS)
+EXTRA_DIST += certs/client-key.pem certs/tls-host-test-cert.pem
+
 # Property-lock lifecycle tests. Build mqtt_packet.c directly with injected
 # semaphore functions so initialization failures are deterministic on every
 # supported host platform.

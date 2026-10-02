@@ -40,7 +40,7 @@ runs:
         echo "image=${ImageOS:-${{ runner.os }}}" >> "$GITHUB_OUTPUT"
         # Hash the build options so different configs do not share a cache.
         # sha256sum is absent on some runners (e.g. macOS); fall back to shasum.
-        opts="${{ inputs.config }}|${{ inputs.cflags }}|${{ inputs.cc }}"
+        opts="${{ inputs.config }} --enable-ip-alt-name|${{ inputs.cflags }}|${{ inputs.cc }}"
         if command -v sha256sum >/dev/null 2>&1; then
           optkey=$(printf '%s' "$opts" | sha256sum | cut -c1-12)
         else
@@ -75,9 +75,11 @@ runs:
         jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)
         if [ -n "${{ inputs.cc }}" ]; then
           ./configure --prefix="$HOME/wolfssl-install" ${{ inputs.config }} \
+            --enable-ip-alt-name \
             CC="${{ inputs.cc }}" CFLAGS="${{ inputs.cflags }}"
         else
           ./configure --prefix="$HOME/wolfssl-install" ${{ inputs.config }} \
+            --enable-ip-alt-name \
             CFLAGS="${{ inputs.cflags }}"
         fi
         make -j"$jobs"

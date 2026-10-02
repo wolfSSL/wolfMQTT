@@ -308,8 +308,8 @@ endif(WIN32)
 target_include_directories(wolfmqtt
     PUBLIC
     $<INSTALL_INTERFACE:include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     )
 
 
@@ -353,8 +353,8 @@ if (WOLFMQTT_BROKER)
     add_executable(mqtt_broker src/mqtt_broker.c)
     target_link_libraries(mqtt_broker wolfmqtt)
     target_include_directories(mqtt_broker PRIVATE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>)
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 endif()
 
 add_option("WOLFMQTT_UNIT_TESTS"
@@ -370,10 +370,23 @@ if(WOLFMQTT_UNIT_TESTS AND CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
         tests/test_mqtt_packet.c
         tests/test_mqtt_client.c
     )
-    target_include_directories(wolfmqtt_unit_tests
-        PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(wolfmqtt_unit_tests BEFORE PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(wolfmqtt_unit_tests wolfmqtt)
     add_test(NAME wolfmqtt_unit_tests COMMAND wolfmqtt_unit_tests)
+
+    if(UNIX AND WOLFMQTT_TLS)
+        find_package(Threads REQUIRED)
+        add_executable(wolfmqtt_tls_host_tests tests/test_mqtt_tls_host.c
+            examples/mqttexample.c examples/mqttnet.c examples/mqttport.c)
+        target_include_directories(wolfmqtt_tls_host_tests BEFORE PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR})
+        target_compile_definitions(wolfmqtt_tls_host_tests PRIVATE
+            WOLFMQTT_TEST_CERT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/certs")
+        target_link_libraries(wolfmqtt_tls_host_tests wolfmqtt Threads::Threads)
+        add_test(NAME wolfmqtt_tls_host_tests COMMAND wolfmqtt_tls_host_tests)
+        set_tests_properties(wolfmqtt_tls_host_tests PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 ####################################################
