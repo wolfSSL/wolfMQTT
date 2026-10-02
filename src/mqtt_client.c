@@ -88,6 +88,9 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
 #if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
 static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
 #endif
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+static int MqttClient_SendIds_Find(const MqttClient* client, word16 packet_id);
+#endif
 #ifdef WOLFMQTT_MULTITHREAD
 
 #ifdef WOLFMQTT_USER_THREADING
@@ -797,18 +800,31 @@ static void MqttClient_Replay_AddSafe(MqttClient* client, MqttPublish* publish)
 #endif
 }
 
-/* Unlike the other wrappers this one reports a lock failure. Skipping the
- * reset would leave the previous Session's messages retained, and a later
- * reconnect would replay them into a Session they do not belong to. */
+/* Discard the retained copies of a Session the server did not resume. A send
+ * is allowed once CONNECT reaches the transport, so an entry may instead belong
+ * to the Session being established: MqttClient_Connect empties the Packet
+ * Identifier table before sending CONNECT, so a still-reserved identifier marks
+ * one of those, and it is kept for a later resume [MQTT-4.4.0-1]. Reports a
+ * lock failure, unlike the wrappers above: a skipped discard would replay the
+ * previous Session's messages into this one. */
 static int MqttClient_Replay_ResetSafe(MqttClient* client)
 {
+    int i;
 #ifdef WOLFMQTT_MULTITHREAD
     int rc = wm_SemLock(&client->lockClient);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
 #endif
-    MqttClient_Replay_Reset(client);
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        if (client->replay[i].packet_id != 0 &&
+                MqttClient_SendIds_Find(client,
+                    client->replay[i].packet_id) >= 0) {
+            continue; /* published on this connection */
+        }
+        MqttClient_Replay_FreeSlot(&client->replay[i]);
+    }
+    client->replayIdx = MQTT_MAX_REPLAY_MSGS;
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
@@ -879,11 +895,8 @@ static int MqttClient_SendIds_Find(const MqttClient* client, word16 packet_id)
  * MQTT_CODE_SUCCESS when it was free (or when isRetransmit says this is a
  * re-send of the same Control Packet, which [MQTT-2.3.1-3] requires to keep
  * its original identifier), and MQTT_CODE_ERROR_PACKET_ID when it is still
- * awaiting its acknowledgement.
- *
- * The _Locked form is for a caller that already holds client->lockClient - the
- * Session resume walks the replay pool under it - since the semaphore is not
- * recursive. */
+ * awaiting its acknowledgement. The _Locked form is for a caller already
+ * holding client->lockClient, which is not recursive. */
 static int MqttClient_SendIdReserve_Locked(MqttClient* client, word16 packet_id,
     void* owner, int isRetransmit, MqttPacketType ack_type)
 {
@@ -2400,6 +2413,16 @@ wait_again:
                 rc = MQTT_CODE_SUCCESS;
             }
             else {
+            #ifdef WOLFMQTT_MULTITHREAD
+                /* Terminal, so the claim must not outlive this reader. The
+                 * CONTINUE path above keeps it: that reader resumes. */
+                if (pendResp != NULL) {
+                    if (wm_SemLock(&client->lockClient) == 0) {
+                        pendResp->packetProcessing = 0;
+                        wm_SemUnlock(&client->lockClient);
+                    }
+                }
+            #endif
                 /* error, break */
                 break;
             }
@@ -3629,10 +3652,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * into it would inject one Session's messages into another. */
         if (!(mc_connect->ack.flags & MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) ||
                 !session_id_matched) {
-            /* A fresh Session starts with no outbound state to re-send.
-             * Under the client lock: a send thread may be replacing a slot's
-             * topic and payload through MqttClient_Replay_AddSafe at the same
-             * moment, and both sides free what they find there. */
+            /* A fresh Session starts with no outbound state to re-send. */
             rc = MqttClient_Replay_ResetSafe(client);
             if (rc != MQTT_CODE_SUCCESS) {
                 return rc;
@@ -3644,8 +3664,8 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             /* The server resumed the Session, so these messages are still in
              * flight as far as it is concerned: keep their Packet Identifiers
              * reserved (MqttClient_Connect cleared the table above) and
-             * re-send them [MQTT-4.4.0-1]. Walked under the client lock for
-             * the same reason as the reset above. */
+             * re-send them [MQTT-4.4.0-1]. A send thread reaches these same
+             * slots, so the walk holds the client lock. */
 #ifdef WOLFMQTT_MULTITHREAD
             rc = wm_SemLock(&client->lockClient);
             if (rc != MQTT_CODE_SUCCESS) {

@@ -888,10 +888,9 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 /*! \brief      In a multi-threaded and non-blocking mode this allows you to
                 cancel an MQTT object that was previously submitted.
  *  \note This is a blocking function that will wait for MqttNet.read
- *  \note Only MQTT_CODE_SUCCESS releases the object back to the caller.
-                MQTT_CODE_CONTINUE means another thread is still processing
-                this message's response: the object must not be freed or
-                reused, and the call should be retried.
+ *  \note MQTT_CODE_CONTINUE means another thread is still processing this
+                message's response: retry, and do not free or reuse the object
+                until MQTT_CODE_SUCCESS.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE or MQTT_CODE_ERROR_*

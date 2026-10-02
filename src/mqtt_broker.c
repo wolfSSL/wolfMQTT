@@ -1999,17 +1999,30 @@ static void BrokerClient_FreeOutQueue(BrokerClient* bc)
     bc->out_q_pending_len = 0;
 }
 
-/* A write can service this same client's close callback before it returns -
- * the WebSocket transport runs lws_service inline - and that hands the whole
- * outbound queue to the Session carrier. Entries the drain is walking were
- * reached from bc->out_q_head, so an empty head while one is still held means
- * the carrier owns them now: they must not be unlinked, freed, or re-linked
- * into bc. Returns non-zero when the drain has to stop for that reason. */
-static int BrokerClient_OutQueueMoved(BrokerClient* bc, int enc_len)
+#ifndef WOLFMQTT_STATIC_MEMORY
+static void BrokerOrphan_ReconcileSent(MqttBroker* broker,
+    const char* client_id, BrokerOutPub* sent);
+#endif
+
+/* A write can service this client's close callback before returning - the
+ * WebSocket transport runs lws_service inline - which hands the queue to the
+ * Session carrier. The walked entries came from bc->out_q_head, so an empty
+ * head while one is still held means the carrier owns them now. Returns
+ * non-zero when the drain must stop and leave them to it. */
+static int BrokerClient_OutQueueMoved(BrokerClient* bc, BrokerOutPub* sent,
+    int completed, int enc_len)
 {
     if (bc->out_q_head != NULL) {
         return 0;
     }
+#ifndef WOLFMQTT_STATIC_MEMORY
+    if (completed) {
+        BrokerOrphan_ReconcileSent(bc->broker, bc->client_id, sent);
+    }
+#else
+    (void)sent;
+    (void)completed;
+#endif
     bc->out_q_pending_len = 0;
     BROKER_FORCE_ZERO(bc->tx_buf, enc_len);
     return 1;
@@ -2075,7 +2088,8 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
                         return MQTT_CODE_ERROR_SYSTEM;
                     }
                     wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, rel_rc);
-                    if (BrokerClient_OutQueueMoved(bc, rel_rc)) {
+                    if (BrokerClient_OutQueueMoved(bc, cur,
+                            wr_rc == rel_rc, rel_rc)) {
                         return sent;
                     }
                     if (wr_rc == MQTT_CODE_CONTINUE) {
@@ -2171,7 +2185,8 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
         {
             int wr_rc;
             wr_rc = MqttPacket_Write(&bc->client, bc->tx_buf, enc_rc);
-            if (BrokerClient_OutQueueMoved(bc, enc_rc)) {
+            if (BrokerClient_OutQueueMoved(bc, cur,
+                    wr_rc == enc_rc, enc_rc)) {
                 return sent;
             }
             /* Scrub the forwarded PUBLISH (which may carry a replayed will or
@@ -3482,6 +3497,52 @@ static BrokerOrphanSession* BrokerOrphan_Find(MqttBroker* broker,
         }
     }
     return NULL;
+}
+
+/* Account for a write that completed after the hand-off moved the queue here.
+ * A delivered QoS 0 entry is spent - MQTT 3.1.1 section 4.3.1 allows no retry -
+ * so retire it rather than let the resume send it again. A QoS > 0 entry is
+ * still unacknowledged and stays, but its resume copy is a re-delivery and
+ * needs DUP [MQTT-3.3.1-1]. Found by walking the carrier, so an entry the
+ * hand-off dropped on its way in is simply absent. */
+static void BrokerOrphan_ReconcileSent(MqttBroker* broker,
+    const char* client_id, BrokerOutPub* sent)
+{
+    BrokerOrphanSession* o;
+    BrokerOutPub* prev = NULL;
+    BrokerOutPub* cur;
+
+    if (sent == NULL || !BROKER_STR_VALID(client_id)) {
+        return;
+    }
+    o = BrokerOrphan_Find(broker, client_id);
+    if (o == NULL) {
+        return;
+    }
+    for (cur = o->out_q_head; cur != NULL; prev = cur, cur = cur->next) {
+        if (cur != sent) {
+            continue;
+        }
+        if (cur->qos != MQTT_QOS_0) {
+            cur->retransmit_dup = 1;
+            return;
+        }
+        if (prev == NULL) {
+            o->out_q_head = cur->next;
+        }
+        else {
+            prev->next = cur->next;
+        }
+        if (o->out_q_tail == cur) {
+            o->out_q_tail = prev;
+        }
+        o->out_q_count--;
+        WBLOG_DBG(broker,
+            "broker: retiring delivered qos0 topic=%s client_id=%s",
+            BrokerLog_Sanitize(cur->topic), BrokerLog_Sanitize(client_id));
+        BrokerOutPub_Free(cur);
+        return;
+    }
 }
 
 /* Free everything an orphan owns (queue entries + client_id) but do
@@ -5904,11 +5965,8 @@ static void BrokerClient_PublishWill(MqttBroker* broker, BrokerClient* bc)
         (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
         (unsigned)bc->will_payload_len);
 
-    /* Claim the Will before fan-out. A fan-out write can service this client's
-     * close callback inline, which re-enters here; the claim makes that nested
-     * call return at the has_will check above, so this frame stays the single
-     * owner of the topic and payload it lends to the encoder below and the
-     * Will is published once. */
+    /* Claimed before fan-out, whose writes can service this client's close
+     * callback and re-enter here; that nested call then returns above. */
     bc->has_will = 0;
 
     BrokerClient_PublishWillImmediate(broker, bc->will_topic,
