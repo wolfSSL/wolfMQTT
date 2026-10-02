@@ -48,21 +48,18 @@ static MqttNet test_net;
 static byte test_tx_buf[TEST_TX_BUF_SIZE];
 static byte test_rx_buf[TEST_RX_BUF_SIZE];
 
-/* The suite routes the library's allocator through here (see
- * tests/test_client_alloc.h) so a test can watch one specific allocation and
- * record the state the library was in when it released it. Everything else is
- * a straight pass-through. */
+/* The library allocator is routed through here (tests/test_broker_alloc.h) so
+ * a test can watch one allocation and record the state it was released in. */
 static void* g_free_watch_ptr;
 static int g_free_watch_count;
 static int g_free_watch_lock_count;
 
-void* wolfmqtt_test_client_malloc(size_t size)
+void* wolfmqtt_test_broker_malloc(size_t size)
 {
     return malloc(size);
 }
 
-/* How many times the client lock is held right now, or -1 where the build
- * keeps no count to read. */
+/* Lock depth, or -1 where the build keeps no count to read. */
 static int test_client_lock_depth(void)
 {
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
@@ -73,7 +70,7 @@ static int test_client_lock_depth(void)
 #endif
 }
 
-void wolfmqtt_test_client_free(void* ptr)
+void wolfmqtt_test_broker_free(void* ptr)
 {
     if (ptr != NULL && ptr == g_free_watch_ptr) {
         g_free_watch_count++;
@@ -4010,19 +4007,98 @@ TEST(reconnect_without_session_present_replays_nothing)
     ASSERT_EQ(1, g_frames_written); /* the CONNECT only */
 }
 
+/* A send is allowed once CONNECT reaches the transport, so a publish can be
+ * retained while this handshake still waits for CONNACK. It belongs to the
+ * Session being established, so a Session Present = 0 answer must keep it for
+ * a later resume [MQTT-4.4.0-1]. The write callback seeds what such a publish
+ * leaves behind, at the only point it is reachable: the Packet Identifier
+ * table is empty and CONNECT is on the wire. */
+static int g_seed_concurrent_publish;
+static byte g_seed_payload[] = "seeded";
+
+static int mock_net_write_seed_publish(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    int rc = mock_net_write_accept(context, buf, buf_len, timeout_ms);
+
+    if (g_seed_concurrent_publish && buf_len > 0 &&
+            (buf[0] >> 4) == MQTT_PACKET_TYPE_CONNECT) {
+#ifndef WOLFMQTT_STATIC_MEMORY
+        char* topic;
+        byte* payload;
+#endif
+
+        g_seed_concurrent_publish = 0;
+        test_client.replay[1].packet_id = 0x5678;
+        test_client.replay[1].qos = MQTT_QOS_1;
+        test_client.replay[1].haveCopy = 1;
+        test_client.replay[1].payload_len = (word32)(sizeof(g_seed_payload) - 1);
+#ifdef WOLFMQTT_STATIC_MEMORY
+        XMEMCPY(test_client.replay[1].topic, "new/1", 6);
+        XMEMCPY(test_client.replay[1].payload, g_seed_payload,
+            sizeof(g_seed_payload) - 1);
+#else
+        topic = (char*)WOLFMQTT_MALLOC(6);
+        payload = (byte*)WOLFMQTT_MALLOC(sizeof(g_seed_payload) - 1);
+        if (topic == NULL || payload == NULL) {
+            WOLFMQTT_FREE(topic);
+            WOLFMQTT_FREE(payload);
+            test_client.replay[1].packet_id = 0;
+            return rc;
+        }
+        XMEMCPY(topic, "new/1", 6);
+        XMEMCPY(payload, g_seed_payload, sizeof(g_seed_payload) - 1);
+        test_client.replay[1].topic = topic;
+        test_client.replay[1].payload = payload;
+#endif
+        /* The reservation that marks the entry as this connection's. */
+        test_client.send_inflight[0].packet_id = 0x5678;
+        test_client.send_inflight[0].ack_type = MQTT_PACKET_TYPE_PUBLISH_ACK;
+    }
+    return rc;
+}
+
+TEST(fresh_session_reset_keeps_publish_from_this_connection)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    /* An unacknowledged publish from the Session that is about to end. */
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+
+    g_seed_concurrent_publish = 1;
+    rc = run_reconnect_with(&connect, 0, mock_net_write_seed_publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The seed really was planted, so the assertions below mean something. */
+    ASSERT_EQ(0, g_seed_concurrent_publish);
+
+    /* The ended Session's message is gone. */
+    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+    /* The one published on this connection is kept, with its copy intact. */
+    ASSERT_EQ(0x5678, (int)test_client.replay[1].packet_id);
+    ASSERT_STR_EQ("new/1", test_client.replay[1].topic);
+}
+
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
-    !defined(WOLFMQTT_NO_COND_SIGNAL)
-/* Discarding the retained copies releases the topic and payload of every
- * slot. A send thread reaches those same slots through the replay store's
- * lock-taking wrapper while the connection is being re-established - the
- * client admits send calls once CONNECT has reached the transport - and both
- * sides free what they find there. So the discard has to hold the client lock
- * as well, or the two can free the same buffer or leave one pointing at
- * memory the other released.
- *
- * The POSIX lock keeps its own depth, and the allocator hook samples it at the
- * moment the slot's topic is released, which is the access that has to be
- * covered. */
+    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* A send thread reaches the same replay slots under the client lock, and both
+ * sides release what they find there, so the discard has to hold it too. The
+ * POSIX lock keeps its own depth; the allocator hook samples it as the slot's
+ * topic is released, which is the access that has to be covered. */
 TEST(fresh_session_reset_frees_replay_under_client_lock)
 {
     int rc;
@@ -4043,8 +4119,7 @@ TEST(fresh_session_reset_frees_replay_under_client_lock)
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
 
-    /* The unacknowledged PUBLISH is retained, so the discard has a real
-     * allocation to release. */
+    /* Retained, so the discard has a real allocation to release. */
     ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
     ASSERT_NOT_NULL(test_client.replay[0].topic);
     test_client_watch_free(test_client.replay[0].topic);
@@ -9962,8 +10037,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_allowed_past_replay_pool_when_connack_ends_session);
 #endif
     RUN_TEST(reconnect_without_session_present_replays_nothing);
+    RUN_TEST(fresh_session_reset_keeps_publish_from_this_connection);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
-    !defined(WOLFMQTT_NO_COND_SIGNAL)
+    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(fresh_session_reset_frees_replay_under_client_lock);
 #endif
     RUN_TEST(reconnect_does_not_replay_acked_publish);
