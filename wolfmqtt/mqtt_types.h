@@ -279,6 +279,11 @@ enum MqttPacketResponseCodes {
         #define XMEMCMP(s1,s2,n)    memcmp((s1),(s2),(n))
     #endif
     #ifndef XATOI
+        /* atoi is declared in <stdlib.h>, not the <string.h> above. The
+         * allocator backstop further down includes that header only when its
+         * own defaults are needed, so a port supplying WOLFMQTT_MALLOC and
+         * WOLFMQTT_FREE would otherwise leave the default XATOI undeclared. */
+        #include <stdlib.h>
         #define XATOI(s)            atoi((s))
     #endif
     #ifndef XISALNUM
@@ -296,11 +301,12 @@ enum MqttPacketResponseCodes {
     #endif
 #endif
 
-/* XMEMCHR backstop. Standard builds and existing custom-string ports
- * (which already pull in <string.h> via other paths) keep building
- * without changes. Custom-string ports that intentionally avoid
- * <string.h> get an explicit #error directing them to define XMEMCHR
- * themselves, instead of a confusing missing-header diagnostic. */
+/* XMEMCHR backstop. Standard builds keep building without changes: the
+ * <string.h> above declares memchr alongside the other defaults. A
+ * custom-string port supplies its own string macros and whatever headers
+ * those need - no wolfMQTT header includes <string.h> for it - so leaving
+ * XMEMCHR undefined gets an explicit #error directing it to define XMEMCHR
+ * itself, instead of a confusing missing-header diagnostic. */
 #ifndef XMEMCHR
     #ifdef WOLFMQTT_CUSTOM_STRING
         #error "WOLFMQTT_CUSTOM_STRING set: please define XMEMCHR"
@@ -309,13 +315,24 @@ enum MqttPacketResponseCodes {
     #endif
 #endif
 
+/* Allocator backstop, mirroring the XMEMCHR one above. The malloc()/free()
+ * defaults need <stdlib.h> whether or not stdio is available, so it is
+ * included beside them rather than with <stdio.h>. A custom-malloc port that
+ * intentionally avoids <stdlib.h> gets an explicit #error naming both macros
+ * it must define, instead of a confusing implicit-declaration diagnostic from
+ * the first WOLFMQTT_FREE call site in mqtt_client.c. */
 #ifndef WOLFMQTT_CUSTOM_MALLOC
+    #if !defined(WOLFMQTT_MALLOC) || !defined(WOLFMQTT_FREE)
+        #include <stdlib.h>
+    #endif
     #ifndef WOLFMQTT_MALLOC
         #define WOLFMQTT_MALLOC(s)  malloc((s))
     #endif
     #ifndef WOLFMQTT_FREE
         #define WOLFMQTT_FREE(p)    {void* xp = (p); if((xp)) free((xp));}
     #endif
+#elif !defined(WOLFMQTT_MALLOC) || !defined(WOLFMQTT_FREE)
+    #error "WOLFMQTT_CUSTOM_MALLOC set: define WOLFMQTT_MALLOC/WOLFMQTT_FREE"
 #endif
 
 #ifndef WOLFMQTT_PACK
@@ -376,8 +393,6 @@ enum MqttPacketResponseCodes {
     #endif
 
     #ifndef WOLFMQTT_NO_STDIO
-        #include <stdlib.h>
-        #include <string.h>
         #include <stdio.h>
     #else
         #undef PRINTF
@@ -415,6 +430,14 @@ enum MqttPacketResponseCodes {
 #ifdef WOLFMQTT_NO_STDIO
     #undef WOLFMQTT_DEBUG_CLIENT
     #undef WOLFMQTT_DEBUG_SOCKET
+#endif
+
+/* PRINTF became a no-op above, so the broker log calls have no sink and drop
+ * their arguments, leaving the helpers that only feed them with no callers.
+ * A port that supplies its own PRINTF keeps its logging. */
+#if defined(WOLFMQTT_NO_STDIO) && !defined(WOLFMQTT_CUSTOM_PRINTF) && \
+    !defined(WOLFMQTT_BROKER_NO_LOG)
+    #define WOLFMQTT_BROKER_NO_LOG
 #endif
 
 #ifdef WOLFMQTT_DEBUG_TRACE

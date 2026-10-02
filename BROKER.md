@@ -85,6 +85,8 @@ All broker features are enabled by default and can be disabled at build time to 
 
 The maximum QoS the broker negotiates is capped by `--enable-max-qos=<0,1,2>` (default 2). Setting it to 1 or 0 compiles out the QoS 2 state machine and shrinks the broker.
 
+`WOLFMQTT_NO_STDIO` turns `PRINTF` into a no-op, so it implies `WOLFMQTT_BROKER_NO_LOG` and the broker log calls are stripped. A port that supplies its own `PRINTF` through `WOLFMQTT_CUSTOM_PRINTF` keeps its logging.
+
 ## Static memory tuning
 
 When built with `WOLFMQTT_STATIC_MEMORY`, the broker uses fixed-size arrays instead of dynamic allocation. The limits below can be overridden via CFLAGS at build time.
