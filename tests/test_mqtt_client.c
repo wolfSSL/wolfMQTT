@@ -48,6 +48,44 @@ static MqttNet test_net;
 static byte test_tx_buf[TEST_TX_BUF_SIZE];
 static byte test_rx_buf[TEST_RX_BUF_SIZE];
 
+/* The library allocator is routed through here (tests/test_broker_alloc.h) so
+ * a test can watch one allocation and record the state it was released in. */
+static void* g_free_watch_ptr;
+static int g_free_watch_count;
+static int g_free_watch_lock_count;
+
+void* wolfmqtt_test_broker_malloc(size_t size)
+{
+    return malloc(size);
+}
+
+/* Lock depth, or -1 where the build keeps no count to read. */
+static int test_client_lock_depth(void)
+{
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
+    !defined(WOLFMQTT_NO_COND_SIGNAL)
+    return test_client.lockClient.lockCount;
+#else
+    return -1;
+#endif
+}
+
+void wolfmqtt_test_broker_free(void* ptr)
+{
+    if (ptr != NULL && ptr == g_free_watch_ptr) {
+        g_free_watch_count++;
+        g_free_watch_lock_count = test_client_lock_depth();
+    }
+    free(ptr);
+}
+
+UT_MAYBE_UNUSED static void test_client_watch_free(void* ptr)
+{
+    g_free_watch_ptr = ptr;
+    g_free_watch_count = 0;
+    g_free_watch_lock_count = -1;
+}
+
 /* Mock network callbacks - just return errors since we're not actually
  * connecting to anything */
 static int mock_net_connect(void *context, const char* host, word16 port,
@@ -1783,6 +1821,66 @@ TEST(cancel_message_retain_is_idempotent)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(4, test_client.server_recv_max);
 }
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
+    (WOLFMQTT_MAX_QOS >= 1)
+/* A write-only publish leaves its response to another thread, which claims the
+ * pending entry, drops the client lock and decodes into the packet_obj this
+ * message owns. A successful cancel is the caller's cue to release or reuse the
+ * object, so it is withheld until that claim is gone. */
+TEST(cancel_refuses_message_while_response_decodes)
+{
+    int rc;
+    int i;
+    int write_state;
+    /* static so the registered pendResp does not point into freed stack after
+     * the test returns. */
+    static MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 31;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_WriteOnly(&test_client, &publish, NULL);
+    }
+    /* Out, with its acknowledgement registered for whichever thread reads. */
+    ASSERT_TRUE(test_client.firstPendResp == &publish.pendResp);
+    ASSERT_EQ(0, (int)publish.pendResp.packetProcessing);
+    write_state = (int)publish.stat.write;
+
+    /* Claim the entry as MqttClient_WaitType does before it decodes. */
+    publish.pendResp.packetProcessing = 1;
+
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    /* Still listed, so the reader's pointers stay good, and untouched, so the
+     * retry starts from the same place. */
+    ASSERT_TRUE(test_client.firstPendResp == &publish.pendResp);
+    ASSERT_EQ(write_state, (int)publish.stat.write);
+
+    /* Once the reader is done with the object the cancel completes. */
+    publish.pendResp.packetDone = 1;
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_NULL(test_client.firstPendResp);
+    ASSERT_EQ(MQTT_MSG_BEGIN, (int)publish.stat.write);
+}
+
+#endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK && MAX_QOS >= 1 */
 #endif /* WOLFMQTT_MULTITHREAD || WOLFMQTT_NONBLOCK */
 
 /* A QoS>0 v5 publish that fails on the wire (unsent) must give its reserved
@@ -3305,6 +3403,137 @@ TEST(reconnect_without_session_present_replays_nothing)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(1, g_frames_written); /* the CONNECT only */
 }
+
+/* A send is allowed once CONNECT reaches the transport, so a publish can be
+ * retained while this handshake still waits for CONNACK. It belongs to the
+ * Session being established, so a Session Present = 0 answer must keep it for
+ * a later resume [MQTT-4.4.0-1]. The write callback seeds what such a publish
+ * leaves behind, at the only point it is reachable: the Packet Identifier
+ * table is empty and CONNECT is on the wire. */
+static int g_seed_concurrent_publish;
+static byte g_seed_payload[] = "seeded";
+
+static int mock_net_write_seed_publish(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    int rc = mock_net_write_accept(context, buf, buf_len, timeout_ms);
+
+    if (g_seed_concurrent_publish && buf_len > 0 &&
+            (buf[0] >> 4) == MQTT_PACKET_TYPE_CONNECT) {
+#ifndef WOLFMQTT_STATIC_MEMORY
+        char* topic;
+        byte* payload;
+#endif
+
+        g_seed_concurrent_publish = 0;
+        test_client.replay[1].packet_id = 0x5678;
+        test_client.replay[1].qos = MQTT_QOS_1;
+        test_client.replay[1].haveCopy = 1;
+        test_client.replay[1].payload_len = (word32)(sizeof(g_seed_payload) - 1);
+#ifdef WOLFMQTT_STATIC_MEMORY
+        XMEMCPY(test_client.replay[1].topic, "new/1", 6);
+        XMEMCPY(test_client.replay[1].payload, g_seed_payload,
+            sizeof(g_seed_payload) - 1);
+#else
+        topic = (char*)WOLFMQTT_MALLOC(6);
+        payload = (byte*)WOLFMQTT_MALLOC(sizeof(g_seed_payload) - 1);
+        if (topic == NULL || payload == NULL) {
+            WOLFMQTT_FREE(topic);
+            WOLFMQTT_FREE(payload);
+            test_client.replay[1].packet_id = 0;
+            return rc;
+        }
+        XMEMCPY(topic, "new/1", 6);
+        XMEMCPY(payload, g_seed_payload, sizeof(g_seed_payload) - 1);
+        test_client.replay[1].topic = topic;
+        test_client.replay[1].payload = payload;
+#endif
+        /* The reservation that marks the entry as this connection's. */
+        test_client.send_inflight[0].packet_id = 0x5678;
+        test_client.send_inflight[0].ack_type = MQTT_PACKET_TYPE_PUBLISH_ACK;
+    }
+    return rc;
+}
+
+TEST(fresh_session_reset_keeps_publish_from_this_connection)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    /* An unacknowledged publish from the Session that is about to end. */
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+
+    g_seed_concurrent_publish = 1;
+    rc = run_reconnect_with(&connect, 0, mock_net_write_seed_publish);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The seed really was planted, so the assertions below mean something. */
+    ASSERT_EQ(0, g_seed_concurrent_publish);
+
+    /* The ended Session's message is gone. */
+    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+    /* The one published on this connection is kept, with its copy intact. */
+    ASSERT_EQ(0x5678, (int)test_client.replay[1].packet_id);
+    ASSERT_STR_EQ("new/1", test_client.replay[1].topic);
+}
+
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
+    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* A send thread reaches the same replay slots under the client lock, and both
+ * sides release what they find there, so the discard has to hold it too. The
+ * POSIX lock keeps its own depth; the allocator hook samples it as the slot's
+ * topic is released, which is the access that has to be covered. */
+TEST(fresh_session_reset_frees_replay_under_client_lock)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    /* Retained, so the discard has a real allocation to release. */
+    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+    ASSERT_NOT_NULL(test_client.replay[0].topic);
+    test_client_watch_free(test_client.replay[0].topic);
+
+    /* Session Present = 0 is a different Session, so nothing is carried. */
+    rc = run_reconnect(&connect, 0);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+
+    /* It really was released on this path, exactly once. */
+    ASSERT_EQ(1, g_free_watch_count);
+    /* And under the client lock. */
+    ASSERT_EQ(1, g_free_watch_lock_count);
+
+    test_client_watch_free(NULL);
+}
+#endif
 
 /* A completed exchange leaves Session state, so an acknowledged PUBLISH is
  * not replayed [MQTT-4.4.0-1] covers unacknowledged messages only. */
@@ -7640,6 +7869,11 @@ void run_mqtt_client_tests(void)
 #if !defined(WOLFMQTT_NO_SESSION_REPLAY) && WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(reconnect_replays_unacked_qos1_publish);
     RUN_TEST(reconnect_without_session_present_replays_nothing);
+    RUN_TEST(fresh_session_reset_keeps_publish_from_this_connection);
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
+    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(fresh_session_reset_frees_replay_under_client_lock);
+#endif
     RUN_TEST(reconnect_does_not_replay_acked_publish);
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(reconnect_replays_unacked_pubrel);
@@ -7741,6 +7975,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(cancel_message_retains_recv_quota_on_wire);
     RUN_TEST(cancel_message_retain_is_idempotent);
     RUN_TEST(cancel_message_reuse_does_not_bypass_recv_quota);
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
+    (WOLFMQTT_MAX_QOS >= 1)
+    RUN_TEST(cancel_refuses_message_while_response_decodes);
+#endif
 #endif
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
