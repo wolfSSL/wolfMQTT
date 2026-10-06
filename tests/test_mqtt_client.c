@@ -4039,6 +4039,60 @@ TEST(reconnect_does_not_replay_streamed_publish)
     ASSERT_EQ(MQTT_PACKET_TYPE_CONNECT, g_replay_types[0]);
 }
 
+/* MqttClient_Replay_Add gives up on the copy for a streamed publish, a v5
+ * publish carrying properties, and an oversized one, but the slot it already
+ * claimed stays in use and a PUBREL can still be recorded against it. The tag
+ * that says which connection the entry belongs to therefore has to be set
+ * before those returns, or a send admitted during a handshake is mistaken for
+ * the previous Session's and re-sent. */
+TEST(replay_uncopied_slot_still_tagged_to_this_connection)
+{
+    int rc;
+    int i;
+    int slot = -1;
+    MqttConnect connect;
+    MqttPublish publish;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    XMEMSET(g_replay_stream_buf, 0, sizeof(g_replay_stream_buf));
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read; /* network error: no PUBACK */
+
+    /* Streamed: buffer_len is one chunk, total_len the whole message, so the
+     * store has nothing to copy. */
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 0x4321;
+    publish.topic_name = "sensor/temp";
+    publish.buffer = g_replay_stream_buf;
+    publish.buffer_len = (word32)REPLAY_STREAM_CHUNK;
+    publish.total_len = (word32)REPLAY_BIG_PAYLOAD_LEN;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish_ex(&test_client, &publish, replay_stream_cb);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        if (test_client.replay[i].packet_id == 0x4321) {
+            slot = i;
+            break;
+        }
+    }
+    /* The slot is in use even though the copy was skipped. */
+    ASSERT_TRUE(slot >= 0);
+    ASSERT_EQ(0, (int)test_client.replay[slot].haveCopy);
+    /* And it is tagged to this connection. */
+    ASSERT_EQ(1, (int)test_client.replay[slot].onThisConn);
+}
+
 /* An entry the replay cannot rebuild is dropped from the Session, so nothing
  * will ever acknowledge it and the Packet Identifier the reconnect reserved for
  * it must be given back [MQTT-2.3.1-3]. Left reserved, the next legitimate
@@ -8073,6 +8127,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_drops_replay_larger_than_tx_buf);
     RUN_TEST(reconnect_replays_at_most_pool_size);
     RUN_TEST(reconnect_does_not_replay_streamed_publish);
+    RUN_TEST(replay_uncopied_slot_still_tagged_to_this_connection);
     RUN_TEST(reconnect_dropped_replay_frees_packet_id);
     RUN_TEST(reconnect_with_new_client_id_does_not_replay);
     RUN_TEST(reconnect_with_hash_colliding_client_id_does_not_replay);

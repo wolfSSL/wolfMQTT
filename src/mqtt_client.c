@@ -685,6 +685,9 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
     slot->packet_id = publish->packet_id;
     slot->qos = (byte)publish->qos;
     slot->retain = publish->retain;
+    /* Before the returns below: they leave the slot in use, and a PUBREL can
+     * still be recorded against it. */
+    slot->onThisConn = 1;
 
     /* A streamed publish delivers its payload through a callback, so there is
      * nothing here to copy; the entry still tracks the QoS 2 PUBREL stage.
@@ -738,7 +741,6 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
 #endif
     slot->payload_len = publish->total_len;
     slot->haveCopy = 1;
-    slot->onThisConn = 1;
 }
 
 /* QoS 2 advanced past PUBREC, so [MQTT-4.4.0-1] replays the PUBREL rather
@@ -805,13 +807,15 @@ static void MqttClient_Replay_AddSafe(MqttClient* client, MqttPublish* publish)
 }
 
 /* Everything retained so far belongs to the Session that is ending; a send
- * admitted once CONNECT is on the wire tags itself. */
-static void MqttClient_Replay_NewConnSafe(MqttClient* client)
+ * admitted once CONNECT is on the wire tags itself. Reports a lock failure:
+ * stale tags would have the handshake skip or keep the wrong entries. */
+static int MqttClient_Replay_NewConnSafe(MqttClient* client)
 {
     int i;
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
-        return;
+    int rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
     }
 #endif
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
@@ -820,6 +824,7 @@ static void MqttClient_Replay_NewConnSafe(MqttClient* client)
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
+    return MQTT_CODE_SUCCESS;
 }
 
 /* Discard the retained copies of a Session the server did not resume, keeping
@@ -3281,7 +3286,10 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * every build. */
         MqttClient_SendIdsReset(client);
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
-        MqttClient_Replay_NewConnSafe(client);
+        rc = MqttClient_Replay_NewConnSafe(client);
+        if (rc != MQTT_CODE_SUCCESS) {
+            return rc;
+        }
 #endif
 
     #ifdef WOLFMQTT_V5
