@@ -9231,31 +9231,6 @@ static int persist_order_put(void* ctx, byte ns, const byte* key,
     return MQTT_CODE_SUCCESS;
 }
 
-/* Keyed variant: a record written again under the same key replaces it, as a
- * real backend does. persist_order_put appends, which would turn a re-write
- * into a second queue entry. */
-static int persist_keyed_put(void* ctx, byte ns, const byte* key,
-    word16 key_len, const byte* blob, word32 blob_len)
-{
-    PersistOrderStore* store = (PersistOrderStore*)ctx;
-    int i;
-
-    if (ns == BROKER_PERSIST_NS_OUTQ) {
-        for (i = 0; i < store->outq_count; i++) {
-            if (store->outq[i].key_len == key_len &&
-                    XMEMCMP(store->outq[i].key, key, key_len) == 0) {
-                if (blob_len > sizeof(store->outq[i].blob)) {
-                    return MQTT_CODE_ERROR_OUT_OF_BUFFER;
-                }
-                XMEMCPY(store->outq[i].blob, blob, blob_len);
-                store->outq[i].blob_len = blob_len;
-                return MQTT_CODE_SUCCESS;
-            }
-        }
-    }
-    return persist_order_put(ctx, ns, key, key_len, blob, blob_len);
-}
-
 static int persist_order_get(void* ctx, byte ns, const byte* key,
     word16 key_len, byte* out, word32* inout_len)
 {
@@ -9437,6 +9412,33 @@ TEST(persist_partial_publish_restart_keeps_dup)
     MqttBroker_Free(&restored);
 }
 
+#endif
+
+/* Keyed variant: a record written again under the same key replaces it, as a
+ * real backend does. persist_order_put appends, which would turn a re-write
+ * into a second queue entry. */
+static int persist_keyed_put(void* ctx, byte ns, const byte* key,
+    word16 key_len, const byte* blob, word32 blob_len)
+{
+    PersistOrderStore* store = (PersistOrderStore*)ctx;
+    int i;
+
+    if (ns == BROKER_PERSIST_NS_OUTQ) {
+        for (i = 0; i < store->outq_count; i++) {
+            if (store->outq[i].key_len == key_len &&
+                    XMEMCMP(store->outq[i].key, key, key_len) == 0) {
+                if (blob_len > sizeof(store->outq[i].blob)) {
+                    return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+                }
+                XMEMCPY(store->outq[i].blob, blob, blob_len);
+                store->outq[i].blob_len = blob_len;
+                return MQTT_CODE_SUCCESS;
+            }
+        }
+    }
+    return persist_order_put(ctx, ns, key, key_len, blob, blob_len);
+}
+
 /* The same requirement when the Session hand-off takes the queue mid-write.
  * BrokerOrphan_Take shadow-writes each entry before that write returns, so the
  * stored copy still says it was never sent; the completed delivery has to be
@@ -9537,7 +9539,6 @@ TEST(persist_handoff_sent_qos1_restart_keeps_dup)
     MqttBroker_Stop(&restored);
     MqttBroker_Free(&restored);
 }
-#endif
 
 /* Non-persisted QoS 0 nodes still occupy FIFO positions. Assigning sequence
  * numbers only to durable nodes can make a later offline QoS 1 enqueue reuse
@@ -11225,8 +11226,8 @@ int main(int argc, char** argv)
     RUN_TEST(persist_restore_packet_id_wrap_preserves_fifo);
     #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
-    RUN_TEST(persist_handoff_sent_qos1_restart_keeps_dup);
     #endif
+    RUN_TEST(persist_handoff_sent_qos1_restart_keeps_dup);
     RUN_TEST(persist_mixed_qos_queue_preserves_fifo);
     RUN_TEST(orphan_reclaim_keeps_persisted_outq);
 #endif
