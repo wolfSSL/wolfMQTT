@@ -2047,6 +2047,24 @@ static void handoff_out_queue_mid_write(void)
     o->next = broker->orphan_sessions;
     broker->orphan_sessions = o;
     broker->orphan_session_count++;
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* BrokerOrphan_Take shadow-writes here, before the write it interrupted
+     * has returned, so the stored copy records an unsent entry. */
+    (void)BrokerPersist_PutOrphanSession(broker, o->client_id,
+        o->protocol_level, o->session_expiry_sec, o->orphan_since);
+    {
+        BrokerOutPub* e;
+        word64 seq = 1;
+
+        for (e = o->out_q_head; e != NULL; e = e->next) {
+            e->enqueue_seq = seq++;
+            if (e->qos > MQTT_QOS_0) {
+                (void)BrokerPersist_PutOutPub(broker, o->client_id, e);
+            }
+        }
+    }
+#endif
 }
 
 TEST(drain_stops_when_session_handoff_takes_queue)
@@ -9213,6 +9231,31 @@ static int persist_order_put(void* ctx, byte ns, const byte* key,
     return MQTT_CODE_SUCCESS;
 }
 
+/* Keyed variant: a record written again under the same key replaces it, as a
+ * real backend does. persist_order_put appends, which would turn a re-write
+ * into a second queue entry. */
+static int persist_keyed_put(void* ctx, byte ns, const byte* key,
+    word16 key_len, const byte* blob, word32 blob_len)
+{
+    PersistOrderStore* store = (PersistOrderStore*)ctx;
+    int i;
+
+    if (ns == BROKER_PERSIST_NS_OUTQ) {
+        for (i = 0; i < store->outq_count; i++) {
+            if (store->outq[i].key_len == key_len &&
+                    XMEMCMP(store->outq[i].key, key, key_len) == 0) {
+                if (blob_len > sizeof(store->outq[i].blob)) {
+                    return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+                }
+                XMEMCPY(store->outq[i].blob, blob, blob_len);
+                store->outq[i].blob_len = blob_len;
+                return MQTT_CODE_SUCCESS;
+            }
+        }
+    }
+    return persist_order_put(ctx, ns, key, key_len, blob, blob_len);
+}
+
 static int persist_order_get(void* ctx, byte ns, const byte* key,
     word16 key_len, byte* out, word32* inout_len)
 {
@@ -9387,6 +9430,107 @@ TEST(persist_partial_publish_restart_keeps_dup)
 
     info = first_publish_info(g_clients[0].out_buf, g_clients[0].out_len);
     ASSERT_TRUE(info.found);
+    ASSERT_EQ(0x3A, info.first_byte);
+    ASSERT_EQ(packet_id, info.packet_id);
+
+    MqttBroker_Stop(&restored);
+    MqttBroker_Free(&restored);
+}
+
+/* The same requirement when the Session hand-off takes the queue mid-write.
+ * BrokerOrphan_Take shadow-writes each entry before that write returns, so the
+ * stored copy still says it was never sent; the completed delivery has to be
+ * written through, or a restart before reconnect re-sends it without DUP
+ * [MQTT-3.3.1-1]. */
+TEST(persist_handoff_sent_qos1_restart_keeps_dup)
+{
+    MqttBroker source;
+    MqttBroker restored;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    PersistOrderStore store;
+    BrokerClient* sub_bc;
+    PublishInfo info;
+    word16 packet_id;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* CleanSession=0, so the Session survives and has a carrier. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&source, 0, sizeof(source));
+    XMEMSET(&restored, 0, sizeof(restored));
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&store, 0, sizeof(store));
+    hooks.kv_put = persist_keyed_put;
+    hooks.kv_get = persist_order_get;
+    hooks.kv_iter = persist_order_iter;
+    hooks.ctx = &store;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    hooks.derive_key = persist_order_derive_key;
+#endif
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&source, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&source, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&source));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&source));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&source);
+    }
+    sub_bc = find_broker_client(&source, "S");
+    ASSERT_NOT_NULL(sub_bc);
+
+    /* The hand-off runs from inside the write, which then completes. */
+    broker_test_watch_free(NULL);
+    g_handoff_broker = &source;
+    g_handoff_client = sub_bc;
+    g_write_publish_hook = handoff_out_queue_mid_write;
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&source);
+    ASSERT_NULL(g_write_publish_hook);
+    g_handoff_broker = NULL;
+    g_handoff_client = NULL;
+
+    ASSERT_NOT_NULL(source.orphan_sessions);
+    ASSERT_NOT_NULL(source.orphan_sessions->out_q_head);
+    ASSERT_EQ(1, (int)source.orphan_sessions->out_q_head->retransmit_dup);
+    packet_id = source.orphan_sessions->out_q_head->packet_id;
+    ASSERT_EQ(1, store.outq_count);
+
+    MqttBroker_Stop(&source);
+    MqttBroker_Free(&source);
+
+    /* Restart before the subscriber reconnects. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&restored, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS,
+        MqttBroker_SetPersistHooks(&restored, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&restored));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&restored));
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&restored);
+    }
+
+    info = first_publish_info(g_clients[0].out_buf, g_clients[0].out_len);
+    ASSERT_TRUE(info.found);
+    /* 0x3A = PUBLISH | DUP | QoS 1. */
     ASSERT_EQ(0x3A, info.first_byte);
     ASSERT_EQ(packet_id, info.packet_id);
 
@@ -11081,6 +11225,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_restore_packet_id_wrap_preserves_fifo);
     #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
+    RUN_TEST(persist_handoff_sent_qos1_restart_keeps_dup);
     #endif
     RUN_TEST(persist_mixed_qos_queue_preserves_fifo);
     RUN_TEST(orphan_reclaim_keeps_persisted_outq);

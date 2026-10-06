@@ -3525,6 +3525,11 @@ static void BrokerOrphan_ReconcileSent(MqttBroker* broker,
         }
         if (cur->qos != MQTT_QOS_0) {
             cur->retransmit_dup = 1;
+        #ifdef WOLFMQTT_BROKER_PERSIST
+            /* BrokerOrphan_Take shadow-wrote this entry before the write
+             * returned, so the stored copy still says it was never sent. */
+            (void)BrokerPersist_PutOutPub(broker, client_id, cur);
+        #endif
             return;
         }
         if (prev == NULL) {

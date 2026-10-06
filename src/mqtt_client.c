@@ -88,6 +88,8 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
 #if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
 static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
 #endif
+static int MqttClient_CancelMessageEx(MqttClient *client, MqttObject* msg,
+    int force);
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
 static int MqttClient_SendIds_Find(const MqttClient* client, word16 packet_id);
 #endif
@@ -736,6 +738,7 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
 #endif
     slot->payload_len = publish->total_len;
     slot->haveCopy = 1;
+    slot->onThisConn = 1;
 }
 
 /* QoS 2 advanced past PUBREC, so [MQTT-4.4.0-1] replays the PUBREL rather
@@ -757,6 +760,7 @@ static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id)
         MqttClient_Replay_FreeSlot(slot);
         slot->packet_id = packet_id;
         slot->qos = MQTT_QOS_2;
+        slot->onThisConn = 1;
     }
     slot->pubrelSent = 1;
 }
@@ -800,13 +804,28 @@ static void MqttClient_Replay_AddSafe(MqttClient* client, MqttPublish* publish)
 #endif
 }
 
-/* Discard the retained copies of a Session the server did not resume. A send
- * is allowed once CONNECT reaches the transport, so an entry may instead belong
- * to the Session being established: MqttClient_Connect empties the Packet
- * Identifier table before sending CONNECT, so a still-reserved identifier marks
- * one of those, and it is kept for a later resume [MQTT-4.4.0-1]. Reports a
- * lock failure, unlike the wrappers above: a skipped discard would replay the
- * previous Session's messages into this one. */
+/* Everything retained so far belongs to the Session that is ending; a send
+ * admitted once CONNECT is on the wire tags itself. */
+static void MqttClient_Replay_NewConnSafe(MqttClient* client)
+{
+    int i;
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
+        return;
+    }
+#endif
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        client->replay[i].onThisConn = 0;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+}
+
+/* Discard the retained copies of a Session the server did not resume, keeping
+ * anything published on this connection: a later resume still owes that
+ * [MQTT-4.4.0-1]. Reports a lock failure, unlike the wrappers above: a skipped
+ * discard would replay the old Session's messages into this one. */
 static int MqttClient_Replay_ResetSafe(MqttClient* client)
 {
     int i;
@@ -817,10 +836,8 @@ static int MqttClient_Replay_ResetSafe(MqttClient* client)
     }
 #endif
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
-        if (client->replay[i].packet_id != 0 &&
-                MqttClient_SendIds_Find(client,
-                    client->replay[i].packet_id) >= 0) {
-            continue; /* published on this connection */
+        if (client->replay[i].onThisConn) {
+            continue;
         }
         MqttClient_Replay_FreeSlot(&client->replay[i]);
     }
@@ -2971,7 +2988,8 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
      * still acknowledge the message it stands for, and that acknowledgement
      * is what releases both the slot and its Packet Identifier
      * [MQTT-2.3.1-3]. */
-    if (slot->packet_id == 0 || (!slot->pubrelSent && !slot->haveCopy)) {
+    if (slot->packet_id == 0 || slot->onThisConn ||
+            (!slot->pubrelSent && !slot->haveCopy)) {
         rc = 0;
         keep = 1;
     }
@@ -3262,6 +3280,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * and outside the WOLFMQTT_V5 block below, since the table exists in
          * every build. */
         MqttClient_SendIdsReset(client);
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+        MqttClient_Replay_NewConnSafe(client);
+#endif
 
     #ifdef WOLFMQTT_V5
         #ifdef WOLFMQTT_MULTITHREAD
@@ -3454,7 +3475,8 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             /* The handshake state set above stands or not on whether bytes
              * reached the peer, so a retry is refused only when some of this
              * CONNECT is already out there. */
-            MqttClient_CancelMessage(client, (MqttObject*)mc_connect);
+            (void)MqttClient_CancelMessageEx(client,
+                (MqttObject*)mc_connect, 1);
             return rc;
         }
 
@@ -3673,7 +3695,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             }
 #endif
             for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
-                if (client->replay[i].packet_id == 0) {
+                if (client->replay[i].packet_id == 0 ||
+                        client->replay[i].onThisConn) {
+                    /* Not the resumed Session's: already in flight here. */
                     continue;
                 }
                 if (!client->replay[i].pubrelSent &&
@@ -3682,6 +3706,14 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
                      * [MQTT-4.4.0-1] cannot be honoured for this one. Drop it
                      * instead of reserving an identifier that no
                      * acknowledgement will ever release [MQTT-2.3.1-3]. */
+                    MqttClient_Replay_FreeSlot(&client->replay[i]);
+                    continue;
+                }
+                if (MqttClient_SendIds_Find(client,
+                        client->replay[i].packet_id) >= 0) {
+                    /* A live request holds the identifier and
+                     * [MQTT-2.3.1-2] allows one use at a time, so drop this
+                     * rather than take its reservation over. */
                     MqttClient_Replay_FreeSlot(&client->replay[i]);
                     continue;
                 }
@@ -4244,7 +4276,8 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                  * message's ownership of it either way. */
                 MqttClient_RestoreRecvQuota(client, publish);
             #endif
-                MqttClient_CancelMessage(client, (MqttObject*)publish);
+                (void)MqttClient_CancelMessageEx(client,
+                    (MqttObject*)publish, 1);
                 if (wrote > 0) {
                     /* Part of the PUBLISH reached the server, so it may have
                      * seen the Packet Identifier. Reclaim the reservation the
@@ -4291,7 +4324,8 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
                  * above. */
                 MqttClient_RestoreRecvQuota(client, publish);
             #endif
-                MqttClient_CancelMessage(client, (MqttObject*)publish);
+                (void)MqttClient_CancelMessageEx(client,
+                    (MqttObject*)publish, 1);
                 /* Reaching the payload means the fixed header - and with it
                  * the Packet Identifier - is already on the wire, so keep the
                  * reservation the cancel dropped [MQTT-2.3.1-3]. */
@@ -4540,7 +4574,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         wrote = (rc == xfer) ? xfer : client->write.pos;
         MqttWriteStop(client, &subscribe->stat);
         if (rc != xfer) {
-            MqttClient_CancelMessage(client, (MqttObject*)subscribe);
+            (void)MqttClient_CancelMessageEx(client, (MqttObject*)subscribe, 1);
             if (wrote > 0) {
                 /* Part of the SUBSCRIBE reached the server, so it may have
                  * seen the Packet Identifier. Reclaim the reservation the
@@ -4695,7 +4729,8 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
         wrote = (rc == xfer) ? xfer : client->write.pos;
         MqttWriteStop(client, &unsubscribe->stat);
         if (rc != xfer) {
-            MqttClient_CancelMessage(client, (MqttObject*)unsubscribe);
+            (void)MqttClient_CancelMessageEx(client,
+                (MqttObject*)unsubscribe, 1);
             if (wrote > 0) {
                 /* Part of the UNSUBSCRIBE reached the server, so it may have
                  * seen the Packet Identifier. Reclaim the reservation the
@@ -4859,7 +4894,7 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
     #endif
         MqttWriteStop(client, &ping->stat);
         if (rc != xfer) {
-            MqttClient_CancelMessage(client, (MqttObject*)ping);
+            (void)MqttClient_CancelMessageEx(client, (MqttObject*)ping, 1);
             return rc;
         }
 
@@ -5383,16 +5418,19 @@ int MqttClient_WaitMessage(MqttClient *client, int timeout_ms)
     return MqttClient_WaitMessage_ex(client, &client->msg, timeout_ms);
 }
 
-#if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
-static
-#endif
-int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
+/* force: detach even while a reader holds its claim. Failure cleanup is
+ * handing the object back with an error, so it can leave nothing linked; only
+ * the public entry point can ask the caller to wait. */
+static int MqttClient_CancelMessageEx(MqttClient *client, MqttObject* msg,
+    int force)
 {
     int rc = MQTT_CODE_SUCCESS;
     MqttMsgStat* mms_stat;
     int onWire;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp* tmpResp;
+#else
+    (void)force; /* nothing can hold a claim without a reader thread */
 #endif
 
     if (client == NULL || msg == NULL) {
@@ -5441,7 +5479,8 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
                 tmpResp->packet_type, tmpResp->packet_id,
                 tmpResp->packetProcessing, tmpResp->packetDone);
         #endif
-            if (tmpResp->packetProcessing && !tmpResp->packetDone) {
+            if (!force && tmpResp->packetProcessing &&
+                    !tmpResp->packetDone) {
                 wm_SemUnlock(&client->lockClient);
                 return MQTT_CODE_CONTINUE;
             }
@@ -5518,6 +5557,14 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     }
 
     return rc;
+}
+
+#if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
+static
+#endif
+int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
+{
+    return MqttClient_CancelMessageEx(client, msg, 0);
 }
 
 #ifdef WOLFMQTT_NONBLOCK

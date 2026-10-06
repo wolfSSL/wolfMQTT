@@ -335,6 +335,12 @@ typedef struct _MqttReplayMsg {
      * for the pool or came from a payload callback, which has nothing to
      * copy; such an entry can still replay a PUBREL but not a PUBLISH. */
     byte    haveCopy;
+    /* Published on the Network Connection being established rather than
+     * carried from the Session that ended. Sends are admitted once CONNECT is
+     * on the wire, so both kinds can be in the pool when CONNACK arrives, and
+     * only the latter are the old Session's to discard or re-send. Cleared on
+     * every entry when a handshake starts. */
+    byte    onThisConn;
 } MqttReplayMsg;
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 
