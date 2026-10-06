@@ -3011,6 +3011,7 @@ TEST(drain_stops_when_session_handoff_takes_queue)
     MqttBroker_Free(&broker);
 }
 
+#if WOLFMQTT_MAX_QOS >= 1
 /* The QoS > 0 half. A completed at-least-once delivery is still unacknowledged
  * so it stays with the carrier, but the subscriber has seen it, so the resume
  * copy must be marked a duplicate [MQTT-3.3.1-1]. */
@@ -3086,6 +3087,7 @@ TEST(handoff_marks_sent_qos1_for_redelivery)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 #ifdef WOLFMQTT_BROKER_WILL
 /* Same hazard on the Will fan-out, which runs its own subscription walk. The
@@ -13675,6 +13677,7 @@ static int persist_keyed_put(void* ctx, byte ns, const byte* key,
     return persist_order_put(ctx, ns, key, key_len, blob, blob_len);
 }
 
+#if WOLFMQTT_MAX_QOS >= 1
 /* The same requirement when the Session hand-off takes the queue mid-write.
  * BrokerOrphan_Take shadow-writes each entry before that write returns, so the
  * stored copy still says it was never sent; the completed delivery has to be
@@ -13775,6 +13778,7 @@ TEST(persist_handoff_sent_qos1_restart_keeps_dup)
     MqttBroker_Stop(&restored);
     MqttBroker_Free(&restored);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL) && \
     WOLFMQTT_MAX_QOS >= 1
@@ -17114,7 +17118,9 @@ int main(int argc, char** argv)
     RUN_TEST(publish_fanout_alloc_failure_v5_qos2_pubrec_failure);
 #endif
     RUN_TEST(drain_stops_when_session_handoff_takes_queue);
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(handoff_marks_sent_qos1_for_redelivery);
+#endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(outbound_queue_short_write_resumes_on_next_step);
 #ifdef WOLFMQTT_BROKER_RETAINED
@@ -17450,7 +17456,9 @@ int main(int argc, char** argv)
     RUN_TEST(persist_subs_written_when_ack_deferred);
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
     #endif
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(persist_handoff_sent_qos1_restart_keeps_dup);
+#endif
     RUN_TEST(persist_mixed_qos_queue_preserves_fifo);
     #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL) && \
         WOLFMQTT_MAX_QOS >= 1
