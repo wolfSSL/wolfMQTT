@@ -1,6 +1,9 @@
 ## Release Notes
 
-### v2.1.1 (In Development)
+### v2.2.0 (10/08/2026)
+Release 2.2.0 has been developed according to wolfSSL's development and QA
+process (see link below) and successfully passed the quality criteria.
+https://www.wolfssl.com/about/wolfssl-software-development-process-quality-assurance
 
 * New Features
     - Automatic client keep-alive: the core client now sends a `PINGREQ` from
@@ -243,6 +246,39 @@
       string sanitizer with no callers. `WOLFMQTT_NO_STDIO` now implies
       `WOLFMQTT_BROKER_NO_LOG`, except where `WOLFMQTT_CUSTOM_PRINTF` supplies
       a working sink (#619)
+
+* What's Changed
+    - Low-severity hardening, encode/decode validation, credential/payload zeroization, and SN/example fixes (#560)
+    - Fenrir fixes (#559)
+    - Fenrir fixes (#561)
+    - Coverity fixes (#562)
+    - Add auto-ping feature to client (#563)
+    - Coverity and fenrir fixes (#564)
+    - Fix fenrir issues (#565)
+    - Fenrir fixes (#566)
+    - Serialize curl getinfo under lockCURL to fix multithread stress race (#568)
+    - Low-severity hardening and compliance fixes (#567)
+    - Harden CONNECT credential handling compliance (#572)
+    - Preserve nonblocking enhanced authentication state (#574)
+    - Preserve persistent sessions on WebSocket close (#573)
+    - Add contribution guidance (CONTRIBUTING.md) (#569)
+    - Preserve the static persistent session delivery (#570)
+    - Propagate persistence restore failures (#571)
+    - Fix broker session persistence and nonblocking CONTINUE handling (#575)
+    - Fenrir fixes: MQTT v5 client and broker (#576)
+    - Harden MQTT protocol validation and lifecycle handling (#577)
+    - Ensure expired messages have their records removed (#578)
+    - Reject AUTH, server-sent DISCONNECT and payload bytes in UNSUBACK below v5. Publish Will on write failure. (#583)
+    - MQTT compliance fixes for CONNECT ordering, Packet Identifier tracking, CONNACK, keepalive, and QoS replay (#615)
+    - Harden QoS delivery, persistent sessions, reauthentication, and MQTT SN sends (#579)
+    - Fix MQTT 5 property validation and QoS 2 state handling in broker and client (#618)
+    - Reject undersized MQTT-SN Length field in SN_Packet_Read (#621)
+    - Broker returns v5 UNSUBACK "No subscription existed" reason code when no filter matched (#617)
+    - Preserve resumed MQTT sessions and verify TLS broker identity (#623)
+    - Fix non-TLS builds and static analysis issues (#620)
+
+* New Contributors
+    - @ageprocpp made their first contribution (#617)
 
 ### v2.1.0 (07/02/2026)
 Release 2.1.0 has been developed according to wolfSSL's development and QA
