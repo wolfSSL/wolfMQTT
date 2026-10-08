@@ -63,6 +63,8 @@ static void* g_capture_alloc_ptr;
 static byte g_capture_freed[64];
 static size_t g_capture_freed_len;
 static int g_capture_free_seen;
+static void* g_free_watch_ptr;
+static int g_free_watch_count;
 
 void* wolfmqtt_test_broker_malloc(size_t size)
 {
@@ -93,6 +95,9 @@ void wolfmqtt_test_broker_free(void* ptr)
 {
     if (ptr != NULL) {
         g_alloc_free_count++;
+        if (ptr == g_free_watch_ptr) {
+            g_free_watch_count++;
+        }
         if (ptr == g_capture_alloc_ptr) {
             g_capture_freed_len = g_capture_alloc_size;
             XMEMCPY(g_capture_freed, ptr, g_capture_freed_len);
@@ -107,6 +112,21 @@ unsigned long wolfmqtt_test_broker_time_s(void)
 {
     return g_broker_time_s;
 }
+
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Count frees of one allocation, so a test can assert on a single object
+ * rather than a total that unrelated activity moves. */
+static void broker_test_watch_free(void* ptr)
+{
+    g_free_watch_ptr = ptr;
+    g_free_watch_count = 0;
+}
+
+static int broker_test_watched_frees(void)
+{
+    return g_free_watch_count;
+}
+#endif
 
 #ifndef WOLFMQTT_STATIC_MEMORY
 static void broker_test_fail_alloc_after(int successful_allocations)
@@ -1979,6 +1999,235 @@ TEST(fanout_survives_reentrant_sub_free)
     MqttBroker_Free(&broker);
 }
 
+/* The drain holds a queue entry across the write that sends it, and that write
+ * can service this client's close callback, which hands the whole queue to the
+ * carrier holding the Session. BrokerSubs_OrphanClient does that through
+ * file-local helpers, so the hook stages the same transfer directly. */
+static MqttBroker* g_handoff_broker;
+static BrokerClient* g_handoff_client;
+static void handoff_out_queue_mid_write(void)
+{
+    MqttBroker* broker = g_handoff_broker;
+    BrokerClient* bc = g_handoff_client;
+    BrokerOrphanSession* o;
+    size_t id_len;
+
+    if (broker == NULL || bc == NULL || bc->client_id == NULL ||
+            bc->out_q_head == NULL) {
+        return;
+    }
+    o = (BrokerOrphanSession*)WOLFMQTT_MALLOC(sizeof(*o));
+    if (o == NULL) {
+        return;
+    }
+    XMEMSET(o, 0, sizeof(*o));
+    id_len = XSTRLEN(bc->client_id);
+    o->client_id = (char*)WOLFMQTT_MALLOC(id_len + 1);
+    if (o->client_id == NULL) {
+        WOLFMQTT_FREE(o);
+        return;
+    }
+    XMEMCPY(o->client_id, bc->client_id, id_len + 1);
+    o->protocol_level = bc->protocol_level;
+    o->session_expiry_sec = bc->session_expiry_sec;
+    o->orphan_since = wolfmqtt_test_broker_time_s();
+
+    /* Watch the entry the drain holds, to see if it frees the carrier's. */
+    broker_test_watch_free(bc->out_q_head);
+
+    o->out_q_head     = bc->out_q_head;
+    o->out_q_tail     = bc->out_q_tail;
+    o->out_q_count    = bc->out_q_count;
+    o->out_q_inflight = bc->out_q_inflight;
+    bc->out_q_head     = NULL;
+    bc->out_q_tail     = NULL;
+    bc->out_q_count    = 0;
+    bc->out_q_inflight = 0;
+
+    o->next = broker->orphan_sessions;
+    broker->orphan_sessions = o;
+    broker->orphan_session_count++;
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* BrokerOrphan_Take shadow-writes here, before the write it interrupted
+     * has returned, so the stored copy records an unsent entry. */
+    (void)BrokerPersist_PutOrphanSession(broker, o->client_id,
+        o->protocol_level, o->session_expiry_sec, o->orphan_since);
+    {
+        BrokerOutPub* e;
+        word64 seq = 1;
+
+        for (e = o->out_q_head; e != NULL; e = e->next) {
+            e->enqueue_seq = seq++;
+            if (e->qos > MQTT_QOS_0) {
+                (void)BrokerPersist_PutOutPub(broker, o->client_id, e);
+            }
+        }
+    }
+#endif
+}
+
+TEST(drain_stops_when_session_handoff_takes_queue)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    BrokerOrphanSession* o;
+    int i;
+    /* Publisher "P". */
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* CleanSession=0, so the Session survives and has a carrier. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id=1, filter "x", granted QoS 0. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* QoS 0 PUBLISH, topic "x", payload "ABC". */
+    static const byte publish_x[] = {
+        0x30, 0x06, 0x00, 0x01, 'x', 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    ASSERT_NULL(sub_bc->out_q_head);
+
+    broker_test_watch_free(NULL);
+    g_handoff_broker = &broker;
+    g_handoff_client = sub_bc;
+    g_write_publish_hook = handoff_out_queue_mid_write;
+
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&broker);
+
+    /* The hand-off ran from inside the write. */
+    ASSERT_NULL(g_write_publish_hook);
+    /* The delivery completed, which is what makes the entry spent. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    /* The carrier took the queue, and the delivered QoS 0 entry is retired
+     * from it: MQTT 3.1.1 section 4.3.1 allows no retry. */
+    o = broker.orphan_sessions;
+    ASSERT_NOT_NULL(o);
+    ASSERT_EQ(1, broker.orphan_session_count);
+    ASSERT_EQ(0, o->out_q_count);
+    ASSERT_NULL(o->out_q_head);
+    ASSERT_NULL(o->out_q_tail);
+
+    /* Released once by the owner that retired it: more would mean the drain
+     * freed a carrier entry, none would leak it. */
+    ASSERT_EQ(1, broker_test_watched_frees());
+
+    /* And no trace of it left on the client. */
+    ASSERT_EQ(0, sub_bc->out_q_count);
+    ASSERT_EQ(0, sub_bc->out_q_inflight);
+    ASSERT_NULL(sub_bc->out_q_head);
+    ASSERT_NULL(sub_bc->out_q_tail);
+    ASSERT_EQ(0, sub_bc->out_q_pending_len);
+
+    g_handoff_broker = NULL;
+    g_handoff_client = NULL;
+    broker_test_watch_free(NULL);
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#if WOLFMQTT_MAX_QOS >= 1
+/* The QoS > 0 half. A completed at-least-once delivery is still unacknowledged
+ * so it stays with the carrier, but the subscriber has seen it, so the resume
+ * copy must be marked a duplicate [MQTT-3.3.1-1]. */
+TEST(handoff_marks_sent_qos1_for_redelivery)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    BrokerOrphanSession* o;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* CleanSession=0, so the Session survives and has a carrier. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id=1, filter "x", granted QoS 1. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    /* QoS 1 PUBLISH, Packet Identifier 7, topic "x", payload "ABC". */
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    ASSERT_NULL(sub_bc->out_q_head);
+
+    broker_test_watch_free(NULL);
+    g_handoff_broker = &broker;
+    g_handoff_client = sub_bc;
+    g_write_publish_hook = handoff_out_queue_mid_write;
+
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&broker);
+
+    ASSERT_NULL(g_write_publish_hook);
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    /* Still the carrier's, awaiting its PUBACK, and nothing freed. */
+    o = broker.orphan_sessions;
+    ASSERT_NOT_NULL(o);
+    ASSERT_EQ(1, o->out_q_count);
+    ASSERT_NOT_NULL(o->out_q_head);
+    ASSERT_EQ(0, broker_test_watched_frees());
+    /* Flagged, so the resume sends it with DUP set. */
+    ASSERT_EQ(1, (int)o->out_q_head->retransmit_dup);
+    ASSERT_EQ(MQTT_QOS_1, (int)o->out_q_head->qos);
+
+    ASSERT_EQ(0, sub_bc->out_q_count);
+    ASSERT_NULL(sub_bc->out_q_head);
+
+    g_handoff_broker = NULL;
+    g_handoff_client = NULL;
+    broker_test_watch_free(NULL);
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
+
 #ifdef WOLFMQTT_BROKER_WILL
 /* Same hazard on the Will fan-out, which runs its own subscription walk. The
  * publisher's socket drops, the broker fans its Will out to three subscribers,
@@ -2053,7 +2302,110 @@ TEST(will_fanout_survives_reentrant_sub_free)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* The Will is fanned out before it is cleared, and a write inside that fan-out
+ * can service the owner's own close callback, which publishes the same Will.
+ * It must find nothing left to publish [MQTT-3.1.2-8]. The hook samples the
+ * flag that nested path tests, from inside the first delivery. */
+static BrokerClient* g_will_owner;
+static int g_will_claimed_during_fanout;
+static int g_will_topic_live_during_fanout;
+static void sample_will_state_mid_write(void)
+{
+    if (g_will_owner == NULL) {
+        return;
+    }
+    g_will_claimed_during_fanout = !g_will_owner->has_will;
+    g_will_topic_live_during_fanout = (g_will_owner->will_topic != NULL);
+}
+
+TEST(takeover_will_claimed_before_fanout)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* Subscribers "A" and "B", CleanSession=1. */
+    static const byte connect_a[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'A'
+    };
+    static const byte connect_b[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'B'
+    };
+    /* SUBSCRIBE packet_id=1, filter "w", QoS 0. */
+    static const byte subscribe_w[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'w', 0x00
+    };
+    /* v3.1.1 CONNECT for "W" carrying a Will: flags 0x06 = CleanSession +
+     * Will Flag, Will Topic "w", Will Payload "bye". Remaining Length 21. */
+    static const byte connect_w_will[] = {
+        0x10, 0x15, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'W',
+        0x00, 0x01, 'w',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* Second CONNECT with the same ClientId takes the Session over, which
+     * publishes the old connection's Will. */
+    static const byte connect_w_dup[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'W'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_a, sizeof(connect_a));
+    mock_client_input_append(0, subscribe_w, sizeof(subscribe_w));
+    mock_client_input_append(1, connect_b, sizeof(connect_b));
+    mock_client_input_append(1, subscribe_w, sizeof(subscribe_w));
+    mock_client_input_append(2, connect_w_will, sizeof(connect_w_will));
+    for (i = 0; i < 24; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    g_will_owner = find_broker_client(&broker, "W");
+    ASSERT_NOT_NULL(g_will_owner);
+    ASSERT_EQ(1, (int)g_will_owner->has_will);
+    ASSERT_NOT_NULL(g_will_owner->will_topic);
+    /* Nothing published yet, so the hook cannot be consumed early. */
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    g_will_claimed_during_fanout = -1;
+    g_will_topic_live_during_fanout = -1;
+    g_write_publish_hook = sample_will_state_mid_write;
+
+    mock_client_input_append(3, connect_w_dup, sizeof(connect_w_dup));
+    g_clients_active = 4;
+    for (i = 0; i < 24; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    /* The Will really was fanned out, so the sample is meaningful. */
+    ASSERT_NULL(g_write_publish_hook);
+
+    /* Claimed before the first write: a close callback delivered during the
+     * fan-out returns without republishing or freeing anything. */
+    ASSERT_EQ(1, g_will_claimed_during_fanout);
+    /* And the buffers it lends the encoder are still owned. */
+    ASSERT_EQ(1, g_will_topic_live_during_fanout);
+
+    /* Exactly one copy reaches each subscriber [MQTT-3.1.2-8]. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    g_will_owner = NULL;
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_BROKER_WILL */
+
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 TEST(qos2_duplicate_publish_dedup)
@@ -9061,7 +9413,136 @@ TEST(persist_partial_publish_restart_keeps_dup)
     MqttBroker_Stop(&restored);
     MqttBroker_Free(&restored);
 }
+
 #endif
+
+/* Keyed variant: a record written again under the same key replaces it, as a
+ * real backend does. persist_order_put appends, which would turn a re-write
+ * into a second queue entry. */
+static int persist_keyed_put(void* ctx, byte ns, const byte* key,
+    word16 key_len, const byte* blob, word32 blob_len)
+{
+    PersistOrderStore* store = (PersistOrderStore*)ctx;
+    int i;
+
+    if (ns == BROKER_PERSIST_NS_OUTQ) {
+        for (i = 0; i < store->outq_count; i++) {
+            if (store->outq[i].key_len == key_len &&
+                    XMEMCMP(store->outq[i].key, key, key_len) == 0) {
+                if (blob_len > sizeof(store->outq[i].blob)) {
+                    return MQTT_CODE_ERROR_OUT_OF_BUFFER;
+                }
+                XMEMCPY(store->outq[i].blob, blob, blob_len);
+                store->outq[i].blob_len = blob_len;
+                return MQTT_CODE_SUCCESS;
+            }
+        }
+    }
+    return persist_order_put(ctx, ns, key, key_len, blob, blob_len);
+}
+
+#if WOLFMQTT_MAX_QOS >= 1
+/* The same requirement when the Session hand-off takes the queue mid-write.
+ * BrokerOrphan_Take shadow-writes each entry before that write returns, so the
+ * stored copy still says it was never sent; the completed delivery has to be
+ * written through, or a restart before reconnect re-sends it without DUP
+ * [MQTT-3.3.1-1]. */
+TEST(persist_handoff_sent_qos1_restart_keeps_dup)
+{
+    MqttBroker source;
+    MqttBroker restored;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    PersistOrderStore store;
+    BrokerClient* sub_bc;
+    PublishInfo info;
+    word16 packet_id;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* CleanSession=0, so the Session survives and has a carrier. */
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&source, 0, sizeof(source));
+    XMEMSET(&restored, 0, sizeof(restored));
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&store, 0, sizeof(store));
+    hooks.kv_put = persist_keyed_put;
+    hooks.kv_get = persist_order_get;
+    hooks.kv_iter = persist_order_iter;
+    hooks.ctx = &store;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    hooks.derive_key = persist_order_derive_key;
+#endif
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&source, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&source, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&source));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&source));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&source);
+    }
+    sub_bc = find_broker_client(&source, "S");
+    ASSERT_NOT_NULL(sub_bc);
+
+    /* The hand-off runs from inside the write, which then completes. */
+    broker_test_watch_free(NULL);
+    g_handoff_broker = &source;
+    g_handoff_client = sub_bc;
+    g_write_publish_hook = handoff_out_queue_mid_write;
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&source);
+    ASSERT_NULL(g_write_publish_hook);
+    g_handoff_broker = NULL;
+    g_handoff_client = NULL;
+
+    ASSERT_NOT_NULL(source.orphan_sessions);
+    ASSERT_NOT_NULL(source.orphan_sessions->out_q_head);
+    ASSERT_EQ(1, (int)source.orphan_sessions->out_q_head->retransmit_dup);
+    packet_id = source.orphan_sessions->out_q_head->packet_id;
+    ASSERT_EQ(1, store.outq_count);
+
+    MqttBroker_Stop(&source);
+    MqttBroker_Free(&source);
+
+    /* Restart before the subscriber reconnects. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&restored, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS,
+        MqttBroker_SetPersistHooks(&restored, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&restored));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&restored));
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&restored);
+    }
+
+    info = first_publish_info(g_clients[0].out_buf, g_clients[0].out_len);
+    ASSERT_TRUE(info.found);
+    /* 0x3A = PUBLISH | DUP | QoS 1. */
+    ASSERT_EQ(0x3A, info.first_byte);
+    ASSERT_EQ(packet_id, info.packet_id);
+
+    MqttBroker_Stop(&restored);
+    MqttBroker_Free(&restored);
+}
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 /* Non-persisted QoS 0 nodes still occupy FIFO positions. Assigning sequence
  * numbers only to durable nodes can make a later offline QoS 1 enqueue reuse
@@ -10499,6 +10980,7 @@ int main(int argc, char** argv)
     RUN_TEST(fanout_survives_reentrant_sub_free);
 #ifdef WOLFMQTT_BROKER_WILL
     RUN_TEST(will_fanout_survives_reentrant_sub_free);
+    RUN_TEST(takeover_will_claimed_before_fanout);
 #endif
 #endif
     RUN_TEST(qos2_duplicate_publish_dedup);
@@ -10516,6 +10998,10 @@ int main(int argc, char** argv)
     RUN_TEST(online_qos1_flood_disconnects_slow_v311_subscriber);
     RUN_TEST(online_qos1_at_cap_keeps_subscriber);
     RUN_TEST(outbound_packet_ids_are_scoped_per_session);
+    RUN_TEST(drain_stops_when_session_handoff_takes_queue);
+#if WOLFMQTT_MAX_QOS >= 1
+    RUN_TEST(handoff_marks_sent_qos1_for_redelivery);
+#endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(outbound_queue_short_write_resumes_on_next_step);
 #ifdef WOLFMQTT_BROKER_RETAINED
@@ -10747,6 +11233,9 @@ int main(int argc, char** argv)
     #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
     #endif
+#if WOLFMQTT_MAX_QOS >= 1
+    RUN_TEST(persist_handoff_sent_qos1_restart_keeps_dup);
+#endif
     RUN_TEST(persist_mixed_qos_queue_preserves_fifo);
     RUN_TEST(orphan_reclaim_keeps_persisted_outq);
 #endif

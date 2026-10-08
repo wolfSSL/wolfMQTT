@@ -335,6 +335,12 @@ typedef struct _MqttReplayMsg {
      * for the pool or came from a payload callback, which has nothing to
      * copy; such an entry can still replay a PUBREL but not a PUBLISH. */
     byte    haveCopy;
+    /* Published on the Network Connection being established rather than
+     * carried from the Session that ended. Sends are admitted once CONNECT is
+     * on the wire, so both kinds can be in the pool when CONNACK arrives, and
+     * only the latter are the old Session's to discard or re-send. Cleared on
+     * every entry when a handshake starts. */
+    byte    onThisConn;
 } MqttReplayMsg;
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 
@@ -888,9 +894,12 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 /*! \brief      In a multi-threaded and non-blocking mode this allows you to
                 cancel an MQTT object that was previously submitted.
  *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note MQTT_CODE_CONTINUE means another thread is still processing this
+                message's response: retry, and do not free or reuse the object
+                until MQTT_CODE_SUCCESS.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_CancelMessage(
