@@ -197,11 +197,17 @@ WOLFMQTT_API int SN_Client_Disconnect(
 /*! \brief      Encodes and sends the MQTT-SN Disconnect packet. Client may
                 send the disconnect with a duration to indicate the client is
                 entering the "asleep" state.
- *  \note This is a non-blocking function that will try and send using
-                MqttNet.write
+ *  \note With a NULL disconnect or a zero sleepTmr this only sends the
+                packet using MqttNet.write. With a nonzero sleepTmr it then
+                waits up to cmd_timeout_ms for the gateway's DISCONNECT
+                acknowledgement (MQTT-SN 1.2 section 6.14): blocking builds
+                wait for it, while WOLFMQTT_NONBLOCK builds may return
+                MQTT_CODE_CONTINUE and must be called again to complete.
  *  \param      client      Pointer to MqttClient structure
  *  \param      disconnect  Pointer to SN_Disconnect structure. NULL is valid.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE when the call must be
+                repeated (another write is in progress, or a nonblocking wait
+                for the acknowledgement), or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int SN_Client_Disconnect_ex(
