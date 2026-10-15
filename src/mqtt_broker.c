@@ -7102,12 +7102,19 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     BrokerClient_ClearWill(bc);
 #ifdef WOLFMQTT_BROKER_WILL
     if (mc.enable_lwt && mc.lwt_msg != NULL) {
+        int will_stored = 1;
         if (mc.lwt_msg->topic_name != NULL &&
             mc.lwt_msg->topic_name_len > 0) {
             BROKER_STORE_STR(bc->will_topic, mc.lwt_msg->topic_name,
                 mc.lwt_msg->topic_name_len, BROKER_MAX_TOPIC_LEN);
+#ifndef WOLFMQTT_STATIC_MEMORY
+            if (bc->will_topic == NULL) {
+                will_stored = 0;
+            }
+#endif
         }
-        if (mc.lwt_msg->total_len > 0 && mc.lwt_msg->buffer != NULL) {
+        if (will_stored && mc.lwt_msg->total_len > 0 &&
+                mc.lwt_msg->buffer != NULL) {
             word16 wp_len;
             wp_len = (word16)mc.lwt_msg->total_len;
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -7119,9 +7126,27 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             }
             else {
                 wp_len = 0;
+                will_stored = 0;
             }
 #endif
             bc->will_payload_len = wp_len;
+        }
+        if (!will_stored) {
+            /* A Will missing its topic or payload would be dropped or
+             * published altered, so refuse the connection instead. */
+            WBLOG_ERR(broker, "broker: LWT alloc failed sock=%d",
+                (int)bc->sock);
+            BrokerClient_ClearWill(bc);
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+            }
+            else
+        #endif
+            {
+                ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+            }
+            goto send_connack;
         }
         /* Clamp will QoS to this build's Maximum QoS. A v5 Will over the cap
          * was already refused above, so this only downgrades v3.1.1, which has

@@ -678,6 +678,59 @@ TEST(connect_v5_client_id_alloc_failure_refused)
 #endif
 #endif
 
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
+/* A Will that cannot be stored in full must not be accepted in altered form:
+ * a missing Will Topic would drop the Will and a missing Will Payload would
+ * publish an empty one (MQTT 3.1.1 section 3.1.2.5). The CONNECT is refused
+ * with "Server unavailable" instead. fail_after selects the Will Topic or
+ * Will Payload copy. */
+static void connect_will_alloc_failure_refused(int fail_after)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT with Will: flags 0x06 (will_flag | clean_session), ClientId
+     * "P", Will Topic "lwt", Will Payload "bye". */
+    static const byte connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    broker_test_fail_alloc_after(fail_after);
+    run_broker_one_connect(&broker);
+    broker_test_disable_alloc_failure();
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+TEST(connect_will_topic_alloc_failure_refused)
+{
+    /* Client object, two I/O buffers and ClientId precede the Will Topic. */
+    connect_will_alloc_failure_refused(4);
+}
+
+TEST(connect_will_payload_alloc_failure_refused)
+{
+    connect_will_alloc_failure_refused(5);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_BROKER_WILL */
+
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
 TEST(connect_v5_oversize_will_payload_emits_connack)
 {
@@ -10977,6 +11030,10 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_client_id_alloc_failure_refused);
 #endif
+#endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
+    RUN_TEST(connect_will_topic_alloc_failure_refused);
+    RUN_TEST(connect_will_payload_alloc_failure_refused);
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(connect_v5_oversize_will_payload_emits_connack);
