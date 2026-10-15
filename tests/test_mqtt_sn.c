@@ -933,6 +933,87 @@ TEST(sn_typedesc_unknown_type)
 #endif /* !WOLFMQTT_NO_ERROR_STRINGS */
 
 /* ============================================================================
+ * MQTT-SN ClientId length
+ *
+ * MQTT-SN 1.2 section 5.3.1: the ClientId is a 1 to 23 character string.
+ * Encoding a longer one by truncating it would let distinct identities that
+ * share a 23-byte prefix reach the gateway as the same client, so the
+ * encoders must refuse it.
+ * ============================================================================ */
+
+/* 23 characters: the longest permitted ClientId. */
+#define SN_TEST_ID_23 "abcdefghijklmnopqrstuvw"
+/* 24 characters: one past the limit, sharing the 23-byte prefix. */
+#define SN_TEST_ID_24 "abcdefghijklmnopqrstuvwx"
+
+TEST(sn_encode_connect_client_id_too_long_rejected)
+{
+    byte buf[64];
+    SN_Connect connect;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.protocol_level = SN_PROTOCOL_ID;
+    connect.keep_alive_sec = 60;
+    connect.client_id = SN_TEST_ID_24;
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG,
+        SN_Encode_Connect(buf, (int)sizeof(buf), &connect));
+}
+
+TEST(sn_encode_connect_client_id_max_len_encoded)
+{
+    byte buf[64];
+    SN_Connect connect;
+    int rc;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.protocol_level = SN_PROTOCOL_ID;
+    connect.keep_alive_sec = 60;
+    connect.client_id = SN_TEST_ID_23;
+
+    rc = SN_Encode_Connect(buf, (int)sizeof(buf), &connect);
+
+    /* MQTT-SN 1.2 section 5.4.4: Length(1) MsgType(1) Flags(1)
+     * ProtocolId(1) Duration(2) ClientId(23) = 29 bytes. */
+    ASSERT_EQ(29, rc);
+    ASSERT_EQ(29, buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_CONNECT, buf[1]);
+    ASSERT_MEM_EQ(SN_TEST_ID_23, &buf[6], 23);
+}
+
+TEST(sn_encode_pingreq_client_id_too_long_rejected)
+{
+    byte buf[64];
+    SN_PingReq ping;
+    char id[] = SN_TEST_ID_24;
+
+    XMEMSET(&ping, 0, sizeof(ping));
+    ping.clientId = id;
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG,
+        SN_Encode_Ping(buf, (int)sizeof(buf), &ping, SN_MSG_TYPE_PING_REQ));
+}
+
+TEST(sn_encode_pingreq_client_id_max_len_encoded)
+{
+    byte buf[64];
+    SN_PingReq ping;
+    char id[] = SN_TEST_ID_23;
+    int rc;
+
+    XMEMSET(&ping, 0, sizeof(ping));
+    ping.clientId = id;
+
+    rc = SN_Encode_Ping(buf, (int)sizeof(buf), &ping, SN_MSG_TYPE_PING_REQ);
+
+    /* MQTT-SN 1.2 section 5.4.19: Length(1) MsgType(1) ClientId(23). */
+    ASSERT_EQ(25, rc);
+    ASSERT_EQ(25, buf[0]);
+    ASSERT_EQ(SN_MSG_TYPE_PING_REQ, buf[1]);
+    ASSERT_MEM_EQ(SN_TEST_ID_23, &buf[2], 23);
+}
+
+/* ============================================================================
  * SN_Encode_Publish
  *
  * publish->total_len is a caller-supplied word32 payload length. The encoder
@@ -1952,6 +2033,10 @@ int main(int argc, char** argv)
     RUN_TEST(sn_typedesc_pubrec);
     RUN_TEST(sn_typedesc_unknown_type);
 #endif
+    RUN_TEST(sn_encode_connect_client_id_too_long_rejected);
+    RUN_TEST(sn_encode_connect_client_id_max_len_encoded);
+    RUN_TEST(sn_encode_pingreq_client_id_too_long_rejected);
+    RUN_TEST(sn_encode_pingreq_client_id_max_len_encoded);
 
     TEST_SUITE_END();
 
