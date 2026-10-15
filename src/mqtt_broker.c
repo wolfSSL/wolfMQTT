@@ -8861,6 +8861,9 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                                 if (disc.props != NULL) {
                                     (void)MqttProps_Free(disc.props);
                                 }
+                                /* MQTT 5.0 section 3.14.2.2.2 */
+                                (void)BrokerSend_Disconnect(bc,
+                                    MQTT_REASON_PROTOCOL_ERR);
                                 BrokerClient_AbnormalClose(broker, bc);
                                 return 0;
                             }

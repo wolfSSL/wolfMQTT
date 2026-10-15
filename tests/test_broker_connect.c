@@ -7719,6 +7719,52 @@ TEST(connect_v5_receive_max_zero_protocol_error)
     MqttBroker_Free(&broker);
 }
 
+/* MQTT 5.0 section 3.14.2.2.2: when CONNECT set a Session Expiry Interval of
+ * zero, a DISCONNECT carrying a non-zero interval is a Protocol Error
+ * [MQTT-3.14.2-1]. The Server does not treat it as a valid DISCONNECT and
+ * sends DISCONNECT with Reason Code 0x82 before closing (section 4.13). */
+TEST(disconnect_v5_session_expiry_raise_sends_protocol_error)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v5 CONNECT, CleanStart, keep alive 60, no properties (Session Expiry
+     * Interval 0), ClientId "A". Remaining Length 14. */
+    static const byte connect[] = {
+        0x10, 14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+    /* v5 DISCONNECT, Reason Code 0x00, Properties length 5: Session Expiry
+     * Interval (0x11) = 60. Remaining Length 7. */
+    static const byte disconnect[] = {
+        0xE0, 0x07,
+        0x00,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x3C
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    mock_client_input_append(0, disconnect, sizeof(disconnect));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(MQTT_REASON_PROTOCOL_ERR,
+        first_disconnect_reason(g_out_buf, g_out_len));
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* v5 CONNECT with Clean Start=0, no Session Expiry: must default to 0,
  * not the v3.1.1 0xFFFFFFFF "never" sentinel. */
 TEST(connect_v5_clean0_no_se_prop_orphan_expiry_zero)
@@ -10892,6 +10938,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_v5_receive_max_zero_protocol_error);
+    RUN_TEST(disconnect_v5_session_expiry_raise_sends_protocol_error);
 #endif
 #endif
 #ifdef WOLFMQTT_V5
