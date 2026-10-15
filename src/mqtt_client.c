@@ -2657,8 +2657,13 @@ wait_again:
 #endif
 
 read_cleanup:
-    if (recvFatal && MqttClient_IsFatalProtoError(rc)) {
-        /* Scrub decoded peer data before releasing lockRecv. */
+    /* Scrub received peer data, which may be a partial v5 AUTH packet,
+     * before releasing lockRecv whenever the receive has ended. A timeout or
+     * wake-up keeps a partially read packet for the next call. Only the
+     * holder of the read may touch rx_buf: after an ack-phase failure the
+     * read was already released and another thread may be filling it. */
+    if (mms_stat->isReadActive && rc < 0 && rc != MQTT_CODE_CONTINUE &&
+            rc != MQTT_CODE_ERROR_TIMEOUT && rc != MQTT_CODE_STDIN_WAKE) {
         CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
     }
     MqttReadStop(client, mms_stat);
