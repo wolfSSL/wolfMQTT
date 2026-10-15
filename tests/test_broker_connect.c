@@ -11044,6 +11044,59 @@ TEST(persist_schema_wipe_failure_keeps_old_meta)
     ASSERT_TRUE(meta_replaced);
 }
 
+/* Running out of memory while restoring a durable record is not a malformed
+ * record to skip: restore must fail and roll back rather than start with part
+ * of the persisted Session state silently missing. */
+TEST(persist_restore_alloc_failure_is_fatal)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    int fail_rc;
+    int fail_restored;
+    int fail_has_orphan;
+    int ok_rc;
+    int ok_has_orphan;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    /* Stamp META, then persist one orphaned Session for ClientId "C". */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_PutOrphanSession(&broker, "C",
+        MQTT_CONNECT_PROTOCOL_LEVEL_4, 3600, 0));
+    MqttBroker_Free(&broker);
+
+    /* A fresh broker over the same backend restores it. The first allocation
+     * made for the Session record fails: the decrypted copy in encrypt-at-rest
+     * builds (after META's), otherwise the orphan Session itself. */
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2, &hooks));
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    broker_test_fail_alloc_after(1);
+#else
+    broker_test_fail_alloc_after(0);
+#endif
+    fail_rc = BrokerPersist_Restore(&broker2);
+    broker_test_disable_alloc_failure();
+    fail_restored = broker2.persist_restored;
+    fail_has_orphan = (broker2.orphan_sessions != NULL);
+
+    ok_rc = BrokerPersist_Restore(&broker2);
+    ok_has_orphan = (broker2.orphan_sessions != NULL);
+    MqttBroker_Free(&broker2);
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_EQ(MQTT_CODE_ERROR_MEMORY, fail_rc);
+    ASSERT_EQ(0, fail_restored);
+    ASSERT_FALSE(fail_has_orphan);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, ok_rc);
+    ASSERT_TRUE(ok_has_orphan);
+}
+
 TEST(persist_takeover_resumes_outbound_qos1_queue)
 {
     takeover_resumes_outbound_qos1_queue(1);
@@ -11701,6 +11754,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_commit_reports_sync_failure);
     RUN_TEST(persist_del_outqueue_reports_failures);
     RUN_TEST(persist_schema_wipe_failure_keeps_old_meta);
+    RUN_TEST(persist_restore_alloc_failure_is_fatal);
     RUN_TEST(persist_takeover_resumes_outbound_qos1_queue);
         #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(persist_takeover_resumes_outbound_qos2_pubrel);

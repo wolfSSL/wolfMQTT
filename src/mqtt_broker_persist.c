@@ -454,6 +454,7 @@ struct wmqb_iter_decrypt_ctx {
     MqttBroker*                    broker;
     MqttBrokerPersist_IterCb       inner_cb;
     void*                          inner_ctx;
+    int                            fatal_rc;
 };
 
 static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
@@ -467,6 +468,12 @@ static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
     int    stop;
 
     rc = wmqb_decrypt_blob(d->broker, blob, blob_len, &plain, &plain_len);
+    if (rc == MQTT_CODE_ERROR_MEMORY) {
+        /* Out of memory says nothing about the record; stop rather than
+         * restore without it. */
+        d->fatal_rc = rc;
+        return 1;
+    }
     if (rc != 0) {
         /* Forward an empty blob; inner cb will read_header-fail and
          * bump its skipped counter. */
@@ -484,6 +491,8 @@ static int wmqb_iter_decrypt(MqttBroker* broker, byte ns,
 {
     struct wmqb_iter_decrypt_ctx wrap;
     const MqttBrokerPersistHooks* h;
+    int rc;
+
     if (broker == NULL || cb == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -494,7 +503,12 @@ static int wmqb_iter_decrypt(MqttBroker* broker, byte ns,
     wrap.broker = broker;
     wrap.inner_cb = cb;
     wrap.inner_ctx = cb_ctx;
-    return h->kv_iter(h->ctx, ns, wmqb_iter_decrypt_cb, &wrap);
+    wrap.fatal_rc = 0;
+    rc = h->kv_iter(h->ctx, ns, wmqb_iter_decrypt_cb, &wrap);
+    if (rc == 0) {
+        rc = wrap.fatal_rc;
+    }
+    return rc;
 }
 
 /* Decrypt-on-get for the META record specifically. The 256-byte stack
@@ -1704,6 +1718,20 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     return 0;
 }
 
+/* Account for a record that failed to restore. A malformed or unsupported
+ * record is skipped; running out of memory is not a property of the record,
+ * so it stops the iteration and fails the restore. Returns the iterator
+ * callback's stop flag. */
+static int wmqb_restore_record_failed(struct wmqb_restore_ctx* c, int rc)
+{
+    c->skipped++;
+    if (rc == MQTT_CODE_ERROR_MEMORY) {
+        c->fatal_rc = rc;
+        return 1;
+    }
+    return 0;
+}
+
 static int wmqb_iter_retained_cb(const byte* key, word16 key_len,
     const byte* blob, word32 blob_len, void* cb_ctx)
 {
@@ -1713,11 +1741,9 @@ static int wmqb_iter_retained_cb(const byte* key, word16 key_len,
     rc = wmqb_decode_and_insert_retained(c->broker, blob, blob_len);
     if (rc == 0) {
         c->loaded++;
+        return 0;
     }
-    else {
-        c->skipped++;
-    }
-    return 0; /* always continue */
+    return wmqb_restore_record_failed(c, rc);
 }
 
 
@@ -2029,11 +2055,9 @@ static int wmqb_iter_subs_cb(const byte* key, word16 key_len,
             blob_len);
     if (rc == 0) {
         c->loaded++;
+        return 0;
     }
-    else {
-        c->skipped++;
-    }
-    return 0;
+    return wmqb_restore_record_failed(c, rc);
 }
 
 /* Decode NS_SESSION record and create a matching orphan slot. */
@@ -2140,6 +2164,9 @@ static int wmqb_iter_session_cb(const byte* key, word16 key_len,
     rc = wmqb_decode_and_insert_session(c->broker, blob, blob_len);
     if (rc == 0) {
         c->loaded++;
+    }
+    else if (rc == MQTT_CODE_ERROR_MEMORY) {
+        return wmqb_restore_record_failed(c, rc);
     }
     else {
         c->skipped++;
@@ -2473,11 +2500,9 @@ static int wmqb_iter_outq_cb(const byte* key, word16 key_len,
             blob_len);
     if (rc == 0) {
         c->loaded++;
+        return 0;
     }
-    else {
-        c->skipped++;
-    }
-    return 0;
+    return wmqb_restore_record_failed(c, rc);
 }
 
 /* Sweep orphans whose v5 Session Expiry has elapsed. Cascades to subs
@@ -2730,11 +2755,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SESSION,
             wmqb_iter_session_cb, &ctx);
-#ifdef WOLFMQTT_STATIC_MEMORY
         if (rc == 0) {
             rc = ctx.fatal_rc;
         }
-#endif
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore sessions failed rc=%d", rc);
@@ -2763,6 +2786,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_RETAINED,
             wmqb_iter_retained_cb, &ctx);
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
+        }
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore retained failed rc=%d", rc);
@@ -2779,6 +2805,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SUBS,
             wmqb_iter_subs_cb, &ctx);
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
+        }
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore subs failed rc=%d", rc);
@@ -2795,6 +2824,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_OUTQ,
             wmqb_iter_outq_cb, &ctx);
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
+        }
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore outq failed rc=%d", rc);
