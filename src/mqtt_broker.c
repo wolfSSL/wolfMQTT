@@ -6403,16 +6403,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     int ack_len = 0;
 #endif
     /* [MQTT-3.2.2-2] Session Present is set when an accepted
-     * CleanSession=0 connection finds stored session state for the
-     * client_id. The MQTT spec defines Session state as more than
-     * subscriptions (in-flight QoS 1/2 PUBLISH, unacknowledged PUBREL,
-     * outstanding packet identifiers); this broker only persists
-     * subscriptions across disconnects today (BrokerSubs_OrphanClient
-     * keeps them, but per-message QoS 2 state in bc->qos2_in_flight is
-     * dropped). If broker session persistence ever widens to cover QoS
-     * state, the source of session_present needs to widen too - a
-     * BrokerSession_HasStoredState() helper is the natural extension
-     * point. */
+     * CleanSession=0 connection resumes stored Session state for the
+     * client_id. A resumed Session can carry subscriptions, queued and
+     * in-flight outbound QoS 1/2 messages, and inbound QoS 2 identifiers
+     * awaiting PUBREL, whether taken over from a still-connected client or
+     * reclaimed from an orphaned or restored Session. Each takeover and
+     * reclaim path below sets session_present when it carries any of that
+     * state over; a new kind of Session state must do the same. */
     int session_present = 0;
 #ifdef WOLFMQTT_V5
     int auto_assigned = 0;
