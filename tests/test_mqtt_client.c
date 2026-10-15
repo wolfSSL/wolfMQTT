@@ -1666,6 +1666,44 @@ TEST(publish_qos1_v5_receive_max_quota_decrements_once_and_replenishes)
 #endif /* WOLFMQTT_MAX_QOS >= 1 */
 #endif /* WOLFMQTT_NONBLOCK */
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Cancelling a wait that is part-way through receiving a packet must scrub
+ * rx_buf, as cancelling an active write already scrubs tx_buf: the partial
+ * packet can carry application data or v5 AUTH authentication data. */
+TEST(cancel_message_active_read_scrubs_rx_buf)
+{
+    int rc;
+    int i;
+    /* v3.1.1 QoS 0 PUBLISH declaring Remaining Length 20 (topic "t" and 17
+     * payload bytes); only the first 10 bytes arrive before the read would
+     * block. */
+    static const byte partial[] = {
+        0x30, 0x14, 0x00, 0x01, 't', 'S', 'E', 'C', 'R', 'E'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, partial, sizeof(partial));
+    g_canned_len = (int)sizeof(partial);
+    g_canned_pos = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    ASSERT_TRUE(test_client.msg.stat.isReadActive);
+
+    rc = MqttClient_CancelMessage(&test_client, &test_client.msg);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, test_client.read.isActive);
+    for (i = 0; i < TEST_RX_BUF_SIZE; i++) {
+        ASSERT_EQ(0, test_rx_buf[i]);
+    }
+}
+#endif /* WOLFMQTT_NONBLOCK */
+
 /* These two exercise MqttClient_CancelMessage, which is only a public API when
  * WOLFMQTT_MULTITHREAD or WOLFMQTT_NONBLOCK is defined (otherwise it is a
  * file-local static in mqtt_client.c). */
@@ -7966,6 +8004,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(cancel_message_retains_recv_quota_on_wire);
     RUN_TEST(cancel_message_retain_is_idempotent);
     RUN_TEST(cancel_message_reuse_does_not_bypass_recv_quota);
+#endif
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(cancel_message_active_read_scrubs_rx_buf);
 #endif
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \

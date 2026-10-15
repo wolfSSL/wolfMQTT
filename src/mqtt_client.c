@@ -5503,6 +5503,10 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("Cancel Read Lock");
     #endif
+        /* An abandoned read can leave part of a received packet - possibly
+         * v5 AUTH data - in rx_buf. Scrub it before MqttReadStop releases
+         * lockRecv. */
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
         MqttReadStop(client, mms_stat);
     }
     if (mms_stat->isWriteActive) {
