@@ -571,7 +571,7 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         (void)close(ns_fd);
         return MQTT_CODE_ERROR_SYSTEM;
     }
-    while ((ent = readdir(d)) != NULL) {
+    for (;;) {
         char key_hex[2 * 256 + 1];
         byte key_buf[256];
         byte* blob;
@@ -585,6 +585,16 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         const char* dot;
         int stop;
 
+        /* readdir reports both end of directory and failure as NULL; only
+         * errno tells them apart. */
+        errno = 0;
+        ent = readdir(d);
+        if (ent == NULL) {
+            if (errno != 0) {
+                rc = MQTT_CODE_ERROR_SYSTEM;
+            }
+            break;
+        }
         if (ent->d_name[0] == '.') {
             continue;
         }
@@ -608,9 +618,21 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         fd = openat(dirfd(d), ent->d_name,
             O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0) {
-            continue;
+            /* A record removed since readdir, or a symlink refused by
+             * O_NOFOLLOW, is not a record to load. Anything else is an I/O
+             * failure that must not be reported as a complete pass. */
+            if (errno == ENOENT || errno == ELOOP) {
+                continue;
+            }
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
         }
-        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
+        if (fstat(fd, &st) < 0) {
+            (void)close(fd);
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
+        }
+        if (!S_ISREG(st.st_mode) ||
                 st.st_uid != geteuid() || st.st_size <= 0 ||
                 (word64)st.st_size > 16 * 1024 * 1024) {
             /* Refuse non-regular, foreign-owned, or oversized records. */
@@ -646,10 +668,13 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
             /* Scrub the record before releasing the heap buffer. In
              * encrypt-at-rest builds the blob is ciphertext, so the wipe is
              * harmless; in plaintext builds it clears session and payload
-             * data from a buffer that would otherwise linger in the heap. */
+             * data from a buffer that would otherwise linger in the heap.
+             * A read error or short read leaves the record unloaded, so
+             * report it rather than skip it. */
             wmqb_posix_force_zero(blob, blob_cap);
             WOLFMQTT_FREE(blob);
-            continue;
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
         }
         stop = cb(key_buf, (word16)kn, blob, blob_cap, cb_ctx);
         wmqb_posix_force_zero(blob, blob_cap);
@@ -659,7 +684,7 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         }
     }
     (void)closedir(d);
-    return 0;
+    return rc;
 }
 
 static int wmqb_posix_sync(void* ctx)

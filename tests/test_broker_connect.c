@@ -10522,6 +10522,71 @@ TEST(persist_put_del_report_namespace_fsync_failure)
     ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, del_fail_rc);
 }
 
+/* A record the backend cannot open is an I/O failure, not a record to skip:
+ * reporting success would let restore or a delete scan finish with durable
+ * state silently left out. Deliberately non-record entries (wrong suffix,
+ * non-regular files) are still skipped. */
+TEST(persist_iter_reports_unreadable_record)
+{
+    static const byte value[] = "value";
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    char ns_path[640];
+    char good_path[680];
+    char bad_path[680];
+    char other_path[680];
+    MqttBrokerPersistHooks hooks;
+    PersistIterCapture capture;
+    char* root;
+    int init_rc = MQTT_CODE_ERROR_SYSTEM;
+    int clean_iter_rc = MQTT_CODE_ERROR_SYSTEM;
+    int iter_rc = MQTT_CODE_SUCCESS;
+    int paths_ok = 0;
+
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&capture, 0, sizeof(capture));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    if (snprintf(ns_path, sizeof(ns_path), "%s/7", root) > 0 &&
+            snprintf(good_path, sizeof(good_path), "%s/1111.bin",
+                ns_path) > 0 &&
+            snprintf(bad_path, sizeof(bad_path), "%s/2222.bin",
+                ns_path) > 0 &&
+            snprintf(other_path, sizeof(other_path), "%s/notes.txt",
+                ns_path) > 0) {
+        paths_ok = 1;
+    }
+    ASSERT_TRUE(paths_ok);
+    ASSERT_EQ(0, mkdir(ns_path, 0700));
+    ASSERT_EQ(0, persist_test_write_file(good_path, value,
+        (word32)sizeof(value)));
+    ASSERT_EQ(0, persist_test_write_file(other_path, value,
+        (word32)sizeof(value)));
+
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        /* Readable record plus a non-record file: iteration succeeds. */
+        clean_iter_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
+            &capture);
+        /* Add a record the backend owns but cannot open. */
+        if (persist_test_write_file(bad_path, value,
+                (word32)sizeof(value)) == 0 && chmod(bad_path, 0) == 0) {
+            iter_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
+                &capture);
+        }
+    }
+
+    MqttBrokerNet_PersistPosix_Free(&hooks);
+    (void)unlink(good_path);
+    (void)unlink(bad_path);
+    (void)unlink(other_path);
+    (void)rmdir(ns_path);
+    (void)rmdir(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, clean_iter_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, iter_rc);
+}
+
 TEST(persist_put_rejects_existing_temp_symlink)
 {
     static const byte key[] = { 0x12, 0x34 };
@@ -11478,6 +11543,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_root_writable_permissions_rejected);
     RUN_TEST(persist_put_rejects_existing_temp_symlink);
     RUN_TEST(persist_put_del_report_namespace_fsync_failure);
+    RUN_TEST(persist_iter_reports_unreadable_record);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     RUN_TEST(persist_failed_key_derivation_scrubs_cache);
     RUN_TEST(persist_bad_tag_scrubs_plaintext_before_free);
