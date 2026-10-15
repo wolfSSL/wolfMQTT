@@ -42,6 +42,7 @@
 #include "wolfmqtt/mqtt_packet.h"
 
 #ifdef WOLFMQTT_BROKER_PERSIST
+    #include <errno.h>
     #include <fcntl.h>
     #include <sys/stat.h>
     #include <sys/wait.h>
@@ -107,6 +108,23 @@ unsigned long wolfmqtt_test_broker_time_s(void)
 {
     return g_broker_time_s;
 }
+
+#ifdef WOLFMQTT_BROKER_PERSIST
+/* When set, fsync of a directory fails with EIO so a test can exercise the
+ * POSIX persistence backend's durability error paths. */
+static int g_fsync_dir_fail;
+
+int wolfmqtt_test_broker_fsync(int fd)
+{
+    struct stat st;
+
+    if (g_fsync_dir_fail && fstat(fd, &st) == 0 && S_ISDIR(st.st_mode)) {
+        errno = EIO;
+        return -1;
+    }
+    return fsync(fd);
+}
+#endif
 
 #ifndef WOLFMQTT_STATIC_MEMORY
 static void broker_test_fail_alloc_after(int successful_allocations)
@@ -10452,6 +10470,58 @@ TEST(persist_root_writable_permissions_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, persist_test_init_root_mode(0777));
 }
 
+/* A rename or unlink is not durable until its namespace directory is
+ * flushed, so the POSIX backend must report a failed directory fsync rather
+ * than claim the update was committed. */
+TEST(persist_put_del_report_namespace_fsync_failure)
+{
+    static const byte key[] = { 0x56, 0x78 };
+    static const byte value[] = "value";
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    char ns_path[640];
+    char final_path[680];
+    MqttBrokerPersistHooks hooks;
+    char* root;
+    int init_rc = MQTT_CODE_ERROR_SYSTEM;
+    int put_fail_rc = MQTT_CODE_SUCCESS;
+    int put_ok_rc = MQTT_CODE_ERROR_SYSTEM;
+    int del_fail_rc = MQTT_CODE_SUCCESS;
+    int paths_ok = 0;
+
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    if (snprintf(ns_path, sizeof(ns_path), "%s/7", root) > 0 &&
+            snprintf(final_path, sizeof(final_path), "%s/5678.bin",
+                ns_path) > 0) {
+        paths_ok = 1;
+    }
+    ASSERT_TRUE(paths_ok);
+
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        g_fsync_dir_fail = 1;
+        put_fail_rc = hooks.kv_put(hooks.ctx, 7, key, (word16)sizeof(key),
+            value, (word32)sizeof(value));
+        g_fsync_dir_fail = 0;
+        put_ok_rc = hooks.kv_put(hooks.ctx, 7, key, (word16)sizeof(key),
+            value, (word32)sizeof(value));
+        g_fsync_dir_fail = 1;
+        del_fail_rc = hooks.kv_del(hooks.ctx, 7, key, (word16)sizeof(key));
+        g_fsync_dir_fail = 0;
+    }
+
+    MqttBrokerNet_PersistPosix_Free(&hooks);
+    (void)unlink(final_path);
+    (void)rmdir(ns_path);
+    (void)rmdir(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, put_fail_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, put_ok_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, del_fail_rc);
+}
+
 TEST(persist_put_rejects_existing_temp_symlink)
 {
     static const byte key[] = { 0x12, 0x34 };
@@ -11407,6 +11477,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_root_readable_permissions_accepted);
     RUN_TEST(persist_root_writable_permissions_rejected);
     RUN_TEST(persist_put_rejects_existing_temp_symlink);
+    RUN_TEST(persist_put_del_report_namespace_fsync_failure);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     RUN_TEST(persist_failed_key_derivation_scrubs_cache);
     RUN_TEST(persist_bad_tag_scrubs_plaintext_before_free);

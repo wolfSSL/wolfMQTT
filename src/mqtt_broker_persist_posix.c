@@ -65,6 +65,26 @@ typedef struct WmqbPosixCtx {
     #define O_CLOEXEC 0
 #endif
 
+/* Overridable so tests can inject durability failures. */
+#ifndef WMQB_POSIX_FSYNC
+    #define WMQB_POSIX_FSYNC(fd) fsync(fd)
+#endif
+
+/* Flush a namespace directory so a rename or unlink in it survives a crash.
+ * Retries a bounded number of EINTRs, like the record write loop. */
+static int wmqb_posix_fsync_dir(int dir_fd)
+{
+    int eintr_count = 0;
+
+    while (WMQB_POSIX_FSYNC(dir_fd) < 0) {
+        if (errno == EINTR && eintr_count++ < 16) {
+            continue;
+        }
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    return 0;
+}
+
 /* Forward decl of all hook callbacks. */
 static int wmqb_posix_put(void* ctx, byte ns, const byte* key, word16 key_len,
     const byte* blob, word32 blob_len);
@@ -399,7 +419,7 @@ static int wmqb_posix_put(void* ctx, byte ns, const byte* key,
             written += (word32)w;
         }
     }
-    if (fsync(fd) < 0) {
+    if (WMQB_POSIX_FSYNC(fd) < 0) {
         (void)close(fd);
         (void)unlinkat(ns_fd, tmp_name, 0);
         (void)close(ns_fd);
@@ -418,9 +438,9 @@ static int wmqb_posix_put(void* ctx, byte ns, const byte* key,
         return MQTT_CODE_ERROR_SYSTEM;
     }
     /* fsync the namespace dir so rename is durable. */
-    (void)fsync(ns_fd);
+    rc = wmqb_posix_fsync_dir(ns_fd);
     (void)close(ns_fd);
-    return 0;
+    return rc;
 }
 
 static int wmqb_posix_get(void* ctx, byte ns, const byte* key,
@@ -521,9 +541,10 @@ static int wmqb_posix_del(void* ctx, byte ns, const byte* key,
         (void)close(ns_fd);
         return MQTT_CODE_ERROR_SYSTEM;
     }
-    (void)fsync(ns_fd);
+    /* fsync the namespace dir so the unlink is durable. */
+    rc = wmqb_posix_fsync_dir(ns_fd);
     (void)close(ns_fd);
-    return 0;
+    return rc;
 }
 
 static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
@@ -650,7 +671,7 @@ static int wmqb_posix_sync(void* ctx)
     if (c == NULL || c->root_fd < 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    return (fsync(c->root_fd) == 0) ? 0 : MQTT_CODE_ERROR_SYSTEM;
+    return (WMQB_POSIX_FSYNC(c->root_fd) == 0) ? 0 : MQTT_CODE_ERROR_SYSTEM;
 }
 
 int MqttBrokerNet_PersistPosix_Init(MqttBrokerPersistHooks* hooks,
