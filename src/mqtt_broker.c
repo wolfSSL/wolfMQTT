@@ -8877,11 +8877,15 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                         }
                 #endif
                     }
-                #ifdef WOLFMQTT_BROKER_WILL
                     else {
-                        BrokerClient_ClearWill(bc);
+                        /* A Malformed Packet is not a normal disconnect, so
+                         * the Will is published (MQTT 5.0 section 3.1.2.5). */
+                        if (disc.props != NULL) {
+                            (void)MqttProps_Free(disc.props);
+                        }
+                        BrokerClient_AbnormalClose(broker, bc);
+                        return 0;
                     }
-                #endif
                     /* Free any decoded v5 DISCONNECT properties. */
                     if (disc.props != NULL) {
                         (void)MqttProps_Free(disc.props);

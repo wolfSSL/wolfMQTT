@@ -4948,6 +4948,68 @@ TEST(disconnect_invalid_fixed_header_flags_fires_will)
     MqttBroker_Free(&broker);
 }
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
+/* A v5 DISCONNECT that fails to decode is a Malformed Packet, not a normal
+ * disconnect: the Server closes the Network Connection and the Will Message
+ * is published (MQTT 5.0 sections 3.1.2.5 and 4.13). Only a successfully
+ * decoded DISCONNECT with Reason Code 0x00 discards the Will [MQTT-3.14.4-3]. */
+TEST(disconnect_v5_malformed_fires_will)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    /* v5 CONNECT with Will: flags 0x06 (will_flag | clean_start), keep
+     * alive 60, Properties length 0, ClientId "P", Will Properties length 0,
+     * Will Topic "lwt", Will Payload "bye". Remaining Length 25. */
+    static const byte pub_connect[] = {
+        0x10, 0x19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x06, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* v5 DISCONNECT, Reason Code 0x00, Property Length 5 with no property
+     * bytes following: the declared Properties overrun the packet. */
+    static const byte disconnect_bad[] = { 0xE0, 0x02, 0x00, 0x05 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    mock_client_input_append(1, disconnect_bad, sizeof(disconnect_bad));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 && WOLFMQTT_BROKER_WILL */
+
 /* Parsed details of a single PUBLISH packet on the wire. found = 0 means
  * no PUBLISH was present in the buffer; subsequent fields are zero. */
 typedef struct {
@@ -10734,6 +10796,9 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif
     RUN_TEST(disconnect_invalid_fixed_header_flags_fires_will);
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
+    RUN_TEST(disconnect_v5_malformed_fires_will);
+#endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_will_scrub_after_failed_write);
 #ifdef WOLFMQTT_NONBLOCK
