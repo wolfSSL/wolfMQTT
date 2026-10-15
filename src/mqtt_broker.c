@@ -2104,6 +2104,11 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
 
         enc_rc = MqttEncode_Publish(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
                     &out_pub, 0);
+        /* A payload clamped to tx_buf leaves Remaining Length declaring bytes
+         * the frame does not carry [MQTT 3.1.1 section 2.2.3]. */
+        if (enc_rc > 0 && out_pub.buffer_pos != cur->payload_len) {
+            enc_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         if (enc_rc <= 0) {
             if (bc->out_q_pending_len != 0) {
                 return (enc_rc < 0) ? enc_rc : MQTT_CODE_ERROR_SYSTEM;
