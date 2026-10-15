@@ -189,7 +189,12 @@ enum MqttClientFlags {
     MQTT_CLIENT_FLAG_TLS_DEFAULT_CTX = 0x01 << 8,
     /* Skip host identity setup when the callback disables authentication.
      * Does not change wolfSSL's certificate verification policy. */
-    MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK = 0x01 << 9
+    MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK = 0x01 << 9,
+    /* The last CONNECT asked for a Session that outlives the Network
+     * Connection (CleanSession 0, or a non-zero v5 Session Expiry Interval),
+     * so unacknowledged QoS > 0 messages must be replayable. Managed by the
+     * library - set or cleared by MqttClient_Connect. */
+    MQTT_CLIENT_FLAG_PERSISTENT_SESSION = 0x01 << 10
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
@@ -283,8 +288,10 @@ typedef struct _MqttSk {
  * MqttPublish is gone, so the client keeps its own copy. That costs memory,
  * hence a pool sized separately from the (much cheaper) identifier table:
  * raise MQTT_MAX_REPLAY_MSGS to retain more in-flight messages, or define
- * WOLFMQTT_NO_SESSION_REPLAY to compile the store out entirely. A message
- * that does not fit is still sent, just not retained for replay.
+ * WOLFMQTT_NO_SESSION_REPLAY to compile the store out entirely. On a Session
+ * that outlives the connection, a QoS > 0 publish that finds the pool full is
+ * refused with MQTT_CODE_ERROR_OUT_OF_BUFFER before it is sent; on a clean
+ * Session, which is never replayed, it is still sent without a copy.
  *
  * A PUBREL awaiting its PUBCOMP is retained regardless of the size limits:
  * it carries no payload, only the Packet Identifier. */

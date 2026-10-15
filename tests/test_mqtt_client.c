@@ -3525,10 +3525,9 @@ TEST(reconnect_drops_replay_larger_than_tx_buf)
     }
 }
 
-/* A retained entry the client cannot rebuild is dropped, so the pool bounds
- * how many messages survive a reconnect. Publishing more than
- * MQTT_MAX_REPLAY_MSGS leaves the extras unretained; they are still sent, they
- * just cannot be replayed. */
+/* The pool bounds how many messages survive a reconnect. On this
+ * CleanSession 0 connection a publish beyond MQTT_MAX_REPLAY_MSGS is refused
+ * before it is sent, since it could not be replayed [MQTT-4.4.0-1]. */
 TEST(reconnect_replays_at_most_pool_size)
 {
     int rc;
@@ -3551,7 +3550,12 @@ TEST(reconnect_replays_at_most_pool_size)
         init_qos_publish(&publish, MQTT_QOS_1, (word16)(0x100 + i),
             "sensor/temp", payload, (word32)(sizeof(payload) - 1));
         rc = run_publish_unacked(&publish);
-        ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+        if (i < MQTT_MAX_REPLAY_MSGS) {
+            ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+        }
+        else {
+            ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+        }
     }
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
@@ -4071,6 +4075,93 @@ TEST(replay_resume_arms_keep_alive)
     ASSERT_EQ(60, (int)test_client.keep_alive_sec);
 }
 #endif /* WOLFMQTT_NONBLOCK */
+/* Publish MQTT_MAX_REPLAY_MSGS unacknowledged QoS 1 messages, filling the
+ * replay pool, then attempt one more. Returns the result of the extra
+ * publish; *frames_out reports whether it reached the wire. */
+static int run_publish_past_replay_pool(int* frames_out)
+{
+    int rc;
+    int i;
+    int frames_before;
+    MqttPublish publish[MQTT_MAX_REPLAY_MSGS + 1];
+    static byte payload[] = "hello";
+
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        init_qos_publish(&publish[i], MQTT_QOS_1, (word16)(i + 1), "t",
+            payload, (word32)(sizeof(payload) - 1));
+        rc = run_publish_unacked(&publish[i]);
+        if (rc != MQTT_CODE_ERROR_NETWORK) {
+            return rc;
+        }
+    }
+    init_qos_publish(&publish[i], MQTT_QOS_1, (word16)(i + 1), "t",
+        payload, (word32)(sizeof(payload) - 1));
+    frames_before = g_frames_written;
+    rc = run_publish_unacked(&publish[i]);
+    *frames_out = g_frames_written - frames_before;
+    return rc;
+}
+
+/* [MQTT-4.4.0-1] requires every unacknowledged QoS > 0 PUBLISH to be re-sent
+ * when a persistent Session resumes. With the replay pool full there is no
+ * copy to re-send, so on a CleanSession 0 connection the publish is refused
+ * before it reaches the wire instead of being sent unrecoverable. */
+TEST(publish_refused_when_replay_pool_full_on_persistent_session)
+{
+    int rc;
+    int frames = -1;
+    MqttConnect connect;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    rc = run_publish_past_replay_pool(&frames);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, frames);
+}
+
+/* A CleanSession 1 Session ends with the Network Connection, so nothing is
+ * ever replayed and a full pool must not limit how many messages are in
+ * flight. */
+TEST(publish_allowed_past_replay_pool_on_clean_session)
+{
+    int rc;
+    int i;
+    int frames = -1;
+    MqttConnect connect;
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    rc = run_publish_past_replay_pool(&frames);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(1, frames);
+}
+
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY && WOLFMQTT_MAX_QOS >= 1 */
 
 
@@ -7771,6 +7862,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_on_reused_connect_object_waits_for_connack);
 #if !defined(WOLFMQTT_NO_SESSION_REPLAY) && WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(reconnect_replays_unacked_qos1_publish);
+    RUN_TEST(publish_refused_when_replay_pool_full_on_persistent_session);
+    RUN_TEST(publish_allowed_past_replay_pool_on_clean_session);
     RUN_TEST(reconnect_without_session_present_replays_nothing);
     RUN_TEST(reconnect_does_not_replay_acked_publish);
 #if WOLFMQTT_MAX_QOS >= 2

@@ -655,10 +655,10 @@ static void MqttClient_Replay_FreeSlot(MqttReplayMsg* slot)
     XMEMSET(slot, 0, sizeof(*slot));
 }
 
-/* Retain a copy of an outbound QoS > 0 PUBLISH. A message that does not fit
- * the pool is left unretained rather than refused: it still goes out, it just
- * cannot be replayed, which is the same position the client was in before the
- * store existed. */
+/* Retain a copy of an outbound QoS > 0 PUBLISH. On a persistent Session the
+ * caller refuses a publish that would not fit the pool first, see
+ * MqttClient_Replay_CheckRoomSafe; on a clean Session a message that does not
+ * fit still goes out unretained, since it is never replayed. */
 static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
 {
     MqttReplayMsg* slot;
@@ -795,6 +795,53 @@ static void MqttClient_Replay_AddSafe(MqttClient* client, MqttPublish* publish)
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
+}
+
+/* [MQTT-4.4.0-1] A persistent Session must be able to re-send every
+ * unacknowledged QoS > 0 PUBLISH, so refuse one that has no replay slot. */
+static int MqttClient_Replay_CheckRoomSafe(MqttClient* client,
+    word16 packet_id)
+{
+    int rc = MQTT_CODE_SUCCESS;
+
+    if ((MqttClient_Flags(client, 0, 0) &
+            MQTT_CLIENT_FLAG_PERSISTENT_SESSION) == 0) {
+        return MQTT_CODE_SUCCESS;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#endif
+    if (MqttClient_Replay_Find(client, packet_id) == NULL &&
+            MqttClient_Replay_Find(client, 0) == NULL) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    return rc;
+}
+
+/* Whether the Session requested by this CONNECT outlives the Network
+ * Connection: CleanSession 0 in v3.1.1, a non-zero Session Expiry Interval
+ * in v5 (MQTT 5.0 section 3.1.2.11.2). */
+static int MqttClient_ConnectIsPersistent(const MqttConnect* mc_connect)
+{
+#ifdef WOLFMQTT_V5
+    if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        const MqttProp* prop;
+
+        for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+            if (prop->type == MQTT_PROP_SESSION_EXPIRY_INTERVAL) {
+                return (prop->data_int != 0) ? 1 : 0;
+            }
+        }
+        return 0;
+    }
+#endif
+    return (mc_connect->clean_session == 0) ? 1 : 0;
 }
 
 static void MqttClient_Replay_RemoveSafe(MqttClient* client, word16 packet_id)
@@ -3378,6 +3425,16 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
              * out. Resuming this same write re-enters past MQTT_MSG_BEGIN, so
              * the once-per-connection guard does not see it. */
             (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
+        #ifndef WOLFMQTT_NO_SESSION_REPLAY
+            if (MqttClient_ConnectIsPersistent(mc_connect)) {
+                (void)MqttClient_Flags(client, 0,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+            }
+            else {
+                (void)MqttClient_Flags(client,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION, 0);
+            }
+        #endif
         }
     #ifdef WOLFMQTT_NONBLOCK
         if (rc == MQTT_CODE_CONTINUE
@@ -4084,6 +4141,20 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
             }
         #endif
             client->write.len = rc;
+
+        #ifndef WOLFMQTT_NO_SESSION_REPLAY
+            if (publish->qos > MQTT_QOS_0) {
+                rc = MqttClient_Replay_CheckRoomSafe(client,
+                    publish->packet_id);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    MqttWriteStop(client, &publish->stat);
+                #ifdef WOLFMQTT_V5
+                    MqttClient_RestoreRecvQuota(client, publish);
+                #endif
+                    return rc;
+                }
+            }
+        #endif
 
             if (publish->qos > MQTT_QOS_0) {
                 /* [MQTT-2.3.1-2] A new QoS>0 PUBLISH must carry a currently
