@@ -1704,58 +1704,6 @@ TEST(cancel_message_active_read_scrubs_rx_buf)
 }
 #endif /* WOLFMQTT_NONBLOCK */
 
-/* Serves g_canned_buf, then fails the connection. */
-static int mock_net_read_canned_then_error(void *context, byte* buf,
-    int buf_len, int timeout_ms)
-{
-    int n = g_canned_len - g_canned_pos;
-    (void)context; (void)timeout_ms;
-    if (n <= 0) {
-        return MQTT_CODE_ERROR_NETWORK;
-    }
-    if (n > buf_len) {
-        n = buf_len;
-    }
-    XMEMCPY(buf, g_canned_buf + g_canned_pos, n);
-    g_canned_pos += n;
-    return n;
-}
-
-/* A transport failure after part of a packet arrived ends the receive, so
- * the partial packet - which can carry v5 AUTH authentication data - must
- * be scrubbed from rx_buf before the read is released, as it already is for
- * protocol errors. */
-TEST(wait_message_network_error_after_partial_read_scrubs_rx_buf)
-{
-    int rc;
-    int i;
-    /* v3.1.1 QoS 0 PUBLISH declaring Remaining Length 20; only the first 10
-     * bytes arrive before the connection fails. */
-    static const byte partial[] = {
-        0x30, 0x14, 0x00, 0x01, 't', 'S', 'E', 'C', 'R', 'E'
-    };
-
-    rc = test_init_client();
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-#ifdef WOLFMQTT_V5
-    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
-#endif
-    test_net.read = mock_net_read_canned_then_error;
-    XMEMCPY(g_canned_buf, partial, sizeof(partial));
-    g_canned_len = (int)sizeof(partial);
-    g_canned_pos = 0;
-
-    rc = MQTT_CODE_CONTINUE;
-    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
-        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
-    }
-    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
-    ASSERT_EQ(0, test_client.read.isActive);
-    for (i = 0; i < TEST_RX_BUF_SIZE; i++) {
-        ASSERT_EQ(0, test_rx_buf[i]);
-    }
-}
-
 #ifdef WOLFMQTT_NONBLOCK
 /* Accepts the first few bytes of a packet, then reports would-block. */
 static int g_write_partial_calls;
@@ -6831,6 +6779,58 @@ TEST(wait_message_ack_encode_failure_resets_wait_state)
     ASSERT_EQ(2, g_bad_ack_cb_calls);
 }
 #endif /* WOLFMQTT_V5 */
+
+/* Serves g_canned_buf, then fails the connection. */
+static int mock_net_read_canned_then_error(void *context, byte* buf,
+    int buf_len, int timeout_ms)
+{
+    int n = g_canned_len - g_canned_pos;
+    (void)context; (void)timeout_ms;
+    if (n <= 0) {
+        return MQTT_CODE_ERROR_NETWORK;
+    }
+    if (n > buf_len) {
+        n = buf_len;
+    }
+    XMEMCPY(buf, g_canned_buf + g_canned_pos, n);
+    g_canned_pos += n;
+    return n;
+}
+
+/* A transport failure after part of a packet arrived ends the receive, so
+ * the partial packet - which can carry v5 AUTH authentication data - must
+ * be scrubbed from rx_buf before the read is released, as it already is for
+ * protocol errors. */
+TEST(wait_message_network_error_after_partial_read_scrubs_rx_buf)
+{
+    int rc;
+    int i;
+    /* v3.1.1 QoS 0 PUBLISH declaring Remaining Length 20; only the first 10
+     * bytes arrive before the connection fails. */
+    static const byte partial[] = {
+        0x30, 0x14, 0x00, 0x01, 't', 'S', 'E', 'C', 'R', 'E'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_net.read = mock_net_read_canned_then_error;
+    XMEMCPY(g_canned_buf, partial, sizeof(partial));
+    g_canned_len = (int)sizeof(partial);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(0, test_client.read.isActive);
+    for (i = 0; i < TEST_RX_BUF_SIZE; i++) {
+        ASSERT_EQ(0, test_rx_buf[i]);
+    }
+}
 
 TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
 {

@@ -1612,6 +1612,20 @@ static BrokerOrphanSession* wmqb_restore_find_orphan(MqttBroker* broker,
 }
 #endif /* WOLFMQTT_STATIC_MEMORY */
 
+/* Account for a record that failed to restore. A malformed or unsupported
+ * record is skipped; running out of memory is not a property of the record,
+ * so it stops the iteration and fails the restore. Returns the iterator
+ * callback's stop flag. */
+static int wmqb_restore_record_failed(struct wmqb_restore_ctx* c, int rc)
+{
+    c->skipped++;
+    if (rc == MQTT_CODE_ERROR_MEMORY) {
+        c->fatal_rc = rc;
+        return 1;
+    }
+    return 0;
+}
+
 #ifdef WOLFMQTT_BROKER_RETAINED
 /* NS_RETAINED body prefix: qos(1) _reserved(1) store_time(8) expiry(4)
  * topic_len(2). */
@@ -1774,20 +1788,6 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         broker->retained_count++;
     }
 #endif
-    return 0;
-}
-
-/* Account for a record that failed to restore. A malformed or unsupported
- * record is skipped; running out of memory is not a property of the record,
- * so it stops the iteration and fails the restore. Returns the iterator
- * callback's stop flag. */
-static int wmqb_restore_record_failed(struct wmqb_restore_ctx* c, int rc)
-{
-    c->skipped++;
-    if (rc == MQTT_CODE_ERROR_MEMORY) {
-        c->fatal_rc = rc;
-        return 1;
-    }
     return 0;
 }
 
@@ -2166,6 +2166,16 @@ static int wmqb_decode_and_insert_session(MqttBroker* broker,
                 (word64)now - orphan_since >= (word64)session_expiry) {
             return MQTT_CODE_ERROR_NOT_FOUND;
         }
+    }
+#else
+    /* An empty ClientId or a store holding more Sessions than the cap (the
+     * cap is enforced on orphaning, not on every write) are records to skip,
+     * not failures; only a NULL after these checks means memory ran out. */
+    if (cid_len == 0) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    if (broker->orphan_session_count >= BROKER_MAX_PERSIST_SESSIONS) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 #endif
     if (wmqb_restore_create_orphan(broker, &p[16], cid_len, proto_level,

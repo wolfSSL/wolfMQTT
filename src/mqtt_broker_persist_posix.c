@@ -615,12 +615,25 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         if (kn < 0) {
             continue;
         }
+        /* Classify the entry by type and owner before opening it, so
+         * symlinks, sockets, FIFOs and foreign files are skipped however the
+         * platform would fail to open them. */
+        if (fstatat(dirfd(d), ent->d_name, &st, AT_SYMLINK_NOFOLLOW) < 0) {
+            if (errno == ENOENT) {
+                continue; /* removed since readdir */
+            }
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
+        }
+        if (!S_ISREG(st.st_mode) || st.st_uid != geteuid()) {
+            continue;
+        }
         fd = openat(dirfd(d), ent->d_name,
             O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0) {
-            /* A record removed since readdir, or a symlink refused by
-             * O_NOFOLLOW, is not a record to load. Anything else is an I/O
-             * failure that must not be reported as a complete pass. */
+            /* Removed or swapped for a symlink since fstatat; anything else
+             * on an owned record is an I/O failure that must not be
+             * reported as a complete pass. */
             if (errno == ENOENT || errno == ELOOP) {
                 continue;
             }

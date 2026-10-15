@@ -47,7 +47,9 @@
     #endif
     #include <errno.h>
     #include <fcntl.h>
+    #include <sys/socket.h>
     #include <sys/stat.h>
+    #include <sys/un.h>
     #include <sys/wait.h>
     #include <unistd.h>
 #endif
@@ -755,6 +757,96 @@ TEST(connect_will_payload_alloc_failure_refused)
 {
     connect_will_alloc_failure_refused(5);
 }
+
+/* CleanSession 0 with no stored Session also creates a new Session. A
+ * refused CONNECT must not orphan it either, since nothing was resumed. */
+TEST(connect_v311_resume_will_alloc_failure_leaves_no_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* CONNECT with Will: flags 0x04 (will_flag, CleanSession 0), ClientId
+     * "P", Will Topic "lwt", Will Payload "bye". */
+    static const byte connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x04, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    int orphans;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    /* Client object, two I/O buffers and ClientId precede the Will Topic. */
+    broker_test_fail_alloc_after(4);
+    run_broker_one_connect(&broker);
+    broker_test_disable_alloc_failure();
+    orphans = broker.orphan_session_count;
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+    ASSERT_EQ(0, orphans);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifdef WOLFMQTT_V5
+/* A refused CONNECT must not leave behind a Session it created. With Clean
+ * Start and a non-zero Session Expiry Interval, the Session is new and empty;
+ * orphaning it after the refusal would hold (and at capacity evict for) a
+ * Session nobody can resume [MQTT-3.2.2-4]. */
+TEST(connect_v5_will_alloc_failure_leaves_no_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    /* v5 CONNECT: flags 0x06 (will_flag | clean_start), keep alive 60,
+     * properties: Session Expiry Interval (0x11) = 60, ClientId "P", Will
+     * Properties length 0, Will Topic "lwt", Will Payload "bye".
+     * Remaining Length 30. */
+    static const byte connect[] = {
+        0x10, 0x1E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x06, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    int orphans;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    /* Client object, two I/O buffers and ClientId precede the Will Topic. */
+    broker_test_fail_alloc_after(4);
+    run_broker_one_connect(&broker);
+    broker_test_disable_alloc_failure();
+    orphans = broker.orphan_session_count;
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_SERVER_UNAVAILABLE, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+    ASSERT_EQ(0, orphans);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
 #endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_BROKER_WILL */
 
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
@@ -7501,6 +7593,73 @@ TEST(broker_shared_subscription_not_supported_v5)
 }
 #endif /* WOLFMQTT_V5 */
 
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_DYN_PROP)
+/* An absent Shared Subscription Available property means "supported" (MQTT
+ * 5.0 section 3.2.2.3.15). If the property cannot be allocated, the CONNECT
+ * is refused rather than accepted with a CONNACK that advertises a feature
+ * the broker does not have. */
+TEST(connect_v5_refused_when_shared_sub_property_unavailable)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttProp* hold = NULL;
+    int free_slots = 0;
+    int held = 0;
+    int i;
+    int last_byte_code;
+    /* v5 CONNECT, clean=1, props_len=0, client_id="A". Remaining Length 14. */
+    static const byte connect[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Hold a property-stack reference of our own: no client exists yet,
+     * and in multithread builds the stack lock is only initialized while
+     * one does. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttProps_Init());
+
+    /* Count the free property slots, then hold all but two: enough for
+     * Retain Available and Wildcard Subscription Available, not for Shared
+     * Subscription Available. */
+    while (MqttProps_Add(&hold) != NULL) {
+        free_slots++;
+    }
+    (void)MqttProps_Free(hold);
+    hold = NULL;
+    for (i = 0; i < free_slots - 2; i++) {
+        if (MqttProps_Add(&hold) != NULL) {
+            held++;
+        }
+    }
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+    (void)MqttProps_Free(hold);
+    (void)MqttProps_ShutDown();
+
+    ASSERT_TRUE(free_slots > 2);
+    ASSERT_EQ(free_slots - 2, held);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    last_byte_code = g_out_buf[3];
+    ASSERT_EQ(MQTT_REASON_SERVER_UNAVAILABLE, last_byte_code);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_DYN_PROP */
+
 #ifndef WOLFMQTT_BROKER_WILDCARDS
 /* [MQTT-3.8.3-2] (v3.1.1 section 3.8.3): when the server does not support
  * wildcard subscriptions it MUST reject any Subscription request whose
@@ -10543,6 +10702,8 @@ TEST(persist_iter_reports_unreadable_record)
     int init_rc = MQTT_CODE_ERROR_SYSTEM;
     int clean_iter_rc = MQTT_CODE_ERROR_SYSTEM;
     int iter_rc = MQTT_CODE_SUCCESS;
+    int bad_unreadable = 0;
+    int fd;
     int paths_ok = 0;
 
     XMEMSET(&hooks, 0, sizeof(hooks));
@@ -10570,11 +10731,20 @@ TEST(persist_iter_reports_unreadable_record)
         /* Readable record plus a non-record file: iteration succeeds. */
         clean_iter_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
             &capture);
-        /* Add a record the backend owns but cannot open. */
+        /* Add a record the backend owns but cannot open. Mode 0 does not
+         * stop a privileged process (root in container CI), so only check
+         * the error path when the open really fails. */
         if (persist_test_write_file(bad_path, value,
                 (word32)sizeof(value)) == 0 && chmod(bad_path, 0) == 0) {
-            iter_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
-                &capture);
+            fd = open(bad_path, O_RDONLY);
+            if (fd >= 0) {
+                (void)close(fd);
+            }
+            else {
+                bad_unreadable = 1;
+                iter_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
+                    &capture);
+            }
         }
     }
 
@@ -10587,7 +10757,82 @@ TEST(persist_iter_reports_unreadable_record)
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
     ASSERT_EQ(MQTT_CODE_SUCCESS, clean_iter_rc);
-    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, iter_rc);
+    if (bad_unreadable) {
+        ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, iter_rc);
+    }
+}
+
+/* Entries named like records that are not regular files the broker owns - a
+ * UNIX socket, a symlink - are skipped by type before any open, so their
+ * platform-specific open errors (ENXIO, ELOOP/EMLINK) cannot fail restore. */
+TEST(persist_iter_skips_socket_and_symlink_entries)
+{
+    static const byte value[] = "value";
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    char ns_path[640];
+    char good_path[680];
+    char sock_path[680];
+    char link_path[680];
+    MqttBrokerPersistHooks hooks;
+    PersistIterCapture capture;
+    struct sockaddr_un sun;
+    char* root;
+    int sock = -1;
+    int init_rc = MQTT_CODE_ERROR_SYSTEM;
+    int iter_rc = MQTT_CODE_ERROR_SYSTEM;
+    int sock_ok = 0;
+    int paths_ok = 0;
+
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&capture, 0, sizeof(capture));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    if (snprintf(ns_path, sizeof(ns_path), "%s/7", root) > 0 &&
+            snprintf(good_path, sizeof(good_path), "%s/1111.bin",
+                ns_path) > 0 &&
+            snprintf(sock_path, sizeof(sock_path), "%s/3333.bin",
+                ns_path) > 0 &&
+            snprintf(link_path, sizeof(link_path), "%s/4444.bin",
+                ns_path) > 0) {
+        paths_ok = 1;
+    }
+    ASSERT_TRUE(paths_ok);
+    ASSERT_EQ(0, mkdir(ns_path, 0700));
+    ASSERT_EQ(0, persist_test_write_file(good_path, value,
+        (word32)sizeof(value)));
+    ASSERT_EQ(0, symlink("1111.bin", link_path));
+
+    XMEMSET(&sun, 0, sizeof(sun));
+    sun.sun_family = AF_UNIX;
+    if (strlen(sock_path) < sizeof(sun.sun_path)) {
+        XMEMCPY(sun.sun_path, sock_path, strlen(sock_path) + 1);
+        sock = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (sock >= 0 && bind(sock, (struct sockaddr*)&sun,
+                (socklen_t)sizeof(sun)) == 0) {
+            sock_ok = 1;
+        }
+    }
+
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        iter_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
+            &capture);
+    }
+
+    MqttBrokerNet_PersistPosix_Free(&hooks);
+    if (sock >= 0) {
+        (void)close(sock);
+    }
+    (void)unlink(sock_path);
+    (void)unlink(link_path);
+    (void)unlink(good_path);
+    (void)rmdir(ns_path);
+    (void)rmdir(root);
+
+    ASSERT_TRUE(sock_ok);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, iter_rc);
+    ASSERT_EQ(1, capture.calls);
 }
 
 TEST(persist_put_rejects_existing_temp_symlink)
@@ -11100,6 +11345,44 @@ TEST(persist_restore_alloc_failure_is_fatal)
     ASSERT_TRUE(ok_has_orphan);
 }
 
+/* More persisted Sessions than BROKER_MAX_PERSIST_SESSIONS is a normal state
+ * (records are written per CONNECT; the cap is enforced on orphaning), so
+ * restore skips the excess rather than failing startup. Only a genuine
+ * allocation failure is fatal. */
+TEST(persist_restore_skips_sessions_over_cap)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    char cid[16];
+    int i;
+    int rc;
+    int restored;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&broker));
+    for (i = 0; i < BROKER_MAX_PERSIST_SESSIONS + 1; i++) {
+        XSNPRINTF(cid, sizeof(cid), "c%d", i);
+        ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_PutOrphanSession(&broker,
+            cid, MQTT_CONNECT_PROTOCOL_LEVEL_4, 3600, 0));
+    }
+    MqttBroker_Free(&broker);
+
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2, &hooks));
+    rc = BrokerPersist_Restore(&broker2);
+    restored = broker2.orphan_session_count;
+    MqttBroker_Free(&broker2);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(BROKER_MAX_PERSIST_SESSIONS, restored);
+}
+
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
 /* An encrypted record is bound to the namespace and storage key it was
  * written under (AES-GCM additional data). A valid ciphertext moved to a
@@ -11335,6 +11618,18 @@ static void persist_pump(PersistFixture* f, int steps)
     }
 }
 
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+/* Encrypt-at-rest needs a key before the first record is written. A fixed
+ * key is enough here: the fixture checks record lifetimes, not secrecy. */
+static int persist_fixture_derive_key(void* ctx, byte* out_key,
+    word32 key_len)
+{
+    (void)ctx;
+    XMEMSET(out_key, 0x22, key_len);
+    return MQTT_CODE_SUCCESS;
+}
+#endif
+
 /* Bring a broker up over whatever the backend currently holds. */
 static int persist_up(PersistFixture* f)
 {
@@ -11346,6 +11641,9 @@ static int persist_up(PersistFixture* f)
     f->hooks.kv_del  = kv_del;
     f->hooks.kv_iter = kv_iter;
     f->hooks.sync    = kv_sync;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    f->hooks.derive_key = persist_fixture_derive_key;
+#endif
     reset_mock_clients(1);
     if (MqttBroker_Init(&f->broker, &f->net) != MQTT_CODE_SUCCESS ||
             MqttBroker_SetPersistHooks(&f->broker, &f->hooks) !=
@@ -11590,6 +11888,10 @@ int main(int argc, char** argv)
 #if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(connect_will_topic_alloc_failure_refused);
     RUN_TEST(connect_will_payload_alloc_failure_refused);
+    RUN_TEST(connect_v311_resume_will_alloc_failure_leaves_no_session);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(connect_v5_will_alloc_failure_leaves_no_session);
+#endif
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(connect_v5_oversize_will_payload_emits_connack);
@@ -11772,6 +12074,9 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(connack_session_present_v5_set_on_resumed_session);
     RUN_TEST(broker_shared_subscription_not_supported_v5);
+#ifndef WOLFMQTT_DYN_PROP
+    RUN_TEST(connect_v5_refused_when_shared_sub_property_unavailable);
+#endif
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_suback_reserved_v311_code_rejected);
@@ -11893,6 +12198,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_del_outqueue_reports_failures);
     RUN_TEST(persist_schema_wipe_failure_keeps_old_meta);
     RUN_TEST(persist_restore_alloc_failure_is_fatal);
+    RUN_TEST(persist_restore_skips_sessions_over_cap);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     RUN_TEST(persist_encrypted_record_bound_to_storage_key);
     RUN_TEST(persist_header_only_aad_store_is_wiped);
@@ -11922,6 +12228,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_put_rejects_existing_temp_symlink);
     RUN_TEST(persist_put_del_report_namespace_fsync_failure);
     RUN_TEST(persist_iter_reports_unreadable_record);
+    RUN_TEST(persist_iter_skips_socket_and_symlink_entries);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     RUN_TEST(persist_failed_key_derivation_scrubs_cache);
     RUN_TEST(persist_bad_tag_scrubs_plaintext_before_free);

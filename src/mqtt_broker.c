@@ -7142,6 +7142,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             WBLOG_ERR(broker, "broker: LWT alloc failed sock=%d",
                 (int)bc->sock);
             BrokerClient_ClearWill(bc);
+            /* A Session that was not resumed was created for this connection
+             * only; end it with the refusal instead of orphaning an empty
+             * Session that could evict a valid one at capacity. A resumed
+             * Session keeps its expiry and survives. */
+            if (!session_present) {
+                bc->session_expiry_sec = 0;
+            }
         #ifdef WOLFMQTT_V5
             if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
                 ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
@@ -7215,6 +7222,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
         ack.return_code == MQTT_CONNECT_ACK_CODE_ACCEPTED) {
         MqttProp* prop;
+        int adv_failed = 0;
 
         /* [MQTT-3.1.3-6] Echo any server-assigned ClientId to v5 clients.
          * Keyed off auto_assigned (set in the auto-id branch above) so this
@@ -7240,7 +7248,10 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             }
         }
 
-        /* Advertise feature availability */
+        /* Advertise feature availability. An absent availability property
+         * means the feature is supported (MQTT 5.0 sections 3.2.2.3.11,
+         * 3.2.2.3.12 and 3.2.2.3.15), so failing to add one that reports an
+         * unsupported feature must refuse the connection. */
         prop = MqttProps_Add(&ack.props);
         if (prop != NULL) {
             prop->type = MQTT_PROP_RETAIN_AVAIL;
@@ -7250,6 +7261,11 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             prop->data_byte = 0;
     #endif
         }
+    #ifndef WOLFMQTT_BROKER_RETAINED
+        else {
+            adv_failed = 1;
+        }
+    #endif
         prop = MqttProps_Add(&ack.props);
         if (prop != NULL) {
             prop->type = MQTT_PROP_WILDCARD_SUB_AVAIL;
@@ -7259,12 +7275,30 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             prop->data_byte = 0;
     #endif
         }
-        /* Shared Subscriptions are not implemented, and an absent property
-         * means they are (MQTT 5.0 section 3.2.2.3.15). */
+    #ifndef WOLFMQTT_BROKER_WILDCARDS
+        else {
+            adv_failed = 1;
+        }
+    #endif
+        /* Shared Subscriptions are not implemented. */
         prop = MqttProps_Add(&ack.props);
         if (prop != NULL) {
             prop->type = MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL;
             prop->data_byte = 0;
+        }
+        else {
+            adv_failed = 1;
+        }
+        if (adv_failed) {
+            WBLOG_ERR(broker, "broker: CONNACK property alloc failed sock=%d",
+                (int)bc->sock);
+            /* A Session not resumed by this refused connection ends with
+             * it, as for the Assigned Client Identifier refusal above. */
+            if (!session_present) {
+                bc->session_expiry_sec = 0;
+            }
+            ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+            goto send_connack;
         }
         /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
          * of the property signals server supports Maximum QoS 2. Emitting
@@ -8261,7 +8295,13 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
             else
         #endif
             {
-                /* v3.1.1 has no failure acknowledgement; close instead. */
+                /* v3.1.1 has no failure acknowledgement; close instead.
+                 * Known limitation: a QoS 2 Packet Identifier recorded
+                 * above stays recorded, so on a resumed Session the
+                 * retransmission is treated as a duplicate and the
+                 * subscribers that missed this fan-out do not receive it.
+                 * Removing it would instead re-deliver to subscribers
+                 * already served, breaking exactly-once for them. */
                 rc = MQTT_CODE_ERROR_MEMORY;
                 goto publish_cleanup;
             }
