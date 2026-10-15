@@ -417,8 +417,9 @@ static int wmqb_kv_put_commit(MqttBroker* broker, byte ns,
 #else
     rc = h->kv_put(h->ctx, ns, key, key_len, blob, blob_len);
 #endif
+    /* The write is not committed until the backend has made it durable. */
     if (rc == 0 && h->sync != NULL) {
-        (void)h->sync(h->ctx);
+        rc = h->sync(h->ctx);
     }
     return rc;
 }
@@ -436,8 +437,9 @@ static int wmqb_kv_del_commit(MqttBroker* broker, byte ns,
         return 0;
     }
     rc = h->kv_del(h->ctx, ns, key, key_len);
+    /* The delete is not committed until the backend has made it durable. */
     if (rc == 0 && h->sync != NULL) {
-        (void)h->sync(h->ctx);
+        rc = h->sync(h->ctx);
     }
     return rc;
 }

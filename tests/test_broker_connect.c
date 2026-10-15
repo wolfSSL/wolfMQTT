@@ -10728,10 +10728,12 @@ typedef struct KvRec {
 } KvRec;
 
 static KvRec g_kv[KV_MAX_RECS];
+static int g_kv_sync_rc; /* result kv_sync reports */
 
 static void kv_reset(void)
 {
     XMEMSET(g_kv, 0, sizeof(g_kv));
+    g_kv_sync_rc = 0;
 }
 
 static KvRec* kv_find(byte ns, const byte* key, word16 key_len)
@@ -10832,7 +10834,7 @@ static int kv_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
 static int kv_sync(void* ctx)
 {
     (void)ctx;
-    return 0;
+    return g_kv_sync_rc;
 }
 
 #ifndef WOLFMQTT_STATIC_MEMORY
@@ -10863,6 +10865,38 @@ static int takeover_setup_persist(MqttBroker* broker,
     hooks->derive_key = persist_order_derive_key;
 #endif
     return MqttBroker_SetPersistHooks(broker, hooks);
+}
+
+/* A write or delete is only committed once the backend's sync hook has made
+ * it durable. A failing sync must reach the caller instead of being reported
+ * as a successful commit. */
+TEST(persist_commit_reports_sync_failure)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    int put_fail_rc;
+    int del_fail_rc;
+    int put_ok_rc;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+
+    g_kv_sync_rc = MQTT_CODE_ERROR_SYSTEM;
+    put_fail_rc = BrokerPersist_PutOrphanSession(&broker, "C",
+        MQTT_CONNECT_PROTOCOL_LEVEL_4, 60, 0);
+    del_fail_rc = BrokerPersist_DelSession(&broker, "C");
+    g_kv_sync_rc = 0;
+    put_ok_rc = BrokerPersist_PutOrphanSession(&broker, "C",
+        MQTT_CONNECT_PROTOCOL_LEVEL_4, 60, 0);
+
+    MqttBroker_Free(&broker);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, put_fail_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, del_fail_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, put_ok_rc);
 }
 
 TEST(persist_takeover_resumes_outbound_qos1_queue)
@@ -11519,6 +11553,7 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     #ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(persist_commit_reports_sync_failure);
     RUN_TEST(persist_takeover_resumes_outbound_qos1_queue);
         #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(persist_takeover_resumes_outbound_qos2_pubrel);
