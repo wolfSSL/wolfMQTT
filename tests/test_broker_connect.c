@@ -5440,6 +5440,104 @@ static BrokerOrphanSession* find_orphan_session(MqttBroker* broker,
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
+/* A PUBACK belongs only to a QoS 1 exchange (MQTT 3.1.1 section 4.3.2). A
+ * subscriber that answers a QoS 2 delivery with PUBACK must not complete it:
+ * the entry keeps its packet identifier and inflight slot until the real
+ * PUBREC/PUBCOMP exchange (section 4.3.3) finishes. */
+TEST(outbound_qos2_puback_does_not_complete_delivery)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    BrokerOutPub* e;
+    word16 pid;
+    int inflight;
+    int i;
+    byte ack[4];
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id 1, filter "x", QoS 2. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x02
+    };
+    /* PUBLISH QoS 2, topic "x", packet_id 7, payload "p". */
+    static const byte publish_x[] = {
+        0x34, 0x06,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    g_clients_active = 2;
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    e = sub_bc->out_q_head;
+    ASSERT_NOT_NULL(e);
+    ASSERT_EQ(MQTT_QOS_2, e->qos);
+    ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT, e->state);
+    pid = e->packet_id;
+    inflight = sub_bc->out_q_inflight;
+
+    /* PUBACK: type 4, remain 2, packet_id of the QoS 2 delivery. */
+    ack[0] = 0x40;
+    ack[1] = 0x02;
+    ack[2] = (byte)(pid >> 8);
+    ack[3] = (byte)(pid & 0xFF);
+    mock_client_input_append(1, ack, sizeof(ack));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(sub_bc->out_q_head == e);
+    ASSERT_EQ(pid, e->packet_id);
+    ASSERT_EQ(BROKER_OUTQ_PUBLISH_SENT, e->state);
+    ASSERT_EQ(inflight, sub_bc->out_q_inflight);
+
+    /* The real PUBREC still drives the exchange forward with a PUBREL. */
+    ack[0] = 0x50;
+    mock_client_input_append(1, ack, sizeof(ack));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(BROKER_OUTQ_PUBREL_SENT, e->state);
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REL));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
+#ifndef WOLFMQTT_STATIC_MEMORY
 /* MQTT 3.1.1 section 2.2.3: Remaining Length counts every byte that follows
  * in the packet. When a queued delivery does not fit the subscriber's
  * transmit buffer, the encoder copies only part of the payload while the
@@ -10594,6 +10692,7 @@ int main(int argc, char** argv)
     RUN_TEST(online_qos1_at_cap_keeps_subscriber);
     RUN_TEST(outbound_packet_ids_are_scoped_per_session);
     RUN_TEST(outbound_publish_exceeding_tx_buf_not_sent_truncated);
+    RUN_TEST(outbound_qos2_puback_does_not_complete_delivery);
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(outbound_queue_short_write_resumes_on_next_step);
 #ifdef WOLFMQTT_BROKER_RETAINED

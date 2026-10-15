@@ -2356,6 +2356,14 @@ static void BrokerClient_OnPubAck(BrokerClient* bc, word16 packet_id)
             (int)bc->sock, (unsigned)packet_id);
         return;
     }
+    /* A PUBACK completes only a QoS 1 exchange. Leave a QoS 2 entry awaiting
+     * its PUBREC so the identifier is not released early [MQTT-2.3.1-3]. */
+    if (e->qos != MQTT_QOS_1) {
+        WBLOG_DBG(bc->broker,
+            "broker: PUBACK for QoS %d PUBLISH sock=%d packet_id=%u",
+            (int)e->qos, (int)bc->sock, (unsigned)packet_id);
+        return;
+    }
     BrokerClient_UnlinkOutPub(bc, prev, e);
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Defense in depth: in normal flow the orphan-reclaim path already
