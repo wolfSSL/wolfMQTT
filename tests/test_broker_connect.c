@@ -5502,6 +5502,177 @@ static BrokerOrphanSession* find_orphan_session(MqttBroker* broker,
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
+/* When the broker cannot queue a QoS 1/2 delivery for a matching subscriber,
+ * it must not acknowledge the PUBLISH as successful (MQTT 3.1.1 section 4.3.2:
+ * PUBACK transfers ownership of the message). v3.1.1 has no failure ack, so
+ * the publisher is disconnected without a PUBACK. */
+TEST(publish_fanout_alloc_failure_v311_not_acked)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    size_t pub_mark;
+    size_t sub_mark;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id 1, filter "x", QoS 1. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x01
+    };
+    /* PUBLISH QoS 1, topic "x", packet_id 7, payload "p". */
+    static const byte publish_x[] = {
+        0x32, 0x06,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    g_clients_active = 2;
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    pub_mark = g_clients[0].out_len;
+    sub_mark = g_clients[1].out_len;
+
+    /* The topic copy succeeds; the subscriber's queued copy does not. */
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    broker_test_fail_alloc_after(1);
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    broker_test_disable_alloc_failure();
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_EQ((int)sub_mark, (int)g_clients[1].out_len);
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf + pub_mark,
+        g_clients[0].out_len - pub_mark, MQTT_PACKET_TYPE_PUBLISH_ACK));
+    ASSERT_TRUE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifdef WOLFMQTT_V5
+/* A v5 publisher is told with a failure Reason Code instead (MQTT 5.0
+ * section 3.5.2.1). A PUBREC with a Reason Code of 0x80 or greater ends the
+ * QoS 2 exchange (section 4.3.3), so the Packet Identifier must not stay
+ * marked as awaiting PUBREL: a later PUBLISH reusing it is a new message. */
+TEST(publish_fanout_alloc_failure_v5_qos2_pubrec_failure)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    size_t pub_mark;
+    size_t sub_mark;
+    int i;
+    /* v5 CONNECT, clean=1, props_len=0, ClientId "P". Remaining Length 14. */
+    static const byte connect_pub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id 1, filter "x", QoS 2. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x02
+    };
+    /* v5 PUBLISH QoS 2, topic "x", packet_id 7, props_len 0, payload "p".
+     * Remaining Length 7. */
+    static const byte publish_x[] = {
+        0x34, 0x07,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        0x00,
+        'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    g_clients_active = 2;
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    pub_mark = g_clients[0].out_len;
+    sub_mark = g_clients[1].out_len;
+
+    /* The v5 PUBLISH makes one more allocation than v3.1.1 before the
+     * topic copy; fail the subscriber's queued copy after both. */
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    broker_test_fail_alloc_after(2);
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    broker_test_disable_alloc_failure();
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_EQ((int)sub_mark, (int)g_clients[1].out_len);
+    ASSERT_FALSE(g_clients[0].closed);
+    /* PUBREC: type 5, Remaining Length >= 3, packet_id 7, Reason 0x80. */
+    ASSERT_TRUE(g_clients[0].out_len >= pub_mark + 5);
+    ASSERT_EQ(0x50, g_clients[0].out_buf[pub_mark]);
+    ASSERT_EQ(0x07, g_clients[0].out_buf[pub_mark + 3]);
+    ASSERT_EQ(MQTT_REASON_UNSPECIFIED_ERR, g_clients[0].out_buf[pub_mark + 4]);
+
+    /* Reusing packet_id 7 delivers a new message rather than being treated
+     * as a retransmission of the refused one. */
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf + sub_mark,
+        g_clients[1].out_len - sub_mark, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
+#ifndef WOLFMQTT_STATIC_MEMORY
 /* A PUBACK belongs only to a QoS 1 exchange (MQTT 3.1.1 section 4.3.2). A
  * subscriber that answers a QoS 2 delivery with PUBACK must not complete it:
  * the entry keeps its packet identifier and inflight slot until the real
@@ -10876,6 +11047,10 @@ int main(int argc, char** argv)
     RUN_TEST(outbound_packet_ids_are_scoped_per_session);
     RUN_TEST(outbound_publish_exceeding_tx_buf_not_sent_truncated);
     RUN_TEST(outbound_qos2_puback_does_not_complete_delivery);
+    RUN_TEST(publish_fanout_alloc_failure_v311_not_acked);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(publish_fanout_alloc_failure_v5_qos2_pubrec_failure);
+#endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(outbound_queue_short_write_resumes_on_next_step);
 #ifdef WOLFMQTT_BROKER_RETAINED

@@ -7679,6 +7679,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     byte* payload = NULL;
     char* topic = NULL;
     MqttQoS eff_qos;
+    int fanout_failed = 0;
 #if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
 #endif
@@ -8090,6 +8091,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 "broker: fan-out list alloc failed after %d destination(s), "
                 "remaining subscribers not served sock=%d topic=%s",
                 targets.count, (int)bc->sock, BrokerLog_Sanitize(topic));
+            fanout_failed = 1;
         }
 
         clients_gen_snapshot = broker->clients_gen;
@@ -8159,6 +8161,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     WBLOG_ERR(broker,
                         "broker: PUBLISH fwd alloc failed sock=%d "
                         "-> sock=%d", (int)bc->sock, (int)wc->sock);
+                    /* QoS 0 delivery may be dropped; QoS 1/2 may not. */
+                    if (eff_qos >= MQTT_QOS_1) {
+                        fanout_failed = 1;
+                    }
                 }
                 else {
                     e->qos = eff_qos;
@@ -8208,6 +8214,28 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         resp.reason_code = MQTT_REASON_SUCCESS;
         resp.props = NULL;
 #endif
+        /* A subscriber's QoS 1/2 copy could not be queued, so the PUBLISH
+         * must not be acknowledged as accepted. */
+        if (fanout_failed) {
+        #ifdef WOLFMQTT_V5
+            if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                resp.reason_code = MQTT_REASON_UNSPECIFIED_ERR;
+            #if WOLFMQTT_MAX_QOS >= 2
+                /* A failure PUBREC ends the QoS 2 exchange (MQTT 5.0
+                 * section 4.3.3), so no PUBREL will follow. */
+                if (pub.qos == MQTT_QOS_2) {
+                    BrokerInboundQos2_Remove(bc, pub.packet_id);
+                }
+            #endif
+            }
+            else
+        #endif
+            {
+                /* v3.1.1 has no failure acknowledgement; close instead. */
+                rc = MQTT_CODE_ERROR_MEMORY;
+                goto publish_cleanup;
+            }
+        }
         rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
                 (pub.qos == MQTT_QOS_1) ? MQTT_PACKET_TYPE_PUBLISH_ACK :
                 MQTT_PACKET_TYPE_PUBLISH_REC, &resp);
