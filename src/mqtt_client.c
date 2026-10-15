@@ -5577,10 +5577,10 @@ int MqttClient_NetConnect(MqttClient *client, const char* host,
 
 int MqttClient_NetDisconnect(MqttClient *client)
 {
+    int rc;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp *tmpResp;
     MqttPendResp *nextResp;
-    int rc;
 #endif
 
     if (client == NULL) {
@@ -5630,7 +5630,22 @@ int MqttClient_NetDisconnect(MqttClient *client)
      * session state across one, so nothing stays in flight [MQTT-2.3.1-3]. */
     MqttClient_SendIdsReset(client);
 
-    return MqttSocket_Disconnect(client);
+    rc = MqttSocket_Disconnect(client);
+
+    /* An operation abandoned with the connection, such as a partly written
+     * nonblocking CONNECT, can leave credentials in tx_buf or peer data in
+     * rx_buf. Nothing on this connection can resume, so wipe both. */
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0)
+#endif
+    {
+        CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockClient);
+    #endif
+    }
+    return rc;
 }
 
 int MqttClient_GetProtocolVersion(MqttClient *client)

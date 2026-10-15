@@ -1756,6 +1756,64 @@ TEST(wait_message_network_error_after_partial_read_scrubs_rx_buf)
     }
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Accepts the first few bytes of a packet, then reports would-block. */
+static int g_write_partial_calls;
+static int mock_net_write_partial_then_block(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    (void)context; (void)buf; (void)timeout_ms;
+    if (g_write_partial_calls++ == 0) {
+        return (buf_len < 5) ? buf_len : 5;
+    }
+    return MQTT_CODE_CONTINUE;
+}
+
+/* Abandoning a connection with MqttClient_NetDisconnect while a nonblocking
+ * CONNECT is only partly written must not leave the serialized credentials
+ * in tx_buf, nor received peer data in rx_buf, once the transport is gone. */
+TEST(net_disconnect_scrubs_partial_connect_credentials)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_net.write = mock_net_write_partial_then_block;
+    test_net.read = mock_net_read_wouldblock;
+    test_net.disconnect = mock_net_disconnect;
+    g_write_partial_calls = 0;
+    XMEMSET(test_rx_buf, 0xAB, sizeof(test_rx_buf));
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "c";
+    connect.username = "user";
+    connect.password = "hunter2";
+    connect.password_len = 7;
+
+    rc = MqttClient_Connect(&test_client, &connect);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    rc = MqttClient_NetDisconnect(&test_client);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    for (i = 0; i < TEST_TX_BUF_SIZE; i++) {
+        ASSERT_EQ(0, test_tx_buf[i]);
+    }
+    for (i = 0; i < TEST_RX_BUF_SIZE; i++) {
+        ASSERT_EQ(0, test_rx_buf[i]);
+    }
+    /* Release the abandoned write as an application would. */
+    (void)MqttClient_CancelMessage(&test_client, (MqttObject*)&connect);
+}
+#endif /* WOLFMQTT_NONBLOCK */
+
 /* These two exercise MqttClient_CancelMessage, which is only a public API when
  * WOLFMQTT_MULTITHREAD or WOLFMQTT_NONBLOCK is defined (otherwise it is a
  * file-local static in mqtt_client.c). */
@@ -8059,6 +8117,7 @@ void run_mqtt_client_tests(void)
 #endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(cancel_message_active_read_scrubs_rx_buf);
+    RUN_TEST(net_disconnect_scrubs_partial_connect_credentials);
 #endif
     RUN_TEST(publish_qos1_v5_write_failure_restores_recv_quota);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
