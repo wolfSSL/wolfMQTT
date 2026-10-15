@@ -745,6 +745,11 @@ wait_again:
 
             /* Clear shared union for next call */
             MqttSNClient_PacketReset(packet_type, &client->msgSN);
+            /* A reused caller object can hold stale union bytes, such as a
+             * gwAddr pointer, from a previously decoded packet type. */
+            if (wait_type == SN_MSG_TYPE_ANY && packet_obj != &client->msgSN) {
+                MqttSNClient_PacketReset(packet_type, packet_obj);
+            }
 
         #ifdef WOLFMQTT_DEBUG_CLIENT
             PRINTF("Read Packet: Len %d, Type %d, ID %d",
