@@ -2844,12 +2844,16 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
 #ifdef WOLFMQTT_V5
         publish_resp->props = NULL;
         if (publish_resp->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            byte* packet_end;
+
+            /* remain_len is attacker-controlled; the whole packet must be
+             * present before any field is bounded by its end */
+            if (rx_buf_len < header_len + remain_len) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
+            packet_end = &rx_buf[header_len + remain_len];
+
             if (remain_len > MQTT_DATA_LEN_SIZE) {
-                /* remain_len is attacker-controlled; confirm the reason-code
-                 * byte was received before reading past the buffer */
-                if (rx_buf_len < (rx_payload - rx_buf) + 1) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-                }
                 /* Decode the Reason Code */
                 publish_resp->reason_code = *rx_payload++;
             }
@@ -2862,30 +2866,32 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
                 int props_tmp;
 
                 /* Decode Length of Properties */
-                if (rx_buf_len < (rx_payload - rx_buf)) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-                }
                 props_tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                        (word32)(rx_buf_len - (rx_payload - rx_buf)));
+                        (word32)(packet_end - rx_payload));
                 if (props_tmp < 0)
                     return props_tmp;
-
-                if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
-                    rx_payload += props_tmp;
-                    if (props_len > 0) {
-                        /* Decode the Properties */
-                        props_tmp = MqttDecode_Props((MqttPacketType)type,
-                                &publish_resp->props, rx_payload,
-                                (word32)(rx_buf_len - (rx_payload - rx_buf)),
-                                props_len);
-                        if (props_tmp < 0)
-                            return props_tmp;
-                        rx_payload += props_tmp;
-                    }
-                }
-                else {
+                rx_payload += props_tmp;
+                if (props_len > (word32)(packet_end - rx_payload)) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
                 }
+                if (props_len > 0) {
+                    /* Decode the Properties */
+                    props_tmp = MqttDecode_Props((MqttPacketType)type,
+                            &publish_resp->props, rx_payload,
+                            (word32)(packet_end - rx_payload), props_len);
+                    if (props_tmp < 0)
+                        return props_tmp;
+                    rx_payload += props_tmp;
+                }
+            }
+            /* MQTT 5.0 sections 3.4.2 to 3.7.2: no payload follows the
+             * Properties. */
+            if (rx_payload != packet_end) {
+                if (publish_resp->props != NULL) {
+                    (void)MqttProps_Free(publish_resp->props);
+                    publish_resp->props = NULL;
+                }
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         }
 #endif
@@ -4046,41 +4052,46 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
     disc->props = NULL;
     if (remain_len > 0) {
-        /* remain_len is attacker-controlled; confirm the reason-code byte
-         * was received before reading past the buffer */
-        if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+        byte* packet_end;
+
+        /* remain_len is attacker-controlled; the whole packet must be
+         * present before any field is bounded by its end */
+        if (rx_buf_len < header_len + remain_len) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
         }
+        packet_end = &rx_buf[header_len + remain_len];
+
         /* Decode variable header */
         disc->reason_code = *rx_payload++;
 
         if (remain_len > 1) {
             int props_tmp;
             /* Decode Length of Properties */
-            if (rx_buf_len < (rx_payload - rx_buf)) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-            }
             props_tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
+                    (word32)(packet_end - rx_payload));
             if (props_tmp < 0)
                 return props_tmp;
-
-            if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
-                rx_payload += props_tmp;
-                if (props_len > 0) {
-                    /* Decode the Properties */
-                    props_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT,
-                            &disc->props, rx_payload,
-                            (word32)(rx_buf_len - (rx_payload - rx_buf)),
-                            props_len);
-                    if (props_tmp < 0)
-                        return props_tmp;
-                    rx_payload += props_tmp;
-                }
-            }
-            else {
+            rx_payload += props_tmp;
+            if (props_len > (word32)(packet_end - rx_payload)) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
+            if (props_len > 0) {
+                /* Decode the Properties */
+                props_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_DISCONNECT,
+                        &disc->props, rx_payload,
+                        (word32)(packet_end - rx_payload), props_len);
+                if (props_tmp < 0)
+                    return props_tmp;
+                rx_payload += props_tmp;
+            }
+        }
+        /* MQTT 5.0 section 3.14.3: DISCONNECT has no payload. */
+        if (rx_payload != packet_end) {
+            if (disc->props != NULL) {
+                (void)MqttProps_Free(disc->props);
+                disc->props = NULL;
+            }
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
     }
     else {
@@ -4218,11 +4229,15 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
 
     auth->props = NULL;
     if (remain_len > 0) {
-        /* remain_len is attacker-controlled; confirm the reason-code byte
-         * was received before reading past the buffer */
-        if (rx_buf_len < (rx_payload - rx_buf) + 1) {
+        byte* packet_end;
+
+        /* remain_len is attacker-controlled; the whole packet must be
+         * present before any field is bounded by its end */
+        if (rx_buf_len < header_len + remain_len) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
         }
+        packet_end = &rx_buf[header_len + remain_len];
+
         /* Decode variable header */
         auth->reason_code = *rx_payload++;
         if ((auth->reason_code == MQTT_REASON_SUCCESS) ||
@@ -4230,28 +4245,29 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
             (auth->reason_code == MQTT_REASON_REAUTH))
         {
             /* Decode Length of Properties */
-            if (rx_buf_len < (rx_payload - rx_buf)) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-            }
             tmp = MqttDecode_Vbi(rx_payload, &props_len,
-                    (word32)(rx_buf_len - (rx_payload - rx_buf)));
+                    (word32)(packet_end - rx_payload));
             if (tmp < 0)
                 return tmp;
 
-            if (props_len <= (word32)(rx_buf_len - (rx_payload - rx_buf))) {
+            if (props_len <= (word32)(packet_end - rx_payload - tmp)) {
                 rx_payload += tmp;
-                if ((rx_payload - rx_buf) > rx_buf_len) {
-                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-                }
                 if (props_len > 0) {
                     /* Decode the Properties */
                     tmp = MqttDecode_Props(MQTT_PACKET_TYPE_AUTH,
                             &auth->props, rx_payload,
-                            (word32)(rx_buf_len - (rx_payload - rx_buf)),
-                            props_len);
+                            (word32)(packet_end - rx_payload), props_len);
                     if (tmp < 0)
                         return tmp;
                     rx_payload += tmp;
+                }
+                /* MQTT 5.0 section 3.15.3: AUTH has no payload. */
+                if (rx_payload != packet_end) {
+                    if (auth->props != NULL) {
+                        (void)MqttProps_Free(auth->props);
+                        auth->props = NULL;
+                    }
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
                 if (auth->props == NULL) {
                     /* An AUTH that carries a reason code must also carry

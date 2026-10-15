@@ -2002,6 +2002,125 @@ TEST(decode_connack_v5_rejects_bytes_after_property_block)
 }
 #endif /* WOLFMQTT_V5 */
 
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 sections 3.4.2 to 3.7.2: a PUBACK, PUBREC, PUBREL or PUBCOMP has
+ * no payload, so Packet Identifier, Reason Code, Property Length and
+ * Properties must consume the Remaining Length exactly. */
+TEST(decode_puback_v5_rejects_bytes_after_property_block)
+{
+    /* Remaining Length 5: packet_id 0x0001, Reason 0x00, Property Length 0,
+     * then one trailing byte. */
+    byte buf[] = { 0x40, 0x05, 0x00, 0x01, MQTT_REASON_SUCCESS, 0x00, 0xFF };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(resp.props);
+}
+
+/* The Property Length belongs to this PUBACK; bytes after its Remaining
+ * Length cannot satisfy it. The trailing bytes form a valid empty Reason
+ * String property deliberately. */
+TEST(decode_puback_v5_props_cannot_cross_packet_end)
+{
+    byte buf[] = {
+        0x40, 0x04, 0x00, 0x01, MQTT_REASON_SUCCESS, 0x03,
+        MQTT_PROP_REASON_STR, 0x00, 0x00
+    };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = MqttDecode_PublishResp(buf, (int)sizeof(buf),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_NULL(resp.props);
+}
+
+/* MQTT 5.0 section 3.14.3: DISCONNECT has no payload. */
+TEST(decode_disconnect_v5_rejects_bytes_after_property_block)
+{
+    /* Remaining Length 3: Reason 0x00, Property Length 0, one trailing
+     * byte. */
+    byte buf[] = { 0xE0, 0x03, MQTT_REASON_SUCCESS, 0x00, 0xFF };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    disc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(disc.props);
+}
+
+TEST(decode_disconnect_v5_props_cannot_cross_packet_end)
+{
+    byte buf[] = {
+        0xE0, 0x02, MQTT_REASON_SUCCESS, 0x03,
+        MQTT_PROP_REASON_STR, 0x00, 0x00
+    };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    disc.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_NULL(disc.props);
+}
+
+/* MQTT 5.0 section 3.15.3: AUTH has no payload. */
+TEST(decode_auth_v5_rejects_bytes_after_property_block)
+{
+    /* Remaining Length 7: Reason 0x18 (Continue authentication), Property
+     * Length 4, Authentication Method "x", one trailing byte. */
+    byte buf[] = {
+        0xF0, 0x07, MQTT_REASON_CONT_AUTH, 0x04,
+        MQTT_PROP_AUTH_METHOD, 0x00, 0x01, 'x',
+        0xFF
+    };
+    MqttAuth auth;
+    int rc;
+
+    XMEMSET(&auth, 0, sizeof(auth));
+
+    rc = MqttDecode_Auth(buf, (int)sizeof(buf), &auth);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(auth.props);
+}
+
+TEST(decode_auth_v5_props_cannot_cross_packet_end)
+{
+    byte buf[] = {
+        0xF0, 0x02, MQTT_REASON_CONT_AUTH, 0x04,
+        MQTT_PROP_AUTH_METHOD, 0x00, 0x01, 'x'
+    };
+    MqttAuth auth;
+    int rc;
+
+    XMEMSET(&auth, 0, sizeof(auth));
+
+    rc = MqttDecode_Auth(buf, (int)sizeof(buf), &auth);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(auth.props);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] CONNACK Flags receive-side validation.
  *
  * The Connect Acknowledge Flags byte has only bit 0 (Session Present)
@@ -7015,6 +7134,14 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connack_v5_shape_without_protocol_level_rejected);
     RUN_TEST(decode_connack_v5_props_cannot_cross_packet_end);
     RUN_TEST(decode_connack_v5_rejects_bytes_after_property_block);
+#endif
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_puback_v5_rejects_bytes_after_property_block);
+    RUN_TEST(decode_puback_v5_props_cannot_cross_packet_end);
+    RUN_TEST(decode_disconnect_v5_rejects_bytes_after_property_block);
+    RUN_TEST(decode_disconnect_v5_props_cannot_cross_packet_end);
+    RUN_TEST(decode_auth_v5_rejects_bytes_after_property_block);
+    RUN_TEST(decode_auth_v5_props_cannot_cross_packet_end);
 #endif
     RUN_TEST(decode_connack_flags_session_present_accepted);
     RUN_TEST(decode_connack_flags_no_session_accepted);
