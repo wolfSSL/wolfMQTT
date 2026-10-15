@@ -4015,10 +4015,13 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
 }
 
 #ifdef WOLFMQTT_V5
-/* Give back the Receive Maximum unit reserved for a QoS>0 v5 PUBLISH when it
- * terminates without a matching PUBACK/PUBCOMP (write failure, cancel,
- * ack-wait timeout, PUBREC rejection). Clamped to the negotiated ceiling so a
- * later stray ack for the same id cannot inflate the quota past it. */
+/* Give back the Receive Maximum unit reserved for a QoS>0 v5 PUBLISH once the
+ * server can no longer be counting it: the PUBLISH failed before it was sent
+ * or its write failed, or the exchange ended with PUBACK/PUBCOMP or a
+ * rejecting PUBREC. Never use it after an ack-wait timeout or a cancel of a
+ * sent PUBLISH; the server still counts that one [MQTT-4.9]. Clamped to the
+ * negotiated ceiling so a later stray ack for the same id cannot inflate the
+ * quota past it. */
 static void MqttClient_RestoreRecvQuota(MqttClient* client,
     MqttPublish* publish)
 {
