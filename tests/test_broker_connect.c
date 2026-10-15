@@ -7130,6 +7130,81 @@ TEST(connack_session_present_v5_set_on_resumed_session)
 }
 #endif /* WOLFMQTT_V5 */
 
+#ifdef WOLFMQTT_V5
+/* The broker has no Shared Subscription routing, so it must not let a v5
+ * client believe otherwise. MQTT 5.0 section 3.2.2.3.15: an absent Shared
+ * Subscription Available property means "supported", so CONNACK must carry
+ * it with value 0. A '$share/' filter (section 4.8.2) is then refused with
+ * SUBACK Reason Code 0x9E (section 3.9.3) instead of being stored and matched
+ * literally. */
+TEST(broker_shared_subscription_not_supported_v5)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttConnectAck ack;
+    MqttProp* prop;
+    int shared_avail = -1;
+    int last_byte;
+    int rc;
+    int i;
+    /* v5 CONNECT, clean=1, props_len=0, client_id="A". Remaining Length 14. */
+    static const byte connect[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+    /* v5 SUBSCRIBE packet_id 7, props_len 0, filter "$share/g/x", options
+     * QoS 0. Remaining Length = 2 + 1 + 2 + 10 + 1 = 16. */
+    static const byte subscribe_shared[] = {
+        0x82, 0x10,
+        0x00, 0x07,
+        0x00,
+        0x00, 0x0A, '$', 's', 'h', 'a', 'r', 'e', '/', 'g', '/', 'x',
+        0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, subscribe_shared, sizeof(subscribe_shared));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_ConnectAck(g_clients[0].out_buf,
+        (int)g_clients[0].out_len, &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, ack.return_code);
+    for (prop = ack.props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL) {
+            shared_avail = prop->data_byte;
+        }
+    }
+    if (ack.props != NULL) {
+        (void)MqttProps_Free(ack.props);
+    }
+    ASSERT_EQ(0, shared_avail);
+
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    last_byte = g_clients[0].out_buf[g_clients[0].out_len - 1];
+    ASSERT_EQ(MQTT_REASON_SS_NOT_SUPPORTED, last_byte);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+
 #ifndef WOLFMQTT_BROKER_WILDCARDS
 /* [MQTT-3.8.3-2] (v3.1.1 section 3.8.3): when the server does not support
  * wildcard subscriptions it MUST reject any Subscription request whose
@@ -10907,6 +10982,7 @@ int main(int argc, char** argv)
     RUN_TEST(connack_session_present_clear_on_clean_session_reconnect);
 #ifdef WOLFMQTT_V5
     RUN_TEST(connack_session_present_v5_set_on_resumed_session);
+    RUN_TEST(broker_shared_subscription_not_supported_v5);
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(broker_suback_reserved_v311_code_rejected);

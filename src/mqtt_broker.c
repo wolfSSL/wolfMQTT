@@ -7229,6 +7229,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             prop->data_byte = 0;
     #endif
         }
+        /* Shared Subscriptions are not implemented, and an absent property
+         * means they are (MQTT 5.0 section 3.2.2.3.15). */
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL;
+            prop->data_byte = 0;
+        }
         /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
          * of the property signals server supports Maximum QoS 2. Emitting
          * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
@@ -7457,6 +7464,17 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
                     fail_code = MQTT_REASON_WILDCARD_SUB_NOT_SUP;
                 }
             #endif
+            }
+            if (sub_rc == MQTT_CODE_SUCCESS)
+        #endif
+        #ifdef WOLFMQTT_V5
+            /* Shared Subscriptions are advertised as unavailable, so refuse
+             * a '$share/' filter rather than match it literally (MQTT 5.0
+             * sections 3.9.3 and 4.8.2). */
+            if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                    flen >= 7 && XMEMCMP(f, "$share/", 7) == 0) {
+                sub_rc = MQTT_CODE_ERROR_BAD_ARG;
+                fail_code = MQTT_REASON_SS_NOT_SUPPORTED;
             }
             if (sub_rc == MQTT_CODE_SUCCESS)
         #endif
