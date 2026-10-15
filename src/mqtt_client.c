@@ -3721,6 +3721,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             if (msg_len > 0) {
                 rc = MqttSocket_Read(client, client->rx_buf, msg_len,
                         timeout_ms);
+                /* Zero means the peer closed mid-payload; retrying the same
+                 * read would never make progress. */
+                if (rc == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+                }
                 if (rc < 0) {
                     break;
                 }

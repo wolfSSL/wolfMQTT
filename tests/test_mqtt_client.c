@@ -7543,6 +7543,74 @@ TEST(client_flags_set_clear)
     ASSERT_EQ(0, (int)(flags & MQTT_CLIENT_FLAG_IS_CONNECTED));
 }
 
+#ifndef WOLFMQTT_NONBLOCK
+/* Serves g_canned_buf, then returns 0 (orderly peer close) until a cap, after
+ * which it returns a hard error so a client stuck retrying cannot hang the
+ * test. */
+static int g_zero_reads;
+static int mock_net_read_canned_then_close(void *context, byte* buf,
+    int buf_len, int timeout_ms)
+{
+    int n = g_canned_len - g_canned_pos;
+    (void)context; (void)timeout_ms;
+    if (n <= 0) {
+        g_zero_reads++;
+        return (g_zero_reads > 5) ? MQTT_CODE_ERROR_NETWORK : 0;
+    }
+    if (n > buf_len) {
+        n = buf_len;
+    }
+    XMEMCPY(buf, g_canned_buf + g_canned_pos, n);
+    g_canned_pos += n;
+    return n;
+}
+
+static int mock_msg_cb_ok(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client; (void)msg; (void)msg_new; (void)msg_done;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* A PUBLISH whose payload exceeds rx_buf is read in chunks. If the peer closes
+ * the connection mid-payload the continuation read returns 0; that must end
+ * the wait with a network error instead of retrying the same read forever.
+ * MQTT 3.1.1 section 2.2.3: Remaining Length counts every remaining byte. */
+TEST(publish_payload_zero_read_returns_network_error)
+{
+    int rc;
+    /* Static so teardown's DeInit never sees a dangling rx_buf. */
+    static byte small_rx[16];
+    /* v3.1.1 QoS 0 PUBLISH, Remaining Length 43 (0x2B): topic length 0x0001,
+     * topic "t", 40 declared payload bytes. Only 20 payload bytes follow. */
+    static const byte frame[] = {
+        0x30, 0x2B, 0x00, 0x01, 't',
+        'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p',
+        'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p', 'p'
+    };
+
+    rc = MqttClient_Init(&test_client, &test_net, mock_msg_cb_ok,
+        test_tx_buf, TEST_TX_BUF_SIZE, small_rx, (int)sizeof(small_rx),
+        TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_inited = 1;
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.read = mock_net_read_canned_then_close;
+    XMEMCPY(g_canned_buf, frame, sizeof(frame));
+    g_canned_len = (int)sizeof(frame);
+    g_canned_pos = 0;
+    g_zero_reads = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(1, g_zero_reads);
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
 /* ============================================================================
  * Test Suite Runner
  * ============================================================================ */
@@ -7853,6 +7921,9 @@ void run_mqtt_client_tests(void)
 
     /* MqttClient_Flags tests */
     RUN_TEST(client_flags_set_clear);
+#ifndef WOLFMQTT_NONBLOCK
+    RUN_TEST(publish_payload_zero_read_returns_network_error);
+#endif
 
     TEST_SUITE_END();
 }
