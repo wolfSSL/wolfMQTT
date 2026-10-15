@@ -1106,6 +1106,7 @@ struct wmqb_delq_ctx {
     const byte* cid;
     word16 cid_len;
     struct wmqb_wipe_key* head;
+    int alloc_failed; /* a matching key could not be collected */
 };
 
 static int wmqb_delq_iter_cb(const byte* key, word16 key_len,
@@ -1126,11 +1127,13 @@ static int wmqb_delq_iter_cb(const byte* key, word16 key_len,
     }
     node = (struct wmqb_wipe_key*)WOLFMQTT_MALLOC(sizeof(*node));
     if (node == NULL) {
+        dq->alloc_failed = 1;
         return 1;
     }
     node->key = (byte*)WOLFMQTT_MALLOC(key_len);
     if (node->key == NULL) {
         WOLFMQTT_FREE(node);
+        dq->alloc_failed = 1;
         return 1;
     }
     XMEMCPY(node->key, key, key_len);
@@ -1182,6 +1185,9 @@ int BrokerPersist_DelOutQueue(MqttBroker* broker, const char* client_id)
         struct wmqb_delq_ctx ctx;
         struct wmqb_wipe_key* cur;
         int deleted = 0;
+        int rc;
+        int del_rc;
+        int sync_rc;
         if (h->kv_iter == NULL || h->kv_del == NULL) {
             return 0;
         }
@@ -1192,23 +1198,35 @@ int BrokerPersist_DelOutQueue(MqttBroker* broker, const char* client_id)
          * iterator callback ignores blob bytes - so bypassing the
          * decrypt wrapper here is safe and avoids unnecessary AES
          * cycles. */
-        (void)h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
+        rc = h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
             wmqb_delq_iter_cb, &ctx);
+        if (rc == 0 && ctx.alloc_failed) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
+        /* Delete what was collected even after a failure, but report the
+         * first error: the queue is not fully removed. */
         cur = ctx.head;
         while (cur != NULL) {
             struct wmqb_wipe_key* next = cur->next;
-            if (h->kv_del(h->ctx, BROKER_PERSIST_NS_OUTQ, cur->key,
-                    cur->key_len) == 0) {
+            del_rc = h->kv_del(h->ctx, BROKER_PERSIST_NS_OUTQ, cur->key,
+                cur->key_len);
+            if (del_rc == 0) {
                 deleted++;
+            }
+            else if (rc == 0) {
+                rc = del_rc;
             }
             WOLFMQTT_FREE(cur->key);
             WOLFMQTT_FREE(cur);
             cur = next;
         }
         if (h->sync != NULL) {
-            (void)h->sync(h->ctx);
+            sync_rc = h->sync(h->ctx);
+            if (rc == 0) {
+                rc = sync_rc;
+            }
         }
-        return deleted;
+        return (rc != 0) ? rc : deleted;
     }
 #endif
 }

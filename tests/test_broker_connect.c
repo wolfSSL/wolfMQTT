@@ -10729,11 +10729,15 @@ typedef struct KvRec {
 
 static KvRec g_kv[KV_MAX_RECS];
 static int g_kv_sync_rc; /* result kv_sync reports */
+static int g_kv_del_rc;  /* non-zero: kv_del fails with this, keeping data */
+static int g_kv_iter_rc; /* result kv_iter reports after visiting records */
 
 static void kv_reset(void)
 {
     XMEMSET(g_kv, 0, sizeof(g_kv));
     g_kv_sync_rc = 0;
+    g_kv_del_rc = 0;
+    g_kv_iter_rc = 0;
 }
 
 static KvRec* kv_find(byte ns, const byte* key, word16 key_len)
@@ -10800,6 +10804,9 @@ static int kv_del(void* ctx, byte ns, const byte* key, word16 key_len)
 {
     KvRec* r;
     (void)ctx;
+    if (g_kv_del_rc != 0) {
+        return g_kv_del_rc;
+    }
     r = kv_find(ns, key, key_len);
     if (r != NULL) {
         XMEMSET(r, 0, sizeof(*r));
@@ -10828,7 +10835,7 @@ static int kv_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
             }
         }
     }
-    return 0;
+    return g_kv_iter_rc;
 }
 
 static int kv_sync(void* ctx)
@@ -10897,6 +10904,74 @@ TEST(persist_commit_reports_sync_failure)
     ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, put_fail_rc);
     ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, del_fail_rc);
     ASSERT_EQ(MQTT_CODE_SUCCESS, put_ok_rc);
+}
+
+/* Seed two outbound-queue records for ClientId "C". The OUTQ key is the
+ * ClientId, a 0x00 separator, then the Packet Identifier. Only keys matter
+ * to BrokerPersist_DelOutQueue. */
+static void delq_seed_two(void)
+{
+    static const byte key1[] = { 'C', 0x00, 0x00, 0x01 };
+    static const byte key2[] = { 'C', 0x00, 0x00, 0x02 };
+    static const byte blob[] = { 0x00 };
+
+    (void)kv_put(NULL, BROKER_PERSIST_NS_OUTQ, key1, (word16)sizeof(key1),
+        blob, (word32)sizeof(blob));
+    (void)kv_put(NULL, BROKER_PERSIST_NS_OUTQ, key2, (word16)sizeof(key2),
+        blob, (word32)sizeof(blob));
+}
+
+/* Deleting a client's persisted outbound queue must report every way the
+ * deletion can be incomplete or not durable, rather than a non-negative
+ * count that callers take as success. */
+TEST(persist_del_outqueue_reports_failures)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    int del_fail_rc;
+    int sync_fail_rc;
+    int iter_fail_rc;
+    int alloc_fail_rc;
+    int ok_rc;
+    int left_after_ok;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+
+    delq_seed_two();
+    g_kv_del_rc = MQTT_CODE_ERROR_SYSTEM;
+    del_fail_rc = BrokerPersist_DelOutQueue(&broker, "C");
+    g_kv_del_rc = 0;
+
+    g_kv_sync_rc = MQTT_CODE_ERROR_SYSTEM;
+    sync_fail_rc = BrokerPersist_DelOutQueue(&broker, "C");
+    g_kv_sync_rc = 0;
+
+    delq_seed_two();
+    g_kv_iter_rc = MQTT_CODE_ERROR_SYSTEM;
+    iter_fail_rc = BrokerPersist_DelOutQueue(&broker, "C");
+    g_kv_iter_rc = 0;
+
+    delq_seed_two();
+    broker_test_fail_alloc_after(0);
+    alloc_fail_rc = BrokerPersist_DelOutQueue(&broker, "C");
+    broker_test_disable_alloc_failure();
+
+    delq_seed_two();
+    ok_rc = BrokerPersist_DelOutQueue(&broker, "C");
+    left_after_ok = kv_outq_count();
+
+    MqttBroker_Free(&broker);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, del_fail_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, sync_fail_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, iter_fail_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_MEMORY, alloc_fail_rc);
+    ASSERT_EQ(2, ok_rc);
+    ASSERT_EQ(0, left_after_ok);
 }
 
 TEST(persist_takeover_resumes_outbound_qos1_queue)
@@ -11554,6 +11629,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_BROKER_PERSIST
     #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(persist_commit_reports_sync_failure);
+    RUN_TEST(persist_del_outqueue_reports_failures);
     RUN_TEST(persist_takeover_resumes_outbound_qos1_queue);
         #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(persist_takeover_resumes_outbound_qos2_pubrel);
