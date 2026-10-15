@@ -38,7 +38,10 @@
  * first, variable-length strings/payloads last, lengths prefixed
  * big-endian. Forward compatibility is by schema-version bump + wipe.
  * wrap_mode is bound as AAD by the AES-GCM path so a tamper that
- * flips it (or flips rec_kind) fails the tag check.
+ * flips it (or flips rec_kind) fails the tag check. The AAD also carries
+ * the namespace and exact storage key, so a ciphertext copied to another
+ * key fails too. Stores written before the key was bound fail the META
+ * tag check and go through the schema-mismatch wipe on the next start.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -265,16 +268,43 @@ static void wmqb_force_zero(void* mem, word32 len)
     }
 }
 
-static int wmqb_encrypt_blob(MqttBroker* broker,
+/* AES-GCM additional data: the record header followed by where the record
+ * is stored, encoded unambiguously as namespace(1) || key_len(2, big
+ * endian) || key. A ciphertext moved to another namespace or storage key
+ * then fails authentication. Caller frees the returned buffer. */
+static byte* wmqb_build_aad(const byte* hdr, byte ns, const byte* key,
+    word16 key_len, word32* aad_len)
+{
+    byte* aad;
+
+    *aad_len = (word32)WMQB_HDR_LEN + 3u + key_len;
+    aad = (byte*)WOLFMQTT_MALLOC(*aad_len);
+    if (aad == NULL) {
+        return NULL;
+    }
+    XMEMCPY(aad, hdr, WMQB_HDR_LEN);
+    aad[WMQB_HDR_LEN] = ns;
+    wmqb_w_u16(&aad[WMQB_HDR_LEN + 1], key_len);
+    if (key_len > 0) {
+        XMEMCPY(&aad[WMQB_HDR_LEN + 3], key, key_len);
+    }
+    return aad;
+}
+
+static int wmqb_encrypt_blob(MqttBroker* broker, byte ns,
+    const byte* key, word16 key_len,
     const byte* plain, word32 plain_len, byte** ct_out, word32* ct_out_len)
 {
     Aes aes;
     WC_RNG rng;
     byte* out;
+    byte* aad;
+    word32 aad_len;
     word32 body_len;
     int rc;
 
     if (broker == NULL || plain == NULL || plain_len < WMQB_HDR_LEN ||
+            (key == NULL && key_len > 0) ||
             ct_out == NULL || ct_out_len == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -289,26 +319,35 @@ static int wmqb_encrypt_blob(MqttBroker* broker,
     if (out == NULL) {
         return MQTT_CODE_ERROR_MEMORY;
     }
+    aad = wmqb_build_aad(plain, ns, key, key_len, &aad_len);
+    if (aad == NULL) {
+        WOLFMQTT_FREE(out);
+        return MQTT_CODE_ERROR_MEMORY;
+    }
     XMEMCPY(out, plain, WMQB_HDR_LEN);
     if (wc_InitRng(&rng) != 0) {
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     if (wc_RNG_GenerateBlock(&rng,
             out + WMQB_HDR_LEN, WMQB_GCM_NONCE_LEN) != 0) {
         wc_FreeRng(&rng);
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     wc_FreeRng(&rng);
 
     if (wc_AesInit(&aes, NULL, INVALID_DEVID) != 0) {
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
@@ -318,29 +357,35 @@ static int wmqb_encrypt_blob(MqttBroker* broker,
             out + WMQB_HDR_LEN, WMQB_GCM_NONCE_LEN,          /* nonce */
             out + WMQB_HDR_LEN + WMQB_GCM_NONCE_LEN + body_len, /* tag */
             WMQB_GCM_TAG_LEN,
-            plain, WMQB_HDR_LEN) != 0) {                     /* aad = header */
+            aad, aad_len) != 0) {          /* aad = header + location */
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     wc_AesFree(&aes);
+    WOLFMQTT_FREE(aad);
     *ct_out = out;
     return 0;
 }
 
 /* Reverse of wmqb_encrypt_blob. Caller must free the returned plain.
  * TODO(perf): see wmqb_encrypt_blob - same per-call key-schedule cost. */
-static int wmqb_decrypt_blob(MqttBroker* broker,
+static int wmqb_decrypt_blob(MqttBroker* broker, byte ns,
+    const byte* key, word16 key_len,
     const byte* ct, word32 ct_len, byte** plain_out, word32* plain_out_len)
 {
     Aes aes;
     byte* out;
+    byte* aad;
+    word32 aad_len;
     word32 body_len;
     int rc;
 
     if (broker == NULL || ct == NULL ||
             ct_len < (word32)(WMQB_HDR_LEN + WMQB_GCM_NONCE_LEN +
                               WMQB_GCM_TAG_LEN) ||
+            (key == NULL && key_len > 0) ||
             plain_out == NULL || plain_out_len == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -355,9 +400,15 @@ static int wmqb_decrypt_blob(MqttBroker* broker,
     if (out == NULL) {
         return MQTT_CODE_ERROR_MEMORY;
     }
+    aad = wmqb_build_aad(ct, ns, key, key_len, &aad_len);
+    if (aad == NULL) {
+        WOLFMQTT_FREE(out);
+        return MQTT_CODE_ERROR_MEMORY;
+    }
     XMEMCPY(out, ct, WMQB_HDR_LEN);
 
     if (wc_AesInit(&aes, NULL, INVALID_DEVID) != 0) {
+        WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
@@ -365,6 +416,7 @@ static int wmqb_decrypt_blob(MqttBroker* broker,
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
@@ -375,13 +427,15 @@ static int wmqb_decrypt_blob(MqttBroker* broker,
             ct + WMQB_HDR_LEN, WMQB_GCM_NONCE_LEN,
             ct + WMQB_HDR_LEN + WMQB_GCM_NONCE_LEN + body_len,
             WMQB_GCM_TAG_LEN,
-            ct, WMQB_HDR_LEN) != 0) {
+            aad, aad_len) != 0) {
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     wc_AesFree(&aes);
+    WOLFMQTT_FREE(aad);
     *plain_out = out;
     return 0;
 }
@@ -407,7 +461,8 @@ static int wmqb_kv_put_commit(MqttBroker* broker, byte ns,
     {
         byte*  enc;
         word32 enc_len;
-        rc = wmqb_encrypt_blob(broker, blob, blob_len, &enc, &enc_len);
+        rc = wmqb_encrypt_blob(broker, ns, key, key_len, blob, blob_len,
+            &enc, &enc_len);
         if (rc != 0) {
             return rc;
         }
@@ -455,6 +510,7 @@ struct wmqb_iter_decrypt_ctx {
     MqttBrokerPersist_IterCb       inner_cb;
     void*                          inner_ctx;
     int                            fatal_rc;
+    byte                           ns;
 };
 
 static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
@@ -467,7 +523,8 @@ static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
     int    rc;
     int    stop;
 
-    rc = wmqb_decrypt_blob(d->broker, blob, blob_len, &plain, &plain_len);
+    rc = wmqb_decrypt_blob(d->broker, d->ns, key, key_len, blob, blob_len,
+        &plain, &plain_len);
     if (rc == MQTT_CODE_ERROR_MEMORY) {
         /* Out of memory says nothing about the record; stop rather than
          * restore without it. */
@@ -504,6 +561,7 @@ static int wmqb_iter_decrypt(MqttBroker* broker, byte ns,
     wrap.inner_cb = cb;
     wrap.inner_ctx = cb_ctx;
     wrap.fatal_rc = 0;
+    wrap.ns = ns;
     rc = h->kv_iter(h->ctx, ns, wmqb_iter_decrypt_cb, &wrap);
     if (rc == 0) {
         rc = wrap.fatal_rc;
@@ -546,7 +604,8 @@ static int wmqb_kv_get_decrypt_meta(MqttBroker* broker, byte ns,
     if (rc != 0) {
         return rc;
     }
-    rc = wmqb_decrypt_blob(broker, enc, cap, &plain, &plain_len);
+    rc = wmqb_decrypt_blob(broker, ns, key, key_len, enc, cap, &plain,
+        &plain_len);
     if (rc != 0) {
         return rc;
     }

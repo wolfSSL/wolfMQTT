@@ -42,6 +42,9 @@
 #include "wolfmqtt/mqtt_packet.h"
 
 #ifdef WOLFMQTT_BROKER_PERSIST
+    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+        #include <wolfssl/wolfcrypt/aes.h>
+    #endif
     #include <errno.h>
     #include <fcntl.h>
     #include <sys/stat.h>
@@ -11097,6 +11100,141 @@ TEST(persist_restore_alloc_failure_is_fatal)
     ASSERT_TRUE(ok_has_orphan);
 }
 
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+/* An encrypted record is bound to the namespace and storage key it was
+ * written under (AES-GCM additional data). A valid ciphertext moved to a
+ * different key by someone with write access to the store must fail
+ * authentication instead of being restored under the new key. */
+TEST(persist_encrypted_record_bound_to_storage_key)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    static const byte key_a[] = { 'A' };
+    static const byte key_b[] = { 'B' };
+    KvRec* rec;
+    int moved = 0;
+    int rc;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_PutOrphanSession(&broker, "A",
+        MQTT_CONNECT_PROTOCOL_LEVEL_4, 3600, 0));
+    MqttBroker_Free(&broker);
+
+    /* Relocate the unchanged ciphertext from key "A" to key "B". */
+    rec = kv_find(BROKER_PERSIST_NS_SESSION, key_a, (word16)sizeof(key_a));
+    if (rec != NULL) {
+        XMEMCPY(rec->key, key_b, sizeof(key_b));
+        moved = 1;
+    }
+    ASSERT_TRUE(moved);
+    ASSERT_NOT_NULL(kv_find(BROKER_PERSIST_NS_SESSION, key_b,
+        (word16)sizeof(key_b)));
+
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2, &hooks));
+    rc = BrokerPersist_Restore(&broker2);
+    moved = (broker2.orphan_sessions != NULL);
+    MqttBroker_Free(&broker2);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The relocated record was rejected, so no Session was restored. */
+    ASSERT_FALSE(moved);
+}
+
+/* Migration: a store encrypted before the storage key was bound has a META
+ * whose tag covers only the 12-byte header. Built here directly with
+ * wolfCrypt, it must fail authentication under the new additional data, so
+ * restore takes the schema-mismatch path: wipe every record, then stamp a
+ * META the current build can read. */
+TEST(persist_header_only_aad_store_is_wiped)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    Aes aes;
+    byte key[32];
+    byte old_meta[12 + 12 + 4 + 16];
+    byte body[4];
+    static const byte meta_key[] = { 0x00 };
+    static const byte outq_key[] = { 'C', 0x00, 0x00, 0x01 };
+    static const byte blob[] = { 0x00 };
+    KvRec* meta;
+    int enc_rc;
+    int rc;
+    int rc2;
+    int outq_left;
+    int meta_changed;
+
+    /* Header: "WMQB", schema version, rec_kind META, wrap AES-GCM, body
+     * length 4. Body: schema version as a 32-bit big-endian value. */
+    XMEMSET(old_meta, 0, sizeof(old_meta));
+    old_meta[0] = WOLFMQTT_BROKER_PERSIST_MAGIC0;
+    old_meta[1] = WOLFMQTT_BROKER_PERSIST_MAGIC1;
+    old_meta[2] = WOLFMQTT_BROKER_PERSIST_MAGIC2;
+    old_meta[3] = WOLFMQTT_BROKER_PERSIST_MAGIC3;
+    old_meta[4] = (byte)(WOLFMQTT_BROKER_PERSIST_SCHEMA_VER >> 8);
+    old_meta[5] = (byte)(WOLFMQTT_BROKER_PERSIST_SCHEMA_VER & 0xFF);
+    old_meta[6] = BROKER_PERSIST_NS_META;
+    old_meta[7] = WOLFMQTT_BROKER_PERSIST_WRAP_AES_GCM;
+    old_meta[11] = 4;
+    body[0] = 0;
+    body[1] = 0;
+    body[2] = (byte)(WOLFMQTT_BROKER_PERSIST_SCHEMA_VER >> 8);
+    body[3] = (byte)(WOLFMQTT_BROKER_PERSIST_SCHEMA_VER & 0xFF);
+    /* Nonce bytes 12..23 stay zero. Key matches persist_order_derive_key. */
+    XMEMSET(key, 0x11, sizeof(key));
+    enc_rc = wc_AesInit(&aes, NULL, INVALID_DEVID);
+    if (enc_rc == 0) {
+        enc_rc = wc_AesGcmSetKey(&aes, key, (word32)sizeof(key));
+        if (enc_rc == 0) {
+            enc_rc = wc_AesGcmEncrypt(&aes, &old_meta[24], body,
+                (word32)sizeof(body), &old_meta[12], 12, &old_meta[28], 16,
+                old_meta, 12);
+        }
+        wc_AesFree(&aes);
+    }
+    ASSERT_EQ(0, enc_rc);
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    (void)kv_put(NULL, BROKER_PERSIST_NS_META, meta_key,
+        (word16)sizeof(meta_key), old_meta, (word32)sizeof(old_meta));
+    (void)kv_put(NULL, BROKER_PERSIST_NS_OUTQ, outq_key,
+        (word16)sizeof(outq_key), blob, (word32)sizeof(blob));
+
+    rc = BrokerPersist_Restore(&broker);
+    outq_left = kv_outq_count();
+    meta = kv_find(BROKER_PERSIST_NS_META, meta_key,
+        (word16)sizeof(meta_key));
+    meta_changed = (meta != NULL && (meta->blob_len != sizeof(old_meta) ||
+        XMEMCMP(meta->blob, old_meta, sizeof(old_meta)) != 0));
+    MqttBroker_Free(&broker);
+
+    /* The restamped META is readable by the current build: a second start
+     * restores normally. */
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2, &hooks));
+    rc2 = BrokerPersist_Restore(&broker2);
+    MqttBroker_Free(&broker2);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, outq_left);
+    ASSERT_TRUE(meta_changed);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc2);
+}
+#endif /* WOLFMQTT_BROKER_PERSIST_ENCRYPT */
+
 TEST(persist_takeover_resumes_outbound_qos1_queue)
 {
     takeover_resumes_outbound_qos1_queue(1);
@@ -11755,6 +11893,10 @@ int main(int argc, char** argv)
     RUN_TEST(persist_del_outqueue_reports_failures);
     RUN_TEST(persist_schema_wipe_failure_keeps_old_meta);
     RUN_TEST(persist_restore_alloc_failure_is_fatal);
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    RUN_TEST(persist_encrypted_record_bound_to_storage_key);
+    RUN_TEST(persist_header_only_aad_store_is_wiped);
+#endif
     RUN_TEST(persist_takeover_resumes_outbound_qos1_queue);
         #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(persist_takeover_resumes_outbound_qos2_pubrel);
