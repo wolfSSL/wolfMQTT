@@ -174,6 +174,7 @@ typedef struct MockClient {
 static MockClient g_clients[MOCK_MAX_CLIENTS];
 static int g_clients_active;   /* how many clients accept() will hand out */
 static int g_accept_count;     /* incremented per successful accept() */
+static int g_accept_fail_rc;   /* non-zero: accept() returns this */
 static int g_listen_count;
 static int g_listen_close_count;
 static int g_listen_fail_on_call;
@@ -216,6 +217,9 @@ static int mock_accept(void* ctx, BROKER_SOCKET_T listen_sock,
     BROKER_SOCKET_T* client_sock)
 {
     (void)ctx; (void)listen_sock;
+    if (g_accept_fail_rc != 0) {
+        return g_accept_fail_rc;
+    }
     if (g_accept_count < g_clients_active) {
         *client_sock =
             (BROKER_SOCKET_T)(MOCK_CLIENT_SOCK_BASE + g_accept_count);
@@ -345,6 +349,7 @@ static void reset_mock_clients(int n_clients)
     }
     g_clients_active = n_clients;
     g_accept_count = 0;
+    g_accept_fail_rc = 0;
 #ifndef WOLFMQTT_STATIC_MEMORY
     g_write_publish_hook = NULL;
 #endif
@@ -3785,6 +3790,52 @@ TEST(puback_write_failure_fires_will)
 }
 #endif
 #endif /* WOLFMQTT_BROKER_WILL */
+
+/* A listener whose accept callback reports a hard failure must surface it
+ * from MqttBroker_Step, so MqttBroker_Run stops instead of spinning forever on
+ * a dead listener. Idle results (CONTINUE/TIMEOUT) stay silent, and existing
+ * clients are still serviced in the step that reports the failure. */
+TEST(broker_step_reports_listener_accept_failure)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int rc;
+    static const byte connect[] = {
+        0x10, 14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x02, 'i', 'd'
+    };
+    static const byte pingreq[] = { 0xC0, 0x00 };
+    size_t out_mark;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+    ASSERT_FALSE(g_client_closed);
+
+    /* Idle listener: nothing to report. */
+    rc = MqttBroker_Step(&broker);
+    ASSERT_TRUE(rc >= 0 || rc == MQTT_CODE_CONTINUE);
+
+    out_mark = g_out_len;
+    mock_client_input_append(0, pingreq, sizeof(pingreq));
+    g_accept_fail_rc = MQTT_CODE_ERROR_NETWORK;
+    rc = MqttBroker_Step(&broker);
+    g_accept_fail_rc = 0;
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    /* The connected client was still serviced: PINGRESP went out. */
+    ASSERT_EQ(1, count_packets_of_type(g_out_buf + out_mark,
+        g_out_len - out_mark, MQTT_PACKET_TYPE_PING_RESP));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 
 TEST(broker_keepalive_expires_at_exact_deadline)
 {
@@ -11145,6 +11196,7 @@ int main(int argc, char** argv)
 #endif
 #endif
     RUN_TEST(broker_keepalive_expires_at_exact_deadline);
+    RUN_TEST(broker_step_reports_listener_accept_failure);
 #ifndef WOLFMQTT_V5
     RUN_TEST(disconnect_v311_nonzero_remain_len_fires_will);
 #endif

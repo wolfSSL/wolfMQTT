@@ -589,12 +589,14 @@ static int BrokerWolfIP_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
     }
 
     fd = wolfIP_sock_accept(wctx->stack, listen_sock, NULL, NULL);
-    if (fd == -WOLFIP_EAGAIN) {
-        /* No pending connection */
-        return MQTT_CODE_CONTINUE;
+    if (fd == -WOLFIP_EINVAL) {
+        /* The listening socket itself is invalid. */
+        return MQTT_CODE_ERROR_NETWORK;
     }
     if (fd < 0) {
-        return MQTT_CODE_ERROR_NETWORK;
+        /* No pending connection, or a transient failure such as an
+         * exhausted socket pool: retry on the next step. */
+        return MQTT_CODE_CONTINUE;
     }
 
     *client_sock = fd;
@@ -743,14 +745,20 @@ static int BrokerPosix_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
 
     fd = accept(listen_sock, NULL, NULL);
     if (fd < 0) {
-        if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            return MQTT_CODE_CONTINUE;
+        /* Only an unusable listening socket is fatal. Per-connection and
+         * resource errors (ECONNABORTED, EINTR, EMFILE, pending network
+         * errors) are retried, so a peer cannot stop the broker by
+         * aborting its own handshake. */
+        if (errno == EBADF || errno == EINVAL || errno == ENOTSOCK ||
+                errno == EFAULT) {
+            return MQTT_CODE_ERROR_NETWORK;
         }
-        return MQTT_CODE_ERROR_NETWORK;
+        return MQTT_CODE_CONTINUE;
     }
     if (BrokerPosix_SetNonBlocking(fd) != MQTT_CODE_SUCCESS) {
+        /* Drop just this connection; the listener is still healthy. */
         close(fd);
-        return MQTT_CODE_ERROR_SYSTEM;
+        return MQTT_CODE_CONTINUE;
     }
 #ifdef SO_NOSIGPIPE
     /* macOS / BSDs: suppress SIGPIPE on writes to a peer-closed socket.
@@ -9165,10 +9173,20 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     return MQTT_CODE_SUCCESS;
 }
 
+/* An accept callback returns MQTT_CODE_CONTINUE or MQTT_CODE_ERROR_TIMEOUT
+ * when no connection is pending; any other negative result means the
+ * listener itself has failed. */
+static int BrokerAccept_IsFailure(int rc)
+{
+    return (rc < 0 && rc != MQTT_CODE_CONTINUE &&
+            rc != MQTT_CODE_ERROR_TIMEOUT) ? 1 : 0;
+}
+
 int MqttBroker_Step(MqttBroker* broker)
 {
     int activity = 0;
     int rc;
+    int accept_rc = MQTT_CODE_SUCCESS;
 
     if (broker == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -9198,6 +9216,10 @@ int MqttBroker_Step(MqttBroker* broker)
         BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
         rc = broker->net.accept(broker->net.ctx, broker->listen_sock,
             &new_sock);
+        if (BrokerAccept_IsFailure(rc)) {
+            WBLOG_ERR(broker, "broker: accept failed (plain) rc=%d", rc);
+            accept_rc = rc;
+        }
         if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
         #ifdef WOLFMQTT_POSIX_SOCKET
             /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
@@ -9229,6 +9251,10 @@ int MqttBroker_Step(MqttBroker* broker)
         BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
         rc = broker->net.accept(broker->net.ctx, broker->listen_sock_tls,
             &new_sock);
+        if (BrokerAccept_IsFailure(rc)) {
+            WBLOG_ERR(broker, "broker: accept failed (TLS) rc=%d", rc);
+            accept_rc = rc;
+        }
         if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
         #ifdef WOLFMQTT_POSIX_SOCKET
             /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
@@ -9329,6 +9355,11 @@ int MqttBroker_Step(MqttBroker* broker)
         activity = 1;
     }
 
+    /* Report a failed listener only after this step has serviced the
+     * connected clients. */
+    if (accept_rc != MQTT_CODE_SUCCESS) {
+        return accept_rc;
+    }
     return activity ? MQTT_CODE_SUCCESS : MQTT_CODE_CONTINUE;
 }
 

@@ -329,6 +329,10 @@ struct MqttBroker;
 /* -------------------------------------------------------------------------- */
 typedef int (*MqttBrokerNet_ListenCb)(void* ctx, BROKER_SOCKET_T* sock,
     word16 port, int backlog);
+/* Returns MQTT_CODE_SUCCESS with *client_sock set for a new connection, and
+ * MQTT_CODE_CONTINUE or MQTT_CODE_ERROR_TIMEOUT when none is pending or a
+ * single connection attempt failed. Any other negative value means the
+ * listener has failed; MqttBroker_Step returns it and MqttBroker_Run stops. */
 typedef int (*MqttBrokerNet_AcceptCb)(void* ctx, BROKER_SOCKET_T listen_sock,
     BROKER_SOCKET_T* client_sock);
 typedef int (*MqttBrokerNet_ReadCb)(void* ctx, BROKER_SOCKET_T sock,
