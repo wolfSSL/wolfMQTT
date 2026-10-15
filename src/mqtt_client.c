@@ -2533,6 +2533,11 @@ wait_again:
         #endif
             if (rc < 0) {
                 MqttWriteStop(client, mms_stat);
+                /* Drop the unsendable ack so later waits read new packets
+                 * instead of retrying the same encode. */
+                mms_stat->ackPacketType = MQTT_PACKET_TYPE_RESERVED;
+                mms_stat->ack = MQTT_MSG_BEGIN;
+                mms_stat->read = MQTT_MSG_BEGIN;
                 break;
             }
 

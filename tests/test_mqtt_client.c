@@ -6529,6 +6529,70 @@ TEST(wait_message_v5_topic_alias_with_topic_rejected)
  * acknowledge path must be unchanged. Without this, every new test runs with a
  * NULL callback and only asserts the FALSE direction of g_pubresp_written, so a
  * regression that suppressed ACKs outright would go unnoticed. */
+#ifdef WOLFMQTT_V5
+/* Rejects the QoS 1 message (packet_id 7) with a Reason Code that is not valid
+ * for PUBACK, and counts every delivery. */
+static int g_bad_ack_cb_calls;
+static int test_bad_puback_reason_cb(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client; (void)msg_new; (void)msg_done;
+    g_bad_ack_cb_calls++;
+    if (msg->packet_id == 7) {
+        /* 0x01 is not in the PUBACK Reason Code table (MQTT 5.0 3.4.2.1). */
+        msg->resp.reason_code = 0x01;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+/* A local failure to encode the automatic PUBACK must not leave the wait object
+ * parked in the ack state: the next wait has to read new packets instead of
+ * retrying the same invalid acknowledgement forever. */
+TEST(wait_message_ack_encode_failure_resets_wait_state)
+{
+    int rc;
+    int i;
+    /* v5 QoS 1 PUBLISH: remain=9, topic "a", packet_id 7, props len 0,
+     * payload "h". Then v5 QoS 0 PUBLISH: remain=5, topic "b", props len 0,
+     * payload "z". */
+    static const byte frames[] = {
+        0x32, 0x07, 0x00, 0x01, 'a', 0x00, 0x07, 0x00, 'h',
+        0x30, 0x05, 0x00, 0x01, 'b', 0x00, 'z'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_client.msg_cb = test_bad_puback_reason_cb;
+    g_bad_ack_cb_calls = 0;
+
+    g_pubresp_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, frames, sizeof(frames));
+    g_canned_len = (int)sizeof(frames);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_EQ(1, g_bad_ack_cb_calls);
+    ASSERT_EQ(0, g_pubresp_written);
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.msg.stat.read);
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.msg.stat.ack);
+    ASSERT_EQ(0, test_client.msg.stat.isWriteActive);
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_bad_ack_cb_calls);
+}
+#endif /* WOLFMQTT_V5 */
+
 TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
 {
     int rc;
@@ -7858,6 +7922,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_topic_alias_with_topic_rejected);
 #endif
     RUN_TEST(wait_message_qos1_with_msg_cb_delivers_and_acks);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(wait_message_ack_encode_failure_resets_wait_state);
+#endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(wait_message_timeout_preserves_partial_vbi);
 #endif
