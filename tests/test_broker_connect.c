@@ -10730,6 +10730,7 @@ typedef struct KvRec {
 static KvRec g_kv[KV_MAX_RECS];
 static int g_kv_sync_rc; /* result kv_sync reports */
 static int g_kv_del_rc;  /* non-zero: kv_del fails with this, keeping data */
+static int g_kv_del_fail_ns; /* namespace g_kv_del_rc applies to, -1 = all */
 static int g_kv_iter_rc; /* result kv_iter reports after visiting records */
 
 static void kv_reset(void)
@@ -10737,6 +10738,7 @@ static void kv_reset(void)
     XMEMSET(g_kv, 0, sizeof(g_kv));
     g_kv_sync_rc = 0;
     g_kv_del_rc = 0;
+    g_kv_del_fail_ns = -1;
     g_kv_iter_rc = 0;
 }
 
@@ -10804,7 +10806,8 @@ static int kv_del(void* ctx, byte ns, const byte* key, word16 key_len)
 {
     KvRec* r;
     (void)ctx;
-    if (g_kv_del_rc != 0) {
+    if (g_kv_del_rc != 0 &&
+            (g_kv_del_fail_ns < 0 || g_kv_del_fail_ns == (int)ns)) {
         return g_kv_del_rc;
     }
     r = kv_find(ns, key, key_len);
@@ -10972,6 +10975,73 @@ TEST(persist_del_outqueue_reports_failures)
     ASSERT_EQ(MQTT_CODE_ERROR_MEMORY, alloc_fail_rc);
     ASSERT_EQ(2, ok_rc);
     ASSERT_EQ(0, left_after_ok);
+}
+
+/* Schema-mismatch recovery wipes every record and then stamps a current
+ * META. If the wipe is incomplete, stamping META would mark it done and the
+ * leftover old-schema records would never be wiped. The old META must stay
+ * in place, and restore must fail, until a later wipe completes. */
+TEST(persist_schema_wipe_failure_keeps_old_meta)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    static const byte meta_key[] = { 0x00 };
+    static const byte outq_key[] = { 'C', 0x00, 0x00, 0x01 };
+    byte bad_meta[32];
+    static const byte blob[] = { 0x00 };
+    KvRec* meta;
+    int fail_rc;
+    int fail_restored;
+    int meta_kept;
+    int ok_rc;
+    int ok_restored;
+    int outq_left;
+    int meta_replaced;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+
+    /* A META record that is not a valid header for this build forces the
+     * schema-mismatch wipe. */
+    XMEMSET(bad_meta, 0xEE, sizeof(bad_meta));
+    (void)kv_put(NULL, BROKER_PERSIST_NS_META, meta_key,
+        (word16)sizeof(meta_key), bad_meta, (word32)sizeof(bad_meta));
+    (void)kv_put(NULL, BROKER_PERSIST_NS_OUTQ, outq_key,
+        (word16)sizeof(outq_key), blob, (word32)sizeof(blob));
+
+    /* Deleting the old outbound-queue record fails. */
+    g_kv_del_rc = MQTT_CODE_ERROR_SYSTEM;
+    g_kv_del_fail_ns = BROKER_PERSIST_NS_OUTQ;
+    fail_rc = BrokerPersist_Restore(&broker);
+    fail_restored = broker.persist_restored;
+    meta = kv_find(BROKER_PERSIST_NS_META, meta_key,
+        (word16)sizeof(meta_key));
+    meta_kept = (meta != NULL && meta->blob_len == sizeof(bad_meta) &&
+        XMEMCMP(meta->blob, bad_meta, sizeof(bad_meta)) == 0);
+    g_kv_del_rc = 0;
+    g_kv_del_fail_ns = -1;
+
+    /* With the backend healthy again the wipe completes. */
+    ok_rc = BrokerPersist_Restore(&broker);
+    ok_restored = broker.persist_restored;
+    outq_left = kv_outq_count();
+    meta = kv_find(BROKER_PERSIST_NS_META, meta_key,
+        (word16)sizeof(meta_key));
+    meta_replaced = (meta != NULL &&
+        XMEMCMP(meta->blob, bad_meta, sizeof(bad_meta)) != 0);
+
+    MqttBroker_Free(&broker);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, fail_rc);
+    ASSERT_EQ(0, fail_restored);
+    ASSERT_TRUE(meta_kept);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, ok_rc);
+    ASSERT_EQ(1, ok_restored);
+    ASSERT_EQ(0, outq_left);
+    ASSERT_TRUE(meta_replaced);
 }
 
 TEST(persist_takeover_resumes_outbound_qos1_queue)
@@ -11630,6 +11700,7 @@ int main(int argc, char** argv)
     #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(persist_commit_reports_sync_failure);
     RUN_TEST(persist_del_outqueue_reports_failures);
+    RUN_TEST(persist_schema_wipe_failure_keeps_old_meta);
     RUN_TEST(persist_takeover_resumes_outbound_qos1_queue);
         #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(persist_takeover_resumes_outbound_qos2_pubrel);

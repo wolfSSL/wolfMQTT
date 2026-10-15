@@ -2575,32 +2575,47 @@ static int wmqb_wipe_iter_cb(const byte* key, word16 key_len,
     return 0;
 }
 
+/* Delete every record in one namespace. Returns the number deleted, or the
+ * first iterator, allocation, deletion or sync failure. */
 static int wmqb_wipe_ns(MqttBroker* broker, byte ns)
 {
     const MqttBrokerPersistHooks* h = broker->persist;
     struct wmqb_wipe_ctx wc;
     struct wmqb_wipe_key* cur;
     int deleted = 0;
+    int rc;
+    int del_rc;
+    int sync_rc;
 
     if (h->kv_iter == NULL || h->kv_del == NULL) {
         return 0;
     }
     XMEMSET(&wc, 0, sizeof(wc));
-    (void)h->kv_iter(h->ctx, ns, wmqb_wipe_iter_cb, &wc);
+    rc = h->kv_iter(h->ctx, ns, wmqb_wipe_iter_cb, &wc);
+    if (rc == 0 && wc.alloc_failed) {
+        rc = MQTT_CODE_ERROR_MEMORY;
+    }
     cur = wc.head;
     while (cur != NULL) {
         struct wmqb_wipe_key* next = cur->next;
-        if (h->kv_del(h->ctx, ns, cur->key, cur->key_len) == 0) {
+        del_rc = h->kv_del(h->ctx, ns, cur->key, cur->key_len);
+        if (del_rc == 0) {
             deleted++;
+        }
+        else if (rc == 0) {
+            rc = del_rc;
         }
         WOLFMQTT_FREE(cur->key);
         WOLFMQTT_FREE(cur);
         cur = next;
     }
     if (h->sync != NULL) {
-        (void)h->sync(h->ctx);
+        sync_rc = h->sync(h->ctx);
+        if (rc == 0) {
+            rc = sync_rc;
+        }
     }
-    return deleted;
+    return (rc != 0) ? rc : deleted;
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
@@ -2615,15 +2630,30 @@ static int wmqb_wipe_all(MqttBroker* broker)
         "broker: persist wipe skipped (STATIC_MEMORY mode)");
     return 0;
 #else
+    /* META goes last: if the wipe stops early, the mismatched META is still
+     * there and the next restore repeats the wipe instead of treating the
+     * leftover records as a first run. */
+    static const byte wipe_order[] = {
+        BROKER_PERSIST_NS_SESSION, BROKER_PERSIST_NS_SUBS,
+        BROKER_PERSIST_NS_RETAINED, BROKER_PERSIST_NS_OUTQ,
+        BROKER_PERSIST_NS_META
+    };
     int total = 0;
+    int rc;
+    size_t i;
+
     if (broker == NULL || broker->persist == NULL) {
         return 0;
     }
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_META);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_SESSION);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_SUBS);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_RETAINED);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_OUTQ);
+    for (i = 0; i < sizeof(wipe_order); i++) {
+        rc = wmqb_wipe_ns(broker, wipe_order[i]);
+        if (rc < 0) {
+            WMQB_LOG_ERR(broker, "broker: persist wipe ns=%u failed rc=%d",
+                (unsigned)wipe_order[i], rc);
+            return rc;
+        }
+        total += rc;
+    }
     WMQB_LOG_INFO(broker, "broker: persist wipe deleted=%d", total);
     return total;
 #endif
@@ -2656,7 +2686,11 @@ int BrokerPersist_Restore(MqttBroker* broker)
          * failure from wmqb_kv_get_decrypt_meta.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
-        (void)wmqb_wipe_all(broker);
+        rc = wmqb_wipe_all(broker);
+        if (rc < 0) {
+            /* Leave the old META so the next start retries the wipe. */
+            return rc;
+        }
         rc = wmqb_meta_write(broker);
         if (rc == 0) {
             broker->persist_restored = 1;
