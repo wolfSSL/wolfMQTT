@@ -1319,6 +1319,21 @@ static int Handle_ConnectAck_Props(MqttClient* client, MqttProp* props)
             /* MQTT v5 [3.1.2.11.8] */
             client->topic_alias_max = prop->data_short;
         }
+    #ifndef WOLFMQTT_NO_SESSION_REPLAY
+        else if (prop->type == MQTT_PROP_SESSION_EXPIRY_INTERVAL) {
+            /* MQTT 5.0 section 3.2.2.3.2: the server's value replaces the
+             * one requested in CONNECT, so it decides whether this Session
+             * outlives the connection and needs replay. */
+            if (prop->data_int != 0) {
+                (void)MqttClient_Flags(client, 0,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+            }
+            else {
+                (void)MqttClient_Flags(client,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION, 0);
+            }
+        }
+    #endif
     }
     return rc;
 }
@@ -5637,17 +5652,24 @@ int MqttClient_NetDisconnect(MqttClient *client)
 
     /* An operation abandoned with the connection, such as a partly written
      * nonblocking CONNECT, can leave credentials in tx_buf or peer data in
-     * rx_buf. Nothing on this connection can resume, so wipe both. */
+     * rx_buf. Nothing on this connection can resume, so wipe both. With
+     * multiple threads a buffer whose read or write is still active belongs
+     * to that operation's owner (lockRecv/lockSend, not lockClient), so it is
+     * left for MqttClient_CancelMessage, which scrubs it on release. */
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0)
-#endif
-    {
-        CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
-        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
-    #ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0) {
+        if (!client->write.isActive) {
+            CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+        }
+        if (!client->read.isActive) {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+        }
         wm_SemUnlock(&client->lockClient);
-    #endif
     }
+#else
+    CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+    CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+#endif
     return rc;
 }
 

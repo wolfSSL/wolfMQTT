@@ -645,6 +645,7 @@ static int SN_Client_WaitType(MqttClient *client, void* packet_obj,
     int waitMatchFound;
     byte response_pending;
     void* use_packet_obj = NULL;
+    void* user_ctx;
 
     if (client == NULL || packet_obj == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
@@ -746,9 +747,14 @@ wait_again:
             /* Clear shared union for next call */
             MqttSNClient_PacketReset(packet_type, &client->msgSN);
             /* A reused caller object can hold stale union bytes, such as a
-             * gwAddr pointer, from a previously decoded packet type. */
+             * gwAddr pointer, from a previously decoded packet type. Keep
+             * the caller's publish callback context across the reset. */
             if (wait_type == SN_MSG_TYPE_ANY && packet_obj != &client->msgSN) {
+                user_ctx = ((SN_Object*)packet_obj)->publish.ctx;
                 MqttSNClient_PacketReset(packet_type, packet_obj);
+                if (packet_type == SN_MSG_TYPE_PUBLISH) {
+                    ((SN_Object*)packet_obj)->publish.ctx = user_ctx;
+                }
             }
 
         #ifdef WOLFMQTT_DEBUG_CLIENT

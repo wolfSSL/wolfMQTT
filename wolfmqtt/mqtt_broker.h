@@ -376,11 +376,12 @@ typedef int (*MqttBrokerPersist_IterCb)(const byte* key, word16 key_len,
 #define BROKER_PERSIST_STREAM_APPEND  3
 
 typedef struct MqttBrokerPersistHooks {
-    /* Key/value blob API. Key bytes are opaque to the backend;
-     * implementations must honor key_len and must not assume a fixed
-     * maximum key length. Keys are derived from peer-supplied client_ids
-     * and topics, which dynamic-memory builds do not cap. A backend that
-     * cannot store a key must return an error rather than truncate it. */
+    /* Key/value blob API. Key bytes are opaque to the backend and
+     * implementations must honor key_len. Keys are derived from
+     * peer-supplied client_ids and topics, which dynamic-memory builds do
+     * not cap. A backend with a maximum key length (the POSIX backend
+     * accepts up to 256 bytes) must reject a longer key with an error
+     * rather than truncate it. */
     int (*kv_put)(void* ctx, byte ns, const byte* key, word16 key_len,
                   const byte* blob, word32 blob_len);
     int (*kv_get)(void* ctx, byte ns, const byte* key, word16 key_len,

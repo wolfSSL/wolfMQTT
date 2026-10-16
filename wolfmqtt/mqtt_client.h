@@ -192,8 +192,11 @@ enum MqttClientFlags {
     MQTT_CLIENT_FLAG_TLS_SKIP_HOST_CHECK = 0x01 << 9,
     /* The last CONNECT asked for a Session that outlives the Network
      * Connection (CleanSession 0, or a non-zero v5 Session Expiry Interval),
-     * so unacknowledged QoS > 0 messages must be replayable. Managed by the
-     * library - set or cleared by MqttClient_Connect. */
+     * so unacknowledged QoS > 0 messages must be replayable. A v5 CONNACK
+     * Session Expiry Interval overrides the requested value (MQTT 5.0
+     * section 3.2.2.3.2). Managed by the library - set or cleared by
+     * MqttClient_Connect and updated from the CONNACK. Applications must
+     * not set or clear it through MqttClient_Flags. */
     MQTT_CLIENT_FLAG_PERSISTENT_SESSION = 0x01 << 10
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
@@ -948,6 +951,10 @@ WOLFMQTT_API int MqttClient_NetConnect(
     MqttTlsCb cb);
 
 /*! \brief      Performs a network disconnect
+ *  \note       Scrubs tx_buf and rx_buf once the transport is closed. In
+                WOLFMQTT_MULTITHREAD builds a buffer whose read or write is
+                still active is left to its owner; release an abandoned
+                operation with MqttClient_CancelMessage, which scrubs it.
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)

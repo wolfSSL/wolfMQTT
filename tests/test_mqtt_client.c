@@ -1719,11 +1719,14 @@ static int mock_net_write_partial_then_block(void *context, const byte* buf,
 
 /* Abandoning a connection with MqttClient_NetDisconnect while a nonblocking
  * CONNECT is only partly written must not leave the serialized credentials
- * in tx_buf, nor received peer data in rx_buf, once the transport is gone. */
+ * in tx_buf, nor received peer data in rx_buf, once the transport is gone.
+ * With multiple threads the still-active write owns tx_buf, so NetDisconnect
+ * leaves it and releasing the write with MqttClient_CancelMessage scrubs it. */
 TEST(net_disconnect_scrubs_partial_connect_credentials)
 {
     int rc;
     int i;
+    int tx_clear;
     MqttConnect connect;
 
     rc = test_init_client();
@@ -1751,14 +1754,28 @@ TEST(net_disconnect_scrubs_partial_connect_credentials)
 
     rc = MqttClient_NetDisconnect(&test_client);
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-    for (i = 0; i < TEST_TX_BUF_SIZE; i++) {
-        ASSERT_EQ(0, test_tx_buf[i]);
-    }
     for (i = 0; i < TEST_RX_BUF_SIZE; i++) {
         ASSERT_EQ(0, test_rx_buf[i]);
     }
+    tx_clear = 1;
+    for (i = 0; i < TEST_TX_BUF_SIZE; i++) {
+        if (test_tx_buf[i] != 0) {
+            tx_clear = 0;
+        }
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    /* The active write's owner still holds tx_buf. */
+    ASSERT_FALSE(tx_clear);
+#else
+    ASSERT_TRUE(tx_clear);
+#endif
+
     /* Release the abandoned write as an application would. */
-    (void)MqttClient_CancelMessage(&test_client, (MqttObject*)&connect);
+    rc = MqttClient_CancelMessage(&test_client, (MqttObject*)&connect);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    for (i = 0; i < TEST_TX_BUF_SIZE; i++) {
+        ASSERT_EQ(0, test_tx_buf[i]);
+    }
 }
 #endif /* WOLFMQTT_NONBLOCK */
 
@@ -4220,6 +4237,58 @@ TEST(publish_refused_when_replay_pool_full_on_persistent_session)
     ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
     ASSERT_EQ(0, frames);
 }
+
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.2.2.3.2: a Session Expiry Interval in CONNACK replaces
+ * the one requested in CONNECT. When the server negotiates it down to 0 the
+ * Session ends with the connection, so the replay pool must not cap how many
+ * messages are in flight. */
+TEST(publish_allowed_past_replay_pool_when_connack_ends_session)
+{
+    int rc;
+    int i;
+    int frames = -1;
+    MqttConnect connect;
+    MqttProp* prop;
+    /* v5 CONNACK: flags 0, reason 0, Properties length 5: Session Expiry
+     * Interval (0x11) = 0. Remaining Length 8. */
+    static const byte connack[] = {
+        0x20, 0x08, 0x00, 0x00, 0x05, 0x11, 0x00, 0x00, 0x00, 0x00
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "replay_client";
+    connect.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    prop = MqttProps_Add(&connect.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    prop->data_int = 60;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    (void)MqttProps_Free(connect.props);
+    connect.props = NULL;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    rc = run_publish_past_replay_pool(&frames);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(1, frames);
+}
+#endif /* WOLFMQTT_V5 */
 
 /* A CleanSession 1 Session ends with the Network Connection, so nothing is
  * ever replayed and a full pool must not limit how many messages are in
@@ -8012,6 +8081,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_replays_unacked_qos1_publish);
     RUN_TEST(publish_refused_when_replay_pool_full_on_persistent_session);
     RUN_TEST(publish_allowed_past_replay_pool_on_clean_session);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(publish_allowed_past_replay_pool_when_connack_ends_session);
+#endif
     RUN_TEST(reconnect_without_session_present_replays_nothing);
     RUN_TEST(reconnect_does_not_replay_acked_publish);
 #if WOLFMQTT_MAX_QOS >= 2

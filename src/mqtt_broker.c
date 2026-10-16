@@ -3851,8 +3851,9 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
 /* Enqueue a fan-out target onto an orphan session's queue. Called from
  * BrokerHandle_Publish when sub->client is NULL but an orphan with the
  * matching client_id exists. QoS 0 is dropped per spec; only persistent
- * messages live in the offline queue. */
-static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
+ * messages live in the offline queue. Returns MQTT_CODE_ERROR_MEMORY when
+ * the message copy cannot be allocated, otherwise MQTT_CODE_SUCCESS. */
+static int BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     const char* topic, const byte* payload, word32 payload_len,
     MqttQoS qos, byte retain
 #ifdef WOLFMQTT_V5
@@ -3863,7 +3864,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     BrokerOutPub* e;
     if (broker == NULL || o == NULL || topic == NULL ||
             qos == MQTT_QOS_0) {
-        return;
+        return MQTT_CODE_SUCCESS;
     }
     /* Drop-oldest eviction when the per-session offline queue is full. */
     while (o->out_q_count >= BROKER_MAX_OFFLINE_MSGS_PER_SUB) {
@@ -3904,7 +3905,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
             "broker: orphan enqueue alloc failed client_id=%s",
             BrokerLog_Sanitize(
                 BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
-        return;
+        return MQTT_CODE_ERROR_MEMORY;
     }
     e->qos = qos;
     e->packet_id = BrokerNextPacketIdForQueue(broker, o->out_q_head);
@@ -3914,7 +3915,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
             BrokerLog_Sanitize(
                 BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
         BrokerOutPub_Free(e);
-        return;
+        return MQTT_CODE_SUCCESS;
     }
     e->retain = retain;
     e->state = BROKER_OUTQ_QUEUED;
@@ -3928,7 +3929,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
             BrokerLog_Sanitize(
                 BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
         BrokerOutPub_Free(e);
-        return;
+        return MQTT_CODE_SUCCESS;
     }
     else {
         e->enqueue_seq = o->out_q_tail->enqueue_seq + 1;
@@ -3951,6 +3952,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
         BrokerLog_Sanitize(
             BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"),
         BrokerLog_Sanitize(topic), (int)qos, o->out_q_count);
+    return MQTT_CODE_SUCCESS;
 }
 
 /* Free every orphan (used by MqttBroker_Free and by wipe paths). */
@@ -8139,13 +8141,15 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 if (eff_qos > MQTT_QOS_0) {
                     BrokerOrphanSession* o =
                         BrokerOrphan_Find(broker, sub->client_id);
-                    if (o != NULL) {
-                        BrokerOrphan_Enqueue(broker, o, topic, payload,
-                            pub.total_len, eff_qos, 0
-                        #ifdef WOLFMQTT_V5
-                            , pub.props
-                        #endif
-                            );
+                    if (o != NULL &&
+                            BrokerOrphan_Enqueue(broker, o, topic, payload,
+                                pub.total_len, eff_qos, 0
+                            #ifdef WOLFMQTT_V5
+                                , pub.props
+                            #endif
+                                ) == MQTT_CODE_ERROR_MEMORY) {
+                        /* The offline copy was not queued either. */
+                        fanout_failed = 1;
                     }
                 }
             }
@@ -8987,6 +8991,25 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                         }
                 #ifdef WOLFMQTT_BROKER_WILL
                         /* [MQTT-3.14.4-3] Reason 0x04 requests Will publish. */
+                        if (disc.reason_code ==
+                                MQTT_REASON_DISCONNECT_W_WILL_MSG) {
+                            BrokerClient_PublishWill(broker, bc);
+                        }
+                        else {
+                            BrokerClient_ClearWill(bc);
+                        }
+                #endif
+                    }
+                    else if (disc_rc == MQTT_CODE_ERROR_MEMORY) {
+                        /* The packet is well formed but its Properties did
+                         * not fit in the property pool. The Reason Code is
+                         * decoded before them, so honor it [MQTT-3.14.4-3];
+                         * the Session Expiry Interval keeps its CONNECT
+                         * value. */
+                        WBLOG_ERR(broker,
+                            "broker: DISCONNECT properties dropped, out of "
+                            "memory sock=%d", (int)bc->sock);
+                #ifdef WOLFMQTT_BROKER_WILL
                         if (disc.reason_code ==
                                 MQTT_REASON_DISCONNECT_W_WILL_MSG) {
                             BrokerClient_PublishWill(broker, bc);
