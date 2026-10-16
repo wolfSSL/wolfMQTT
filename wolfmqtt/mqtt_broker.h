@@ -329,6 +329,10 @@ struct MqttBroker;
 /* -------------------------------------------------------------------------- */
 typedef int (*MqttBrokerNet_ListenCb)(void* ctx, BROKER_SOCKET_T* sock,
     word16 port, int backlog);
+/* Returns MQTT_CODE_SUCCESS with *client_sock set for a new connection, and
+ * MQTT_CODE_CONTINUE or MQTT_CODE_ERROR_TIMEOUT when none is pending or a
+ * single connection attempt failed. Any other negative value means the
+ * listener has failed; MqttBroker_Step returns it and MqttBroker_Run stops. */
 typedef int (*MqttBrokerNet_AcceptCb)(void* ctx, BROKER_SOCKET_T listen_sock,
     BROKER_SOCKET_T* client_sock);
 typedef int (*MqttBrokerNet_ReadCb)(void* ctx, BROKER_SOCKET_T sock,
@@ -372,8 +376,12 @@ typedef int (*MqttBrokerPersist_IterCb)(const byte* key, word16 key_len,
 #define BROKER_PERSIST_STREAM_APPEND  3
 
 typedef struct MqttBrokerPersistHooks {
-    /* Key/value blob API. key bytes are opaque to the backend; len is
-     * always <= 256 in current use (a client_id or topic). */
+    /* Key/value blob API. Key bytes are opaque to the backend and
+     * implementations must honor key_len. Keys are derived from
+     * peer-supplied client_ids and topics, which dynamic-memory builds do
+     * not cap. A backend with a maximum key length (the POSIX backend
+     * accepts up to 256 bytes) must reject a longer key with an error
+     * rather than truncate it. */
     int (*kv_put)(void* ctx, byte ns, const byte* key, word16 key_len,
                   const byte* blob, word32 blob_len);
     int (*kv_get)(void* ctx, byte ns, const byte* key, word16 key_len,
@@ -698,6 +706,10 @@ typedef struct BrokerClient {
      * Network Connection, so the client is kept only until those bytes are
      * fully delivered and is then dropped without becoming connected. */
     unsigned int  connack_refused : 1;
+    /* A DISCONNECT announcing an abnormal close is still being written in
+     * direct_pending_len. Once that write finishes or fails, the client is
+     * closed instead of reading another packet. */
+    unsigned int  close_after_direct : 1;
 #endif
 } BrokerClient;
 
@@ -867,6 +879,11 @@ typedef struct MqttBroker {
 #ifdef WOLFMQTT_BROKER_PERSIST
     byte persist_restored;
 #endif
+    /* Last accept failure the built-in network adapters logged for
+     * listen_sock and for the TLS listener (0 = none), so a persistent
+     * failure is reported once rather than on every step. */
+    int accept_log_err;
+    int accept_log_err_tls;
 } MqttBroker;
 
 /* -------------------------------------------------------------------------- */

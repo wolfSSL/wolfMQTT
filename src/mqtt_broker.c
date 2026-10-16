@@ -525,6 +525,39 @@ static void BrokerTls_Free(MqttBroker* broker)
 }
 #endif /* ENABLE_MQTT_TLS && !WOLFMQTT_BROKER_CUSTOM_NET */
 
+#if defined(WOLFMQTT_WOLFIP) || !defined(WOLFMQTT_BROKER_CUSTOM_NET)
+/* Record err (0 for an accepted or no pending connection) as the latest
+ * accept result for broker's listener listen_sock. Returns 1 when err is a
+ * failure not yet logged for that listener, so a persistent failure is
+ * reported once and an idle listener cannot clear another's entry. */
+static int BrokerAcceptLog_Update(MqttBroker* broker,
+    BROKER_SOCKET_T listen_sock, int err)
+{
+    int* last;
+
+    if (broker == NULL) {
+        return 0;
+    }
+    if (listen_sock == broker->listen_sock) {
+        last = &broker->accept_log_err;
+    }
+#ifdef ENABLE_MQTT_TLS
+    else if (listen_sock == broker->listen_sock_tls) {
+        last = &broker->accept_log_err_tls;
+    }
+#endif
+    else {
+        /* Not one of this broker's listeners: report every failure. */
+        return (err != 0) ? 1 : 0;
+    }
+    if (*last == err) {
+        return 0;
+    }
+    *last = err;
+    return (err != 0) ? 1 : 0;
+}
+#endif /* WOLFMQTT_WOLFIP || !WOLFMQTT_BROKER_CUSTOM_NET */
+
 /* -------------------------------------------------------------------------- */
 /* wolfIP network backend                                                      */
 /* -------------------------------------------------------------------------- */
@@ -542,6 +575,9 @@ typedef struct BrokerWolfIP_Ctx {
  * with one broker instance. For multiple instances, use
  * WOLFMQTT_BROKER_CUSTOM_NET and provide per-instance context. */
 static BrokerWolfIP_Ctx broker_wolfip_ctx;
+/* Broker that logs for the wolfIP adapter, set by MqttBroker_Init when it is
+ * given this adapter's context. */
+static MqttBroker* broker_wolfip_log;
 
 static int BrokerWolfIP_Listen(void* ctx, BROKER_SOCKET_T* sock,
     word16 port, int backlog)
@@ -590,13 +626,29 @@ static int BrokerWolfIP_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
 
     fd = wolfIP_sock_accept(wctx->stack, listen_sock, NULL, NULL);
     if (fd == -WOLFIP_EAGAIN) {
-        /* No pending connection */
+        /* No pending connection. */
+        (void)BrokerAcceptLog_Update(broker_wolfip_log, listen_sock, 0);
         return MQTT_CODE_CONTINUE;
     }
-    if (fd < 0) {
+    if (fd == -WOLFIP_EINVAL) {
+        /* The listening socket itself is invalid. */
         return MQTT_CODE_ERROR_NETWORK;
     }
+    if (fd < 0) {
+        /* wolfIP returns -1 for an exhausted socket pool, a connection its
+         * filter rejected, and a listener no longer in the listening state,
+         * without telling them apart. Retry on the next step rather than stop
+         * the broker, which a peer could otherwise force by opening
+         * connections, but report the condition. */
+        if (BrokerAcceptLog_Update(broker_wolfip_log, listen_sock, fd)) {
+            WBLOG_ERR(broker_wolfip_log,
+                "broker: accept failed sock=%d rc=%d, retrying",
+                (int)listen_sock, fd);
+        }
+        return MQTT_CODE_CONTINUE;
+    }
 
+    (void)BrokerAcceptLog_Update(broker_wolfip_log, listen_sock, 0);
     *client_sock = fd;
     return MQTT_CODE_SUCCESS;
 }
@@ -736,6 +788,7 @@ static int BrokerPosix_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
     BROKER_SOCKET_T* client_sock)
 {
     BROKER_SOCKET_T fd;
+    int err;
 #ifdef SO_NOSIGPIPE
     int on = 1;
 #endif
@@ -743,14 +796,35 @@ static int BrokerPosix_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
 
     fd = accept(listen_sock, NULL, NULL);
     if (fd < 0) {
-        if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            return MQTT_CODE_CONTINUE;
+        err = errno;
+        /* Only an unusable listening socket is fatal. Per-connection and
+         * resource errors (ECONNABORTED, EINTR, EMFILE, pending network
+         * errors) are retried, so a peer cannot stop the broker by
+         * aborting its own handshake or exhausting descriptors. */
+        if (err == EBADF || err == EINVAL || err == ENOTSOCK ||
+                err == EFAULT) {
+            return MQTT_CODE_ERROR_NETWORK;
         }
-        return MQTT_CODE_ERROR_NETWORK;
+        if (err == EAGAIN || err == EWOULDBLOCK) {
+            /* No pending connection. */
+            (void)BrokerAcceptLog_Update((MqttBroker*)ctx, listen_sock, 0);
+        }
+        else if (err != EINTR &&
+                BrokerAcceptLog_Update((MqttBroker*)ctx, listen_sock, err)) {
+            WBLOG_ERR((MqttBroker*)ctx,
+                "broker: accept failed sock=%d errno=%d, retrying",
+                (int)listen_sock, err);
+        }
+        return MQTT_CODE_CONTINUE;
     }
+    (void)BrokerAcceptLog_Update((MqttBroker*)ctx, listen_sock, 0);
     if (BrokerPosix_SetNonBlocking(fd) != MQTT_CODE_SUCCESS) {
+        /* Drop just this connection; the listener is still healthy. */
+        WBLOG_ERR((MqttBroker*)ctx,
+            "broker: accept sock=%d set nonblocking failed errno=%d",
+            (int)fd, errno);
         close(fd);
-        return MQTT_CODE_ERROR_SYSTEM;
+        return MQTT_CODE_CONTINUE;
     }
 #ifdef SO_NOSIGPIPE
     /* macOS / BSDs: suppress SIGPIPE on writes to a peer-closed socket.
@@ -1903,6 +1977,56 @@ static void BrokerOutPub_Free(BrokerOutPub* e)
     WOLFMQTT_FREE(e);
 }
 
+/* Returns 1 when the PUBLISH that BrokerClient_DrainOutQueue would encode for
+ * topic, payload_len, qos and props, sent to a client at protocol_level, fits
+ * a transmit buffer of tx_len bytes. The encoder clamps an oversized payload
+ * to the buffer while the fixed header still declares all of it [MQTT 3.1.1
+ * section 2.2.3], so such a message can never be delivered. */
+static int BrokerOutPub_FitsTx(const char* topic, word32 payload_len,
+    MqttQoS qos, byte protocol_level
+#ifdef WOLFMQTT_V5
+    , const MqttProp* props
+#endif
+    , int tx_len)
+{
+    word32 remain_len;
+    int vbi_len;
+#ifdef WOLFMQTT_V5
+    int props_len;
+#endif
+
+    /* Topic Name (MQTT 3.1.1 section 3.3.2.1), Packet Identifier for QoS 1
+     * and 2 (section 3.3.2.2), then the payload. */
+    remain_len = MQTT_DATA_LEN_SIZE + (word32)XSTRLEN(topic) + payload_len;
+    if (qos > MQTT_QOS_0) {
+        remain_len += MQTT_DATA_LEN_SIZE;
+    }
+#ifdef WOLFMQTT_V5
+    /* Property Length and Properties (MQTT 5.0 section 3.3.2.3). */
+    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        props_len = MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH,
+            (MqttProp*)props, NULL);
+        if (props_len < 0) {
+            return 0;
+        }
+        vbi_len = MqttEncode_Vbi(NULL, (word32)props_len);
+        if (vbi_len < 0) {
+            return 0;
+        }
+        remain_len += (word32)props_len + (word32)vbi_len;
+    }
+#else
+    (void)protocol_level;
+#endif
+    vbi_len = MqttEncode_Vbi(NULL, remain_len);
+    if (vbi_len < 0 || tx_len <= 0) {
+        return 0;
+    }
+    /* Fixed header byte and Remaining Length (MQTT 3.1.1 section 2.2). */
+    return (remain_len <= (word32)tx_len &&
+            1 + (word32)vbi_len + remain_len <= (word32)tx_len) ? 1 : 0;
+}
+
 /* Allocate a new entry holding a deep copy of topic + payload (+ props if
  * src_props is non-NULL). Returns NULL on allocation failure (caller
  * decides whether that means drop or close). Fields are zero-initialized;
@@ -2104,6 +2228,11 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
 
         enc_rc = MqttEncode_Publish(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
                     &out_pub, 0);
+        /* A payload clamped to tx_buf leaves Remaining Length declaring bytes
+         * the frame does not carry [MQTT 3.1.1 section 2.2.3]. */
+        if (enc_rc > 0 && out_pub.buffer_pos != cur->payload_len) {
+            enc_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        }
         if (enc_rc <= 0) {
             if (bc->out_q_pending_len != 0) {
                 return (enc_rc < 0) ? enc_rc : MQTT_CODE_ERROR_SYSTEM;
@@ -2349,6 +2478,14 @@ static void BrokerClient_OnPubAck(BrokerClient* bc, word16 packet_id)
         WBLOG_DBG(bc->broker,
             "broker: spurious PUBACK sock=%d packet_id=%u",
             (int)bc->sock, (unsigned)packet_id);
+        return;
+    }
+    /* A PUBACK completes only a QoS 1 exchange. Leave a QoS 2 entry awaiting
+     * its PUBREC so the identifier is not released early [MQTT-2.3.1-3]. */
+    if (e->qos != MQTT_QOS_1) {
+        WBLOG_DBG(bc->broker,
+            "broker: PUBACK for QoS %d PUBLISH sock=%d packet_id=%u",
+            (int)e->qos, (int)bc->sock, (unsigned)packet_id);
         return;
     }
     BrokerClient_UnlinkOutPub(bc, prev, e);
@@ -3830,8 +3967,10 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
 /* Enqueue a fan-out target onto an orphan session's queue. Called from
  * BrokerHandle_Publish when sub->client is NULL but an orphan with the
  * matching client_id exists. QoS 0 is dropped per spec; only persistent
- * messages live in the offline queue. */
-static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
+ * messages live in the offline queue. Returns MQTT_CODE_ERROR_MEMORY when
+ * the message copy cannot be allocated, MQTT_CODE_ERROR_OUT_OF_BUFFER when it
+ * is too large to deliver, otherwise MQTT_CODE_SUCCESS. */
+static int BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     const char* topic, const byte* payload, word32 payload_len,
     MqttQoS qos, byte retain
 #ifdef WOLFMQTT_V5
@@ -3842,7 +3981,21 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
     BrokerOutPub* e;
     if (broker == NULL || o == NULL || topic == NULL ||
             qos == MQTT_QOS_0) {
-        return;
+        return MQTT_CODE_SUCCESS;
+    }
+    /* A copy too large for the transmit buffer of the client that resumes
+     * this Session could never be delivered. Refuse it before evicting an
+     * older message to make room. */
+    if (!BrokerOutPub_FitsTx(topic, payload_len, qos, o->protocol_level
+        #ifdef WOLFMQTT_V5
+            , src_props
+        #endif
+            , BROKER_TX_BUF_SZ)) {
+        WBLOG_ERR(broker,
+            "broker: orphan enqueue too large client_id=%s",
+            BrokerLog_Sanitize(
+                BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
     /* Drop-oldest eviction when the per-session offline queue is full. */
     while (o->out_q_count >= BROKER_MAX_OFFLINE_MSGS_PER_SUB) {
@@ -3883,7 +4036,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
             "broker: orphan enqueue alloc failed client_id=%s",
             BrokerLog_Sanitize(
                 BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
-        return;
+        return MQTT_CODE_ERROR_MEMORY;
     }
     e->qos = qos;
     e->packet_id = BrokerNextPacketIdForQueue(broker, o->out_q_head);
@@ -3893,7 +4046,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
             BrokerLog_Sanitize(
                 BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
         BrokerOutPub_Free(e);
-        return;
+        return MQTT_CODE_SUCCESS;
     }
     e->retain = retain;
     e->state = BROKER_OUTQ_QUEUED;
@@ -3907,7 +4060,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
             BrokerLog_Sanitize(
                 BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"));
         BrokerOutPub_Free(e);
-        return;
+        return MQTT_CODE_SUCCESS;
     }
     else {
         e->enqueue_seq = o->out_q_tail->enqueue_seq + 1;
@@ -3930,6 +4083,7 @@ static void BrokerOrphan_Enqueue(MqttBroker* broker, BrokerOrphanSession* o,
         BrokerLog_Sanitize(
             BROKER_STR_VALID(o->client_id) ? o->client_id : "(null)"),
         BrokerLog_Sanitize(topic), (int)qos, o->out_q_count);
+    return MQTT_CODE_SUCCESS;
 }
 
 /* Free every orphan (used by MqttBroker_Free and by wipe paths). */
@@ -6382,16 +6536,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     int ack_len = 0;
 #endif
     /* [MQTT-3.2.2-2] Session Present is set when an accepted
-     * CleanSession=0 connection finds stored session state for the
-     * client_id. The MQTT spec defines Session state as more than
-     * subscriptions (in-flight QoS 1/2 PUBLISH, unacknowledged PUBREL,
-     * outstanding packet identifiers); this broker only persists
-     * subscriptions across disconnects today (BrokerSubs_OrphanClient
-     * keeps them, but per-message QoS 2 state in bc->qos2_in_flight is
-     * dropped). If broker session persistence ever widens to cover QoS
-     * state, the source of session_present needs to widen too - a
-     * BrokerSession_HasStoredState() helper is the natural extension
-     * point. */
+     * CleanSession=0 connection resumes stored Session state for the
+     * client_id. A resumed Session can carry subscriptions, queued and
+     * in-flight outbound QoS 1/2 messages, and inbound QoS 2 identifiers
+     * awaiting PUBREL, whether taken over from a still-connected client or
+     * reclaimed from an orphaned or restored Session. Each takeover and
+     * reclaim path below sets session_present when it carries any of that
+     * state over; a new kind of Session state must do the same. */
     int session_present = 0;
 #ifdef WOLFMQTT_V5
     int auto_assigned = 0;
@@ -6883,6 +7034,217 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
     }
 #endif
 
+    /* Store the Will and build the CONNACK properties that acceptance depends
+     * on before any existing Session is touched. A refusal from here on must
+     * leave a connected client with the same ClientId, and every stored
+     * Session, as they were. */
+    BrokerClient_ClearWill(bc);
+#ifdef WOLFMQTT_BROKER_WILL
+    if (mc.enable_lwt && mc.lwt_msg != NULL) {
+        int will_stored = 1;
+        if (mc.lwt_msg->topic_name != NULL &&
+            mc.lwt_msg->topic_name_len > 0) {
+            BROKER_STORE_STR(bc->will_topic, mc.lwt_msg->topic_name,
+                mc.lwt_msg->topic_name_len, BROKER_MAX_TOPIC_LEN);
+#ifndef WOLFMQTT_STATIC_MEMORY
+            if (bc->will_topic == NULL) {
+                will_stored = 0;
+            }
+#endif
+        }
+        if (will_stored && mc.lwt_msg->total_len > 0 &&
+                mc.lwt_msg->buffer != NULL) {
+            word16 wp_len;
+            wp_len = (word16)mc.lwt_msg->total_len;
+#ifdef WOLFMQTT_STATIC_MEMORY
+            XMEMCPY(bc->will_payload, mc.lwt_msg->buffer, wp_len);
+#else
+            bc->will_payload = (byte*)WOLFMQTT_MALLOC(wp_len);
+            if (bc->will_payload != NULL) {
+                XMEMCPY(bc->will_payload, mc.lwt_msg->buffer, wp_len);
+            }
+            else {
+                wp_len = 0;
+                will_stored = 0;
+            }
+#endif
+            bc->will_payload_len = wp_len;
+        }
+        if (!will_stored) {
+            /* A Will missing its topic or payload would be dropped or
+             * published altered, so refuse the connection instead. */
+            WBLOG_ERR(broker, "broker: LWT alloc failed sock=%d",
+                (int)bc->sock);
+            BrokerClient_ClearWill(bc);
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+            }
+            else
+        #endif
+            {
+                ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+            }
+            goto send_connack;
+        }
+        /* Clamp will QoS to this build's Maximum QoS. A v5 Will over the cap
+         * was already refused above, so this only downgrades v3.1.1, which has
+         * no Maximum QoS advertisement to reject against. */
+        bc->will_qos = (mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) ?
+            (MqttQoS)WOLFMQTT_MAX_QOS : mc.lwt_msg->qos;
+        bc->will_retain = mc.lwt_msg->retain;
+        bc->will_delay_sec = 0;
+#ifdef WOLFMQTT_V5
+        if (mc.lwt_msg->props != NULL) {
+            MqttProp* prop = BrokerProps_Find(mc.lwt_msg->props,
+                MQTT_PROP_WILL_DELAY_INTERVAL);
+            if (prop != NULL) {
+                /* [MQTT-3.1.2.11.5] Honor the negotiated value, but clamp to a
+                 * sane maximum so a client advertising a huge delay cannot
+                 * hold a pending-will slot indefinitely. */
+                if (prop->data_int > BROKER_MAX_WILL_DELAY_SEC) {
+                    bc->will_delay_sec = BROKER_MAX_WILL_DELAY_SEC;
+                }
+                else {
+                    bc->will_delay_sec = prop->data_int;
+                }
+            }
+        }
+#endif
+        bc->has_will = 1;
+        WBLOG_DBG(broker, "broker: LWT stored sock=%d topic=%s qos=%d retain=%d "
+            "len=%u delay=%u", (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
+            bc->will_qos, bc->will_retain,
+            (unsigned)bc->will_payload_len,
+            (unsigned)bc->will_delay_sec);
+    }
+#endif /* WOLFMQTT_BROKER_WILL */
+
+#ifdef WOLFMQTT_V5
+    /* Release the decoded CONNECT and Will properties before building the
+     * CONNACK: they share the fixed property pool, and a CONNECT carrying many
+     * User Properties would otherwise exhaust it and drop the mandatory
+     * Assigned Client Identifier added below. */
+    if (mc.props != NULL) {
+        (void)MqttProps_Free(mc.props);
+        mc.props = NULL;
+    }
+    if (lwt.props != NULL) {
+        (void)MqttProps_Free(lwt.props);
+        lwt.props = NULL;
+    }
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        MqttProp* prop;
+        int adv_failed = 0;
+
+        /* [MQTT-3.1.3-6] Echo any server-assigned ClientId to v5 clients.
+         * Keyed off auto_assigned (set in the auto-id branch above) so this
+         * stays true to its name even if a future code path populates
+         * bc->client_id from another source (e.g., a TLS-cert identity). */
+        if (auto_assigned) {
+            prop = MqttProps_Add(&ack.props);
+            if (prop != NULL) {
+                prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
+                prop->data_str.str = bc->client_id;
+                prop->data_str.len = (word16)XSTRLEN(bc->client_id);
+            }
+            else {
+                /* [MQTT-3.1.3-6] An empty-ClientId client must be told its
+                 * assigned id; refuse rather than accept an unusable connection
+                 * when the property pool cannot hold it. */
+                ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+                goto send_connack;
+            }
+        }
+
+        /* Advertise feature availability. An absent availability property
+         * means the feature is supported (MQTT 5.0 sections 3.2.2.3.11,
+         * 3.2.2.3.12 and 3.2.2.3.15), so failing to add one that reports an
+         * unsupported feature must refuse the connection. */
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_RETAIN_AVAIL;
+    #ifdef WOLFMQTT_BROKER_RETAINED
+            prop->data_byte = 1;
+    #else
+            prop->data_byte = 0;
+    #endif
+        }
+    #ifndef WOLFMQTT_BROKER_RETAINED
+        else {
+            adv_failed = 1;
+        }
+    #endif
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_WILDCARD_SUB_AVAIL;
+    #ifdef WOLFMQTT_BROKER_WILDCARDS
+            prop->data_byte = 1;
+    #else
+            prop->data_byte = 0;
+    #endif
+        }
+    #ifndef WOLFMQTT_BROKER_WILDCARDS
+        else {
+            adv_failed = 1;
+        }
+    #endif
+        /* Shared Subscriptions are not implemented. */
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_SHARED_SUBSCRIPTION_AVAIL;
+            prop->data_byte = 0;
+        }
+        else {
+            adv_failed = 1;
+        }
+        /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
+         * of the property signals server supports Maximum QoS 2. Emitting
+         * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
+         * mosquitto) will disconnect on receipt. Emit the property only
+         * when this build caps below QoS 2 via WOLFMQTT_MAX_QOS, and
+         * refuse the connection when it cannot be added. */
+    #if WOLFMQTT_MAX_QOS < 2
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_MAX_QOS;
+            prop->data_byte = (byte)WOLFMQTT_MAX_QOS;
+        }
+        else {
+            adv_failed = 1;
+        }
+    #endif
+        /* [MQTT-3.2.2.3.3] Receive Maximum. Advertise the broker's
+         * per-client inbound QoS 1/2 cap so well-behaved publishers can
+         * pace themselves. We accept up to BROKER_MAX_INBOUND_QOS2
+         * concurrent QoS 2 PUBLISHes awaiting PUBREL ([MQTT-4.3.3]); use
+         * the same number as the wire value. Absence would mean 65535, so
+         * refuse the connection when it cannot be added. The property MUST
+         * NOT be 0 - we skip the emission entirely in that (unreachable)
+         * case so a future tunable down to 0 cannot send an illegal value.
+         * The cap applies in both dynamic and static memory modes. */
+        if (BROKER_MAX_INBOUND_QOS2 > 0) {
+            prop = MqttProps_Add(&ack.props);
+            if (prop != NULL) {
+                prop->type = MQTT_PROP_RECEIVE_MAX;
+                prop->data_short =
+                    (BROKER_MAX_INBOUND_QOS2 > 0xFFFF) ?
+                    (word16)0xFFFF :
+                    (word16)BROKER_MAX_INBOUND_QOS2;
+            }
+            else {
+                adv_failed = 1;
+            }
+        }
+        if (adv_failed) {
+            WBLOG_ERR(broker, "broker: CONNACK property alloc failed sock=%d",
+                (int)bc->sock);
+            ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
+            goto send_connack;
+        }
+    }
+#endif
+
 #ifdef WOLFMQTT_STATIC_MEMORY
     /* Reserve bounded Session storage before accepting a persistent
      * connection. Refusing a new Session preserves every existing Session;
@@ -7085,64 +7447,6 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #endif
     }
 
-    /* Store Last Will and Testament */
-    BrokerClient_ClearWill(bc);
-#ifdef WOLFMQTT_BROKER_WILL
-    if (mc.enable_lwt && mc.lwt_msg != NULL) {
-        if (mc.lwt_msg->topic_name != NULL &&
-            mc.lwt_msg->topic_name_len > 0) {
-            BROKER_STORE_STR(bc->will_topic, mc.lwt_msg->topic_name,
-                mc.lwt_msg->topic_name_len, BROKER_MAX_TOPIC_LEN);
-        }
-        if (mc.lwt_msg->total_len > 0 && mc.lwt_msg->buffer != NULL) {
-            word16 wp_len;
-            wp_len = (word16)mc.lwt_msg->total_len;
-#ifdef WOLFMQTT_STATIC_MEMORY
-            XMEMCPY(bc->will_payload, mc.lwt_msg->buffer, wp_len);
-#else
-            bc->will_payload = (byte*)WOLFMQTT_MALLOC(wp_len);
-            if (bc->will_payload != NULL) {
-                XMEMCPY(bc->will_payload, mc.lwt_msg->buffer, wp_len);
-            }
-            else {
-                wp_len = 0;
-            }
-#endif
-            bc->will_payload_len = wp_len;
-        }
-        /* Clamp will QoS to this build's Maximum QoS. A v5 Will over the cap
-         * was already refused above, so this only downgrades v3.1.1, which has
-         * no Maximum QoS advertisement to reject against. */
-        bc->will_qos = (mc.lwt_msg->qos > WOLFMQTT_MAX_QOS) ?
-            (MqttQoS)WOLFMQTT_MAX_QOS : mc.lwt_msg->qos;
-        bc->will_retain = mc.lwt_msg->retain;
-        bc->will_delay_sec = 0;
-#ifdef WOLFMQTT_V5
-        if (mc.lwt_msg->props != NULL) {
-            MqttProp* prop = BrokerProps_Find(mc.lwt_msg->props,
-                MQTT_PROP_WILL_DELAY_INTERVAL);
-            if (prop != NULL) {
-                /* [MQTT-3.1.2.11.5] Honor the negotiated value, but clamp to a
-                 * sane maximum so a client advertising a huge delay cannot
-                 * hold a pending-will slot indefinitely. */
-                if (prop->data_int > BROKER_MAX_WILL_DELAY_SEC) {
-                    bc->will_delay_sec = BROKER_MAX_WILL_DELAY_SEC;
-                }
-                else {
-                    bc->will_delay_sec = prop->data_int;
-                }
-            }
-        }
-#endif
-        bc->has_will = 1;
-        WBLOG_DBG(broker, "broker: LWT stored sock=%d topic=%s qos=%d retain=%d "
-            "len=%u delay=%u", (int)bc->sock, BrokerLog_Sanitize(bc->will_topic),
-            bc->will_qos, bc->will_retain,
-            (unsigned)bc->will_payload_len,
-            (unsigned)bc->will_delay_sec);
-    }
-#endif /* WOLFMQTT_BROKER_WILL */
-
     /* Credentials were already validated above, before any session-state
      * mutation. [MQTT-3.2.2-2]: when the accepted CleanSession=0 connection
      * finds stored session state, Session Present MUST be 1; otherwise it
@@ -7151,104 +7455,6 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
      * Present=0 on a refused CONNACK. */
     ack.flags = session_present ? MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT : 0;
     ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
-#ifdef WOLFMQTT_V5
-    ack.props = NULL;
-
-    /* Release the decoded CONNECT and Will properties before building the
-     * CONNACK: they share the fixed property pool, and a CONNECT carrying many
-     * User Properties would otherwise exhaust it and drop the mandatory
-     * Assigned Client Identifier added below. */
-    if (mc.props != NULL) {
-        (void)MqttProps_Free(mc.props);
-        mc.props = NULL;
-    }
-    if (lwt.props != NULL) {
-        (void)MqttProps_Free(lwt.props);
-        lwt.props = NULL;
-    }
-#endif
-
-#ifdef WOLFMQTT_V5
-    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
-        ack.return_code == MQTT_CONNECT_ACK_CODE_ACCEPTED) {
-        MqttProp* prop;
-
-        /* [MQTT-3.1.3-6] Echo any server-assigned ClientId to v5 clients.
-         * Keyed off auto_assigned (set in the auto-id branch above) so this
-         * stays true to its name even if a future code path populates
-         * bc->client_id from another source (e.g., a TLS-cert identity). */
-        if (auto_assigned) {
-            prop = MqttProps_Add(&ack.props);
-            if (prop != NULL) {
-                prop->type = MQTT_PROP_ASSIGNED_CLIENT_ID;
-                prop->data_str.str = bc->client_id;
-                prop->data_str.len = (word16)XSTRLEN(bc->client_id);
-            }
-            else {
-                /* [MQTT-3.1.3-6] An empty-ClientId client must be told its
-                 * assigned id; refuse rather than accept an unusable connection
-                 * when the property pool cannot hold it. Clear the effective
-                 * session expiry first so the refused connection tears its
-                 * tentative session down instead of orphaning an unreachable
-                 * one that could evict a valid session at capacity. */
-                bc->session_expiry_sec = 0;
-                ack.return_code = MQTT_REASON_SERVER_UNAVAILABLE;
-                goto send_connack;
-            }
-        }
-
-        /* Advertise feature availability */
-        prop = MqttProps_Add(&ack.props);
-        if (prop != NULL) {
-            prop->type = MQTT_PROP_RETAIN_AVAIL;
-    #ifdef WOLFMQTT_BROKER_RETAINED
-            prop->data_byte = 1;
-    #else
-            prop->data_byte = 0;
-    #endif
-        }
-        prop = MqttProps_Add(&ack.props);
-        if (prop != NULL) {
-            prop->type = MQTT_PROP_WILDCARD_SUB_AVAIL;
-    #ifdef WOLFMQTT_BROKER_WILDCARDS
-            prop->data_byte = 1;
-    #else
-            prop->data_byte = 0;
-    #endif
-        }
-        /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
-         * of the property signals server supports Maximum QoS 2. Emitting
-         * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
-         * mosquitto) will disconnect on receipt. Emit the property only
-         * when this build caps below QoS 2 via WOLFMQTT_MAX_QOS. */
-    #if WOLFMQTT_MAX_QOS < 2
-        prop = MqttProps_Add(&ack.props);
-        if (prop != NULL) {
-            prop->type = MQTT_PROP_MAX_QOS;
-            prop->data_byte = (byte)WOLFMQTT_MAX_QOS;
-        }
-    #endif
-
-        /* [MQTT-3.2.2.3.3] Receive Maximum. Advertise the broker's
-         * per-client inbound QoS 1/2 cap so well-behaved publishers can
-         * pace themselves. We accept up to BROKER_MAX_INBOUND_QOS2
-         * concurrent QoS 2 PUBLISHes awaiting PUBREL ([MQTT-4.3.3]); use
-         * the same number as the wire value. The property MUST NOT be
-         * 0 - we skip the emission entirely in that (unreachable) case
-         * so a future tunable down to 0 cannot send an illegal value.
-         * The cap applies in both dynamic and static memory modes. */
-        if (BROKER_MAX_INBOUND_QOS2 > 0) {
-            prop = MqttProps_Add(&ack.props);
-            if (prop != NULL) {
-                prop->type = MQTT_PROP_RECEIVE_MAX;
-                prop->data_short =
-                    (BROKER_MAX_INBOUND_QOS2 > 0xFFFF) ?
-                    (word16)0xFFFF :
-                    (word16)BROKER_MAX_INBOUND_QOS2;
-            }
-        }
-    }
-#endif
 
 send_connack:
     /* [MQTT-3.2.2-4] A refused CONNACK MUST have Session Present = 0. The
@@ -7257,6 +7463,19 @@ send_connack:
      * return_code to a refusal after that point. */
     if (ack.return_code != MQTT_CONNECT_ACK_CODE_ACCEPTED) {
         ack.flags = 0;
+        /* [MQTT-3.1.2-8] A Will is stored only for an accepted connection,
+         * and one stored before a later refusal must not be published by any
+         * close path. */
+        BrokerClient_ClearWill(bc);
+    #ifdef WOLFMQTT_V5
+        /* The CONNACK properties built before a later refusal describe an
+         * accepted connection, including any Assigned Client Identifier
+         * (MQTT 5.0 section 3.2.2.3.7), so a refusal carries none. */
+        if (ack.props != NULL) {
+            (void)MqttProps_Free(ack.props);
+            ack.props = NULL;
+        }
+    #endif
     }
     rc = MqttEncode_ConnectAck(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc), &ack);
     if (rc > 0) {
@@ -7444,6 +7663,17 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
                     fail_code = MQTT_REASON_WILDCARD_SUB_NOT_SUP;
                 }
             #endif
+            }
+            if (sub_rc == MQTT_CODE_SUCCESS)
+        #endif
+        #ifdef WOLFMQTT_V5
+            /* Shared Subscriptions are advertised as unavailable, so refuse
+             * a '$share/' filter rather than match it literally (MQTT 5.0
+             * sections 3.9.3 and 4.8.2). */
+            if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                    flen >= 7 && XMEMCMP(f, "$share/", 7) == 0) {
+                sub_rc = MQTT_CODE_ERROR_BAD_ARG;
+                fail_code = MQTT_REASON_SS_NOT_SUPPORTED;
             }
             if (sub_rc == MQTT_CODE_SUCCESS)
         #endif
@@ -7648,6 +7878,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     byte* payload = NULL;
     char* topic = NULL;
     MqttQoS eff_qos;
+    int fanout_failed = 0;
 #if WOLFMQTT_MAX_QOS >= 2
     int qos2_duplicate = 0;
 #endif
@@ -8043,13 +8274,15 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 if (eff_qos > MQTT_QOS_0) {
                     BrokerOrphanSession* o =
                         BrokerOrphan_Find(broker, sub->client_id);
-                    if (o != NULL) {
-                        BrokerOrphan_Enqueue(broker, o, topic, payload,
-                            pub.total_len, eff_qos, 0
-                        #ifdef WOLFMQTT_V5
-                            , pub.props
-                        #endif
-                            );
+                    if (o != NULL &&
+                            BrokerOrphan_Enqueue(broker, o, topic, payload,
+                                pub.total_len, eff_qos, 0
+                            #ifdef WOLFMQTT_V5
+                                , pub.props
+                            #endif
+                                ) < 0) {
+                        /* The offline copy was not queued either. */
+                        fanout_failed = 1;
                     }
                 }
             }
@@ -8059,6 +8292,7 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 "broker: fan-out list alloc failed after %d destination(s), "
                 "remaining subscribers not served sock=%d topic=%s",
                 targets.count, (int)bc->sock, BrokerLog_Sanitize(topic));
+            fanout_failed = 1;
         }
 
         clients_gen_snapshot = broker->clients_gen;
@@ -8117,6 +8351,21 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 }
                 wc->connected = 0;
             }
+            else if (!BrokerOutPub_FitsTx(topic, pub.total_len, eff_qos,
+                    wc->protocol_level
+                #ifdef WOLFMQTT_V5
+                    , pub.props
+                #endif
+                    , BROKER_CLIENT_TX_SZ(wc))) {
+                WBLOG_ERR(broker,
+                    "broker: PUBLISH too large for subscriber "
+                    "sock=%d -> sock=%d topic=%s",
+                    (int)bc->sock, (int)wc->sock, BrokerLog_Sanitize(topic));
+                /* QoS 0 delivery may be dropped; QoS 1/2 may not. */
+                if (eff_qos >= MQTT_QOS_1) {
+                    fanout_failed = 1;
+                }
+            }
             else {
                 BrokerOutPub* e = BrokerOutPub_Alloc(topic, payload,
                                       pub.total_len
@@ -8128,6 +8377,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     WBLOG_ERR(broker,
                         "broker: PUBLISH fwd alloc failed sock=%d "
                         "-> sock=%d", (int)bc->sock, (int)wc->sock);
+                    /* QoS 0 delivery may be dropped; QoS 1/2 may not. */
+                    if (eff_qos >= MQTT_QOS_1) {
+                        fanout_failed = 1;
+                    }
                 }
                 else {
                     e->qos = eff_qos;
@@ -8177,6 +8430,34 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         resp.reason_code = MQTT_REASON_SUCCESS;
         resp.props = NULL;
 #endif
+        /* A subscriber's QoS 1/2 copy could not be queued, so the PUBLISH
+         * must not be acknowledged as accepted. */
+        if (fanout_failed) {
+        #ifdef WOLFMQTT_V5
+            if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                resp.reason_code = MQTT_REASON_UNSPECIFIED_ERR;
+            #if WOLFMQTT_MAX_QOS >= 2
+                /* A failure PUBREC ends the QoS 2 exchange (MQTT 5.0
+                 * section 4.3.3), so no PUBREL will follow. */
+                if (pub.qos == MQTT_QOS_2) {
+                    BrokerInboundQos2_Remove(bc, pub.packet_id);
+                }
+            #endif
+            }
+            else
+        #endif
+            {
+                /* v3.1.1 has no failure acknowledgement; close instead.
+                 * Known limitation: a QoS 2 Packet Identifier recorded
+                 * above stays recorded, so on a resumed Session the
+                 * retransmission is treated as a duplicate and the
+                 * subscribers that missed this fan-out do not receive it.
+                 * Removing it would instead re-deliver to subscribers
+                 * already served, breaking exactly-once for them. */
+                rc = MQTT_CODE_ERROR_MEMORY;
+                goto publish_cleanup;
+            }
+        }
         rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
                 (pub.qos == MQTT_QOS_1) ? MQTT_PACKET_TYPE_PUBLISH_ACK :
                 MQTT_PACKET_TYPE_PUBLISH_REC, &resp);
@@ -8549,6 +8830,11 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
         if (rc != MQTT_CODE_SUCCESS) {
             return 0;
         }
+        if (bc->close_after_direct) {
+            /* The DISCONNECT that announced this close is fully written. */
+            BrokerClient_AbnormalClose(broker, bc);
+            return 0;
+        }
         activity = 1;
     }
 
@@ -8848,6 +9134,20 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                                 if (disc.props != NULL) {
                                     (void)MqttProps_Free(disc.props);
                                 }
+                                /* MQTT 5.0 section 3.14.2.2.2 */
+                            #ifndef WOLFMQTT_STATIC_MEMORY
+                                if (BrokerSend_Disconnect(bc,
+                                        MQTT_REASON_PROTOCOL_ERR) ==
+                                        MQTT_CODE_CONTINUE) {
+                                    /* Finish writing the DISCONNECT on a
+                                     * later step before closing. */
+                                    bc->close_after_direct = 1;
+                                    return 0;
+                                }
+                            #else
+                                (void)BrokerSend_Disconnect(bc,
+                                    MQTT_REASON_PROTOCOL_ERR);
+                            #endif
                                 BrokerClient_AbnormalClose(broker, bc);
                                 return 0;
                             }
@@ -8864,11 +9164,34 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                         }
                 #endif
                     }
+                    else if (disc_rc == MQTT_CODE_ERROR_MEMORY) {
+                        /* The packet is well formed but its Properties did
+                         * not fit in the property pool. The Reason Code is
+                         * decoded before them, so honor it [MQTT-3.14.4-3];
+                         * the Session Expiry Interval keeps its CONNECT
+                         * value. */
+                        WBLOG_ERR(broker,
+                            "broker: DISCONNECT properties dropped, out of "
+                            "memory sock=%d", (int)bc->sock);
                 #ifdef WOLFMQTT_BROKER_WILL
-                    else {
-                        BrokerClient_ClearWill(bc);
-                    }
+                        if (disc.reason_code ==
+                                MQTT_REASON_DISCONNECT_W_WILL_MSG) {
+                            BrokerClient_PublishWill(broker, bc);
+                        }
+                        else {
+                            BrokerClient_ClearWill(bc);
+                        }
                 #endif
+                    }
+                    else {
+                        /* A Malformed Packet is not a normal disconnect, so
+                         * the Will is published (MQTT 5.0 section 3.1.2.5). */
+                        if (disc.props != NULL) {
+                            (void)MqttProps_Free(disc.props);
+                        }
+                        BrokerClient_AbnormalClose(broker, bc);
+                        return 0;
+                    }
                     /* Free any decoded v5 DISCONNECT properties. */
                     if (disc.props != NULL) {
                         (void)MqttProps_Free(disc.props);
@@ -9062,6 +9385,11 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     }
 #endif
 
+#if defined(WOLFMQTT_WOLFIP)
+    if (broker->net.ctx == &broker_wolfip_ctx) {
+        broker_wolfip_log = broker;
+    }
+#endif
 #if !defined(WOLFMQTT_WOLFIP) && !defined(WOLFMQTT_BROKER_CUSTOM_NET)
     /* For the default POSIX backend, the net callbacks expect ctx to be a
      * MqttBroker* for logging via WBLOG_*. If no context was provided,
@@ -9074,10 +9402,20 @@ int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
     return MQTT_CODE_SUCCESS;
 }
 
+/* An accept callback returns MQTT_CODE_CONTINUE or MQTT_CODE_ERROR_TIMEOUT
+ * when no connection is pending; any other negative result means the
+ * listener itself has failed. */
+static int BrokerAccept_IsFailure(int rc)
+{
+    return (rc < 0 && rc != MQTT_CODE_CONTINUE &&
+            rc != MQTT_CODE_ERROR_TIMEOUT) ? 1 : 0;
+}
+
 int MqttBroker_Step(MqttBroker* broker)
 {
     int activity = 0;
     int rc;
+    int accept_rc = MQTT_CODE_SUCCESS;
 
     if (broker == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -9107,6 +9445,10 @@ int MqttBroker_Step(MqttBroker* broker)
         BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
         rc = broker->net.accept(broker->net.ctx, broker->listen_sock,
             &new_sock);
+        if (BrokerAccept_IsFailure(rc)) {
+            WBLOG_ERR(broker, "broker: accept failed (plain) rc=%d", rc);
+            accept_rc = rc;
+        }
         if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
         #ifdef WOLFMQTT_POSIX_SOCKET
             /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
@@ -9138,6 +9480,10 @@ int MqttBroker_Step(MqttBroker* broker)
         BROKER_SOCKET_T new_sock = BROKER_SOCKET_INVALID;
         rc = broker->net.accept(broker->net.ctx, broker->listen_sock_tls,
             &new_sock);
+        if (BrokerAccept_IsFailure(rc)) {
+            WBLOG_ERR(broker, "broker: accept failed (TLS) rc=%d", rc);
+            accept_rc = rc;
+        }
         if (rc == MQTT_CODE_SUCCESS && new_sock != BROKER_SOCKET_INVALID) {
         #ifdef WOLFMQTT_POSIX_SOCKET
             /* Reject socket if >= FD_SETSIZE (would overflow fd_set) */
@@ -9238,6 +9584,11 @@ int MqttBroker_Step(MqttBroker* broker)
         activity = 1;
     }
 
+    /* Report a failed listener only after this step has serviced the
+     * connected clients. */
+    if (accept_rc != MQTT_CODE_SUCCESS) {
+        return accept_rc;
+    }
     return activity ? MQTT_CODE_SUCCESS : MQTT_CODE_CONTINUE;
 }
 
@@ -9423,6 +9774,9 @@ int MqttBroker_Start(MqttBroker* broker)
     }
 #endif
 
+    /* New listeners start with no accept failure reported. */
+    broker->accept_log_err = 0;
+    broker->accept_log_err_tls = 0;
     broker->running = 1;
     return MQTT_CODE_SUCCESS;
 
@@ -9517,6 +9871,11 @@ int MqttBroker_Free(MqttBroker* broker)
         return MQTT_CODE_ERROR_BAD_ARG;
     }
     broker->running = 0;
+#if defined(WOLFMQTT_WOLFIP)
+    if (broker_wolfip_log == broker) {
+        broker_wolfip_log = NULL;
+    }
+#endif
 
     /* Disconnect and free all clients and subscriptions */
 #ifdef WOLFMQTT_STATIC_MEMORY

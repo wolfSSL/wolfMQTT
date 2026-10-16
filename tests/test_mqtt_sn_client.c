@@ -409,14 +409,11 @@ static const byte SUBACK_REJECT_FRAME[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00,
 /* Gateway PINGRESP: total_len=2, type. */
 static const byte PINGRESP_FRAME[] = { 0x02, SN_MSG_TYPE_PING_RESP };
 
-#ifdef WOLFMQTT_NONBLOCK
-/* Unsolicited GWINFO broadcast: total_len=5, type, gwId, addr(2). Not a
- * match for any pending wait, so SN_Client_WaitType routes it through the
- * shared client->msgSN object. */
+/* GWINFO from a gateway: total_len=5, type, gwId, addr(2)
+ * (MQTT-SN 1.2 section 5.4.4). */
 #define SN_TEST_GWINFO_GWID 0x09
 static const byte GWINFO_FRAME[] = { 0x05, SN_MSG_TYPE_GWINFO,
                                      SN_TEST_GWINFO_GWID, 0xAA, 0xBB };
-#endif
 
 /* Scripted publish-response frames for packet_id 1.
  * PUBACK:  total_len=7, type, topicId(2), packet_id(2), return_code.
@@ -2918,6 +2915,72 @@ TEST(sn_ping_unsolicited_gwinfo_captured)
 
 #endif /* WOLFMQTT_NONBLOCK */
 
+/* A caller-owned SN_Object reused with SN_Client_WaitMessage_ex can carry
+ * leftover union bytes from an earlier packet where gwInfo.gwAddr lives. A
+ * GWINFO decoded into it must use the object's own gwAddrBuf and never write
+ * through that stale pointer. */
+TEST(sn_wait_message_ex_reused_obj_gwinfo_ignores_stale_addr)
+{
+    SN_Object obj;
+    SN_GwAddr stale;
+    SN_GwAddr stale_expect;
+    int rc;
+    const byte expect_addr[2] = { 0xAA, 0xBB };
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+
+    XMEMSET(&stale, 0x5A, sizeof(stale));
+    XMEMCPY(&stale_expect, &stale, sizeof(stale));
+    XMEMSET(&obj, 0, sizeof(obj));
+    obj.gwInfo.gwAddr = &stale;
+
+    mock_net_push(&g_mock, GWINFO_FRAME, (int)sizeof(GWINFO_FRAME));
+    rc = SN_Client_WaitMessage_ex(&g_client, &obj, 1000);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_MEM_EQ(&stale_expect, &stale, sizeof(stale));
+    ASSERT_EQ(SN_TEST_GWINFO_GWID, obj.gwInfo.gwId);
+    ASSERT_TRUE(obj.gwInfo.gwAddr == &obj.gwInfo.gwAddrBuf);
+    ASSERT_MEM_EQ(expect_addr, &obj.gwInfo.gwAddrBuf, sizeof(expect_addr));
+}
+
+/* The context a caller stores in its own SN_Object's publish.ctx is the
+ * user-supplied callback context; reusing the object for an incoming PUBLISH
+ * must deliver that context to msg_cb, not a reset NULL. */
+static void* g_sn_seen_ctx;
+static int sn_record_ctx_cb(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client; (void)msg_new; (void)msg_done;
+    g_sn_seen_ctx = ((SN_Publish*)msg)->ctx;
+    return MQTT_CODE_SUCCESS;
+}
+
+TEST(sn_wait_message_ex_publish_keeps_caller_ctx)
+{
+    SN_Object obj;
+    int marker = 0;
+    int rc;
+    /* MQTT-SN 1.2 section 5.4.21 PUBLISH, QoS 0: Length 9, MsgType, Flags
+     * 0x00, TopicId 0x000A, MsgId 0x0000, Data 0x01 0x02. */
+    static const byte publish_qos0[] = {
+        0x09, SN_MSG_TYPE_PUBLISH, 0x00, 0x00, 0x0A, 0x00, 0x00, 0x01, 0x02
+    };
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    g_client.msg_cb = sn_record_ctx_cb;
+    g_sn_seen_ctx = NULL;
+
+    XMEMSET(&obj, 0, sizeof(obj));
+    obj.publish.ctx = &marker;
+
+    mock_net_push(&g_mock, publish_qos0, (int)sizeof(publish_qos0));
+    rc = SN_Client_WaitMessage_ex(&g_client, &obj, 1000);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_sn_seen_ctx == (void*)&marker);
+}
+
 TEST(sn_packet_read_bounds_fixed_header)
 {
     static const byte short_frame[] = { 0x02, SN_MSG_TYPE_PING_RESP };
@@ -3222,6 +3285,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_ping_null_no_continue);
     RUN_TEST(sn_ping_null_consecutive_success);
     RUN_TEST(sn_ping_null_recovers_after_malformed_response);
+    RUN_TEST(sn_wait_message_ex_reused_obj_gwinfo_ignores_stale_addr);
+    RUN_TEST(sn_wait_message_ex_publish_keeps_caller_ctx);
     RUN_TEST(sn_packet_read_bounds_fixed_header);
     RUN_TEST(sn_packet_read_rejects_header_past_buffer);
     RUN_TEST(sn_nondtls_reads_full_frames);

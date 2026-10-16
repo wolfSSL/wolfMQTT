@@ -655,10 +655,10 @@ static void MqttClient_Replay_FreeSlot(MqttReplayMsg* slot)
     XMEMSET(slot, 0, sizeof(*slot));
 }
 
-/* Retain a copy of an outbound QoS > 0 PUBLISH. A message that does not fit
- * the pool is left unretained rather than refused: it still goes out, it just
- * cannot be replayed, which is the same position the client was in before the
- * store existed. */
+/* Retain a copy of an outbound QoS > 0 PUBLISH. On a persistent Session the
+ * caller refuses a publish that would not fit the pool first, see
+ * MqttClient_Replay_CheckRoomSafe; on a clean Session a message that does not
+ * fit still goes out unretained, since it is never replayed. */
 static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
 {
     MqttReplayMsg* slot;
@@ -795,6 +795,53 @@ static void MqttClient_Replay_AddSafe(MqttClient* client, MqttPublish* publish)
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
+}
+
+/* [MQTT-4.4.0-1] A persistent Session must be able to re-send every
+ * unacknowledged QoS > 0 PUBLISH, so refuse one that has no replay slot. */
+static int MqttClient_Replay_CheckRoomSafe(MqttClient* client,
+    word16 packet_id)
+{
+    int rc = MQTT_CODE_SUCCESS;
+
+    if ((MqttClient_Flags(client, 0, 0) &
+            MQTT_CLIENT_FLAG_PERSISTENT_SESSION) == 0) {
+        return MQTT_CODE_SUCCESS;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#endif
+    if (MqttClient_Replay_Find(client, packet_id) == NULL &&
+            MqttClient_Replay_Find(client, 0) == NULL) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    return rc;
+}
+
+/* Whether the Session requested by this CONNECT outlives the Network
+ * Connection: CleanSession 0 in v3.1.1, a non-zero Session Expiry Interval
+ * in v5 (MQTT 5.0 section 3.1.2.11.2). */
+static int MqttClient_ConnectIsPersistent(const MqttConnect* mc_connect)
+{
+#ifdef WOLFMQTT_V5
+    if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        const MqttProp* prop;
+
+        for (prop = mc_connect->props; prop != NULL; prop = prop->next) {
+            if (prop->type == MQTT_PROP_SESSION_EXPIRY_INTERVAL) {
+                return (prop->data_int != 0) ? 1 : 0;
+            }
+        }
+        return 0;
+    }
+#endif
+    return (mc_connect->clean_session == 0) ? 1 : 0;
 }
 
 static void MqttClient_Replay_RemoveSafe(MqttClient* client, word16 packet_id)
@@ -1272,6 +1319,21 @@ static int Handle_ConnectAck_Props(MqttClient* client, MqttProp* props)
             /* MQTT v5 [3.1.2.11.8] */
             client->topic_alias_max = prop->data_short;
         }
+    #ifndef WOLFMQTT_NO_SESSION_REPLAY
+        else if (prop->type == MQTT_PROP_SESSION_EXPIRY_INTERVAL) {
+            /* MQTT 5.0 section 3.2.2.3.2: the server's value replaces the
+             * one requested in CONNECT, so it decides whether this Session
+             * outlives the connection and needs replay. */
+            if (prop->data_int != 0) {
+                (void)MqttClient_Flags(client, 0,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+            }
+            else {
+                (void)MqttClient_Flags(client,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION, 0);
+            }
+        }
+    #endif
     }
     return rc;
 }
@@ -2533,6 +2595,11 @@ wait_again:
         #endif
             if (rc < 0) {
                 MqttWriteStop(client, mms_stat);
+                /* Drop the unsendable ack so later waits read new packets
+                 * instead of retrying the same encode. */
+                mms_stat->ackPacketType = MQTT_PACKET_TYPE_RESERVED;
+                mms_stat->ack = MQTT_MSG_BEGIN;
+                mms_stat->read = MQTT_MSG_BEGIN;
                 break;
             }
 
@@ -2605,8 +2672,13 @@ wait_again:
 #endif
 
 read_cleanup:
-    if (recvFatal && MqttClient_IsFatalProtoError(rc)) {
-        /* Scrub decoded peer data before releasing lockRecv. */
+    /* Scrub received peer data, which may be a partial v5 AUTH packet,
+     * before releasing lockRecv whenever the receive has ended. A timeout or
+     * wake-up keeps a partially read packet for the next call. Only the
+     * holder of the read may touch rx_buf: after an ack-phase failure the
+     * read was already released and another thread may be filling it. */
+    if (mms_stat->isReadActive && rc < 0 && rc != MQTT_CODE_CONTINUE &&
+            rc != MQTT_CODE_ERROR_TIMEOUT && rc != MQTT_CODE_STDIN_WAKE) {
         CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
     }
     MqttReadStop(client, mms_stat);
@@ -3373,6 +3445,16 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
              * out. Resuming this same write re-enters past MQTT_MSG_BEGIN, so
              * the once-per-connection guard does not see it. */
             (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
+        #ifndef WOLFMQTT_NO_SESSION_REPLAY
+            if (MqttClient_ConnectIsPersistent(mc_connect)) {
+                (void)MqttClient_Flags(client, 0,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+            }
+            else {
+                (void)MqttClient_Flags(client,
+                    MQTT_CLIENT_FLAG_PERSISTENT_SESSION, 0);
+            }
+        #endif
         }
     #ifdef WOLFMQTT_NONBLOCK
         if (rc == MQTT_CODE_CONTINUE
@@ -3721,6 +3803,11 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
             if (msg_len > 0) {
                 rc = MqttSocket_Read(client, client->rx_buf, msg_len,
                         timeout_ms);
+                /* Zero means the peer closed mid-payload; retrying the same
+                 * read would never make progress. */
+                if (rc == 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+                }
                 if (rc < 0) {
                     break;
                 }
@@ -3943,10 +4030,13 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
 }
 
 #ifdef WOLFMQTT_V5
-/* Give back the Receive Maximum unit reserved for a QoS>0 v5 PUBLISH when it
- * terminates without a matching PUBACK/PUBCOMP (write failure, cancel,
- * ack-wait timeout, PUBREC rejection). Clamped to the negotiated ceiling so a
- * later stray ack for the same id cannot inflate the quota past it. */
+/* Give back the Receive Maximum unit reserved for a QoS>0 v5 PUBLISH once the
+ * server can no longer be counting it: the PUBLISH failed before it was sent
+ * or its write failed, or the exchange ended with PUBACK/PUBCOMP or a
+ * rejecting PUBREC. Never use it after an ack-wait timeout or a cancel of a
+ * sent PUBLISH; the server still counts that one [MQTT-4.9]. Clamped to the
+ * negotiated ceiling so a later stray ack for the same id cannot inflate the
+ * quota past it. */
 static void MqttClient_RestoreRecvQuota(MqttClient* client,
     MqttPublish* publish)
 {
@@ -4074,6 +4164,20 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
             }
         #endif
             client->write.len = rc;
+
+        #ifndef WOLFMQTT_NO_SESSION_REPLAY
+            if (publish->qos > MQTT_QOS_0) {
+                rc = MqttClient_Replay_CheckRoomSafe(client,
+                    publish->packet_id);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    MqttWriteStop(client, &publish->stat);
+                #ifdef WOLFMQTT_V5
+                    MqttClient_RestoreRecvQuota(client, publish);
+                #endif
+                    return rc;
+                }
+            }
+        #endif
 
             if (publish->qos > MQTT_QOS_0) {
                 /* [MQTT-2.3.1-2] A new QoS>0 PUBLISH must carry a currently
@@ -5422,6 +5526,10 @@ int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg)
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("Cancel Read Lock");
     #endif
+        /* An abandoned read can leave part of a received packet - possibly
+         * v5 AUTH data - in rx_buf. Scrub it before MqttReadStop releases
+         * lockRecv. */
+        CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
         MqttReadStop(client, mms_stat);
     }
     if (mms_stat->isWriteActive) {
@@ -5487,10 +5595,10 @@ int MqttClient_NetConnect(MqttClient *client, const char* host,
 
 int MqttClient_NetDisconnect(MqttClient *client)
 {
+    int rc;
 #ifdef WOLFMQTT_MULTITHREAD
     MqttPendResp *tmpResp;
     MqttPendResp *nextResp;
-    int rc;
 #endif
 
     if (client == NULL) {
@@ -5540,7 +5648,29 @@ int MqttClient_NetDisconnect(MqttClient *client)
      * session state across one, so nothing stays in flight [MQTT-2.3.1-3]. */
     MqttClient_SendIdsReset(client);
 
-    return MqttSocket_Disconnect(client);
+    rc = MqttSocket_Disconnect(client);
+
+    /* An operation abandoned with the connection, such as a partly written
+     * nonblocking CONNECT, can leave credentials in tx_buf or peer data in
+     * rx_buf. Nothing on this connection can resume, so wipe both. With
+     * multiple threads a buffer whose read or write is still active belongs
+     * to that operation's owner (lockRecv/lockSend, not lockClient), so it is
+     * left for MqttClient_CancelMessage, which scrubs it on release. */
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0) {
+        if (!client->write.isActive) {
+            CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+        }
+        if (!client->read.isActive) {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+        }
+        wm_SemUnlock(&client->lockClient);
+    }
+#else
+    CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+    CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+#endif
+    return rc;
 }
 
 int MqttClient_GetProtocolVersion(MqttClient *client)

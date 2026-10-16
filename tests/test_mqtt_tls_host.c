@@ -50,6 +50,7 @@ typedef struct TlsTestServer {
 
 static const char* g_tls_test_identity;
 static int g_tls_test_precreate;
+static int g_tls_test_peer_close;
 
 static int tls_test_connect(void* context, const char* host, word16 port,
     int timeout_ms)
@@ -205,7 +206,38 @@ static void* tls_test_server_run(void* arg)
     TlsTestServer* server = (TlsTestServer*)arg;
 
     server->result = wolfSSL_accept(server->ssl);
+    if (g_tls_test_peer_close && server->result == WOLFSSL_SUCCESS) {
+        (void)wolfSSL_shutdown(server->ssl);
+    }
     return NULL;
+}
+
+/* After the peer sends close_notify, wolfSSL_read reports the closure with a
+ * zero return. That must surface as a terminal network error on the first
+ * read, not as MQTT_CODE_CONTINUE, and later writes must fail as well. */
+static int tls_test_check_peer_close(MqttClient* client)
+{
+    int rc;
+    int attempts = 0;
+
+    rc = MqttClient_WaitMessage(client, 1000);
+    if (rc != MQTT_CODE_ERROR_NETWORK) {
+        PRINTF("  TLS peer close: read expected %d, got %d",
+            MQTT_CODE_ERROR_NETWORK, rc);
+        return 1;
+    }
+
+    (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
+    attempts = 0;
+    do {
+        rc = MqttClient_Ping(client);
+    } while (rc == MQTT_CODE_CONTINUE && ++attempts < 8);
+    if (rc != MQTT_CODE_ERROR_NETWORK) {
+        PRINTF("  TLS peer close: write expected %d, got %d",
+            MQTT_CODE_ERROR_NETWORK, rc);
+        return 1;
+    }
+    return 0;
 }
 
 static int tls_test_host_with_cb(const char* host, const char* identity,
@@ -303,6 +335,10 @@ static int tls_test_host_with_cb(const char* host, const char* identity,
     do {
         connect_rc = MqttClient_NetConnect(&client, host, 8883, 3000, 1, cb);
     } while (connect_rc == MQTT_CODE_CONTINUE && ++attempts < 8);
+    if (connect_rc == MQTT_CODE_SUCCESS && g_tls_test_peer_close &&
+            tls_test_check_peer_close(&client) != 0) {
+        goto cleanup;
+    }
     if (connect_rc == MQTT_CODE_SUCCESS) {
         (void)MqttClient_NetDisconnect(&client);
         if (MqttClient_Flags(&client, 0, 0) &
@@ -330,6 +366,7 @@ cleanup:
 #endif
     g_tls_test_identity = NULL;
     g_tls_test_precreate = 0;
+    g_tls_test_peer_close = 0;
     (void)tls_test_disconnect(&client_net);
     if (thread_started) {
         (void)pthread_join(thread, NULL);
@@ -465,6 +502,11 @@ int main(void)
     }
     if (rc == 0) {
         rc = tls_test_host_with_cb(NULL, NULL, 0,
+            MQTT_CODE_SUCCESS, tls_test_no_verify);
+    }
+    if (rc == 0) {
+        g_tls_test_peer_close = 1;
+        rc = tls_test_host_with_cb("127.0.0.1", NULL, 0,
             MQTT_CODE_SUCCESS, tls_test_no_verify);
     }
 #ifdef HAVE_SNI

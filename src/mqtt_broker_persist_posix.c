@@ -65,6 +65,26 @@ typedef struct WmqbPosixCtx {
     #define O_CLOEXEC 0
 #endif
 
+/* Overridable so tests can inject durability failures. */
+#ifndef WMQB_POSIX_FSYNC
+    #define WMQB_POSIX_FSYNC(fd) fsync(fd)
+#endif
+
+/* Flush a namespace directory so a rename or unlink in it survives a crash.
+ * Retries a bounded number of EINTRs, like the record write loop. */
+static int wmqb_posix_fsync_dir(int dir_fd)
+{
+    int eintr_count = 0;
+
+    while (WMQB_POSIX_FSYNC(dir_fd) < 0) {
+        if (errno == EINTR && eintr_count++ < 16) {
+            continue;
+        }
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    return 0;
+}
+
 /* Forward decl of all hook callbacks. */
 static int wmqb_posix_put(void* ctx, byte ns, const byte* key, word16 key_len,
     const byte* blob, word32 blob_len);
@@ -399,7 +419,7 @@ static int wmqb_posix_put(void* ctx, byte ns, const byte* key,
             written += (word32)w;
         }
     }
-    if (fsync(fd) < 0) {
+    if (WMQB_POSIX_FSYNC(fd) < 0) {
         (void)close(fd);
         (void)unlinkat(ns_fd, tmp_name, 0);
         (void)close(ns_fd);
@@ -418,9 +438,9 @@ static int wmqb_posix_put(void* ctx, byte ns, const byte* key,
         return MQTT_CODE_ERROR_SYSTEM;
     }
     /* fsync the namespace dir so rename is durable. */
-    (void)fsync(ns_fd);
+    rc = wmqb_posix_fsync_dir(ns_fd);
     (void)close(ns_fd);
-    return 0;
+    return rc;
 }
 
 static int wmqb_posix_get(void* ctx, byte ns, const byte* key,
@@ -521,9 +541,10 @@ static int wmqb_posix_del(void* ctx, byte ns, const byte* key,
         (void)close(ns_fd);
         return MQTT_CODE_ERROR_SYSTEM;
     }
-    (void)fsync(ns_fd);
+    /* fsync the namespace dir so the unlink is durable. */
+    rc = wmqb_posix_fsync_dir(ns_fd);
     (void)close(ns_fd);
-    return 0;
+    return rc;
 }
 
 static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
@@ -550,7 +571,7 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         (void)close(ns_fd);
         return MQTT_CODE_ERROR_SYSTEM;
     }
-    while ((ent = readdir(d)) != NULL) {
+    for (;;) {
         char key_hex[2 * 256 + 1];
         byte key_buf[256];
         byte* blob;
@@ -564,6 +585,16 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         const char* dot;
         int stop;
 
+        /* readdir reports both end of directory and failure as NULL; only
+         * errno tells them apart. */
+        errno = 0;
+        ent = readdir(d);
+        if (ent == NULL) {
+            if (errno != 0) {
+                rc = MQTT_CODE_ERROR_SYSTEM;
+            }
+            break;
+        }
         if (ent->d_name[0] == '.') {
             continue;
         }
@@ -584,12 +615,37 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         if (kn < 0) {
             continue;
         }
+        /* Classify the entry by type and owner before opening it, so
+         * symlinks, sockets, FIFOs and foreign files are skipped however the
+         * platform would fail to open them. */
+        if (fstatat(dirfd(d), ent->d_name, &st, AT_SYMLINK_NOFOLLOW) < 0) {
+            if (errno == ENOENT) {
+                continue; /* removed since readdir */
+            }
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
+        }
+        if (!S_ISREG(st.st_mode) || st.st_uid != geteuid()) {
+            continue;
+        }
         fd = openat(dirfd(d), ent->d_name,
             O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0) {
-            continue;
+            /* Removed or swapped for a symlink since fstatat; anything else
+             * on an owned record is an I/O failure that must not be
+             * reported as a complete pass. */
+            if (errno == ENOENT || errno == ELOOP) {
+                continue;
+            }
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
         }
-        if (fstat(fd, &st) < 0 || !S_ISREG(st.st_mode) ||
+        if (fstat(fd, &st) < 0) {
+            (void)close(fd);
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
+        }
+        if (!S_ISREG(st.st_mode) ||
                 st.st_uid != geteuid() || st.st_size <= 0 ||
                 (word64)st.st_size > 16 * 1024 * 1024) {
             /* Refuse non-regular, foreign-owned, or oversized records. */
@@ -625,10 +681,13 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
             /* Scrub the record before releasing the heap buffer. In
              * encrypt-at-rest builds the blob is ciphertext, so the wipe is
              * harmless; in plaintext builds it clears session and payload
-             * data from a buffer that would otherwise linger in the heap. */
+             * data from a buffer that would otherwise linger in the heap.
+             * A read error or short read leaves the record unloaded, so
+             * report it rather than skip it. */
             wmqb_posix_force_zero(blob, blob_cap);
             WOLFMQTT_FREE(blob);
-            continue;
+            rc = MQTT_CODE_ERROR_SYSTEM;
+            break;
         }
         stop = cb(key_buf, (word16)kn, blob, blob_cap, cb_ctx);
         wmqb_posix_force_zero(blob, blob_cap);
@@ -638,7 +697,7 @@ static int wmqb_posix_iter(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
         }
     }
     (void)closedir(d);
-    return 0;
+    return rc;
 }
 
 static int wmqb_posix_sync(void* ctx)
@@ -650,7 +709,7 @@ static int wmqb_posix_sync(void* ctx)
     if (c == NULL || c->root_fd < 0) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    return (fsync(c->root_fd) == 0) ? 0 : MQTT_CODE_ERROR_SYSTEM;
+    return (WMQB_POSIX_FSYNC(c->root_fd) == 0) ? 0 : MQTT_CODE_ERROR_SYSTEM;
 }
 
 int MqttBrokerNet_PersistPosix_Init(MqttBrokerPersistHooks* hooks,

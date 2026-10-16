@@ -38,7 +38,10 @@
  * first, variable-length strings/payloads last, lengths prefixed
  * big-endian. Forward compatibility is by schema-version bump + wipe.
  * wrap_mode is bound as AAD by the AES-GCM path so a tamper that
- * flips it (or flips rec_kind) fails the tag check.
+ * flips it (or flips rec_kind) fails the tag check. The AAD also carries
+ * the namespace and exact storage key, so a ciphertext copied to another
+ * key fails too. Stores written before the key was bound fail the META
+ * tag check and go through the schema-mismatch wipe on the next start.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -265,16 +268,43 @@ static void wmqb_force_zero(void* mem, word32 len)
     }
 }
 
-static int wmqb_encrypt_blob(MqttBroker* broker,
+/* AES-GCM additional data: the record header followed by where the record
+ * is stored, encoded unambiguously as namespace(1) || key_len(2, big
+ * endian) || key. A ciphertext moved to another namespace or storage key
+ * then fails authentication. Caller frees the returned buffer. */
+static byte* wmqb_build_aad(const byte* hdr, byte ns, const byte* key,
+    word16 key_len, word32* aad_len)
+{
+    byte* aad;
+
+    *aad_len = (word32)WMQB_HDR_LEN + 3u + key_len;
+    aad = (byte*)WOLFMQTT_MALLOC(*aad_len);
+    if (aad == NULL) {
+        return NULL;
+    }
+    XMEMCPY(aad, hdr, WMQB_HDR_LEN);
+    aad[WMQB_HDR_LEN] = ns;
+    wmqb_w_u16(&aad[WMQB_HDR_LEN + 1], key_len);
+    if (key_len > 0) {
+        XMEMCPY(&aad[WMQB_HDR_LEN + 3], key, key_len);
+    }
+    return aad;
+}
+
+static int wmqb_encrypt_blob(MqttBroker* broker, byte ns,
+    const byte* key, word16 key_len,
     const byte* plain, word32 plain_len, byte** ct_out, word32* ct_out_len)
 {
     Aes aes;
     WC_RNG rng;
     byte* out;
+    byte* aad;
+    word32 aad_len;
     word32 body_len;
     int rc;
 
     if (broker == NULL || plain == NULL || plain_len < WMQB_HDR_LEN ||
+            (key == NULL && key_len > 0) ||
             ct_out == NULL || ct_out_len == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -289,26 +319,35 @@ static int wmqb_encrypt_blob(MqttBroker* broker,
     if (out == NULL) {
         return MQTT_CODE_ERROR_MEMORY;
     }
+    aad = wmqb_build_aad(plain, ns, key, key_len, &aad_len);
+    if (aad == NULL) {
+        WOLFMQTT_FREE(out);
+        return MQTT_CODE_ERROR_MEMORY;
+    }
     XMEMCPY(out, plain, WMQB_HDR_LEN);
     if (wc_InitRng(&rng) != 0) {
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     if (wc_RNG_GenerateBlock(&rng,
             out + WMQB_HDR_LEN, WMQB_GCM_NONCE_LEN) != 0) {
         wc_FreeRng(&rng);
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     wc_FreeRng(&rng);
 
     if (wc_AesInit(&aes, NULL, INVALID_DEVID) != 0) {
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
@@ -318,29 +357,35 @@ static int wmqb_encrypt_blob(MqttBroker* broker,
             out + WMQB_HDR_LEN, WMQB_GCM_NONCE_LEN,          /* nonce */
             out + WMQB_HDR_LEN + WMQB_GCM_NONCE_LEN + body_len, /* tag */
             WMQB_GCM_TAG_LEN,
-            plain, WMQB_HDR_LEN) != 0) {                     /* aad = header */
+            aad, aad_len) != 0) {          /* aad = header + location */
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
     wc_AesFree(&aes);
+    WOLFMQTT_FREE(aad);
     *ct_out = out;
     return 0;
 }
 
 /* Reverse of wmqb_encrypt_blob. Caller must free the returned plain.
  * TODO(perf): see wmqb_encrypt_blob - same per-call key-schedule cost. */
-static int wmqb_decrypt_blob(MqttBroker* broker,
+static int wmqb_decrypt_blob(MqttBroker* broker, byte ns,
+    const byte* key, word16 key_len,
     const byte* ct, word32 ct_len, byte** plain_out, word32* plain_out_len)
 {
     Aes aes;
     byte* out;
+    byte* aad;
+    word32 aad_len;
     word32 body_len;
     int rc;
 
     if (broker == NULL || ct == NULL ||
             ct_len < (word32)(WMQB_HDR_LEN + WMQB_GCM_NONCE_LEN +
                               WMQB_GCM_TAG_LEN) ||
+            (key == NULL && key_len > 0) ||
             plain_out == NULL || plain_out_len == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -355,9 +400,15 @@ static int wmqb_decrypt_blob(MqttBroker* broker,
     if (out == NULL) {
         return MQTT_CODE_ERROR_MEMORY;
     }
+    aad = wmqb_build_aad(ct, ns, key, key_len, &aad_len);
+    if (aad == NULL) {
+        WOLFMQTT_FREE(out);
+        return MQTT_CODE_ERROR_MEMORY;
+    }
     XMEMCPY(out, ct, WMQB_HDR_LEN);
 
     if (wc_AesInit(&aes, NULL, INVALID_DEVID) != 0) {
+        WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
@@ -365,6 +416,7 @@ static int wmqb_decrypt_blob(MqttBroker* broker,
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
@@ -375,13 +427,15 @@ static int wmqb_decrypt_blob(MqttBroker* broker,
             ct + WMQB_HDR_LEN, WMQB_GCM_NONCE_LEN,
             ct + WMQB_HDR_LEN + WMQB_GCM_NONCE_LEN + body_len,
             WMQB_GCM_TAG_LEN,
-            ct, WMQB_HDR_LEN) != 0) {
+            aad, aad_len) != 0) {
         wc_AesFree(&aes);
+        WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     wc_AesFree(&aes);
+    WOLFMQTT_FREE(aad);
     *plain_out = out;
     return 0;
 }
@@ -407,7 +461,8 @@ static int wmqb_kv_put_commit(MqttBroker* broker, byte ns,
     {
         byte*  enc;
         word32 enc_len;
-        rc = wmqb_encrypt_blob(broker, blob, blob_len, &enc, &enc_len);
+        rc = wmqb_encrypt_blob(broker, ns, key, key_len, blob, blob_len,
+            &enc, &enc_len);
         if (rc != 0) {
             return rc;
         }
@@ -417,8 +472,9 @@ static int wmqb_kv_put_commit(MqttBroker* broker, byte ns,
 #else
     rc = h->kv_put(h->ctx, ns, key, key_len, blob, blob_len);
 #endif
+    /* The write is not committed until the backend has made it durable. */
     if (rc == 0 && h->sync != NULL) {
-        (void)h->sync(h->ctx);
+        rc = h->sync(h->ctx);
     }
     return rc;
 }
@@ -436,8 +492,9 @@ static int wmqb_kv_del_commit(MqttBroker* broker, byte ns,
         return 0;
     }
     rc = h->kv_del(h->ctx, ns, key, key_len);
+    /* The delete is not committed until the backend has made it durable. */
     if (rc == 0 && h->sync != NULL) {
-        (void)h->sync(h->ctx);
+        rc = h->sync(h->ctx);
     }
     return rc;
 }
@@ -452,6 +509,8 @@ struct wmqb_iter_decrypt_ctx {
     MqttBroker*                    broker;
     MqttBrokerPersist_IterCb       inner_cb;
     void*                          inner_ctx;
+    int                            fatal_rc;
+    byte                           ns;
 };
 
 static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
@@ -464,7 +523,14 @@ static int wmqb_iter_decrypt_cb(const byte* key, word16 key_len,
     int    rc;
     int    stop;
 
-    rc = wmqb_decrypt_blob(d->broker, blob, blob_len, &plain, &plain_len);
+    rc = wmqb_decrypt_blob(d->broker, d->ns, key, key_len, blob, blob_len,
+        &plain, &plain_len);
+    if (rc == MQTT_CODE_ERROR_MEMORY) {
+        /* Out of memory says nothing about the record; stop rather than
+         * restore without it. */
+        d->fatal_rc = rc;
+        return 1;
+    }
     if (rc != 0) {
         /* Forward an empty blob; inner cb will read_header-fail and
          * bump its skipped counter. */
@@ -482,6 +548,8 @@ static int wmqb_iter_decrypt(MqttBroker* broker, byte ns,
 {
     struct wmqb_iter_decrypt_ctx wrap;
     const MqttBrokerPersistHooks* h;
+    int rc;
+
     if (broker == NULL || cb == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -492,7 +560,13 @@ static int wmqb_iter_decrypt(MqttBroker* broker, byte ns,
     wrap.broker = broker;
     wrap.inner_cb = cb;
     wrap.inner_ctx = cb_ctx;
-    return h->kv_iter(h->ctx, ns, wmqb_iter_decrypt_cb, &wrap);
+    wrap.fatal_rc = 0;
+    wrap.ns = ns;
+    rc = h->kv_iter(h->ctx, ns, wmqb_iter_decrypt_cb, &wrap);
+    if (rc == 0) {
+        rc = wrap.fatal_rc;
+    }
+    return rc;
 }
 
 /* Decrypt-on-get for the META record specifically. The 256-byte stack
@@ -530,7 +604,8 @@ static int wmqb_kv_get_decrypt_meta(MqttBroker* broker, byte ns,
     if (rc != 0) {
         return rc;
     }
-    rc = wmqb_decrypt_blob(broker, enc, cap, &plain, &plain_len);
+    rc = wmqb_decrypt_blob(broker, ns, key, key_len, enc, cap, &plain,
+        &plain_len);
     if (rc != 0) {
         return rc;
     }
@@ -1104,6 +1179,7 @@ struct wmqb_delq_ctx {
     const byte* cid;
     word16 cid_len;
     struct wmqb_wipe_key* head;
+    int alloc_failed; /* a matching key could not be collected */
 };
 
 static int wmqb_delq_iter_cb(const byte* key, word16 key_len,
@@ -1124,11 +1200,13 @@ static int wmqb_delq_iter_cb(const byte* key, word16 key_len,
     }
     node = (struct wmqb_wipe_key*)WOLFMQTT_MALLOC(sizeof(*node));
     if (node == NULL) {
+        dq->alloc_failed = 1;
         return 1;
     }
     node->key = (byte*)WOLFMQTT_MALLOC(key_len);
     if (node->key == NULL) {
         WOLFMQTT_FREE(node);
+        dq->alloc_failed = 1;
         return 1;
     }
     XMEMCPY(node->key, key, key_len);
@@ -1180,6 +1258,9 @@ int BrokerPersist_DelOutQueue(MqttBroker* broker, const char* client_id)
         struct wmqb_delq_ctx ctx;
         struct wmqb_wipe_key* cur;
         int deleted = 0;
+        int rc;
+        int del_rc;
+        int sync_rc;
         if (h->kv_iter == NULL || h->kv_del == NULL) {
             return 0;
         }
@@ -1190,23 +1271,35 @@ int BrokerPersist_DelOutQueue(MqttBroker* broker, const char* client_id)
          * iterator callback ignores blob bytes - so bypassing the
          * decrypt wrapper here is safe and avoids unnecessary AES
          * cycles. */
-        (void)h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
+        rc = h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
             wmqb_delq_iter_cb, &ctx);
+        if (rc == 0 && ctx.alloc_failed) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
+        /* Delete what was collected even after a failure, but report the
+         * first error: the queue is not fully removed. */
         cur = ctx.head;
         while (cur != NULL) {
             struct wmqb_wipe_key* next = cur->next;
-            if (h->kv_del(h->ctx, BROKER_PERSIST_NS_OUTQ, cur->key,
-                    cur->key_len) == 0) {
+            del_rc = h->kv_del(h->ctx, BROKER_PERSIST_NS_OUTQ, cur->key,
+                cur->key_len);
+            if (del_rc == 0) {
                 deleted++;
+            }
+            else if (rc == 0) {
+                rc = del_rc;
             }
             WOLFMQTT_FREE(cur->key);
             WOLFMQTT_FREE(cur);
             cur = next;
         }
         if (h->sync != NULL) {
-            (void)h->sync(h->ctx);
+            sync_rc = h->sync(h->ctx);
+            if (rc == 0) {
+                rc = sync_rc;
+            }
         }
-        return deleted;
+        return (rc != 0) ? rc : deleted;
     }
 #endif
 }
@@ -1519,6 +1612,20 @@ static BrokerOrphanSession* wmqb_restore_find_orphan(MqttBroker* broker,
 }
 #endif /* WOLFMQTT_STATIC_MEMORY */
 
+/* Account for a record that failed to restore. A malformed or unsupported
+ * record is skipped; running out of memory is not a property of the record,
+ * so it stops the iteration and fails the restore. Returns the iterator
+ * callback's stop flag. */
+static int wmqb_restore_record_failed(struct wmqb_restore_ctx* c, int rc)
+{
+    c->skipped++;
+    if (rc == MQTT_CODE_ERROR_MEMORY) {
+        c->fatal_rc = rc;
+        return 1;
+    }
+    return 0;
+}
+
 #ifdef WOLFMQTT_BROKER_RETAINED
 /* NS_RETAINED body prefix: qos(1) _reserved(1) store_time(8) expiry(4)
  * topic_len(2). */
@@ -1693,11 +1800,9 @@ static int wmqb_iter_retained_cb(const byte* key, word16 key_len,
     rc = wmqb_decode_and_insert_retained(c->broker, blob, blob_len);
     if (rc == 0) {
         c->loaded++;
+        return 0;
     }
-    else {
-        c->skipped++;
-    }
-    return 0; /* always continue */
+    return wmqb_restore_record_failed(c, rc);
 }
 
 
@@ -2009,11 +2114,9 @@ static int wmqb_iter_subs_cb(const byte* key, word16 key_len,
             blob_len);
     if (rc == 0) {
         c->loaded++;
+        return 0;
     }
-    else {
-        c->skipped++;
-    }
-    return 0;
+    return wmqb_restore_record_failed(c, rc);
 }
 
 /* Decode NS_SESSION record and create a matching orphan slot. */
@@ -2063,6 +2166,16 @@ static int wmqb_decode_and_insert_session(MqttBroker* broker,
                 (word64)now - orphan_since >= (word64)session_expiry) {
             return MQTT_CODE_ERROR_NOT_FOUND;
         }
+    }
+#else
+    /* An empty ClientId or a store holding more Sessions than the cap (the
+     * cap is enforced on orphaning, not on every write) are records to skip,
+     * not failures; only a NULL after these checks means memory ran out. */
+    if (cid_len == 0) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    if (broker->orphan_session_count >= BROKER_MAX_PERSIST_SESSIONS) {
+        return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
 #endif
     if (wmqb_restore_create_orphan(broker, &p[16], cid_len, proto_level,
@@ -2120,6 +2233,9 @@ static int wmqb_iter_session_cb(const byte* key, word16 key_len,
     rc = wmqb_decode_and_insert_session(c->broker, blob, blob_len);
     if (rc == 0) {
         c->loaded++;
+    }
+    else if (rc == MQTT_CODE_ERROR_MEMORY) {
+        return wmqb_restore_record_failed(c, rc);
     }
     else {
         c->skipped++;
@@ -2453,11 +2569,9 @@ static int wmqb_iter_outq_cb(const byte* key, word16 key_len,
             blob_len);
     if (rc == 0) {
         c->loaded++;
+        return 0;
     }
-    else {
-        c->skipped++;
-    }
-    return 0;
+    return wmqb_restore_record_failed(c, rc);
 }
 
 /* Sweep orphans whose v5 Session Expiry has elapsed. Cascades to subs
@@ -2555,32 +2669,47 @@ static int wmqb_wipe_iter_cb(const byte* key, word16 key_len,
     return 0;
 }
 
+/* Delete every record in one namespace. Returns the number deleted, or the
+ * first iterator, allocation, deletion or sync failure. */
 static int wmqb_wipe_ns(MqttBroker* broker, byte ns)
 {
     const MqttBrokerPersistHooks* h = broker->persist;
     struct wmqb_wipe_ctx wc;
     struct wmqb_wipe_key* cur;
     int deleted = 0;
+    int rc;
+    int del_rc;
+    int sync_rc;
 
     if (h->kv_iter == NULL || h->kv_del == NULL) {
         return 0;
     }
     XMEMSET(&wc, 0, sizeof(wc));
-    (void)h->kv_iter(h->ctx, ns, wmqb_wipe_iter_cb, &wc);
+    rc = h->kv_iter(h->ctx, ns, wmqb_wipe_iter_cb, &wc);
+    if (rc == 0 && wc.alloc_failed) {
+        rc = MQTT_CODE_ERROR_MEMORY;
+    }
     cur = wc.head;
     while (cur != NULL) {
         struct wmqb_wipe_key* next = cur->next;
-        if (h->kv_del(h->ctx, ns, cur->key, cur->key_len) == 0) {
+        del_rc = h->kv_del(h->ctx, ns, cur->key, cur->key_len);
+        if (del_rc == 0) {
             deleted++;
+        }
+        else if (rc == 0) {
+            rc = del_rc;
         }
         WOLFMQTT_FREE(cur->key);
         WOLFMQTT_FREE(cur);
         cur = next;
     }
     if (h->sync != NULL) {
-        (void)h->sync(h->ctx);
+        sync_rc = h->sync(h->ctx);
+        if (rc == 0) {
+            rc = sync_rc;
+        }
     }
-    return deleted;
+    return (rc != 0) ? rc : deleted;
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
@@ -2595,15 +2724,30 @@ static int wmqb_wipe_all(MqttBroker* broker)
         "broker: persist wipe skipped (STATIC_MEMORY mode)");
     return 0;
 #else
+    /* META goes last: if the wipe stops early, the mismatched META is still
+     * there and the next restore repeats the wipe instead of treating the
+     * leftover records as a first run. */
+    static const byte wipe_order[] = {
+        BROKER_PERSIST_NS_SESSION, BROKER_PERSIST_NS_SUBS,
+        BROKER_PERSIST_NS_RETAINED, BROKER_PERSIST_NS_OUTQ,
+        BROKER_PERSIST_NS_META
+    };
     int total = 0;
+    int rc;
+    size_t i;
+
     if (broker == NULL || broker->persist == NULL) {
         return 0;
     }
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_META);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_SESSION);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_SUBS);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_RETAINED);
-    total += wmqb_wipe_ns(broker, BROKER_PERSIST_NS_OUTQ);
+    for (i = 0; i < sizeof(wipe_order); i++) {
+        rc = wmqb_wipe_ns(broker, wipe_order[i]);
+        if (rc < 0) {
+            WMQB_LOG_ERR(broker, "broker: persist wipe ns=%u failed rc=%d",
+                (unsigned)wipe_order[i], rc);
+            return rc;
+        }
+        total += rc;
+    }
     WMQB_LOG_INFO(broker, "broker: persist wipe deleted=%d", total);
     return total;
 #endif
@@ -2636,7 +2780,11 @@ int BrokerPersist_Restore(MqttBroker* broker)
          * failure from wmqb_kv_get_decrypt_meta.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
-        (void)wmqb_wipe_all(broker);
+        rc = wmqb_wipe_all(broker);
+        if (rc < 0) {
+            /* Leave the old META so the next start retries the wipe. */
+            return rc;
+        }
         rc = wmqb_meta_write(broker);
         if (rc == 0) {
             broker->persist_restored = 1;
@@ -2676,11 +2824,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SESSION,
             wmqb_iter_session_cb, &ctx);
-#ifdef WOLFMQTT_STATIC_MEMORY
         if (rc == 0) {
             rc = ctx.fatal_rc;
         }
-#endif
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore sessions failed rc=%d", rc);
@@ -2709,6 +2855,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_RETAINED,
             wmqb_iter_retained_cb, &ctx);
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
+        }
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore retained failed rc=%d", rc);
@@ -2725,6 +2874,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SUBS,
             wmqb_iter_subs_cb, &ctx);
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
+        }
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore subs failed rc=%d", rc);
@@ -2741,6 +2893,9 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (h->kv_iter != NULL) {
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_OUTQ,
             wmqb_iter_outq_cb, &ctx);
+        if (rc == 0) {
+            rc = ctx.fatal_rc;
+        }
         if (rc != 0) {
             WMQB_LOG_ERR(broker,
                 "broker: persist restore outq failed rc=%d", rc);

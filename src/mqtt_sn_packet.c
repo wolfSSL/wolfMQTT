@@ -384,9 +384,12 @@ int SN_Encode_Connect(byte *tx_buf, int tx_buf_len, SN_Connect *mc_connect)
     /* Determine packet length */
     total_len = 6; /* Len + Message Type + Flags + ProtocolID + Duration(2) */
 
-    /* Client ID size */
+    /* Client ID size. MQTT-SN 1.2 section 5.3.1 caps the ClientId at 23
+     * characters; truncating would merge distinct identities. */
     id_len = XSTRLEN(mc_connect->client_id);
-    id_len = (id_len <= SN_CLIENTID_MAX_LEN) ? id_len : SN_CLIENTID_MAX_LEN;
+    if (id_len > SN_CLIENTID_MAX_LEN) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
 
     total_len += id_len;
 
@@ -1676,10 +1679,11 @@ int SN_Encode_Ping(byte *tx_buf, int tx_buf_len, SN_PingReq *ping, byte type)
 
     if ((type == SN_MSG_TYPE_PING_REQ) && (ping != NULL) &&
         (ping->clientId != NULL)) {
-        clientId_len = (int)XSTRLEN(ping->clientId);
-        if (clientId_len > SN_CLIENTID_MAX_LEN) {
-            clientId_len = SN_CLIENTID_MAX_LEN;
+        /* MQTT-SN 1.2 section 5.3.1: reject rather than truncate. */
+        if (XSTRLEN(ping->clientId) > SN_CLIENTID_MAX_LEN) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+        clientId_len = (int)XSTRLEN(ping->clientId);
         total_len += clientId_len;
     }
 

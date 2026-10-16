@@ -203,8 +203,8 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
         client->tls.sockRcWrite = 0; /* init value */
 
         rc = wolfSSL_write(client->tls.ssl, (char*)buf, buf_len);
-        if (rc < 0) {
-            int error = wolfSSL_get_error(client->tls.ssl, 0);
+        if (rc <= 0) {
+            int error = wolfSSL_get_error(client->tls.ssl, rc);
             client->tls.lastError = error;
         #ifdef WOLFMQTT_DEBUG_SOCKET
             if (error != WOLFSSL_ERROR_WANT_WRITE
@@ -223,7 +223,14 @@ static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
             if (error == WC_PENDING_E) {
                 rc = MQTT_CODE_CONTINUE;
             }
+            else
         #endif
+            /* A closed or failed session must not look like a retryable
+             * zero-byte write. */
+            if (rc >= 0 && error != WOLFSSL_ERROR_WANT_WRITE &&
+                    error != WOLFSSL_ERROR_WANT_READ) {
+                rc = MQTT_CODE_ERROR_NETWORK;
+            }
         }
     }
     else
@@ -312,8 +319,8 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         client->tls.sockRcRead = 0; /* init value */
 
         rc = wolfSSL_read(client->tls.ssl, (char*)buf, buf_len);
-        if (rc < 0) {
-            int error = wolfSSL_get_error(client->tls.ssl, 0);
+        if (rc <= 0) {
+            int error = wolfSSL_get_error(client->tls.ssl, rc);
             client->tls.lastError = error;
         #ifdef WOLFMQTT_DEBUG_SOCKET
             if (error != WOLFSSL_ERROR_WANT_READ
@@ -336,6 +343,12 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
         #endif
             /* used with compatibility layer to communicate peer close */
             if (error == WOLFSSL_ERROR_ZERO_RETURN) {
+                rc = MQTT_CODE_ERROR_NETWORK;
+            }
+            /* A closed or failed session must not look like a retryable
+             * zero-byte read. */
+            else if (rc >= 0 && error != WOLFSSL_ERROR_WANT_READ &&
+                    error != WOLFSSL_ERROR_WANT_WRITE) {
                 rc = MQTT_CODE_ERROR_NETWORK;
             }
         }
