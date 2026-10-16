@@ -847,6 +847,91 @@ TEST(connect_v5_will_alloc_failure_leaves_no_session)
     MqttBroker_Free(&broker);
 }
 #endif /* WOLFMQTT_V5 */
+
+static int count_packets_of_type(const byte* buf, size_t len, byte type);
+
+/* A CONNECT refused because its Will cannot be stored must not take over the
+ * connected client that holds the same ClientId: that client stays connected
+ * with its Session (here, its subscription) unchanged. */
+TEST(connect_will_alloc_failure_keeps_incumbent_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int incumbent_closed;
+    int incumbent_publishes;
+    /* CONNECT: CleanSession 0, keep alive 60, ClientId "P". */
+    static const byte incumbent_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* SUBSCRIBE packet id 1, filter "t", QoS 0. */
+    static const byte incumbent_subscribe[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 't',
+        0x00
+    };
+    /* CONNECT with Will: flags 0x04 (will_flag, CleanSession 0), ClientId
+     * "P", Will Topic "lwt", Will Payload "bye". */
+    static const byte takeover_connect[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x04, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* QoS 0 PUBLISH to "t", payload "x". */
+    static const byte publish[] = {
+        0x30, 0x04,
+        0x00, 0x01, 't',
+        'x'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, incumbent_connect, sizeof(incumbent_connect));
+    mock_client_input_append(0, incumbent_subscribe,
+        sizeof(incumbent_subscribe));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Both connections are already accepted; the ClientId copy precedes the
+     * Will Topic. */
+    mock_client_input_append(1, takeover_connect, sizeof(takeover_connect));
+    broker_test_fail_alloc_after(1);
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    broker_test_disable_alloc_failure();
+
+    mock_client_input_append(0, publish, sizeof(publish));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    incumbent_closed = g_clients[0].closed;
+    incumbent_publishes = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL, g_clients[1].out_buf[3]);
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_FALSE(incumbent_closed);
+    ASSERT_EQ(1, incumbent_publishes);
+}
 #endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_BROKER_WILL */
 
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
@@ -5448,6 +5533,58 @@ static BrokerClient* find_static_broker_client(MqttBroker* broker,
     return NULL;
 }
 
+#ifdef WOLFMQTT_V5
+/* A CONNECT refused because the static persistent-Session quota is full gets a
+ * CONNACK with Reason Code 0x97 and no properties: in particular no Assigned
+ * Client Identifier the refused client could never use (MQTT 5.0 section
+ * 3.2.2.3.7 applies to an accepted connection). */
+TEST(static_quota_refusal_connack_has_no_properties)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v5 CONNECT: Clean Start, keep alive 60, properties: Session Expiry
+     * Interval (0x11) = 60, empty ClientId. Remaining Length 18. */
+    static const byte connect[] = {
+        0x10, 0x12,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Every persistent-Session slot holds an unexpired Session. */
+    for (i = 0; i < BROKER_MAX_STATIC_ORPHAN_SESSIONS; i++) {
+        broker.static_orphans[i].in_use = 1;
+        XSNPRINTF(broker.static_orphans[i].client_id,
+            sizeof(broker.static_orphans[i].client_id), "q%d", i);
+        broker.static_orphans[i].protocol_level =
+            MQTT_CONNECT_PROTOCOL_LEVEL_5;
+        broker.static_orphans[i].session_expiry_sec = 3600;
+        broker.static_orphans[i].orphan_since = g_broker_time_s;
+    }
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+
+    /* CONNACK: Remaining Length 3 = flags, Reason Code, Property Length 0. */
+    ASSERT_TRUE(g_out_len >= 5);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x03, g_out_buf[1]);
+    ASSERT_EQ(MQTT_REASON_QUOTA_EXCEEDED, g_out_buf[3]);
+    ASSERT_EQ(0x00, g_out_buf[4]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+
 /* [MQTT-2.3.1-4] holds a Server sending a QoS > 0 PUBLISH to the same
  * identifier rule as a Client: the value stays in use until the matching
  * PUBACK is processed [MQTT-2.3.1-3]. The static-memory fan-out has no
@@ -6265,6 +6402,114 @@ TEST(outbound_publish_exceeding_tx_buf_not_sent_truncated)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+#ifdef WOLFMQTT_V5
+/* A QoS 1 or QoS 2 copy that cannot fit a subscriber's transmit buffer is
+ * never delivered, so the v5 publisher must not be told the PUBLISH was
+ * accepted: its PUBACK or PUBREC carries Reason Code 0x80 (MQTT 5.0 sections
+ * 3.4.2.1 and 3.5.2.1). Returns 0 when that holds. */
+static int publish_exceeding_sub_tx_buf_not_acked(MqttQoS qos)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    size_t pub_out_mark;
+    size_t sub_out_mark;
+    int i;
+    int result = -1;
+    /* v5 CONNECT: Clean Start, keep alive 60, Property Length 0, ClientId
+     * "P". Remaining Length 14. */
+    static const byte connect_pub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet_id 1, filter "x", QoS 2. */
+    static const byte subscribe_x[] = {
+        0x82, 0x06,
+        0x00, 0x01,
+        0x00, 0x01, 'x',
+        0x02
+    };
+    /* v5 PUBLISH to "x", packet id 7, Property Length 0, 20 payload bytes:
+     * Remaining Length 26. The QoS bits are set below. Forwarded at the same
+     * QoS to a v3.1.1 subscriber, it encodes to 27 bytes. */
+    byte publish_x[] = {
+        0x30, 0x1A,
+        0x00, 0x01, 'x',
+        0x00, 0x07,
+        0x00,
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+    };
+    publish_x[0] = (byte)(0x30 | ((byte)qos << 1));
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+
+    reset_mock_clients(3);
+    g_clients_active = 2;
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    if (sub_bc != NULL) {
+        /* Subscriber transmit buffer smaller than the forwarded frame, as
+         * with a build whose receive buffer exceeds its transmit buffer. */
+        sub_bc->tx_buf_len = 16;
+        pub_out_mark = g_clients[0].out_len;
+        sub_out_mark = g_clients[1].out_len;
+
+        mock_client_input_append(0, publish_x, sizeof(publish_x));
+        for (i = 0; i < 8; i++) {
+            (void)MqttBroker_Step(&broker);
+        }
+
+        /* The response's first byte is PUBACK (0x40) or PUBREC (0x50), and
+         * its Reason Code follows the 2-byte Packet Identifier. */
+        if (g_clients[0].out_len >= pub_out_mark + 5 &&
+                g_clients[0].out_buf[pub_out_mark] ==
+                    ((qos == MQTT_QOS_1) ? 0x40 : 0x50) &&
+                g_clients[0].out_buf[pub_out_mark + 4] ==
+                    MQTT_REASON_UNSPECIFIED_ERR &&
+                g_clients[1].out_len == sub_out_mark &&
+                sub_bc->out_q_count == 0) {
+            result = 0;
+        }
+    }
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    return result;
+}
+
+TEST(publish_qos1_exceeding_sub_tx_buf_not_acked)
+{
+    ASSERT_EQ(0, publish_exceeding_sub_tx_buf_not_acked(MQTT_QOS_1));
+}
+
+#if WOLFMQTT_MAX_QOS >= 2
+TEST(publish_qos2_exceeding_sub_tx_buf_not_acked)
+{
+    ASSERT_EQ(0, publish_exceeding_sub_tx_buf_not_acked(MQTT_QOS_2));
+}
+#endif
+#endif /* WOLFMQTT_V5 */
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
 #if defined(WOLFMQTT_NONBLOCK) && !defined(WOLFMQTT_STATIC_MEMORY)
@@ -7861,6 +8106,103 @@ TEST(connect_v5_refused_when_shared_sub_property_unavailable)
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
+}
+
+/* A CONNECT refused because a required CONNACK property cannot be allocated
+ * must not take over the connected client that holds the same ClientId: that
+ * client stays connected with its Session (here, its subscription)
+ * unchanged. */
+TEST(connect_v5_connack_property_failure_keeps_incumbent_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttProp* hold = NULL;
+    int free_slots = 0;
+    int held = 0;
+    int i;
+    int incumbent_closed;
+    int incumbent_publishes;
+    /* v5 CONNECT: Clean Start 0, keep alive 60, properties: Session Expiry
+     * Interval (0x11) = 60, ClientId "P". Remaining Length 19. Used by both
+     * the incumbent and the takeover attempt. */
+    static const byte connect[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* v5 SUBSCRIBE packet id 1, Property Length 0, filter "t", options 0. */
+    static const byte subscribe[] = {
+        0x82, 0x07,
+        0x00, 0x01,
+        0x00,
+        0x00, 0x01, 't',
+        0x00
+    };
+    /* v5 QoS 0 PUBLISH to "t", Property Length 0, payload "x". */
+    static const byte publish[] = {
+        0x30, 0x05,
+        0x00, 0x01, 't',
+        0x00,
+        'x'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect, sizeof(connect));
+    mock_client_input_append(0, subscribe, sizeof(subscribe));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* Hold a property-stack reference of our own (see
+     * connect_v5_refused_when_shared_sub_property_unavailable), then leave
+     * two free slots: enough to decode the CONNECT's Session Expiry Interval
+     * and later to hold Retain Available and Wildcard Subscription
+     * Available, not Shared Subscription Available. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttProps_Init());
+    while (MqttProps_Add(&hold) != NULL) {
+        free_slots++;
+    }
+    (void)MqttProps_Free(hold);
+    hold = NULL;
+    for (i = 0; i < free_slots - 2; i++) {
+        if (MqttProps_Add(&hold) != NULL) {
+            held++;
+        }
+    }
+
+    mock_client_input_append(1, connect, sizeof(connect));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    (void)MqttProps_Free(hold);
+    (void)MqttProps_ShutDown();
+
+    mock_client_input_append(0, publish, sizeof(publish));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    incumbent_closed = g_clients[0].closed;
+    incumbent_publishes = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+
+    ASSERT_TRUE(free_slots > 2);
+    ASSERT_EQ(free_slots - 2, held);
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_SERVER_UNAVAILABLE, g_clients[1].out_buf[3]);
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_FALSE(incumbent_closed);
+    ASSERT_EQ(1, incumbent_publishes);
 }
 #endif /* WOLFMQTT_V5 && !WOLFMQTT_DYN_PROP */
 
@@ -12097,6 +12439,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_will_alloc_failure_leaves_no_session);
 #endif
+    RUN_TEST(connect_will_alloc_failure_keeps_incumbent_session);
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(connect_v5_oversize_will_payload_emits_connack);
@@ -12105,6 +12448,9 @@ int main(int argc, char** argv)
     #endif
 #endif
 #ifdef WOLFMQTT_STATIC_MEMORY
+#ifdef WOLFMQTT_V5
+    RUN_TEST(static_quota_refusal_connack_has_no_properties);
+#endif
     RUN_TEST(static_fanout_does_not_reuse_unacked_packet_id);
     RUN_TEST(static_retained_releases_packet_id_on_write_failure);
     RUN_TEST(static_fanout_drops_delivery_when_ids_exhausted);
@@ -12166,6 +12512,12 @@ int main(int argc, char** argv)
     RUN_TEST(online_qos1_at_cap_keeps_subscriber);
     RUN_TEST(outbound_packet_ids_are_scoped_per_session);
     RUN_TEST(outbound_publish_exceeding_tx_buf_not_sent_truncated);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(publish_qos1_exceeding_sub_tx_buf_not_acked);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(publish_qos2_exceeding_sub_tx_buf_not_acked);
+#endif
+#endif
     RUN_TEST(outbound_qos2_puback_does_not_complete_delivery);
     RUN_TEST(publish_fanout_alloc_failure_v311_not_acked);
     RUN_TEST(publish_offline_fanout_alloc_failure_v311_not_acked);
@@ -12288,6 +12640,7 @@ int main(int argc, char** argv)
     RUN_TEST(broker_shared_subscription_not_supported_v5);
 #ifndef WOLFMQTT_DYN_PROP
     RUN_TEST(connect_v5_refused_when_shared_sub_property_unavailable);
+    RUN_TEST(connect_v5_connack_property_failure_keeps_incumbent_session);
 #endif
 #endif
 #ifndef WOLFMQTT_STATIC_MEMORY
