@@ -8108,6 +8108,68 @@ TEST(connect_v5_refused_when_shared_sub_property_unavailable)
     MqttBroker_Free(&broker);
 }
 
+/* Receive Maximum and, when this build caps QoS below 2, Maximum QoS are
+ * also capability statements: their absence means 65535 and QoS 2 (MQTT 5.0
+ * sections 3.2.2.3.3 and 3.2.2.3.4). With room for only the three
+ * availability properties, the CONNECT must be refused rather than accepted
+ * without them. */
+TEST(connect_v5_refused_when_receive_max_property_unavailable)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttProp* hold = NULL;
+    int free_slots = 0;
+    int held = 0;
+    int i;
+    int last_byte_code;
+    /* v5 CONNECT, clean=1, props_len=0, client_id="A". Remaining Length 14. */
+    static const byte connect[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x02,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* See connect_v5_refused_when_shared_sub_property_unavailable for the
+     * property-stack reference. Leave three free slots: Retain Available,
+     * Wildcard Subscription Available and Shared Subscription Available. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttProps_Init());
+    while (MqttProps_Add(&hold) != NULL) {
+        free_slots++;
+    }
+    (void)MqttProps_Free(hold);
+    hold = NULL;
+    for (i = 0; i < free_slots - 3; i++) {
+        if (MqttProps_Add(&hold) != NULL) {
+            held++;
+        }
+    }
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+    (void)MqttProps_Free(hold);
+    (void)MqttProps_ShutDown();
+
+    ASSERT_TRUE(free_slots > 3);
+    ASSERT_EQ(free_slots - 3, held);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    last_byte_code = g_out_buf[3];
+    ASSERT_EQ(MQTT_REASON_SERVER_UNAVAILABLE, last_byte_code);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* A CONNECT refused because a required CONNACK property cannot be allocated
  * must not take over the connected client that holds the same ClientId: that
  * client stays connected with its Session (here, its subscription)
@@ -9086,6 +9148,90 @@ TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#if defined(WOLFMQTT_NONBLOCK) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* The Protocol Error DISCONNECT (Reason Code 0x82, MQTT 5.0 section
+ * 3.14.2.2.2) for a 0-to-nonzero Session Expiry change must reach the client
+ * in full before the Network Connection is closed, even when the transport
+ * takes it in more than one write. */
+TEST(disconnect_v5_session_expiry_protocol_error_short_write_completes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    size_t pub_mark;
+    int closed_after_first;
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_lwt[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    /* Same publisher CONNECT and DISCONNECT as
+     * disconnect_v5_session_expiry_0_to_nonzero_protocol_error. */
+    static const byte connect_pub[] = {
+        0x10, 25,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05,
+        0x04,
+        0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    static const byte disconnect_se[] = {
+        0xE0, 0x07,
+        0x00,
+        0x05,
+        0x11, 0x00, 0x00, 0x00, 0x1E
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_lwt, sizeof(subscribe_lwt));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The transport takes only the first byte of the DISCONNECT. */
+    pub_mark = g_clients[1].out_len;
+    g_clients[1].write_limit_once = 1;
+    mock_client_input_append(1, disconnect_se, sizeof(disconnect_se));
+    MqttBroker_Step(&broker);
+    closed_after_first = g_clients[1].closed;
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+
+    ASSERT_FALSE(closed_after_first);
+    /* DISCONNECT: type 0xE0, Remaining Length, Reason Code 0x82 first. */
+    ASSERT_TRUE(g_clients[1].out_len >= pub_mark + 3);
+    ASSERT_EQ(0xE0, g_clients[1].out_buf[pub_mark]);
+    ASSERT_EQ(g_clients[1].out_len - pub_mark,
+        (size_t)2 + g_clients[1].out_buf[pub_mark + 1]);
+    ASSERT_EQ(MQTT_REASON_PROTOCOL_ERR, g_clients[1].out_buf[pub_mark + 2]);
+    ASSERT_TRUE(g_clients[1].closed);
+    /* The close is still abnormal, so the Will is published. */
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+}
+#endif /* WOLFMQTT_NONBLOCK && !WOLFMQTT_STATIC_MEMORY */
 #endif /* WOLFMQTT_BROKER_WILL */
 
 #ifdef WOLFMQTT_BROKER_RETAINED
@@ -12640,6 +12786,7 @@ int main(int argc, char** argv)
     RUN_TEST(broker_shared_subscription_not_supported_v5);
 #ifndef WOLFMQTT_DYN_PROP
     RUN_TEST(connect_v5_refused_when_shared_sub_property_unavailable);
+    RUN_TEST(connect_v5_refused_when_receive_max_property_unavailable);
     RUN_TEST(connect_v5_connack_property_failure_keeps_incumbent_session);
 #endif
 #endif
@@ -12695,6 +12842,9 @@ int main(int argc, char** argv)
 #ifndef WOLFMQTT_STATIC_MEMORY
 #ifdef WOLFMQTT_BROKER_WILL
     RUN_TEST(disconnect_v5_session_expiry_0_to_nonzero_protocol_error);
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(disconnect_v5_session_expiry_protocol_error_short_write_completes);
+#endif
 #endif
 #endif
 #endif

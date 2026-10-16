@@ -526,53 +526,34 @@ static void BrokerTls_Free(MqttBroker* broker)
 #endif /* ENABLE_MQTT_TLS && !WOLFMQTT_BROKER_CUSTOM_NET */
 
 #if defined(WOLFMQTT_WOLFIP) || !defined(WOLFMQTT_BROKER_CUSTOM_NET)
-/* Last accept failure logged for each listening socket, so a persistent
- * failure is reported once rather than on every step, and an idle listener's
- * "no pending connection" result cannot clear another listener's entry. This
- * is logging state only: broker instances racing on it in different threads
- * can at worst repeat or skip a log line. */
-#define BROKER_ACCEPT_LOG_SLOTS 4
-typedef struct BrokerAcceptLog {
-    BROKER_SOCKET_T sock;
-    int err; /* 0 when no failure is being reported */
-} BrokerAcceptLog;
-static BrokerAcceptLog broker_accept_log[BROKER_ACCEPT_LOG_SLOTS];
-
-/* Record err (0 for an accepted or no pending connection) as listen_sock's
- * latest accept result. Returns 1 when err is a failure not yet logged. */
-static int BrokerAcceptLog_Update(BROKER_SOCKET_T listen_sock, int err)
+/* Record err (0 for an accepted or no pending connection) as the latest
+ * accept result for broker's listener listen_sock. Returns 1 when err is a
+ * failure not yet logged for that listener, so a persistent failure is
+ * reported once and an idle listener cannot clear another's entry. */
+static int BrokerAcceptLog_Update(MqttBroker* broker,
+    BROKER_SOCKET_T listen_sock, int err)
 {
-    int i;
-    BrokerAcceptLog* slot = NULL;
+    int* last;
 
-    for (i = 0; i < BROKER_ACCEPT_LOG_SLOTS; i++) {
-        if (broker_accept_log[i].err != 0 &&
-                broker_accept_log[i].sock == listen_sock) {
-            slot = &broker_accept_log[i];
-            break;
-        }
-    }
-    if (slot == NULL) {
-        if (err == 0) {
-            return 0;
-        }
-        for (i = 0; i < BROKER_ACCEPT_LOG_SLOTS; i++) {
-            if (broker_accept_log[i].err == 0) {
-                slot = &broker_accept_log[i];
-                break;
-            }
-        }
-        if (slot == NULL) {
-            /* More failing listeners than slots: reuse the first. */
-            slot = &broker_accept_log[0];
-        }
-        slot->sock = listen_sock;
-        slot->err = 0;
-    }
-    if (slot->err == err) {
+    if (broker == NULL) {
         return 0;
     }
-    slot->err = err;
+    if (listen_sock == broker->listen_sock) {
+        last = &broker->accept_log_err;
+    }
+#ifdef ENABLE_MQTT_TLS
+    else if (listen_sock == broker->listen_sock_tls) {
+        last = &broker->accept_log_err_tls;
+    }
+#endif
+    else {
+        /* Not one of this broker's listeners: report every failure. */
+        return (err != 0) ? 1 : 0;
+    }
+    if (*last == err) {
+        return 0;
+    }
+    *last = err;
     return (err != 0) ? 1 : 0;
 }
 #endif /* WOLFMQTT_WOLFIP || !WOLFMQTT_BROKER_CUSTOM_NET */
@@ -646,7 +627,7 @@ static int BrokerWolfIP_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
     fd = wolfIP_sock_accept(wctx->stack, listen_sock, NULL, NULL);
     if (fd == -WOLFIP_EAGAIN) {
         /* No pending connection. */
-        (void)BrokerAcceptLog_Update(listen_sock, 0);
+        (void)BrokerAcceptLog_Update(broker_wolfip_log, listen_sock, 0);
         return MQTT_CODE_CONTINUE;
     }
     if (fd == -WOLFIP_EINVAL) {
@@ -659,8 +640,7 @@ static int BrokerWolfIP_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
          * without telling them apart. Retry on the next step rather than stop
          * the broker, which a peer could otherwise force by opening
          * connections, but report the condition. */
-        if (BrokerAcceptLog_Update(listen_sock, fd) &&
-                broker_wolfip_log != NULL) {
+        if (BrokerAcceptLog_Update(broker_wolfip_log, listen_sock, fd)) {
             WBLOG_ERR(broker_wolfip_log,
                 "broker: accept failed sock=%d rc=%d, retrying",
                 (int)listen_sock, fd);
@@ -668,7 +648,7 @@ static int BrokerWolfIP_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
         return MQTT_CODE_CONTINUE;
     }
 
-    (void)BrokerAcceptLog_Update(listen_sock, 0);
+    (void)BrokerAcceptLog_Update(broker_wolfip_log, listen_sock, 0);
     *client_sock = fd;
     return MQTT_CODE_SUCCESS;
 }
@@ -827,17 +807,17 @@ static int BrokerPosix_Accept(void* ctx, BROKER_SOCKET_T listen_sock,
         }
         if (err == EAGAIN || err == EWOULDBLOCK) {
             /* No pending connection. */
-            (void)BrokerAcceptLog_Update(listen_sock, 0);
+            (void)BrokerAcceptLog_Update((MqttBroker*)ctx, listen_sock, 0);
         }
         else if (err != EINTR &&
-                BrokerAcceptLog_Update(listen_sock, err)) {
+                BrokerAcceptLog_Update((MqttBroker*)ctx, listen_sock, err)) {
             WBLOG_ERR((MqttBroker*)ctx,
                 "broker: accept failed sock=%d errno=%d, retrying",
                 (int)listen_sock, err);
         }
         return MQTT_CODE_CONTINUE;
     }
-    (void)BrokerAcceptLog_Update(listen_sock, 0);
+    (void)BrokerAcceptLog_Update((MqttBroker*)ctx, listen_sock, 0);
     if (BrokerPosix_SetNonBlocking(fd) != MQTT_CODE_SUCCESS) {
         /* Drop just this connection; the listener is still healthy. */
         WBLOG_ERR((MqttBroker*)ctx,
@@ -7218,6 +7198,44 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         else {
             adv_failed = 1;
         }
+        /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
+         * of the property signals server supports Maximum QoS 2. Emitting
+         * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
+         * mosquitto) will disconnect on receipt. Emit the property only
+         * when this build caps below QoS 2 via WOLFMQTT_MAX_QOS, and
+         * refuse the connection when it cannot be added. */
+    #if WOLFMQTT_MAX_QOS < 2
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_MAX_QOS;
+            prop->data_byte = (byte)WOLFMQTT_MAX_QOS;
+        }
+        else {
+            adv_failed = 1;
+        }
+    #endif
+        /* [MQTT-3.2.2.3.3] Receive Maximum. Advertise the broker's
+         * per-client inbound QoS 1/2 cap so well-behaved publishers can
+         * pace themselves. We accept up to BROKER_MAX_INBOUND_QOS2
+         * concurrent QoS 2 PUBLISHes awaiting PUBREL ([MQTT-4.3.3]); use
+         * the same number as the wire value. Absence would mean 65535, so
+         * refuse the connection when it cannot be added. The property MUST
+         * NOT be 0 - we skip the emission entirely in that (unreachable)
+         * case so a future tunable down to 0 cannot send an illegal value.
+         * The cap applies in both dynamic and static memory modes. */
+        if (BROKER_MAX_INBOUND_QOS2 > 0) {
+            prop = MqttProps_Add(&ack.props);
+            if (prop != NULL) {
+                prop->type = MQTT_PROP_RECEIVE_MAX;
+                prop->data_short =
+                    (BROKER_MAX_INBOUND_QOS2 > 0xFFFF) ?
+                    (word16)0xFFFF :
+                    (word16)BROKER_MAX_INBOUND_QOS2;
+            }
+            else {
+                adv_failed = 1;
+            }
+        }
         if (adv_failed) {
             WBLOG_ERR(broker, "broker: CONNACK property alloc failed sock=%d",
                 (int)bc->sock);
@@ -7437,45 +7455,6 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
      * Present=0 on a refused CONNACK. */
     ack.flags = session_present ? MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT : 0;
     ack.return_code = MQTT_CONNECT_ACK_CODE_ACCEPTED;
-
-#ifdef WOLFMQTT_V5
-    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
-        ack.return_code == MQTT_CONNECT_ACK_CODE_ACCEPTED) {
-        MqttProp* prop;
-
-        /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
-         * of the property signals server supports Maximum QoS 2. Emitting
-         * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
-         * mosquitto) will disconnect on receipt. Emit the property only
-         * when this build caps below QoS 2 via WOLFMQTT_MAX_QOS. */
-    #if WOLFMQTT_MAX_QOS < 2
-        prop = MqttProps_Add(&ack.props);
-        if (prop != NULL) {
-            prop->type = MQTT_PROP_MAX_QOS;
-            prop->data_byte = (byte)WOLFMQTT_MAX_QOS;
-        }
-    #endif
-
-        /* [MQTT-3.2.2.3.3] Receive Maximum. Advertise the broker's
-         * per-client inbound QoS 1/2 cap so well-behaved publishers can
-         * pace themselves. We accept up to BROKER_MAX_INBOUND_QOS2
-         * concurrent QoS 2 PUBLISHes awaiting PUBREL ([MQTT-4.3.3]); use
-         * the same number as the wire value. The property MUST NOT be
-         * 0 - we skip the emission entirely in that (unreachable) case
-         * so a future tunable down to 0 cannot send an illegal value.
-         * The cap applies in both dynamic and static memory modes. */
-        if (BROKER_MAX_INBOUND_QOS2 > 0) {
-            prop = MqttProps_Add(&ack.props);
-            if (prop != NULL) {
-                prop->type = MQTT_PROP_RECEIVE_MAX;
-                prop->data_short =
-                    (BROKER_MAX_INBOUND_QOS2 > 0xFFFF) ?
-                    (word16)0xFFFF :
-                    (word16)BROKER_MAX_INBOUND_QOS2;
-            }
-        }
-    }
-#endif
 
 send_connack:
     /* [MQTT-3.2.2-4] A refused CONNACK MUST have Session Present = 0. The
@@ -8851,6 +8830,11 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
         if (rc != MQTT_CODE_SUCCESS) {
             return 0;
         }
+        if (bc->close_after_direct) {
+            /* The DISCONNECT that announced this close is fully written. */
+            BrokerClient_AbnormalClose(broker, bc);
+            return 0;
+        }
         activity = 1;
     }
 
@@ -9151,8 +9135,19 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                                     (void)MqttProps_Free(disc.props);
                                 }
                                 /* MQTT 5.0 section 3.14.2.2.2 */
+                            #ifndef WOLFMQTT_STATIC_MEMORY
+                                if (BrokerSend_Disconnect(bc,
+                                        MQTT_REASON_PROTOCOL_ERR) ==
+                                        MQTT_CODE_CONTINUE) {
+                                    /* Finish writing the DISCONNECT on a
+                                     * later step before closing. */
+                                    bc->close_after_direct = 1;
+                                    return 0;
+                                }
+                            #else
                                 (void)BrokerSend_Disconnect(bc,
                                     MQTT_REASON_PROTOCOL_ERR);
+                            #endif
                                 BrokerClient_AbnormalClose(broker, bc);
                                 return 0;
                             }
@@ -9779,6 +9774,9 @@ int MqttBroker_Start(MqttBroker* broker)
     }
 #endif
 
+    /* New listeners start with no accept failure reported. */
+    broker->accept_log_err = 0;
+    broker->accept_log_err_tls = 0;
     broker->running = 1;
     return MQTT_CODE_SUCCESS;
 

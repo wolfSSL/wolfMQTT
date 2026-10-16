@@ -706,6 +706,10 @@ typedef struct BrokerClient {
      * Network Connection, so the client is kept only until those bytes are
      * fully delivered and is then dropped without becoming connected. */
     unsigned int  connack_refused : 1;
+    /* A DISCONNECT announcing an abnormal close is still being written in
+     * direct_pending_len. Once that write finishes or fails, the client is
+     * closed instead of reading another packet. */
+    unsigned int  close_after_direct : 1;
 #endif
 } BrokerClient;
 
@@ -875,6 +879,11 @@ typedef struct MqttBroker {
 #ifdef WOLFMQTT_BROKER_PERSIST
     byte persist_restored;
 #endif
+    /* Last accept failure the built-in network adapters logged for
+     * listen_sock and for the TLS listener (0 = none), so a persistent
+     * failure is reported once rather than on every step. */
+    int accept_log_err;
+    int accept_log_err_tls;
 } MqttBroker;
 
 /* -------------------------------------------------------------------------- */
