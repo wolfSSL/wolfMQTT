@@ -6228,6 +6228,27 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             BrokerFanout_Add(&targets, sub->client,
                 (qos < sub->qos) ? qos : sub->qos);
         }
+        /* Offline persistent Session: queue QoS 1/2 for delivery on
+         * reconnect, as the PUBLISH fan-out does. */
+        else if (sub->client == NULL && sub->client_id != NULL &&
+                BROKER_STR_VALID(sub->filter) &&
+                BrokerTopicMatch(sub->filter, topic)) {
+            MqttQoS eff_qos = (qos < sub->qos) ? qos : sub->qos;
+            if (eff_qos > MQTT_QOS_0) {
+                BrokerOrphanSession* o = BrokerOrphan_Find(broker,
+                    sub->client_id);
+                if (o != NULL && BrokerOrphan_Enqueue(broker, o, topic,
+                        payload, payload_len, eff_qos, 0
+                    #ifdef WOLFMQTT_V5
+                        , NULL
+                    #endif
+                        ) < 0) {
+                    WBLOG_ERR(broker,
+                        "broker: offline will queue failed client_id=%s",
+                        BrokerLog_Sanitize(sub->client_id));
+                }
+            }
+        }
     }
     if (targets.truncated) {
         WBLOG_ERR(broker,

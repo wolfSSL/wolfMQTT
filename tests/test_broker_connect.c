@@ -6054,6 +6054,72 @@ TEST(will_qos0_exceeding_tx_buf_not_sent_truncated)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* A QoS 1 Will matching an offline persistent subscriber is queued in its
+ * Session and delivered when it reconnects, as a QoS 1 PUBLISH would be
+ * [MQTT-3.1.2-4]. */
+TEST(will_qos1_queued_for_offline_persistent_subscriber)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v3.1.1 CONNECT, CleanSession=0, ClientId "S" */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet id 1, filter "lwt", QoS 1 */
+    static const byte subscribe_lwt[] = {
+        0x82, 0x08, 0x00, 0x01, 0x00, 0x03, 'l', 'w', 't', 0x01
+    };
+    static const byte disconnect[] = { 0xE0, 0x00 };
+    /* v3.1.1 CONNECT, Will Flag, Will QoS 1 and CleanSession, ClientId "P",
+     * Will Topic "lwt", Will Message "bye". Remaining Length 23. */
+    static const byte connect_pub[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x0E, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_lwt, sizeof(subscribe_lwt));
+    mock_client_input_append(0, disconnect, sizeof(disconnect));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+    ASSERT_NOT_NULL(broker.orphan_sessions);
+
+    /* The Will publisher drops, firing its Will while "S" is offline */
+    g_clients[1].read_err = 1;
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[1].closed);
+
+    /* "S" resumes its Session and receives the queued Will */
+    mock_client_input_append(2, connect_sub, sizeof(connect_sub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[2].out_buf,
+        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_BROKER_WILL */
 
 /* Parsed details of a single PUBLISH packet on the wire. found = 0 means
@@ -13500,6 +13566,7 @@ int main(int argc, char** argv)
 #endif
 #if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(will_qos0_exceeding_tx_buf_not_sent_truncated);
+    RUN_TEST(will_qos1_queued_for_offline_persistent_subscriber);
 #endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_will_scrub_after_failed_write);
