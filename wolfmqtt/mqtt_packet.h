@@ -204,9 +204,10 @@ typedef enum _MqttQoS {
 } MqttQoS;
 
 /* Maximum QoS supported by this build. Legal values: 0, 1, 2. Default 2.
- * Define in user_settings.h to compile a QoS-capped client/broker. Wired
- * into broker CONNACK Maximum QoS property emission today; broader code
- * gating lives on the mqtt_qos_max branch. */
+ * Define in user_settings.h to compile a QoS-capped client/broker. Sets the
+ * client's max_qos and the broker's CONNACK Maximum QoS, clamps granted
+ * subscription and Will QoS, rejects inbound PUBLISH above the cap, and
+ * compiles out the QoS 2 state when below 2. */
 #ifndef WOLFMQTT_MAX_QOS
     #define WOLFMQTT_MAX_QOS 2
 #endif
@@ -903,12 +904,14 @@ WOLFMQTT_API int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
     byte* buf);
 WOLFMQTT_API int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
     byte* buf, word32 buf_len, word32 prop_len);
-/* Must be called once from a single thread before any concurrent access
- * to MQTTv5 property functions. Not thread-safe if called concurrently. */
+/* Reference counted: each call must be paired with one MqttProps_ShutDown
+ * call. MqttClient_Init and MqttClient_DeInit already make one pair per v5
+ * client. Calls must not run concurrently with each other. */
 WOLFMQTT_API int MqttProps_Init(void);
-/* Must be called once from a single thread after all concurrent access
- * to MQTTv5 property functions has ceased. Not thread-safe if called
- * concurrently. */
+/* Releases one MqttProps_Init reference. The shared property lock is freed
+ * when the last reference is released, so call it only after property
+ * functions are no longer in use through that reference. Calls must not run
+ * concurrently with each other. */
 WOLFMQTT_API int MqttProps_ShutDown(void);
 WOLFMQTT_API MqttProp* MqttProps_Add(MqttProp **head);
 WOLFMQTT_API int MqttProps_Free(MqttProp *head);

@@ -44,10 +44,10 @@
 #define WOLFMQTT_SN_MAXPACKET_SIZE 1024
 #endif
 
-/* The SN_GwAddr field has a variable length and contains the address of a GW.
-   Its depends on the network over which MQTT-SN operates and is indicated in
-   the first octet of this field. For example, in a ZigBee network the network
-   address is 2-octet long. */
+/* Gateway address. MQTT-SN 1.2 section 5.4.3 defines GwAdd as variable
+   length and network dependent, but this type holds only a fixed 2-octet
+   address (for example a ZigBee network address). SN_Decode_GWInfo copies at
+   most sizeof(SN_GwAddr) bytes. */
 typedef word16 SN_GwAddr ;
 
 /* RETURN CODE values */

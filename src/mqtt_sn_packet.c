@@ -1264,7 +1264,8 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     if ((publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) ||
         (publish->topic_type == SN_TOPIC_ID_TYPE_PREDEF)) {
-        /* Short and predefined topic names are 2 chars */
+        /* A short topic name is 2 chars; a predefined topic ID is a 2-byte
+         * identifier, not a name */
         XMEMCPY(tx_payload, publish->topic_name, 2);
         tx_payload += 2;
     }

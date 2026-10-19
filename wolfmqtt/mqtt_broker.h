@@ -149,8 +149,8 @@
 #endif
 /* Maximum concurrent inbound QoS 2 packet IDs awaiting PUBREL per client.
  * Used to dedup duplicate PUBLISHes per [MQTT-4.3.3] (Method B). 16 covers
- * any reasonable client; a misbehaving client that exceeds this gets a
- * malformed-packet rejection. */
+ * any reasonable client; a misbehaving client that exceeds this is
+ * disconnected (v5 reason Quota Exceeded 0x97). */
 #ifndef BROKER_MAX_INBOUND_QOS2
     #define BROKER_MAX_INBOUND_QOS2 16
 #endif
@@ -357,8 +357,9 @@ typedef struct MqttBrokerNet {
 /* The persistence layer is intentionally hook-based so the broker can run
  * on top of POSIX files, embedded flash, an external KV store, or an
  * in-RAM stub used by tests. Each hook returns 0 on success or a negative
- * error code. Shadow-write failures are logged while in-memory state remains
- * authoritative. Iterator failures during restore abort MqttBroker_Start.
+ * error code. Most shadow-write failures are not logged by the broker, so a
+ * hook should report its own errors; in-memory state remains authoritative.
+ * Iterator failures during restore abort MqttBroker_Start.
  *
  * The broker currently uses only the key/value API. At minimum kv_put,
  * kv_get, and kv_iter must be installed for sessions, subscriptions,
@@ -646,7 +647,7 @@ typedef struct BrokerClient {
      * not yet PUBREL'd. A duplicate PUBLISH carrying one of these IDs is
      * acked again (PUBREC) but NOT re-fanned-out to subscribers. The
      * BROKER_MAX_INBOUND_QOS2 cap is enforced in both memory modes; a
-     * client that exceeds it is disconnected with malformed-packet error.
+     * client that exceeds it is disconnected with Quota Exceeded (0x97).
      * Compiled out for capped-QoS builds (WOLFMQTT_MAX_QOS < 2). */
 #if WOLFMQTT_MAX_QOS >= 2
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -685,10 +686,10 @@ typedef struct BrokerClient {
     int           out_q_pending_len;
     /* Encoded length of a direct broker response still being written. */
     int           direct_pending_len;
-    /* v5 Receive Maximum advertised by this client in CONNECT, or 65535
-     * (per MQTT v5 sec 3.1.2.11.3) when the client did not include the
-     * property. For v3.1.1 clients this is left at 65535 - the cap
-     * comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
+    /* v5 Receive Maximum advertised by this client in CONNECT, or 0 when
+     * the client did not include the property or is a v3.1.1 client. 0
+     * means no per-client cap (the MQTT v5 section 3.1.2.11.3 default of
+     * 65535), so the cap comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
     word16        client_receive_max;
 #endif /* !WOLFMQTT_STATIC_MEMORY */
     word32        session_expiry_sec;
@@ -994,8 +995,9 @@ WOLFMQTT_LOCAL int BrokerPersist_DelOutPub(MqttBroker* broker,
 WOLFMQTT_LOCAL int BrokerPersist_DelOutQueue(MqttBroker* broker,
     const char* client_id);
 /* Startup-time restore on a freshly initialized, empty broker. Rebuilds the
- * in-memory tables before the first MqttBroker_Start accepts clients. Wipes
- * and re-stamps META when the persisted schema version does not match. */
+ * in-memory tables before the first MqttBroker_Start accepts clients. When the
+ * persisted schema version does not match it re-stamps META, first deleting
+ * every record in dynamic memory builds (static builds skip the wipe). */
 WOLFMQTT_LOCAL int BrokerPersist_Restore(MqttBroker* broker);
 /* Discard state loaded by a failed startup restore. Defined in
  * mqtt_broker.c because it uses the broker's shared teardown helpers. */

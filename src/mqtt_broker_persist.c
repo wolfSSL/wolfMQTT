@@ -809,9 +809,10 @@ int BrokerPersist_PutSubs(MqttBroker* broker, const char* client_id)
     {
         size_t raw = XSTRLEN(client_id);
         /* word16 downcast - reject lengths that wouldn't fit instead
-         * of silently truncating. MQTT v3.1.1 caps client_id at 23
-         * bytes; v5 caps at 65535 (i.e., fits in word16). Anything
-         * longer is malformed input from a caller. */
+         * of silently truncating. MQTT strings are at most 65535 bytes
+         * (MQTT 3.1.1 section 1.5.3); the 23-byte Client ID limit in
+         * [MQTT-3.1.3-5] is a minimum a server must accept, not a cap.
+         * Anything longer is malformed input from a caller. */
         if (raw == 0 || raw > 0xFFFFu) {
             return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
@@ -1859,7 +1860,9 @@ static int wmqb_purge_expired_retained_cb(const byte* key, word16 key_len,
  * every live copy and nothing at runtime can reach them again. Stages a
  * bounded batch, leaves the iterator, then deletes: a backend is not required
  * to tolerate mutation under an active iterator. Repeats until a scan finds
- * nothing, so one restore drains a whole backlog at fixed memory cost. */
+ * nothing or WMQB_RETAINED_PURGE_PASSES scans have run, so a large backlog
+ * can take more than one restore to drain. A key too long to stage is left
+ * in place. */
 static void wmqb_restore_purge_expired_retained(MqttBroker* broker)
 {
     const MqttBrokerPersistHooks* h = broker->persist;
@@ -2773,11 +2776,12 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
             rc == MQTT_CODE_ERROR_BAD_ARG) {
         /* Schema or magic mismatch. Wipe-and-restart per the chosen
-         * policy: iterate every namespace, delete every record,
-         * restamp META. New records get written fresh as activity
-         * resumes. (BAD_ARG = header magic / schema version mismatch
-         * from wmqb_read_header; MALFORMED_DATA = decrypt or size
-         * failure from wmqb_kv_get_decrypt_meta.) */
+         * policy: iterate every namespace, delete every record
+         * (dynamic memory builds only; static builds skip the wipe
+         * in wmqb_wipe_all), restamp META. New records get written
+         * fresh as activity resumes. (BAD_ARG = header magic / schema
+         * version mismatch from wmqb_read_header; MALFORMED_DATA =
+         * decrypt or size failure from wmqb_kv_get_decrypt_meta.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
         rc = wmqb_wipe_all(broker);

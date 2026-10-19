@@ -419,7 +419,7 @@ typedef struct _MqttClient {
 #endif
 
     MqttPkRead   packet; /* publish packet state - protected by read lock */
-    MqttPublishResp packetAck; /* publish ACK - protected by write lock */
+    MqttPublishResp packetAck; /* publish ACK - protected by lockClient */
     MqttSk       read;   /* read socket state - protected by read lock */
     MqttSk       write;  /* write socket state - protected by write lock */
 
@@ -516,8 +516,8 @@ typedef struct _MqttClient {
 
     /* Outbound Packet Identifiers written on the current Network Connection
      * and not yet released by their acknowledgement. Cleared when a connection
-     * starts or ends, since the client keeps no outbound session state across
-     * one. */
+     * starts or ends; messages kept in replay[] have their identifiers
+     * reserved again when a resumed Session re-sends them. */
     MqttSendId send_inflight[MQTT_MAX_SEND_INFLIGHT];
 
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
@@ -811,10 +811,12 @@ WOLFMQTT_API int MqttClient_Auth(
 
 
 /*! \brief      Add a new property.
- *  Allocate a property structure and add it to the head of the list
-    pointed to by head. To be used prior to calling packet command.
+ *  Allocate a property structure and append it to the tail of the list
+    pointed to by head; *head is set only when the list is empty. To be
+    used prior to calling packet command.
  *  \param      head        Pointer-pointer to a property structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ *  \return     Pointer to the new property, or NULL if head is NULL or no
+                property could be allocated
  */
 WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
     MqttProp **head);
@@ -831,8 +833,9 @@ WOLFMQTT_API int MqttClient_PropsFree(
 
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
- *  \note This is a non-blocking function that will try and send using
-                MqttNet.write
+ *  \note This function does not wait for a response. It sends using
+                MqttNet.write and, unless WOLFMQTT_NONBLOCK is defined,
+                blocks until the packet is written or the write fails.
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
@@ -844,8 +847,9 @@ WOLFMQTT_API int MqttClient_Disconnect(
 
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
- *  \note This is a non-blocking function that will try and send using
-                MqttNet.write
+ *  \note This function does not wait for a response. It sends using
+                MqttNet.write and, unless WOLFMQTT_NONBLOCK is defined,
+                blocks until the packet is written or the write fails.
  *  \param      client      Pointer to MqttClient structure
  *  \param      disconnect  Pointer to MqttDisconnect structure. NULL is valid.
  *  \return     MQTT_CODE_SUCCESS,
@@ -897,7 +901,8 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 #if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
 /*! \brief      In a multi-threaded and non-blocking mode this allows you to
                 cancel an MQTT object that was previously submitted.
- *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note This function performs no network I/O. In multi-threaded
+                builds it may wait to take the client locks.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -914,8 +919,8 @@ WOLFMQTT_API int MqttClient_CancelMessage(
  *  \note This function assumes caller owns the object
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     1 if a read or write is pending, 0 if not, or a negative
+                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_IsMessageActive(
     MqttClient *client,

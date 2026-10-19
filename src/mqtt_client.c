@@ -47,7 +47,7 @@ WOLFMQTT_LOCAL void MqttClient_ForceZero(void* mem, word32 len)
  *  flagged, so the other thread knows it completed.
  *
  * WOLFMQTT_NONBLOCK: Enabled transport support for returning WANT READ/WRITE,
- *  which becomes WOLFMQTT_CODE_CONTINUE. This prevents blocking if the
+ *  which becomes MQTT_CODE_CONTINUE. This prevents blocking if the
  *  transport (socket) has no data.
  *
  * WOLFMQTT_V5: Enables MQTT v5.0 support
@@ -885,8 +885,9 @@ static void MqttClient_Replay_PubRelSentSafe(MqttClient* client,
  * dropped as soon as the waiting call returns - including on a timeout, where
  * no acknowledgement was processed at all. This table is the connection-level
  * record the rule actually asks for, so it is kept in every build. It is
- * cleared when a Network Connection starts or ends, because the client holds
- * no outbound session state across one.
+ * cleared when a Network Connection starts or ends. Unacknowledged messages
+ * kept for session replay have their identifiers reserved again when a
+ * resumed Session re-sends them.
  *
  * These are called from both the send and receive paths, so they take
  * client->lockClient themselves; no caller may already hold it. Every caller
@@ -1067,8 +1068,8 @@ static void MqttClient_SendIdDisown(MqttClient* client, const void* owner)
 }
 
 /* Drop every reservation. The identifiers were only in use on the Network
- * Connection that is starting or ending, and the client keeps no outbound
- * session state across one. */
+ * Connection that is starting or ending. Replayed messages reserve theirs
+ * again on a Session Present reconnect. */
 static void MqttClient_SendIdsReset(MqttClient* client)
 {
 #ifdef WOLFMQTT_MULTITHREAD
@@ -2774,8 +2775,8 @@ int MqttClient_Init(MqttClient *client, MqttNet* net,
     client->rx_buf_len = rx_buf_len;
     client->cmd_timeout_ms = cmd_timeout_ms;
 #ifdef WOLFMQTT_V5
-    /* Initialize to this build's Maximum QoS. Handle_Props will narrow
-     * this if the server advertises a lower MQTT_PROP_MAX_QOS. */
+    /* Initialize to this build's Maximum QoS. Handle_ConnectAck_Props will
+     * narrow this if the server advertises a lower MQTT_PROP_MAX_QOS. */
     client->max_qos = (MqttQoS)WOLFMQTT_MAX_QOS;
     client->retain_avail = 1;
     client->protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL;
@@ -3268,9 +3269,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         }
 
         /* Past the guard, so this really is a new handshake: start a fresh
-         * outbound Packet Identifier space. The client keeps no
-         * unacknowledged outbound PUBLISH/PUBREL across a Network Connection,
-         * so nothing from a previous one is still in flight [MQTT-2.3.1-3].
+         * outbound Packet Identifier space. Identifiers from a previous
+         * Network Connection are not in flight on this one [MQTT-2.3.1-3];
+         * replayed messages reserve theirs again if the Session resumes.
          * Must run after the guard above - a refused duplicate CONNECT would
          * otherwise wipe identifiers still in flight on the live connection -
          * and outside the WOLFMQTT_V5 block below, since the table exists in
@@ -5646,8 +5647,9 @@ int MqttClient_NetDisconnect(MqttClient *client)
     }
 #endif
 
-    /* The Network Connection is going away and the client keeps no outbound
-     * session state across one, so nothing stays in flight [MQTT-2.3.1-3]. */
+    /* The Network Connection is going away, so none of its identifiers stay
+     * in flight [MQTT-2.3.1-3]. Replayed messages reserve theirs again if a
+     * later Session resumes. */
     MqttClient_SendIdsReset(client);
 
     rc = MqttSocket_Disconnect(client);

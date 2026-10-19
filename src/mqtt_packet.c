@@ -1094,7 +1094,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
             break;
         }
-        /* Allocate a structure and add to head. */
+        /* Allocate a structure and append it, keeping wire order. */
         cur_prop = MqttProps_Add(props);
         if (cur_prop == NULL) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MEMORY);
@@ -3221,8 +3221,9 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             /* Preserve v5 No Local / Retain As Published / Retain Handling
              * (bits 2-5) so the full options byte round-trips. Reserved and
              * QoS bits were validated above; for a valid v3.1.1 packet these
-             * bits are 0. The broker stores these but does not yet enforce
-             * them on delivery. */
+             * bits are 0. The broker applies Retain Handling when it sends
+             * retained messages for a new subscription; it does not store
+             * No Local or Retain As Published. */
             topic->sub_options = (byte)(options & MQTT_SUBSCRIBE_OPTIONS_MASK);
         #endif
             subscribe->topic_count++;
@@ -4310,8 +4311,8 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     return header_len + remain_len;
 }
 
-/* Must be called once from a single thread before any concurrent access
- * to MQTTv5 property functions. Not thread-safe if called concurrently. */
+/* Reference counted: each call must be paired with one MqttProps_ShutDown
+ * call. Calls must not run concurrently with each other. */
 int MqttProps_Init(void)
 {
     int ret = MQTT_CODE_SUCCESS;
@@ -4326,9 +4327,9 @@ int MqttProps_Init(void)
     return  ret;
 }
 
-/* Must be called once from a single thread after all concurrent access
- * to MQTTv5 property functions has ceased. Not thread-safe if called
- * concurrently. */
+/* Releases one MqttProps_Init reference and frees the shared property lock
+ * when the last one is released. Calls must not run concurrently with each
+ * other. */
 int MqttProps_ShutDown(void)
 {
     int ret = MQTT_CODE_SUCCESS;
@@ -4480,9 +4481,10 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 
     rc = MqttPacket_HandleNetError(client, rc);
 #ifndef WOLFMQTT_NO_TIME
-    /* Record when a full control packet leaves the wire so the keep-alive
-     * scheduler can measure how long the outbound link has been idle. Only
-     * needed while auto-ping is armed; skip the clock read otherwise. */
+    /* Record each fully written buffer (a whole packet, or one segment of a
+     * streamed PUBLISH payload) so the keep-alive scheduler can measure how
+     * long the outbound link has been idle. Only needed while auto-ping is
+     * armed; skip the clock read otherwise. */
     if (rc == tx_buf_len && client->keep_alive_sec != 0) {
         client->last_tx_time = WOLFMQTT_GET_TIME_S();
     }
