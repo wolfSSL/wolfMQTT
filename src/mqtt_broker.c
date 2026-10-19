@@ -2767,6 +2767,8 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
 #endif
     }
     else if (bc != NULL) {
+        /* The caller closes the rejected socket */
+        bc->sock = BROKER_SOCKET_INVALID;
         BrokerClient_Free(bc);
         bc = NULL;
     }

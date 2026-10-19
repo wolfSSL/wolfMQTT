@@ -176,6 +176,7 @@ typedef struct MockClient {
     byte   out_buf[MOCK_BUF_SZ];
     size_t out_len;
     int    closed;
+    int    close_count; /* net->close calls on this socket */
     int    read_err; /* when set, mock_read returns a network error (peer RST) */
     int    write_err; /* when set, mock_write returns a network error */
     int    write_continue; /* when set, mock_write reports would-block */
@@ -353,6 +354,7 @@ static int mock_close(void* ctx, BROKER_SOCKET_T sock)
     (void)ctx;
     if (idx >= 0) {
         g_clients[idx].closed = 1;
+        g_clients[idx].close_count++;
     }
     else if (sock == MOCK_LISTEN_SOCK) {
         g_listen_close_count++;
@@ -1384,6 +1386,34 @@ TEST(broker_start_partial_listener_failure_cleans_up)
     ASSERT_EQ(4, g_listen_count);
 
     broker.tls_ctx = NULL;
+    MqttBroker_Free(&broker);
+}
+
+/* A TLS accept with no tls_ctx fails BrokerClient_Add after the socket was
+ * recorded in the client. The caller closes the rejected socket, so the
+ * failed add must not close it too; a second close could hit a reused fd. */
+TEST(broker_add_failure_closes_socket_once)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+
+    install_mock_net(&net);
+    reset_mock_clients(1);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    ASSERT_TRUE(broker.tls_ctx == NULL);
+
+    /* Route the next accept through the TLS listener only */
+    broker.listen_sock = BROKER_SOCKET_INVALID;
+    broker.listen_sock_tls = MOCK_LISTEN_SOCK;
+
+    MqttBroker_Step(&broker);
+    ASSERT_EQ(1, g_accept_count);
+    ASSERT_EQ(1, g_clients[0].close_count);
+
+    broker.listen_sock = MOCK_LISTEN_SOCK;
+    broker.listen_sock_tls = BROKER_SOCKET_INVALID;
     MqttBroker_Free(&broker);
 }
 #endif
@@ -12628,6 +12658,7 @@ int main(int argc, char** argv)
 #endif
 #ifdef ENABLE_MQTT_TLS
     RUN_TEST(broker_start_partial_listener_failure_cleans_up);
+    RUN_TEST(broker_add_failure_closes_socket_once);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
