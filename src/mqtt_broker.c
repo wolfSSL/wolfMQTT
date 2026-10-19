@@ -5811,6 +5811,12 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
 #endif
             enc_rc = MqttEncode_Publish(bc->tx_buf,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
+            /* A payload clamped to tx_buf leaves Remaining Length declaring
+             * bytes the frame does not carry [MQTT 3.1.1 section 2.2.3]. */
+            if (enc_rc > 0 && out_pub.buffer_pos != out_pub.total_len) {
+                BROKER_FORCE_ZERO(bc->tx_buf, enc_rc);
+                enc_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             if (enc_rc > 0) {
                 WBLOG_DBG(broker, "broker: retained deliver sock=%d topic=%s "
                     "len=%u qos=%d", (int)bc->sock,
@@ -6151,6 +6157,13 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
 #endif
                 enc_rc = MqttEncode_Publish(wc->tx_buf,
                     BROKER_CLIENT_TX_SZ(wc), &out_pub, 0);
+                /* A payload clamped to tx_buf leaves Remaining Length
+                 * declaring bytes the frame does not carry [MQTT 3.1.1
+                 * section 2.2.3]. */
+                if (enc_rc > 0 && out_pub.buffer_pos != out_pub.total_len) {
+                    BROKER_FORCE_ZERO(wc->tx_buf, enc_rc);
+                    enc_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
                 if (enc_rc > 0) {
                     wr_rc = BrokerClient_WriteDirect(wc, enc_rc);
                     /* Scrub tx_buf unless still in-progress (CONTINUE). */
@@ -6315,6 +6328,12 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
         #endif
             enc_rc = MqttEncode_Publish(wc->tx_buf,
                 BROKER_CLIENT_TX_SZ(wc), &out_pub, 0);
+            /* A payload clamped to tx_buf leaves Remaining Length declaring
+             * bytes the frame does not carry [MQTT 3.1.1 section 2.2.3]. */
+            if (enc_rc > 0 && out_pub.buffer_pos != out_pub.total_len) {
+                BROKER_FORCE_ZERO(wc->tx_buf, enc_rc);
+                enc_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             if (enc_rc > 0) {
                 wr_rc = BrokerClient_WriteDirect(wc, enc_rc);
                 /* Scrub tx_buf unless still in-progress (CONTINUE). */
@@ -8202,6 +8221,13 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 #endif
                 sub_rc = MqttEncode_Publish(sub->client->tx_buf,
                     BROKER_CLIENT_TX_SZ(sub->client), &out_pub, 0);
+                /* A payload clamped to tx_buf leaves Remaining Length
+                 * declaring bytes the frame does not carry [MQTT 3.1.1
+                 * section 2.2.3]. */
+                if (sub_rc > 0 && out_pub.buffer_pos != out_pub.total_len) {
+                    BROKER_FORCE_ZERO(sub->client->tx_buf, sub_rc);
+                    sub_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
                 if (sub_rc > 0) {
                     WBLOG_DBG(broker,
                         "broker: PUBLISH fwd sock=%d -> sock=%d "

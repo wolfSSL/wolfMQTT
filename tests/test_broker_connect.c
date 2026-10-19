@@ -165,18 +165,21 @@ static void broker_test_disable_free_capture(void)
 #define MOCK_LISTEN_SOCK       100
 #define MOCK_CLIENT_SOCK_BASE  101 /* sock = base + index */
 #define MOCK_BUF_SZ            1024
+/* Room for a PUBLISH that fills the broker receive buffer */
+#define MOCK_IN_BUF_SZ         (BROKER_RX_BUF_SZ + 64)
 #define MOCK_MAX_CLIENTS       4
 
 /* Per-mock-client state. Multi-client tests (e.g. QoS 2 dedup) need a
  * subscriber and a publisher running through the same broker instance. */
 typedef struct MockClient {
-    byte   in_buf[MOCK_BUF_SZ];
+    byte   in_buf[MOCK_IN_BUF_SZ];
     size_t in_len;
     size_t in_pos;
     byte   out_buf[MOCK_BUF_SZ];
     size_t out_len;
     int    closed;
     int    close_count; /* net->close calls on this socket */
+    int    publish_writes; /* PUBLISH frames the broker tried to write */
     int    read_err; /* when set, mock_read returns a network error (peer RST) */
     int    write_err; /* when set, mock_write returns a network error */
     int    write_continue; /* when set, mock_write reports would-block */
@@ -297,6 +300,10 @@ static int mock_write(void* ctx, BROKER_SOCKET_T sock,
         return MQTT_CODE_ERROR_NETWORK;
     }
     mc = &g_clients[idx];
+    if (buf != NULL && buf_len > 0 &&
+            ((buf[0] & 0xF0) >> 4) == MQTT_PACKET_TYPE_PUBLISH) {
+        mc->publish_writes++;
+    }
     if (mc->write_err_pending) {
         mc->write_err_pending = 0;
         return MQTT_CODE_ERROR_NETWORK;
@@ -5870,6 +5877,184 @@ TEST(reclaim_v311_resume_never_expires)
         sizeof(connect_v311)));
 }
 #endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
+
+#ifdef WOLFMQTT_V5
+/* Build a v3.1.1 QoS 0 PUBLISH to "x" that exactly fills the broker receive
+ * buffer (MQTT 3.1.1 section 3.3): fixed header byte, two byte Remaining
+ * Length, Topic Name "x", then payload. Forwarded to a v5 subscriber it gains
+ * a Property Length byte and no longer fits the transmit buffer. */
+static size_t build_full_rx_publish(byte* buf, size_t buf_sz, byte retain)
+{
+    word32 remain_len = (word32)BROKER_RX_BUF_SZ - 3;
+    size_t i;
+
+    if (buf_sz < (size_t)BROKER_RX_BUF_SZ || remain_len < 128 ||
+            remain_len > 16383) {
+        return 0;
+    }
+    buf[0] = (byte)(0x30 | (retain ? 0x01 : 0x00));
+    buf[1] = (byte)((remain_len & 0x7F) | 0x80);
+    buf[2] = (byte)(remain_len >> 7);
+    buf[3] = 0x00;
+    buf[4] = 0x01;
+    buf[5] = 'x';
+    for (i = 6; i < (size_t)BROKER_RX_BUF_SZ; i++) {
+        buf[i] = 'A';
+    }
+    return (size_t)BROKER_RX_BUF_SZ;
+}
+
+/* A forwarded PUBLISH that does not fit the subscriber's transmit buffer
+ * must not be written: a clamped payload under the full Remaining Length
+ * would desynchronize the subscriber (MQTT 3.1.1 section 2.2.3). Returns the
+ * subscriber's PUBLISH writes, or -1 on setup failure. */
+static int oversize_forward_publish_writes(int retained, int* sub_closed)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    static byte big[BROKER_RX_BUF_SZ];
+    size_t big_len;
+    int i;
+    int writes;
+    /* v5 CONNECT, Clean Start, ClientId "S" */
+    static const byte connect_sub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'S'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, filter "x", QoS 0 */
+    static const byte subscribe_x[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'x', 0x00
+    };
+    /* v3.1.1 CONNECT, CleanSession=1, ClientId "P" */
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+
+    big_len = build_full_rx_publish(big, sizeof(big), (byte)retained);
+    if (big_len == 0) {
+        return -1;
+    }
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+
+    reset_mock_clients(2);
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    if (!retained) {
+        mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+        mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    }
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    mock_client_input_append(1, big, big_len);
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    if (retained) {
+        /* The retained copy is delivered on subscribe */
+        mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+        mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+        for (i = 0; i < 16; i++) {
+            MqttBroker_Step(&broker);
+        }
+    }
+
+    writes = g_clients[0].publish_writes;
+    *sub_closed = g_clients[0].closed;
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    return writes;
+}
+
+TEST(live_forward_exceeding_tx_buf_not_sent_truncated)
+{
+    int closed = 1;
+
+    ASSERT_EQ(0, oversize_forward_publish_writes(0, &closed));
+    ASSERT_FALSE(closed);
+}
+
+TEST(retained_delivery_exceeding_tx_buf_not_sent_truncated)
+{
+    int closed = 1;
+
+    ASSERT_EQ(0, oversize_forward_publish_writes(1, &closed));
+    ASSERT_FALSE(closed);
+}
+#endif /* WOLFMQTT_V5 */
+
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
+/* A QoS 0 Will written directly to a subscriber whose transmit buffer cannot
+ * hold it must be skipped rather than sent with a clamped payload (MQTT 3.1.1
+ * section 2.2.3). */
+TEST(will_qos0_exceeding_tx_buf_not_sent_truncated)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    int i;
+    /* v3.1.1 CONNECT, CleanSession=1, ClientId "S" */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet id 1, filter "lwt", QoS 0 */
+    static const byte subscribe_lwt[] = {
+        0x82, 0x08, 0x00, 0x01, 0x00, 0x03, 'l', 'w', 't', 0x00
+    };
+    /* v3.1.1 CONNECT, Will Flag (QoS 0) and CleanSession, ClientId "P",
+     * Will Topic "lwt", Will Message "bye". Remaining Length 23. */
+    static const byte connect_pub[] = {
+        0x10, 0x17,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C,
+        0x00, 0x01, 'P',
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_lwt, sizeof(subscribe_lwt));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+
+    /* The Will PUBLISH is 10 bytes: fixed header 2, Topic Name 5, payload 3 */
+    sub_bc->tx_buf_len = 8;
+    g_clients[1].read_err = 1;
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_EQ(0, g_clients[0].publish_writes);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_BROKER_WILL */
 
 /* Parsed details of a single PUBLISH packet on the wire. found = 0 means
  * no PUBLISH was present in the buffer; subsequent fields are zero. */
@@ -13308,6 +13493,13 @@ int main(int argc, char** argv)
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(reclaim_keeps_explicit_v5_never_expire);
     RUN_TEST(reclaim_v311_resume_never_expires);
+#endif
+#ifdef WOLFMQTT_V5
+    RUN_TEST(live_forward_exceeding_tx_buf_not_sent_truncated);
+    RUN_TEST(retained_delivery_exceeding_tx_buf_not_sent_truncated);
+#endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
+    RUN_TEST(will_qos0_exceeding_tx_buf_not_sent_truncated);
 #endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_will_scrub_after_failed_write);
