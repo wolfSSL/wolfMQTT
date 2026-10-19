@@ -3732,6 +3732,18 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     return rc;
 }
 
+/* The message callback refused a PUBLISH. With payload still unread the
+ * stream can no longer be parsed, so mark the connection unusable as the
+ * MqttMsgCb contract promises; the application tears the transport down via
+ * MqttClient_NetDisconnect. */
+static void MqttClient_Publish_AbandonPayload(MqttClient* client,
+    byte msg_done)
+{
+    if (!msg_done) {
+        (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
+    }
+}
+
 static int MqttClient_Publish_ReadPayload(MqttClient* client,
     MqttPublish* publish, int timeout_ms)
 {
@@ -3773,6 +3785,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
                 rc = client->msg_cb(client, publish, publish->buffer_new,
                                     msg_done);
                 if (rc != MQTT_CODE_SUCCESS) {
+                    MqttClient_Publish_AbandonPayload(client, msg_done);
                     return rc;
                 };
             }
@@ -3830,6 +3843,7 @@ static int MqttClient_Publish_ReadPayload(MqttClient* client,
                     rc = client->msg_cb(client, publish, publish->buffer_new,
                                         msg_done);
                     if (rc != MQTT_CODE_SUCCESS) {
+                        MqttClient_Publish_AbandonPayload(client, msg_done);
                         return rc;
                     };
                 }

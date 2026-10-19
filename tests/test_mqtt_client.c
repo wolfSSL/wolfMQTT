@@ -6742,6 +6742,92 @@ TEST(wait_message_v5_props_null_msg_cb_frees_props)
 }
 #endif /* WOLFMQTT_V5 */
 
+/* Message callback that fails on call number g_msg_cb_fail_on (1-based). */
+static int g_msg_cb_fail_calls;
+static int g_msg_cb_fail_on;
+static int test_failing_message_cb(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client; (void)msg; (void)msg_new; (void)msg_done;
+    g_msg_cb_fail_calls++;
+    return (g_msg_cb_fail_calls == g_msg_cb_fail_on) ?
+        MQTT_CODE_ERROR_CALLBACK : MQTT_CODE_SUCCESS;
+}
+
+/* Drive a PUBLISH whose payload spans several rx_buf reads into a message
+ * callback that fails on call fail_on, with the transport marked connected.
+ * Returns the terminal WaitMessage result. */
+static int run_wait_message_cb_fails_mid_payload(int fail_on)
+{
+    /* rx_buf smaller than the payload, so it is delivered in chunks */
+    static byte small_rx_buf[16];
+    int rc;
+    int i;
+    /* v3.1.1 QoS 0 PUBLISH: type=0x30, Remaining Length 33, topic "a"
+     * (0x0001 'a'), 30-byte payload (no packet id for QoS 0). */
+    static const byte publish_qos0[] = {
+        0x30, 0x21, 0x00, 0x01, 'a',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+    };
+
+    rc = MqttClient_Init(&test_client, &test_net, test_failing_message_cb,
+        test_tx_buf, TEST_TX_BUF_SIZE, small_rx_buf,
+        (int)sizeof(small_rx_buf), TEST_CMD_TIMEOUT_MS);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    test_client_inited = 1;
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_CONNECT_SENT);
+
+    g_msg_cb_fail_calls = 0;
+    g_msg_cb_fail_on = fail_on;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_qos0, sizeof(publish_qos0));
+    g_canned_len = (int)sizeof(publish_qos0);
+    g_canned_pos = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    return rc;
+}
+
+/* A message callback error with payload still unread leaves the rest of the
+ * PUBLISH in the transport, so the next read would parse payload bytes as a
+ * fixed header. MqttMsgCb documents that a non-success return causes a net
+ * disconnect: the client must stop reporting the connection as usable. */
+TEST(wait_message_cb_error_first_chunk_clears_connected)
+{
+    int rc;
+
+    rc = run_wait_message_cb_fails_mid_payload(1);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    ASSERT_EQ(1, g_msg_cb_fail_calls);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+TEST(wait_message_cb_error_later_chunk_clears_connected)
+{
+    int rc;
+
+    rc = run_wait_message_cb_fails_mid_payload(2);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_CALLBACK, rc);
+    ASSERT_EQ(2, g_msg_cb_fail_calls);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
 /* Counts deliveries for the positive-control test below. */
 static int g_msg_cb_calls;
 static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
@@ -8348,6 +8434,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_qos1_null_msg_cb_errors_no_ack);
     RUN_TEST(wait_message_qos0_null_msg_cb_errors);
     RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
+    RUN_TEST(wait_message_cb_error_first_chunk_clears_connected);
+    RUN_TEST(wait_message_cb_error_later_chunk_clears_connected);
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
     RUN_TEST(wait_message_qos2_full_dedup_table_v311_errors_no_ack);
 #ifdef WOLFMQTT_V5
