@@ -3103,6 +3103,59 @@ TEST(wait_message_puback_survives_shared_ack_overwrite)
 }
 #endif /* WOLFMQTT_MULTITHREAD && WOLFMQTT_NONBLOCK && WOLFMQTT_MAX_QOS >= 1 */
 
+#if !defined(WOLFMQTT_NONBLOCK) && WOLFMQTT_MAX_QOS >= 1
+static int g_zero_write_calls;
+
+/* A blocking transport that accepts nothing, e.g. a send interrupted before
+ * any byte left. */
+static int mock_net_write_zero(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)buf; (void)buf_len; (void)timeout_ms;
+    g_zero_write_calls++;
+    return 0;
+}
+
+static int mock_msg_cb_zero_write(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client; (void)msg; (void)msg_new; (void)msg_done;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* A blocking PUBACK write that sends zero bytes did not acknowledge the
+ * PUBLISH [MQTT-4.3.2-2], so it must be reported as a network error instead
+ * of success. */
+TEST(wait_message_zero_byte_puback_write_is_error)
+{
+    int rc;
+    /* v3.1.1 QoS 1 PUBLISH: topic "a", packet id 1, payload "h". */
+    static const byte publish_id1[] = {
+        0x32, 0x06, 0x00, 0x01, 'a', 0x00, 0x01, 'h'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = mock_msg_cb_zero_write;
+
+    g_zero_write_calls = 0;
+    test_net.write = mock_net_write_zero;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish_id1, sizeof(publish_id1));
+    g_canned_len = (int)sizeof(publish_id1);
+    g_canned_pos = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+
+    ASSERT_EQ(1, g_zero_write_calls);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+}
+#endif /* !WOLFMQTT_NONBLOCK && WOLFMQTT_MAX_QOS >= 1 */
+
 /* MqttClient_WaitType dispatches on the stat of the object it is handed, which
  * for the CONNACK wait is mc_connect->ack. Left at MQTT_MSG_PAYLOAD after a
  * completed handshake, a second MqttClient_Connect on the same MqttConnect
@@ -8137,6 +8190,9 @@ void run_mqtt_client_tests(void)
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK) && \
     WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(wait_message_puback_survives_shared_ack_overwrite);
+#endif
+#if !defined(WOLFMQTT_NONBLOCK) && WOLFMQTT_MAX_QOS >= 1
+    RUN_TEST(wait_message_zero_byte_puback_write_is_error);
 #endif
     RUN_TEST(net_connect_clears_connect_sent_flag);
     RUN_TEST(publish_after_disconnect_rejected);

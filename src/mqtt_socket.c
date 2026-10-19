@@ -316,6 +316,11 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
         client->write.pos = buf_len - remain;
         client->write.total = MqttSocket_AddTotal(client->write.total, rc);
     } while (remain > 0);
+    /* A blocking write that makes no progress cannot finish the packet;
+     * returning 0 would read as success to callers. */
+    if (rc == 0) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+    }
 #endif /* WOLFMQTT_NONBLOCK */
 
     /* handle return code */
