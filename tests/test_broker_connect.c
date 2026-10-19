@@ -6122,6 +6122,125 @@ TEST(will_qos1_queued_for_offline_persistent_subscriber)
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_BROKER_WILL */
 
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_V5)
+/* Queue a v5 QoS 1 PUBLISH with Message Expiry Interval 10 for an offline
+ * persistent subscriber, let wait_sec pass, then resume the Session.
+ * Returns the PUBLISH packets delivered and sets *wire_expiry to the Message
+ * Expiry Interval of the first one (-1 if not found). */
+static int queued_publish_after_wait(word32 wait_sec, long* wire_expiry)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int publishes;
+    size_t pos;
+    const byte* out;
+    size_t out_len;
+    /* v5 CONNECT, Clean Start 0, Properties length 5 holding Session Expiry
+     * Interval 300 (0x11), ClientId "S". Remaining Length 19. */
+    static const byte connect_sub[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x01, 0x2C,
+        0x00, 0x01, 'S'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, filter "x", QoS 1 */
+    static const byte subscribe_x[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte disconnect[] = { 0xE0, 0x00 };
+    /* v5 CONNECT, Clean Start 1, Properties length 0, ClientId "P" */
+    static const byte connect_pub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+    /* v5 PUBLISH QoS 1 (MQTT 5.0 section 3.3): topic "x", packet id 1,
+     * Properties length 5 holding Message Expiry Interval 10 (0x02),
+     * payload "hi". Remaining Length 13. */
+    static const byte publish_x[] = {
+        0x32, 0x0D,
+        0x00, 0x01, 'x',
+        0x00, 0x01,
+        0x05, 0x02, 0x00, 0x00, 0x00, 0x0A,
+        'h', 'i'
+    };
+
+    *wire_expiry = -1;
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+
+    g_broker_time_s = 100;
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(0, disconnect, sizeof(disconnect));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    g_broker_time_s += wait_sec;
+    mock_client_input_append(2, connect_sub, sizeof(connect_sub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    out = g_clients[2].out_buf;
+    out_len = g_clients[2].out_len;
+    publishes = count_packets_of_type(out, out_len,
+        MQTT_PACKET_TYPE_PUBLISH);
+    /* Forwarded layout: 0x32 0x0D, topic "x", 2 byte packet id, Properties
+     * length 5, then 0x02 and the four byte Message Expiry Interval. */
+    for (pos = 0; pos + 13 <= out_len; pos++) {
+        if (out[pos] == 0x32 && out[pos + 1] == 0x0D &&
+                out[pos + 2] == 0x00 && out[pos + 3] == 0x01 &&
+                out[pos + 4] == 'x' && out[pos + 7] == 0x05 &&
+                out[pos + 8] == MQTT_PROP_MSG_EXPIRY_INTERVAL) {
+            *wire_expiry = ((long)out[pos + 9] << 24) |
+                ((long)out[pos + 10] << 16) | ((long)out[pos + 11] << 8) |
+                (long)out[pos + 12];
+            break;
+        }
+    }
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    g_broker_time_s = 0;
+    return publishes;
+}
+
+/* [MQTT-3.3.2-5] A queued copy whose Message Expiry Interval passed before
+ * onward delivery started is deleted, not delivered. */
+TEST(queued_publish_expired_before_delivery_dropped)
+{
+    long wire_expiry;
+
+    ASSERT_EQ(0, queued_publish_after_wait(11, &wire_expiry));
+}
+
+/* [MQTT-3.3.2-6] A queued copy is delivered with the received Message Expiry
+ * Interval minus the time it waited in the Server. */
+TEST(queued_publish_expiry_reduced_by_wait)
+{
+    long wire_expiry;
+
+    ASSERT_EQ(1, queued_publish_after_wait(4, &wire_expiry));
+    ASSERT_EQ(6, wire_expiry);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY && WOLFMQTT_V5 */
+
 /* Parsed details of a single PUBLISH packet on the wire. found = 0 means
  * no PUBLISH was present in the buffer; subsequent fields are zero. */
 typedef struct {
@@ -13567,6 +13686,10 @@ int main(int argc, char** argv)
 #if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(will_qos0_exceeding_tx_buf_not_sent_truncated);
     RUN_TEST(will_qos1_queued_for_offline_persistent_subscriber);
+#endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_V5)
+    RUN_TEST(queued_publish_expired_before_delivery_dropped);
+    RUN_TEST(queued_publish_expiry_reduced_by_wait);
 #endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_will_scrub_after_failed_write);

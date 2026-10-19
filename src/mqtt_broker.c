@@ -2040,6 +2040,9 @@ static BrokerOutPub* BrokerOutPub_Alloc(const char* topic,
 {
     BrokerOutPub* e;
     size_t topic_len;
+#ifdef WOLFMQTT_V5
+    const MqttProp* prop;
+#endif
 
     if (topic == NULL) {
         return NULL;
@@ -2078,8 +2081,17 @@ static BrokerOutPub* BrokerOutPub_Alloc(const char* topic,
             BrokerOutPub_Free(e);
             return NULL;
         }
+        /* MQTT 5.0 section 3.3.2.3.3: the copy expires this long after it
+         * was queued. */
+        for (prop = e->props; prop != NULL; prop = prop->next) {
+            if (prop->type == MQTT_PROP_MSG_EXPIRY_INTERVAL) {
+                e->expiry_sec = prop->data_int;
+                break;
+            }
+        }
     }
 #endif
+    e->enq_time = WOLFMQTT_BROKER_GET_TIME_S();
     return e;
 }
 
@@ -2133,6 +2145,36 @@ static void BrokerClient_FreeOutQueue(BrokerClient* bc)
  * preserved: even a QUEUED QoS 0 behind a capped QoS>0 stays put. Returns the
  * number of completed writes, MQTT_CODE_CONTINUE for an in-progress write,
  * or a negative error for a terminal write failure. */
+/* Unlink cur (preceded by prev) from bc's out_q, drop any persisted copy and
+ * free it. Returns the entry that followed cur. */
+static BrokerOutPub* BrokerClient_OutQRemove(BrokerClient* bc,
+    BrokerOutPub* prev, BrokerOutPub* cur)
+{
+    BrokerOutPub* next = cur->next;
+
+    if (prev == NULL) {
+        bc->out_q_head = next;
+    }
+    else {
+        prev->next = next;
+    }
+    if (bc->out_q_tail == cur) {
+        bc->out_q_tail = prev;
+    }
+    bc->out_q_count--;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    /* If this entry was previously shadow-written (orphan path), drop the
+     * disk record now so a future restart cannot replay it. Idempotent for
+     * entries that were never persisted (QoS 0, or not-yet-orphaned). */
+    if (cur->qos > MQTT_QOS_0 && BROKER_STR_VALID(bc->client_id)) {
+        (void)BrokerPersist_DelOutPub(bc->broker, bc->client_id,
+            cur->packet_id);
+    }
+#endif
+    BrokerOutPub_Free(cur);
+    return next;
+}
+
 static int BrokerClient_DrainOutQueue(BrokerClient* bc)
 {
     BrokerOutPub* cur;
@@ -2156,6 +2198,10 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
     while (cur != NULL) {
         MqttPublish out_pub;
         int enc_rc;
+        WOLFMQTT_BROKER_TIME_T now;
+    #ifdef WOLFMQTT_V5
+        MqttProp* prop;
+    #endif
 
         if (cur->state != BROKER_OUTQ_QUEUED) {
 #if WOLFMQTT_MAX_QOS >= 2
@@ -2203,6 +2249,26 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
             cur = cur->next;
             continue;
         }
+        /* Expiry applies until onward delivery starts; a deferred write or a
+         * DUP retransmission reuses the interval it was first sent with. */
+        if (cur->expiry_sec > 0 && bc->out_q_pending_len == 0 &&
+                !cur->retransmit_dup && !cur->partial_send) {
+            now = WOLFMQTT_BROKER_GET_TIME_S();
+            if (now >= cur->enq_time &&
+                    now - cur->enq_time >= cur->expiry_sec) {
+                /* [MQTT-3.3.2-5] Delete the expired copy */
+                WBLOG_DBG(bc->broker,
+                    "broker: drain dropped expired PUBLISH sock=%d topic=%s",
+                    (int)bc->sock, BrokerLog_Sanitize(cur->topic));
+                cur = BrokerClient_OutQRemove(bc, prev, cur);
+                continue;
+            }
+            if (now > cur->enq_time) {
+                /* Keep the same deadline, measured from now */
+                cur->expiry_sec -= (word32)(now - cur->enq_time);
+                cur->enq_time = now;
+            }
+        }
         if (cur->qos > MQTT_QOS_0 && bc->out_q_inflight >= effective_cap) {
             /* Cap reached. Stop here - cannot send anything behind it
              * either, because [MQTT-4.6.0-3] requires ordered delivery. */
@@ -2224,6 +2290,13 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
     #ifdef WOLFMQTT_V5
         out_pub.protocol_level = cur->protocol_level;
         out_pub.props = cur->props;
+        /* [MQTT-3.3.2-6] Send the interval remaining after the wait */
+        for (prop = cur->props; prop != NULL; prop = prop->next) {
+            if (prop->type == MQTT_PROP_MSG_EXPIRY_INTERVAL) {
+                prop->data_int = cur->expiry_sec;
+                break;
+            }
+        }
     #endif
 
         enc_rc = MqttEncode_Publish(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
@@ -2245,33 +2318,7 @@ static int BrokerClient_DrainOutQueue(BrokerClient* bc)
             BROKER_FORCE_ZERO(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc));
             /* Drop just this entry and continue. Encoding failure for
              * a single message is not fatal to the connection. */
-            if (prev == NULL) {
-                bc->out_q_head = cur->next;
-            }
-            else {
-                prev->next = cur->next;
-            }
-            if (bc->out_q_tail == cur) {
-                bc->out_q_tail = prev;
-            }
-            bc->out_q_count--;
-            {
-                BrokerOutPub* free_me = cur;
-                cur = cur->next;
-            #ifdef WOLFMQTT_BROKER_PERSIST
-                /* If this entry was previously shadow-written (orphan
-                 * path), drop the disk record now so a future restart
-                 * cannot replay an undeliverable message. Idempotent
-                 * for entries that were never persisted (QoS 0, or
-                 * not-yet-orphaned). */
-                if (free_me->qos > MQTT_QOS_0 &&
-                        BROKER_STR_VALID(bc->client_id)) {
-                    (void)BrokerPersist_DelOutPub(bc->broker,
-                        bc->client_id, free_me->packet_id);
-                }
-            #endif
-                BrokerOutPub_Free(free_me);
-            }
+            cur = BrokerClient_OutQRemove(bc, prev, cur);
             continue;
         }
         if (bc->out_q_pending_len != 0 &&
