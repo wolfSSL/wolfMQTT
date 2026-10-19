@@ -5343,6 +5343,97 @@ TEST(disconnect_v5_malformed_fires_will)
     MqttBroker_Free(&broker);
 }
 
+/* Connect a v5 publisher with a Will and a v3.1.1 subscriber to its Will
+ * topic, then send a well-formed DISCONNECT carrying only reason_code.
+ * Returns the number of PUBLISH packets the subscriber received. */
+static int disconnect_v5_reason_wills(byte reason_code, int* closed)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int publishes;
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    /* Same v5 CONNECT with Will as disconnect_v5_malformed_fires_will. */
+    static const byte pub_connect[] = {
+        0x10, 0x19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x06, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P',
+        0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* v5 DISCONNECT (MQTT 5.0 section 3.14): Remaining Length 1, Reason
+     * Code only, Property Length omitted (section 3.14.2.2.1). */
+    byte disconnect[] = { 0xE0, 0x01, 0x00 };
+    disconnect[2] = reason_code;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, pub_connect, sizeof(pub_connect));
+    mock_client_input_append(1, disconnect, sizeof(disconnect));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    publishes = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    *closed = g_clients[1].closed;
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    return publishes;
+}
+
+/* Only Reason Code 0x00 discards the Will [MQTT-3.14.4-3]. */
+TEST(disconnect_v5_reason_0_discards_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(0, disconnect_v5_reason_wills(MQTT_REASON_SUCCESS, &closed));
+    ASSERT_TRUE(closed);
+}
+
+TEST(disconnect_v5_reason_4_publishes_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(1, disconnect_v5_reason_wills(
+        MQTT_REASON_DISCONNECT_W_WILL_MSG, &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* Any other Reason Code is not a normal disconnection, so the Will is
+ * published (MQTT 5.0 section 3.1.2.5, [MQTT-3.1.2-10]). */
+TEST(disconnect_v5_reason_error_publishes_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(1, disconnect_v5_reason_wills(MQTT_REASON_UNSPECIFIED_ERR,
+        &closed));
+    ASSERT_TRUE(closed);
+}
+
 #ifndef WOLFMQTT_DYN_PROP
 /* Connect a v5 publisher with a Will and a v3.1.1 subscriber to its Will
  * topic, leave the shared property pool one slot short of the publisher's
@@ -5461,6 +5552,17 @@ TEST(disconnect_v5_props_pool_exhausted_reason_4_publishes_will)
 
     ASSERT_EQ(1, disconnect_v5_props_pool_exhausted_wills(
         MQTT_REASON_DISCONNECT_W_WILL_MSG, &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* An error Reason Code publishes the Will when the DISCONNECT Properties
+ * cannot be allocated (MQTT 5.0 section 3.1.2.5). */
+TEST(disconnect_v5_props_pool_exhausted_reason_error_publishes_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(1, disconnect_v5_props_pool_exhausted_wills(
+        MQTT_REASON_UNSPECIFIED_ERR, &closed));
     ASSERT_TRUE(closed);
 }
 #endif /* !WOLFMQTT_DYN_PROP */
@@ -12747,9 +12849,13 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_WILL)
     RUN_TEST(disconnect_v5_malformed_fires_will);
+    RUN_TEST(disconnect_v5_reason_0_discards_will);
+    RUN_TEST(disconnect_v5_reason_4_publishes_will);
+    RUN_TEST(disconnect_v5_reason_error_publishes_will);
 #ifndef WOLFMQTT_DYN_PROP
     RUN_TEST(disconnect_v5_props_pool_exhausted_reason_0_discards_will);
     RUN_TEST(disconnect_v5_props_pool_exhausted_reason_4_publishes_will);
+    RUN_TEST(disconnect_v5_props_pool_exhausted_reason_error_publishes_will);
 #endif
 #endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)

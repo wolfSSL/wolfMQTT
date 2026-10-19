@@ -9156,13 +9156,14 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                             bc->session_expiry_sec = se_prop->data_int;
                         }
                 #ifdef WOLFMQTT_BROKER_WILL
-                        /* [MQTT-3.14.4-3] Reason 0x04 requests Will publish. */
-                        if (disc.reason_code ==
-                                MQTT_REASON_DISCONNECT_W_WILL_MSG) {
-                            BrokerClient_PublishWill(broker, bc);
+                        /* [MQTT-3.14.4-3] Only Reason 0x00 discards the
+                         * Will; any other code publishes it (MQTT 5.0
+                         * section 3.1.2.5). */
+                        if (disc.reason_code == MQTT_REASON_SUCCESS) {
+                            BrokerClient_ClearWill(bc);
                         }
                         else {
-                            BrokerClient_ClearWill(bc);
+                            BrokerClient_PublishWill(broker, bc);
                         }
                 #endif
                     }
@@ -9176,12 +9177,11 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                             "broker: DISCONNECT properties dropped, out of "
                             "memory sock=%d", (int)bc->sock);
                 #ifdef WOLFMQTT_BROKER_WILL
-                        if (disc.reason_code ==
-                                MQTT_REASON_DISCONNECT_W_WILL_MSG) {
-                            BrokerClient_PublishWill(broker, bc);
+                        if (disc.reason_code == MQTT_REASON_SUCCESS) {
+                            BrokerClient_ClearWill(bc);
                         }
                         else {
-                            BrokerClient_ClearWill(bc);
+                            BrokerClient_PublishWill(broker, bc);
                         }
                 #endif
                     }
