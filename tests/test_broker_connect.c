@@ -5782,6 +5782,95 @@ TEST(disconnect_v5_props_pool_exhausted_reason_error_publishes_will)
 #endif /* !WOLFMQTT_DYN_PROP */
 #endif /* WOLFMQTT_V5 && WOLFMQTT_BROKER_WILL */
 
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* Leave a v5 Session for "P" with Session Expiry 60, resume it with
+ * reconnect, and return the Session Expiry Interval the resumed client
+ * ends up with (0 on setup failure). */
+static word32 reclaim_session_expiry(const byte* reconnect,
+    size_t reconnect_len)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* bc;
+    word32 expiry = 0;
+    int i;
+    /* v5 CONNECT (MQTT 5.0 section 3.1): Clean Start 0, keep alive 60,
+     * Properties length 5 holding Session Expiry Interval 60 (0x11),
+     * ClientId "P". Remaining Length 19. */
+    static const byte connect_60[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* v5 DISCONNECT, Remaining Length 0: Reason Code 0x00 */
+    static const byte disconnect[] = { 0xE0, 0x00 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return 0;
+    }
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_60, sizeof(connect_60));
+    mock_client_input_append(0, disconnect, sizeof(disconnect));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    if (broker.orphan_sessions != NULL &&
+            broker.orphan_sessions->session_expiry_sec == 60) {
+        mock_client_input_append(1, reconnect, reconnect_len);
+        for (i = 0; i < 16; i++) {
+            MqttBroker_Step(&broker);
+        }
+        bc = find_broker_client(&broker, "P");
+        if (bc != NULL && broker.orphan_sessions == NULL) {
+            expiry = bc->session_expiry_sec;
+        }
+    }
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    return expiry;
+}
+
+/* [MQTT-3.1.2.11.2] The resuming CONNECT's explicit 0xFFFFFFFF means the
+ * Session never expires; it must not be replaced by the old interval. */
+TEST(reclaim_keeps_explicit_v5_never_expire)
+{
+    /* As connect_60 in reclaim_session_expiry, with Session Expiry
+     * 0xFFFFFFFF */
+    static const byte connect_never[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0xFF, 0xFF, 0xFF, 0xFF,
+        0x00, 0x01, 'P'
+    };
+
+    ASSERT_EQ(0xFFFFFFFFu, reclaim_session_expiry(connect_never,
+        sizeof(connect_never)));
+}
+
+/* A v3.1.1 CleanSession=0 Session never expires (MQTT 3.1.1 section
+ * 3.1.2.4), even when it resumes a Session created over v5. */
+TEST(reclaim_v311_resume_never_expires)
+{
+    static const byte connect_v311[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+
+    ASSERT_EQ(0xFFFFFFFFu, reclaim_session_expiry(connect_v311,
+        sizeof(connect_v311)));
+}
+#endif /* WOLFMQTT_V5 && !WOLFMQTT_STATIC_MEMORY */
+
 /* Parsed details of a single PUBLISH packet on the wire. found = 0 means
  * no PUBLISH was present in the buffer; subsequent fields are zero. */
 typedef struct {
@@ -13215,6 +13304,10 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v5_props_pool_exhausted_reason_4_publishes_will);
     RUN_TEST(disconnect_v5_props_pool_exhausted_reason_error_publishes_will);
 #endif
+#endif
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(reclaim_keeps_explicit_v5_never_expire);
+    RUN_TEST(reclaim_v311_resume_never_expires);
 #endif
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_will_scrub_after_failed_write);

@@ -3945,9 +3945,6 @@ static int BrokerOrphan_Reclaim(MqttBroker* broker, BrokerClient* new_bc)
     o->out_q_tail = NULL;
     o->out_q_count = 0;
     o->out_q_inflight = 0;
-    if (new_bc->session_expiry_sec == 0xFFFFFFFFu) {
-        new_bc->session_expiry_sec = o->session_expiry_sec;
-    }
 #if WOLFMQTT_MAX_QOS >= 2
     /* Move QoS 2 dedup state back before any new PUBLISH is processed. */
     new_bc->qos2_pending       = o->qos2_pending;
@@ -7451,9 +7448,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #else
         else {
             /* Persistent session reconnect: pick up any queued messages
-             * left by the prior incarnation. Inherits session_expiry
-             * from the orphan when this CONNECT did not specify one.
-             * Drain is invoked further down, after CONNACK is sent. */
+             * left by the prior incarnation. The Session Expiry Interval
+             * comes from this CONNECT [MQTT-3.1.2.11.2]. Drain is invoked
+             * further down, after CONNACK is sent. */
             if (BrokerOrphan_Reclaim(broker, bc)) {
                 session_present = 1;
             }
