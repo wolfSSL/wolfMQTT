@@ -1082,6 +1082,10 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
             subscribe->topicNameId == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
+    /* MQTT-SN 1.2 section 5.3.4: TopicIdType 0b11 is reserved */
+    if (subscribe->topic_type > SN_TOPIC_ID_TYPE_SHORT) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
 
     /* Determine packet length */
     if (subscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
@@ -1204,6 +1208,10 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
 
     /* Validate required arguments */
     if (tx_buf == NULL || publish == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    /* MQTT-SN 1.2 section 5.3.4: TopicIdType 0b11 is reserved */
+    if (publish->topic_type > SN_TOPIC_ID_TYPE_SHORT) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
     if (tx_buf_len < 0) {
@@ -1495,6 +1503,10 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
      * to assign topicNameId would otherwise crash in XSTRLEN(NULL). */
     if (tx_buf == NULL || unsubscribe == NULL ||
             unsubscribe->topicNameId == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+    /* MQTT-SN 1.2 section 5.3.4: TopicIdType 0b11 is reserved */
+    if (unsubscribe->topic_type > SN_TOPIC_ID_TYPE_SHORT) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
