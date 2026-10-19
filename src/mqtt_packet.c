@@ -933,8 +933,11 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_SHORT:
             {
-                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. */
-                if (cur_prop->type == MQTT_PROP_TOPIC_ALIAS &&
+                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error.
+                 * MQTT 5.0 sections 3.1.2.11.3 and 3.2.2.3.3: so is a
+                 * Receive Maximum of 0. */
+                if ((cur_prop->type == MQTT_PROP_TOPIC_ALIAS ||
+                        cur_prop->type == MQTT_PROP_RECEIVE_MAX) &&
                         cur_prop->data_short == 0) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 }

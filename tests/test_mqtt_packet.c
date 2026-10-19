@@ -6903,6 +6903,39 @@ TEST(encode_props_boolean_byte_out_of_range_rejected)
     ASSERT_TRUE(rc > 0);
 }
 
+/* MQTT 5.0 sections 3.1.2.11.3 and 3.2.2.3.3: a Receive Maximum of 0 is a
+ * Protocol Error in both CONNECT and CONNACK. The encoder must refuse it in
+ * the length pass (buf == NULL) and the output pass. */
+TEST(encode_props_receive_max_zero_rejected)
+{
+    MqttProp prop;
+    byte buf[8];
+    /* Receive Maximum = 1: identifier 0x21, Two Byte Integer 0x0001
+     * (MQTT 5.0 sections 2.2.2.2 and 1.5.2) */
+    static const byte expect[] = { 0x21, 0x00, 0x01 };
+    int rc;
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_RECEIVE_MAX;
+    prop.data_short = 0;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, buf);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, buf);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    /* The smallest legal value still encodes. */
+    prop.data_short = 1;
+    XMEMSET(buf, 0, sizeof(buf));
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, buf);
+    ASSERT_EQ((int)sizeof(expect), rc);
+    ASSERT_EQ(0, XMEMCMP(buf, expect, sizeof(expect)));
+}
+
 /* ============================================================================
  * MqttEncode/Decode_Auth roundtrip
  *
@@ -7817,6 +7850,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_props_user_prop_invalid_utf8_rejected);
     RUN_TEST(encode_props_duplicate_repeatability);
     RUN_TEST(encode_props_boolean_byte_out_of_range_rejected);
+    RUN_TEST(encode_props_receive_max_zero_rejected);
     RUN_TEST(auth_v5_cont_auth_roundtrip);
     RUN_TEST(auth_v5_reauth_roundtrip);
     RUN_TEST(auth_v5_reauth_decodes_without_error);
