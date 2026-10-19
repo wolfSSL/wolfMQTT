@@ -5434,6 +5434,140 @@ TEST(disconnect_v5_reason_error_publishes_will)
     ASSERT_TRUE(closed);
 }
 
+/* Connect a v3.1.1 subscriber to "lwt" and a v5 client "P" with a Will on
+ * "lwt", then take over "P" from a second v5 connection. Returns the number
+ * of PUBLISH packets the subscriber received by the time the Will Delay of
+ * the old connection would have elapsed. */
+static int takeover_v5_wills(word32 session_expiry, word32 will_delay,
+    int new_clean_start, int* old_closed)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int publishes;
+    static const byte sub_connect[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte sub_subscribe[] = {
+        0x82, 0x08,
+        0x00, 0x01,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00
+    };
+    /* v5 CONNECT (MQTT 5.0 section 3.1): flags 0x04 (Will, Clean Start 0),
+     * keep alive 60, Properties length 5 holding Session Expiry Interval
+     * (0x11, four byte integer), ClientId "P", Will Properties length 5
+     * holding Will Delay Interval (0x18, four byte integer), Will Topic
+     * "lwt", Will Payload "bye". Remaining Length 35. */
+    byte old_connect[] = {
+        0x10, 0x23,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x04, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x01, 'P',
+        0x05, 0x18, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x03, 'l', 'w', 't',
+        0x00, 0x03, 'b', 'y', 'e'
+    };
+    /* v5 CONNECT, no Will, Properties length 0, ClientId "P". Flags byte is
+     * 0x02 for Clean Start 1 or 0x00 for Clean Start 0. Remaining Length 14. */
+    byte new_connect[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+
+    old_connect[14] = (byte)(session_expiry >> 24);
+    old_connect[15] = (byte)(session_expiry >> 16);
+    old_connect[16] = (byte)(session_expiry >> 8);
+    old_connect[17] = (byte)session_expiry;
+    old_connect[23] = (byte)(will_delay >> 24);
+    old_connect[24] = (byte)(will_delay >> 16);
+    old_connect[25] = (byte)(will_delay >> 8);
+    old_connect[26] = (byte)will_delay;
+    if (new_clean_start) {
+        new_connect[9] = 0x02;
+    }
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+
+    reset_mock_clients(3);
+    mock_client_input_append(0, sub_connect, sizeof(sub_connect));
+    mock_client_input_append(0, sub_subscribe, sizeof(sub_subscribe));
+    mock_client_input_append(1, old_connect, sizeof(old_connect));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    mock_client_input_append(2, new_connect, sizeof(new_connect));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    /* Let any deferred Will come due */
+    g_broker_time_s += will_delay + 1;
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    publishes = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    *old_closed = g_clients[1].closed;
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    return publishes;
+}
+
+/* MQTT 5.0 section 3.1.4: with a zero Will Delay the old Will is published
+ * because its Network Connection is closed, even though the Session
+ * survives the takeover. */
+TEST(takeover_v5_zero_will_delay_publishes_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(1, takeover_v5_wills(60, 0, 0, &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* The Session resumes before the Will Delay elapses, so the Will is not
+ * sent [MQTT-3.1.3-9]. */
+TEST(takeover_v5_will_delay_resumed_session_discards_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(0, takeover_v5_wills(60, 30, 0, &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* Clean Start 1 ends the old Session at takeover, which publishes the Will
+ * ahead of its delay (MQTT 5.0 sections 3.1.3.2.2 and 3.1.4). */
+TEST(takeover_v5_clean_start_publishes_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(1, takeover_v5_wills(60, 30, 1, &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* A zero Session Expiry ends the old Session at takeover, so the Will is
+ * published (MQTT 5.0 section 3.1.4). */
+TEST(takeover_v5_zero_session_expiry_publishes_will)
+{
+    int closed = 0;
+
+    ASSERT_EQ(1, takeover_v5_wills(0, 30, 0, &closed));
+    ASSERT_TRUE(closed);
+}
+
 #ifndef WOLFMQTT_DYN_PROP
 /* Connect a v5 publisher with a Will and a v3.1.1 subscriber to its Will
  * topic, leave the shared property pool one slot short of the publisher's
@@ -12852,6 +12986,10 @@ int main(int argc, char** argv)
     RUN_TEST(disconnect_v5_reason_0_discards_will);
     RUN_TEST(disconnect_v5_reason_4_publishes_will);
     RUN_TEST(disconnect_v5_reason_error_publishes_will);
+    RUN_TEST(takeover_v5_zero_will_delay_publishes_will);
+    RUN_TEST(takeover_v5_will_delay_resumed_session_discards_will);
+    RUN_TEST(takeover_v5_clean_start_publishes_will);
+    RUN_TEST(takeover_v5_zero_session_expiry_publishes_will);
 #ifndef WOLFMQTT_DYN_PROP
     RUN_TEST(disconnect_v5_props_pool_exhausted_reason_0_discards_will);
     RUN_TEST(disconnect_v5_props_pool_exhausted_reason_4_publishes_will);

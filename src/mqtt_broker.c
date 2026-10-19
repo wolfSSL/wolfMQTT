@@ -7309,7 +7309,19 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
             else {
                 BrokerSend_Disconnect(old,
                     MQTT_REASON_SESSION_TAKEN_OVER);
-                BrokerClient_ClearWill(old);
+#ifdef WOLFMQTT_BROKER_WILL
+                /* MQTT 5.0 section 3.1.4: a resumed Session suppresses a
+                 * delayed Will [MQTT-3.1.3-9]; an ending Session or a zero
+                 * Will Delay publishes it now. */
+                if (old->will_delay_sec > 0 && !mc.clean_session &&
+                        old->session_expiry_sec != 0) {
+                    BrokerClient_ClearWill(old);
+                }
+                else {
+                    old->will_delay_sec = 0;
+                    BrokerClient_PublishWill(broker, old);
+                }
+#endif
             }
 #else
             BrokerClient_PublishWill(broker, old);
