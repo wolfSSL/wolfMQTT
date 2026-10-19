@@ -33,22 +33,29 @@ struct MqttPropMatrix {
     MqttDataType data;
     word16 packet_type_mask; /* allowed packets */
 };
+/* Will Properties have their own allow-list [MQTT-3.1.3.2]. Packet type 0 is
+ * reserved and never sent, so its bit marks the Will scope. */
+#define MQTT_PROP_SCOPE_WILL MQTT_PACKET_TYPE_RESERVED
 static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_PAYLOAD_FORMAT_IND,         MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
-        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CONTENT_TYPE,               MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_RESP_TOPIC,                 MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CORRELATION_DATA,           MQTT_DATA_TYPE_BINARY,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_SUBSCRIPTION_ID,            MQTT_DATA_TYPE_VAR_INT,
@@ -79,7 +86,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_REQ_PROB_INFO,              MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_WILL_DELAY_INTERVAL,        MQTT_DATA_TYPE_INT,
-        (1 << MQTT_PACKET_TYPE_CONNECT) },
+        (1 << MQTT_PROP_SCOPE_WILL) },
     { MQTT_PROP_REQ_RESP_INFO,              MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_RESP_INFO,                  MQTT_DATA_TYPE_STRING,
@@ -1563,7 +1570,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         }
 
         /* Determine length of properties */
-        lwt_props_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+        lwt_props_len = MqttEncode_Props(
+                (MqttPacketType)MQTT_PROP_SCOPE_WILL,
                 mc_connect->lwt_msg->props, NULL);
         if (lwt_props_len >= 0) {
             int tmp_len = MqttEncode_Vbi(NULL, lwt_props_len);
@@ -1682,7 +1690,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         /* Encode the lwt property length */
         tx_payload += tmp_len;
 
-        tmp_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+        tmp_len = MqttEncode_Props((MqttPacketType)MQTT_PROP_SCOPE_WILL,
             mc_connect->lwt_msg->props, tx_payload);
         if (tmp_len < 0) {
             return tmp_len;
@@ -1919,10 +1927,15 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
             rx_payload += lwt_tmp;
             if (lwt_props_len > 0) {
                 /* Decode, then enforce the tighter Will allow-list below. */
-                lwt_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT,
+                lwt_tmp = MqttDecode_Props(
+                        (MqttPacketType)MQTT_PROP_SCOPE_WILL,
                         &mc_connect->lwt_msg->props, rx_payload,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)),
                         lwt_props_len);
+                /* Report a non-Will property as the encoder does */
+                if (lwt_tmp == MQTT_CODE_ERROR_PROPERTY_MISMATCH) {
+                    lwt_tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 if (lwt_tmp < 0) {
                     rc = lwt_tmp;
                     goto cleanup;

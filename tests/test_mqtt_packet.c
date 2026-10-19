@@ -3774,6 +3774,77 @@ TEST(encode_connect_v5_invalid_will_property_rejected)
     ASSERT_EQ(0xA5, buf[0]);
 }
 
+/* [MQTT-3.1.3.2] Payload Format Indicator and Content Type are Will
+ * Properties, so a CONNECT carrying them in the Will must encode. */
+TEST(encode_connect_v5_will_publish_properties_accepted)
+{
+    byte buf[64];
+    MqttConnect connect;
+    MqttMessage lwt;
+    MqttProp pfi;
+    MqttProp content_type;
+    int rc;
+    /* MQTT 5.0 section 3.1: CONNECT, Remaining Length 28 */
+    static const byte expected[] = {
+        0x10, 0x1C,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x04, 0x00, 0x00,         /* v5, Will Flag, Keep Alive 0 */
+        0x00,                           /* CONNECT Properties length 0 */
+        0x00, 0x03, 'c', 'i', 'd',      /* Client Identifier */
+        0x06,                           /* Will Properties length 6 */
+        0x01, 0x01,                     /* Payload Format Indicator 1 */
+        0x03, 0x00, 0x01, 't',          /* Content Type "t" */
+        0x00, 0x01, 'w',                /* Will Topic */
+        0x00, 0x00                      /* empty Will Payload */
+    };
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    XMEMSET(&pfi, 0, sizeof(pfi));
+    XMEMSET(&content_type, 0, sizeof(content_type));
+    connect.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    connect.client_id = "cid";
+    connect.enable_lwt = 1;
+    connect.lwt_msg = &lwt;
+    lwt.topic_name = "w";
+    pfi.type = MQTT_PROP_PAYLOAD_FORMAT_IND;
+    pfi.data_byte = 1;
+    pfi.next = &content_type;
+    content_type.type = MQTT_PROP_CONTENT_TYPE;
+    content_type.data_str.str = (char*)"t";
+    content_type.data_str.len = 1;
+    lwt.props = &pfi;
+
+    rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
+    ASSERT_EQ((int)sizeof(expected), rc);
+    ASSERT_EQ(0, XMEMCMP(expected, buf, sizeof(expected)));
+}
+
+/* MQTT 5.0 section 3.1.2.11: Message Expiry Interval and Will Delay Interval
+ * are not CONNECT Properties; they belong only in the Will Properties. */
+TEST(encode_connect_v5_will_only_properties_in_connect_rejected)
+{
+    byte buf[64];
+    MqttConnect connect;
+    MqttProp prop;
+    int rc;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    XMEMSET(&prop, 0, sizeof(prop));
+    connect.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    connect.client_id = "cid";
+    connect.props = &prop;
+    prop.data_int = 30;
+
+    prop.type = MQTT_PROP_MSG_EXPIRY_INTERVAL;
+    rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    prop.type = MQTT_PROP_WILL_DELAY_INTERVAL;
+    rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+}
+
 TEST(encode_connect_v5_cyclic_will_properties_rejected)
 {
     byte buf[256];
@@ -7045,6 +7116,74 @@ TEST(decode_connect_v5_will_props_session_expiry_rejected)
     rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
 }
+
+/* [MQTT-3.1.3.2] Payload Format Indicator and Content Type are valid Will
+ * Properties and must decode. */
+TEST(decode_connect_v5_will_publish_properties_accepted)
+{
+    /* Hand-built v5 CONNECT, same layout as
+     * encode_connect_v5_will_publish_properties_accepted. */
+    byte buf[] = {
+        0x10, 0x1C,                         /* CONNECT, Remaining Length 28 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',    /* Protocol Name */
+        0x05, 0x04, 0x00, 0x00,            /* v5, Will Flag, Keep Alive */
+        0x00,                               /* CONNECT Properties length */
+        0x00, 0x03, 'c', 'i', 'd',         /* Client Identifier */
+        0x06,                               /* Will Properties length 6 */
+        0x01, 0x01,                         /* Payload Format Indicator 1 */
+        0x03, 0x00, 0x01, 't',             /* Content Type "t" */
+        0x00, 0x01, 'w',                   /* Will Topic */
+        0x00, 0x00                          /* empty Will Payload */
+    };
+    MqttConnect dec;
+    MqttMessage dec_lwt;
+    MqttProp* prop;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&dec_lwt, 0, sizeof(dec_lwt));
+    dec.lwt_msg = &dec_lwt;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ((int)sizeof(buf), rc);
+    prop = dec_lwt.props;
+    ASSERT_NOT_NULL(prop);
+    ASSERT_EQ(MQTT_PROP_PAYLOAD_FORMAT_IND, prop->type);
+    ASSERT_EQ(1, prop->data_byte);
+    prop = prop->next;
+    ASSERT_NOT_NULL(prop);
+    ASSERT_EQ(MQTT_PROP_CONTENT_TYPE, prop->type);
+    ASSERT_EQ(1, prop->data_str.len);
+    ASSERT_EQ('t', prop->data_str.str[0]);
+    ASSERT_NULL(prop->next);
+    MqttProps_Free(dec_lwt.props);
+    MqttProps_Free(dec.props);
+}
+
+/* MQTT 5.0 section 3.1.2.11: Message Expiry Interval (0x02) and Will Delay
+ * Interval (0x18) are not CONNECT Properties. */
+TEST(decode_connect_v5_will_only_properties_in_connect_rejected)
+{
+    byte buf[] = {
+        0x10, 0x15,                         /* CONNECT, Remaining Length 21 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',    /* Protocol Name */
+        0x05, 0x02, 0x00, 0x00,            /* v5, Clean Start, Keep Alive */
+        0x05, 0x02, 0x00, 0x00, 0x00, 0x1E, /* Property, four byte value 30 */
+        0x00, 0x03, 'c', 'i', 'd'          /* Client Identifier */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY_MISMATCH, rc);
+    MqttProps_Free(dec.props);
+
+    buf[13] = MQTT_PROP_WILL_DELAY_INTERVAL;
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY_MISMATCH, rc);
+    MqttProps_Free(dec.props);
+}
 #endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
 
 #ifdef WOLFMQTT_V5
@@ -7474,6 +7613,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_connect_lwt_topic_oversized_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(encode_connect_v5_invalid_will_property_rejected);
+    RUN_TEST(encode_connect_v5_will_publish_properties_accepted);
+    RUN_TEST(encode_connect_v5_will_only_properties_in_connect_rejected);
     RUN_TEST(encode_connect_v5_cyclic_will_properties_rejected);
     RUN_TEST(encode_connect_v5_excess_will_properties_rejected);
 #endif
@@ -7511,6 +7652,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_v5_max_packet_size_zero_rejected);
     RUN_TEST(decode_connect_v5_auth_data_without_auth_method_rejected);
     RUN_TEST(decode_connect_v5_will_props_session_expiry_rejected);
+    RUN_TEST(decode_connect_v5_will_publish_properties_accepted);
+    RUN_TEST(decode_connect_v5_will_only_properties_in_connect_rejected);
     RUN_TEST(decode_connect_v5_empty_will_topic_rejected);
 #endif
 
