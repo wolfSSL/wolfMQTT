@@ -2918,6 +2918,86 @@ TEST(qos2_publish_then_abrupt_close_offline_subscriber)
     MqttBroker_Free(&broker);
 }
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* A QoS 2 PUBLISH whose topic copy fails was never delivered, so its Packet
+ * Identifier must not stay recorded as awaiting PUBREL. Otherwise the
+ * retransmission after reconnect is treated as a duplicate and acknowledged
+ * without delivery, losing the message [MQTT-4.3.3-2]. */
+TEST(qos2_topic_alloc_failure_retransmit_delivered)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v3.1.1 CONNECT, CleanSession=1, ClientId "S" */
+    static const byte connect_sub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet id 1, filter "x", QoS 0 */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* v3.1.1 CONNECT, CleanSession=0, ClientId "P" */
+    static const byte connect_pub[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    /* PUBLISH QoS 2 (MQTT 3.1.1 section 3.3): topic "x", packet id 1,
+     * payload "hi". */
+    static const byte publish_q2[] = {
+        0x34, 0x07, 0x00, 0x01, 'x', 0x00, 0x01, 'h', 'i'
+    };
+    /* Same PUBLISH retransmitted with DUP set [MQTT-4.4.0-1] */
+    static const byte publish_q2_dup[] = {
+        0x3C, 0x07, 0x00, 0x01, 'x', 0x00, 0x01, 'h', 'i'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    /* The inbound QoS 2 record allocates first and succeeds; the topic
+     * copy is the next allocation and fails. */
+    broker_test_fail_alloc_after(1);
+    mock_client_input_append(1, publish_q2, sizeof(publish_q2));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    broker_test_disable_alloc_failure();
+    ASSERT_EQ(1, g_alloc_failure_count);
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    /* Resume the Session and retransmit */
+    mock_client_input_append(2, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(2, publish_q2_dup, sizeof(publish_q2_dup));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[2].out_buf,
+        g_clients[2].out_len, MQTT_PACKET_TYPE_PUBLISH_REC));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 /* The out_q-cap tests are dynamic-memory-only (they inspect out_q_count and
  * the linked client list); the v5 variant additionally uses the v5-only
  * MQTT_REASON_QUOTA_EXCEEDED. Guard accordingly so the non-V5 and
@@ -13057,6 +13137,7 @@ int main(int argc, char** argv)
     RUN_TEST(qos2_publish_with_offline_durable_subscriber);
     RUN_TEST(qos2_publish_then_abrupt_close_offline_subscriber);
 #ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(qos2_topic_alloc_failure_retransmit_delivered);
 #ifdef WOLFMQTT_V5
     RUN_TEST(online_qos1_flood_disconnects_slow_v5_subscriber);
 #endif /* WOLFMQTT_V5 */

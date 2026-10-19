@@ -8057,6 +8057,13 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
              * delivered. */
             WBLOG_ERR(broker, "broker: PUBLISH topic alloc failed sock=%d",
                 (int)bc->sock);
+        #if WOLFMQTT_MAX_QOS >= 2
+            /* Nothing was delivered, so the retransmission must not be
+             * treated as a duplicate [MQTT-4.3.3-2]. */
+            if (pub.qos == MQTT_QOS_2 && !qos2_duplicate) {
+                BrokerInboundQos2_Remove(bc, pub.packet_id);
+            }
+        #endif
             rc = MQTT_CODE_ERROR_MEMORY;
             goto publish_cleanup;
         }
