@@ -192,6 +192,22 @@ int MqttSocket_Init(MqttClient *client, MqttNet *net)
     return rc;
 }
 
+/* Saturate rather than overflow: the broker never resets its read total. */
+static int MqttSocket_AddTotal(int total, int len)
+{
+    word32 sum = 0;
+
+    if (total > 0) {
+        sum = (word32)total;
+    }
+    /* both terms are non-negative ints, so this cannot wrap */
+    sum += (word32)len;
+    if (sum > (word32)0x7FFFFFFF) {
+        sum = (word32)0x7FFFFFFF;
+    }
+    return (int)sum;
+}
+
 static int MqttSocket_WriteDo(MqttClient *client, const byte* buf, int buf_len,
     int timeout_ms)
 {
@@ -253,6 +269,7 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     int timeout_ms)
 {
     int rc;
+    int remain;
 
     /* Validate arguments */
     if (client == NULL || client->net == NULL || client->net->write == NULL ||
@@ -261,47 +278,50 @@ int MqttSocket_Write(MqttClient *client, const byte* buf, int buf_len,
     }
 
     /* check for buffer position overflow */
-    if (client->write.pos >= buf_len) {
+    if (client->write.pos < 0 || client->write.pos >= buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
+    /* Track bytes left in a local the net callback cannot reach */
+    remain = buf_len - client->write.pos;
 
 #ifdef WOLFMQTT_NONBLOCK
-    rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
-        buf_len - client->write.pos, timeout_ms);
+    rc = MqttSocket_WriteDo(client, &buf[buf_len - remain], remain, timeout_ms);
     if (rc >= 0) {
         /* Clamp return value: write callback is user-provided and may
          * return more than the requested length */
-        if (rc > buf_len - client->write.pos) {
-            rc = buf_len - client->write.pos;
+        if (rc > remain) {
+            rc = remain;
         }
-        client->write.pos += rc;
-        client->write.total += rc;
-        if (client->write.pos < buf_len) {
+        remain -= rc;
+        client->write.pos = buf_len - remain;
+        client->write.total = MqttSocket_AddTotal(client->write.total, rc);
+        if (remain > 0) {
             rc = MQTT_CODE_CONTINUE;
         }
     }
 
 #else
     do {
-        rc = MqttSocket_WriteDo(client, &buf[client->write.pos],
-            buf_len - client->write.pos, timeout_ms);
+        rc = MqttSocket_WriteDo(client, &buf[buf_len - remain], remain,
+            timeout_ms);
         if (rc <= 0) {
             break;
         }
         /* Clamp return value: write callback is user-provided and may
          * return more than the requested length */
-        if (rc > buf_len - client->write.pos) {
-            rc = buf_len - client->write.pos;
+        if (rc > remain) {
+            rc = remain;
         }
-        client->write.pos += rc;
-        client->write.total += rc;
-    } while (client->write.pos < buf_len);
+        remain -= rc;
+        client->write.pos = buf_len - remain;
+        client->write.total = MqttSocket_AddTotal(client->write.total, rc);
+    } while (remain > 0);
 #endif /* WOLFMQTT_NONBLOCK */
 
     /* handle return code */
     if (rc > 0) {
         /* return length write and reset position */
-        rc = client->write.pos;
+        rc = buf_len - remain;
         client->write.pos = 0;
     }
 
@@ -371,6 +391,7 @@ static int MqttSocket_ReadDo(MqttClient *client, byte* buf, int buf_len,
 int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
 {
     int rc;
+    int remain;
 
     /* Validate arguments */
     if (client == NULL || client->net == NULL || client->net->read == NULL ||
@@ -379,53 +400,51 @@ int MqttSocket_Read(MqttClient *client, byte* buf, int buf_len, int timeout_ms)
     }
 
     /* check for buffer position overflow */
-    if (client->read.pos >= buf_len) {
+    if (client->read.pos < 0 || client->read.pos >= buf_len) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
+    /* Track bytes left in a local the net callback cannot reach */
+    remain = buf_len - client->read.pos;
 
 #ifdef WOLFMQTT_NONBLOCK
-    rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
-        buf_len - client->read.pos, timeout_ms);
+    rc = MqttSocket_ReadDo(client, &buf[buf_len - remain], remain, timeout_ms);
     if (rc >= 0) {
         /* Clamp return value: read callback is user-provided and may
          * return more than the requested length */
-        if (rc > buf_len - client->read.pos) {
-            rc = buf_len - client->read.pos;
+        if (rc > remain) {
+            rc = remain;
         }
-        client->read.pos += rc;
-        client->read.total += rc;
-        if (client->read.pos < buf_len) {
+        remain -= rc;
+        client->read.pos = buf_len - remain;
+        client->read.total = MqttSocket_AddTotal(client->read.total, rc);
+        if (remain > 0) {
             rc = MQTT_CODE_CONTINUE;
         }
     }
 
 #else
     do {
-        rc = MqttSocket_ReadDo(client, &buf[client->read.pos],
-            buf_len - client->read.pos, timeout_ms);
+        rc = MqttSocket_ReadDo(client, &buf[buf_len - remain], remain,
+            timeout_ms);
         if (rc <= 0) {
             break;
         }
         /* Clamp return value: read callback is user-provided and may
          * return more than the requested length */
-        if (rc > buf_len - client->read.pos) {
-            rc = buf_len - client->read.pos;
+        if (rc > remain) {
+            rc = remain;
         }
-        client->read.pos += rc;
-        client->read.total += rc;
-    } while (client->read.pos < buf_len);
+        remain -= rc;
+        client->read.pos = buf_len - remain;
+        client->read.total = MqttSocket_AddTotal(client->read.total, rc);
+    } while (remain > 0);
 #endif /* WOLFMQTT_NONBLOCK */
 
     /* handle return code */
     if (rc > 0) {
         /* return length read and reset position */
-        rc = client->read.pos;
+        rc = buf_len - remain;
         client->read.pos = 0;
-        /* Never report more than the caller requested; guards against a
-         * read callback that returns more bytes than buf_len */
-        if (rc > buf_len) {
-            rc = buf_len;
-        }
     }
 
     return rc;

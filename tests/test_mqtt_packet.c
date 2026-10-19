@@ -312,6 +312,8 @@ typedef struct PacketReadFixture {
     int data_len;
     int pos;
     int calls;
+    int max_chunk; /* bytes delivered per read, 0 for no limit */
+    int extra;     /* added to the reported length to simulate over-report */
 } PacketReadFixture;
 
 static int packet_read_fixture(void* context, byte* buf, int buf_len,
@@ -325,12 +327,15 @@ static int packet_read_fixture(void* context, byte* buf, int buf_len,
     if (read_len > buf_len) {
         read_len = buf_len;
     }
+    if (fixture->max_chunk > 0 && read_len > fixture->max_chunk) {
+        read_len = fixture->max_chunk;
+    }
     if (read_len <= 0) {
         return MQTT_CODE_ERROR_NETWORK;
     }
     XMEMCPY(buf, fixture->data + fixture->pos, (size_t)read_len);
     fixture->pos += read_len;
-    return read_len;
+    return read_len + fixture->extra;
 }
 
 static int packet_net_connect(void* context, const char* host, word16 port,
@@ -407,6 +412,242 @@ TEST(packet_read_rejects_buffer_shorter_than_max_header)
     ASSERT_EQ((int)sizeof(short_header), rc);
     ASSERT_EQ(0xA5, guarded[0]);
     ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+
+    MqttClient_DeInit(&client);
+}
+
+static int packet_write_count(void* context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    PacketReadFixture* fixture = (PacketReadFixture*)context;
+
+    (void)buf;
+    (void)timeout_ms;
+    fixture->calls++;
+    return buf_len + fixture->extra;
+}
+
+static int packet_io_client_init(MqttClient* client, MqttNet* net,
+    PacketReadFixture* fixture, byte* tx, int tx_len, byte* rx, int rx_len)
+{
+    XMEMSET(net, 0, sizeof(*net));
+    XMEMSET(fixture, 0, sizeof(*fixture));
+    net->context = fixture;
+    net->connect = packet_net_connect;
+    net->read = packet_read_fixture;
+    net->write = packet_write_count;
+    net->disconnect = packet_net_disconnect;
+    return MqttClient_Init(client, net, NULL, tx, tx_len, rx, rx_len, 0);
+}
+
+/* A corrupted negative socket position must be rejected before it is used
+ * as a buffer index or in the remaining-length arithmetic. */
+TEST(packet_read_write_reject_negative_socket_pos)
+{
+    static const byte ping_resp[] = { 0xD0, 0x00 };
+    byte client_rx[16];
+    byte client_tx[16];
+    byte buf[8];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = ping_resp;
+    fixture.data_len = (int)sizeof(ping_resp);
+
+    client.read.pos = -1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    XMEMSET(buf, 0, sizeof(buf));
+    client.write.pos = -1;
+    rc = MqttPacket_Write(&client, buf, 2);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    MqttClient_DeInit(&client);
+}
+
+/* Resuming in MQTT_PK_READ with corrupted header/remaining lengths must fail
+ * without reading, rather than computing an out-of-range return length. */
+TEST(packet_read_rejects_corrupt_resume_state)
+{
+    byte client_rx[16];
+    byte client_tx[16];
+    byte buf[8];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+
+    client.packet.stat = MQTT_PK_READ;
+    client.packet.header_len = -1;
+    client.packet.remain_len = 1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    client.packet.stat = MQTT_PK_READ;
+    client.packet.header_len = (int)sizeof(buf) + 1;
+    client.packet.remain_len = 1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    client.packet.stat = MQTT_PK_READ;
+    client.packet.header_len = 2;
+    client.packet.remain_len = -1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    MqttClient_DeInit(&client);
+}
+
+/* The running byte totals saturate instead of overflowing a signed int. */
+TEST(packet_read_write_total_saturates)
+{
+    static const byte ping_resp[] = { 0xD0, 0x00 };
+    static const byte ping_req[] = { 0xC0, 0x00 };
+    byte client_rx[16];
+    byte client_tx[16];
+    byte buf[8];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = ping_resp;
+    fixture.data_len = (int)sizeof(ping_resp);
+
+    client.read.total = 0x7FFFFFFF - 1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ((int)sizeof(ping_resp), rc);
+    ASSERT_EQ(0x7FFFFFFF, client.read.total);
+    ASSERT_EQ(0, client.read.pos);
+
+    XMEMCPY(buf, ping_req, sizeof(ping_req));
+    client.write.total = 0x7FFFFFFF;
+    rc = MqttPacket_Write(&client, buf, (int)sizeof(ping_req));
+    ASSERT_EQ((int)sizeof(ping_req), rc);
+    ASSERT_EQ(0x7FFFFFFF, client.write.total);
+    ASSERT_EQ(0, client.write.pos);
+
+    MqttClient_DeInit(&client);
+}
+
+/* A callback that reports more bytes than requested must be clamped: the
+ * returned length stays exact and nothing outside the buffer is touched. */
+TEST(packet_read_write_clamp_over_reported_length)
+{
+    /* PUBLISH QoS 0: fixed header 0x30, Remaining Length 3,
+     * Topic Name length 0x0001, Topic Name "a" (MQTT 5.0 section 3.3) */
+    static const byte publish[] = { 0x30, 0x03, 0x00, 0x01, 0x61 };
+    static const byte ping_req[] = { 0xC0, 0x00 };
+    byte client_rx[16];
+    byte client_tx[16];
+    byte guarded[10];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = publish;
+    fixture.data_len = (int)sizeof(publish);
+    fixture.extra = 5;
+
+    XMEMSET(guarded, 0xA5, sizeof(guarded));
+    rc = MqttPacket_Read(&client, &guarded[1], (int)sizeof(guarded) - 2, 0);
+    ASSERT_EQ((int)sizeof(publish), rc);
+    ASSERT_EQ(0, XMEMCMP(&guarded[1], publish, sizeof(publish)));
+    ASSERT_EQ(0xA5, guarded[0]);
+    ASSERT_EQ(0xA5, guarded[sizeof(publish) + 1]);
+    ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+    ASSERT_EQ(0, client.read.pos);
+    ASSERT_EQ((int)sizeof(publish), fixture.pos);
+
+    XMEMCPY(guarded, ping_req, sizeof(ping_req));
+    rc = MqttPacket_Write(&client, guarded, (int)sizeof(ping_req));
+    ASSERT_EQ((int)sizeof(ping_req), rc);
+    ASSERT_EQ(0, client.write.pos);
+
+    MqttClient_DeInit(&client);
+}
+
+/* One byte per callback: blocking builds reassemble the packet in a single
+ * MqttPacket_Read; non-blocking builds resume from read.pos on each call. */
+TEST(packet_read_reassembles_one_byte_reads)
+{
+    /* PUBLISH QoS 0 with Remaining Length 128, encoded as the two-byte
+     * Variable Byte Integer 0x80 0x01 [MQTT-1.5.5]. Variable header is
+     * Topic Name length 0x0001 and "a"; the remaining 125 bytes are
+     * payload (MQTT 5.0 section 3.3). */
+    byte publish[3 + 128];
+    byte client_rx[16];
+    byte client_tx[16];
+    byte rx[160];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+    int i;
+#ifdef WOLFMQTT_NONBLOCK
+    int prev_pos = 0;
+    int iters = 0;
+#endif
+
+    publish[0] = 0x30;
+    publish[1] = 0x80;
+    publish[2] = 0x01;
+    publish[3] = 0x00;
+    publish[4] = 0x01;
+    publish[5] = 0x61;
+    for (i = 6; i < (int)sizeof(publish); i++) {
+        publish[i] = (byte)i;
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = publish;
+    fixture.data_len = (int)sizeof(publish);
+    fixture.max_chunk = 1;
+
+    XMEMSET(rx, 0, sizeof(rx));
+#ifdef WOLFMQTT_NONBLOCK
+    do {
+        rc = MqttPacket_Read(&client, rx, (int)sizeof(rx), 0);
+        if (rc == MQTT_CODE_CONTINUE) {
+            /* progress either continues the current read or starts the
+             * next one */
+            ASSERT_TRUE(client.read.pos == prev_pos + 1 ||
+                client.read.pos == 1);
+            prev_pos = client.read.pos;
+        }
+        iters++;
+    } while (rc == MQTT_CODE_CONTINUE && iters <= (int)sizeof(publish));
+#else
+    rc = MqttPacket_Read(&client, rx, (int)sizeof(rx), 0);
+#endif
+    ASSERT_EQ((int)sizeof(publish), rc);
+    ASSERT_EQ(0, XMEMCMP(rx, publish, sizeof(publish)));
+    ASSERT_EQ(0, client.read.pos);
+    ASSERT_EQ((int)sizeof(publish), fixture.calls);
 
     MqttClient_DeInit(&client);
 }
@@ -7032,6 +7273,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_vbi_overlong_2byte_127);
     RUN_TEST(encode_decode_vbi_roundtrip);
     RUN_TEST(packet_read_rejects_buffer_shorter_than_max_header);
+    RUN_TEST(packet_read_write_reject_negative_socket_pos);
+    RUN_TEST(packet_read_rejects_corrupt_resume_state);
+    RUN_TEST(packet_read_write_total_saturates);
+    RUN_TEST(packet_read_write_clamp_over_reported_length);
+    RUN_TEST(packet_read_reassembles_one_byte_reads);
 
     /* UTF-8 well-formedness validation [MQTT-1.5.3-1] */
 #ifdef WOLFMQTT_BROKER

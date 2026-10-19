@@ -4481,7 +4481,8 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     int timeout_ms)
 {
-    int rc, len, remain_read = 0;
+    int rc, len, remain_read = 0, header_len = 0;
+    word32 read_len;
     MqttPacket* header;
 
     if (client == NULL || rx_buf == NULL) {
@@ -4583,21 +4584,27 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
         case MQTT_PK_READ:
         {
-            /* read remainder of packet */
+            /* read remainder of packet; use locals the socket read cannot
+             * modify */
             remain_read = client->packet.remain_len;
+            header_len = client->packet.header_len;
             client->packet.stat = MQTT_PK_READ;
 
             /* Make sure it does not overflow rx_buf */
-            if (rx_buf_len < client->packet.header_len) {
+            if (header_len < 0 || header_len > rx_buf_len) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
-            if (remain_read > rx_buf_len - client->packet.header_len) {
-                remain_read = rx_buf_len - client->packet.header_len;
+            if (remain_read < 0) {
+                return MqttPacket_HandleNetError(client,
+                    MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA));
+            }
+            if (remain_read > rx_buf_len - header_len) {
+                remain_read = rx_buf_len - header_len;
             }
 
             /* Read remaining */
             if (client->packet.remain_len > 0) {
-                rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len],
+                rc = MqttSocket_Read(client, &rx_buf[header_len],
                     remain_read, timeout_ms);
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
@@ -4616,14 +4623,13 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     /* reset state */
     client->packet.stat = MQTT_PK_BEGIN;
 
-    /* Return read length. header_len and remain_read are each bounded by
-     * rx_buf_len above, so their sum cannot exceed it; clamp to keep the
-     * returned length provably in range for static analysis. */
-    rc = client->packet.header_len + remain_read;
-    if (rc > rx_buf_len) {
-        rc = rx_buf_len;
+    /* Return read length. Both terms are non-negative ints, so the unsigned
+     * sum cannot wrap; the clamp is defensive. */
+    read_len = (word32)header_len + (word32)remain_read;
+    if (read_len > (word32)rx_buf_len) {
+        read_len = (word32)rx_buf_len;
     }
-    return rc;
+    return (int)read_len;
 }
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
