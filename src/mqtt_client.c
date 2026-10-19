@@ -3938,7 +3938,9 @@ static int MqttClient_Publish_WritePayload(MqttClient *client,
         } while (publish->buffer_pos < publish->total_len);
     }
     else if (publish->buffer_pos < publish->total_len) {
-        if (publish->buffer_pos > 0) {
+        /* buffer_pos is 0 when the header filled tx_buf; build the first
+         * payload chunk then too. */
+        if (publish->buffer != NULL) {
             client->write.len = (publish->total_len - publish->buffer_pos);
             if (client->write.len > client->tx_buf_len) {
                 client->write.len = client->tx_buf_len;

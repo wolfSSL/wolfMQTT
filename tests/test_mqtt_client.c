@@ -5544,6 +5544,71 @@ static int connect_wire_props(const byte* wire, int len, const byte** props)
     return prop_len;
 }
 
+/* A PUBLISH whose fixed and variable header exactly fill tx_buf leaves no room
+ * for payload in the first write. The whole payload must then follow in later
+ * writes instead of the client issuing an empty write after the header. */
+TEST(publish_header_fills_tx_buf_sends_payload)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* CONNACK v3.1.1: type=0x20, remain=2, flags=0x00, return_code=0x00. */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+    /* MQTT 3.1.1 section 3.3: PUBLISH QoS 0, Remaining Length 8, Topic Name
+     * "t" (length 1), no Packet Identifier, payload "hello". */
+    static const byte expected[] = {
+        0x30, 0x08, 0x00, 0x01, 't', 'h', 'e', 'l', 'l', 'o'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Fixed header (2) plus Topic Name (3) exactly fill tx_buf */
+    test_client.tx_buf_len = 5;
+    test_net.write = mock_net_write_capture;
+    g_connect_wire_len = 0;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && (rc == MQTT_CODE_CONTINUE ||
+            rc == MQTT_CODE_PUB_CONTINUE); i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    test_client.tx_buf_len = TEST_TX_BUF_SIZE;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ((int)sizeof(expected), g_connect_wire_len);
+    ASSERT_EQ(0, XMEMCMP(expected, g_connect_wire, sizeof(expected)));
+}
+
 /* [MQTT-3.3.4] The inbound QoS 2 dedup table holds MQTT_MAX_RECV_QOS2 packet
  * ids; without an advertised Receive Maximum a server may keep more QoS 2
  * PUBLISHes un-PUBRELed than fit, and the ids that go untracked lose duplicate
@@ -8165,6 +8230,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_clientid_change_clears_qos2_dedup);
     RUN_TEST(connect_clean1_clears_qos2_dedup);
     RUN_TEST(connect_resume_declined_clears_qos2_dedup);
+    RUN_TEST(publish_header_fills_tx_buf_sends_payload);
     RUN_TEST(connect_v5_advertises_receive_max);
     RUN_TEST(connect_v5_app_receive_max_preserved);
 #endif
