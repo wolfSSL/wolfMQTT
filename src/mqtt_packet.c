@@ -4229,6 +4229,7 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     int header_len, remain_len, tmp;
     byte *rx_payload;
     word32 props_len = 0;
+    MqttProp* auth_prop;
 
 
     /* Validate required arguments */
@@ -4291,6 +4292,18 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
                        properties (at minimum the Authentication Method). The
                        short form (reason 0x00 Success, no properties) has a
                        Remaining Length of 0 and never reaches this branch. */
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
+                /* MQTT 5.0 section 3.15.2.2.2: omitting the Authentication
+                 * Method is a Protocol Error. */
+                auth_prop = auth->props;
+                while (auth_prop != NULL &&
+                        auth_prop->type != MQTT_PROP_AUTH_METHOD) {
+                    auth_prop = auth_prop->next;
+                }
+                if (auth_prop == NULL) {
+                    (void)MqttProps_Free(auth->props);
+                    auth->props = NULL;
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
             }

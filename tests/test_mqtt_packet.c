@@ -2360,6 +2360,36 @@ TEST(decode_auth_v5_props_cannot_cross_packet_end)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
     ASSERT_NULL(auth.props);
 }
+
+/* MQTT 5.0 section 3.15.2.2.2: it is a Protocol Error to omit the
+ * Authentication Method from an AUTH packet's properties. */
+TEST(decode_auth_v5_missing_auth_method_rejected)
+{
+    /* Remaining Length 6: Reason 0x18 (Continue authentication), Property
+     * Length 4, Reason String (0x1F) "r", no Authentication Method. */
+    byte cont[] = {
+        0xF0, 0x06, MQTT_REASON_CONT_AUTH, 0x04,
+        MQTT_PROP_REASON_STR, 0x00, 0x01, 'r'
+    };
+    /* Same properties with Reason 0x00 (Success): the long form carries a
+     * property block, so the Authentication Method is still required. */
+    byte success[] = {
+        0xF0, 0x06, MQTT_REASON_SUCCESS, 0x04,
+        MQTT_PROP_REASON_STR, 0x00, 0x01, 'r'
+    };
+    MqttAuth auth;
+    int rc;
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    rc = MqttDecode_Auth(cont, (int)sizeof(cont), &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(auth.props);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    rc = MqttDecode_Auth(success, (int)sizeof(success), &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(auth.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] CONNACK Flags receive-side validation.
@@ -7560,6 +7590,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_disconnect_v5_props_cannot_cross_packet_end);
     RUN_TEST(decode_auth_v5_rejects_bytes_after_property_block);
     RUN_TEST(decode_auth_v5_props_cannot_cross_packet_end);
+    RUN_TEST(decode_auth_v5_missing_auth_method_rejected);
 #endif
     RUN_TEST(decode_connack_flags_session_present_accepted);
     RUN_TEST(decode_connack_flags_no_session_accepted);
