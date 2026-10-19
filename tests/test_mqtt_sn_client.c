@@ -2707,6 +2707,42 @@ TEST(sn_publish_qos1_zero_write_returns_network_error)
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
     ASSERT_NO_PENDRESP();
 }
+
+static int g_zero_puback_publish_calls;
+
+static int sn_count_incoming_publish(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client;
+    (void)msg;
+    (void)msg_new;
+    (void)msg_done;
+    g_zero_puback_publish_calls++;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* MQTT-SN 1.2 section 5.4.4: a QoS 1 PUBLISH is acknowledged with PUBACK. A
+ * blocking PUBACK write that sends zero bytes did not acknowledge it, so it
+ * must be reported as a network error instead of success. */
+TEST(sn_publish_auto_reply_zero_write_returns_network_error)
+{
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    g_client.msg_cb = sn_count_incoming_publish;
+    g_zero_puback_publish_calls = 0;
+    g_mock.write_zero_count = 1;
+    g_mock.write_zero_type = SN_MSG_TYPE_PUBACK;
+    mock_net_push(&g_mock, SN_PUBLISH_QOS1_FRAME,
+        (int)sizeof(SN_PUBLISH_QOS1_FRAME));
+
+    rc = SN_Client_WaitMessage(&g_client, 1000);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(1, g_zero_puback_publish_calls);
+    ASSERT_EQ(0, g_mock.write_zero_count); /* the PUBACK write was tried */
+    ASSERT_EQ(0, g_mock.out_len);
+}
 #endif /* !WOLFMQTT_NONBLOCK */
 
 /* ============================================================================
@@ -3278,6 +3314,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connect_willmsg_zero_write_returns_network_error);
     RUN_TEST(sn_willmsgupd_zero_write_returns_network_error);
     RUN_TEST(sn_publish_qos1_zero_write_returns_network_error);
+    RUN_TEST(sn_publish_auto_reply_zero_write_returns_network_error);
 #endif
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
