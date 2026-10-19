@@ -11146,6 +11146,145 @@ TEST(persist_restore_packet_id_wrap_preserves_fifo)
     MqttBroker_Free(&restored_again);
     MqttBroker_Free(&source);
 }
+
+#ifdef WOLFMQTT_NONBLOCK
+typedef struct PersistSubsCount {
+    int puts;
+    int dels;
+} PersistSubsCount;
+
+static int persist_subs_count_put(void* ctx, byte ns, const byte* key,
+    word16 key_len, const byte* blob, word32 blob_len)
+{
+    (void)key;
+    (void)key_len;
+    (void)blob;
+    (void)blob_len;
+    if (ns == BROKER_PERSIST_NS_SUBS) {
+        ((PersistSubsCount*)ctx)->puts++;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+static int persist_subs_count_get(void* ctx, byte ns, const byte* key,
+    word16 key_len, byte* out, word32* inout_len)
+{
+    (void)ctx;
+    (void)ns;
+    (void)key;
+    (void)key_len;
+    (void)out;
+    (void)inout_len;
+    return MQTT_CODE_ERROR_NOT_FOUND;
+}
+
+static int persist_subs_count_del(void* ctx, byte ns, const byte* key,
+    word16 key_len)
+{
+    (void)key;
+    (void)key_len;
+    if (ns == BROKER_PERSIST_NS_SUBS) {
+        ((PersistSubsCount*)ctx)->dels++;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+static int persist_subs_count_iter(void* ctx, byte ns,
+    MqttBrokerPersist_IterCb cb, void* cb_ctx)
+{
+    (void)ctx;
+    (void)ns;
+    (void)cb;
+    (void)cb_ctx;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* A SUBACK or UNSUBACK whose write is deferred must still shadow-write the
+ * persistent session's subscription list; otherwise a restart restores the
+ * list from before the change. */
+TEST(persist_subs_written_when_ack_deferred)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    PersistSubsCount count;
+    int i;
+    int puts_before;
+    int dels_before;
+    /* v3.1.1 CONNECT, CleanSession=0, keep alive 60, ClientId "S" */
+    static const byte connect_s[] = {
+        0x10, 0x0D,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    /* SUBSCRIBE packet id 1, filter "x", QoS 1 (MQTT 3.1.1 section 3.8) */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    /* UNSUBSCRIBE packet id 2, filter "x" (MQTT 3.1.1 section 3.10) */
+    static const byte unsubscribe_x[] = {
+        0xA2, 0x05, 0x00, 0x02, 0x00, 0x01, 'x'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&count, 0, sizeof(count));
+    hooks.kv_put = persist_subs_count_put;
+    hooks.kv_get = persist_subs_count_get;
+    hooks.kv_del = persist_subs_count_del;
+    hooks.kv_iter = persist_subs_count_iter;
+    hooks.ctx = &count;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    hooks.derive_key = persist_order_derive_key;
+#endif
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect_s, sizeof(connect_s));
+    run_broker_one_connect(&broker);
+    ASSERT_EQ(1, count_packets_of_type(g_out_buf, g_out_len,
+        MQTT_PACKET_TYPE_CONNECT_ACK));
+
+    /* SUBACK write defers */
+    puts_before = count.puts;
+    g_clients[0].write_continue = 1;
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(puts_before + 1, count.puts);
+
+    g_clients[0].write_continue = 0;
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_out_buf, g_out_len,
+        MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+
+    /* UNSUBACK write defers; the now empty list is deleted */
+    dels_before = count.dels;
+    g_clients[0].write_continue = 1;
+    mock_client_input_append(0, unsubscribe_x, sizeof(unsubscribe_x));
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(dels_before + 1, count.dels);
+
+    g_clients[0].write_continue = 0;
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_out_buf, g_out_len,
+        MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_NONBLOCK */
 #endif
 
 static int persist_test_stream_open(void* ctx, byte ns, const byte* key,
@@ -13203,6 +13342,7 @@ int main(int argc, char** argv)
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(persist_restore_packet_id_wrap_preserves_fifo);
     #ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(persist_subs_written_when_ack_deferred);
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
     #endif
     RUN_TEST(persist_mixed_qos_queue_preserves_fifo);

@@ -7779,8 +7779,10 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Shadow-write the full subscription list for this client. Only
      * meaningful for clean_session=0 sessions; the persist layer no-ops
-     * when no hooks are installed. */
-    if (rc > 0 && bc->session_expiry_sec != 0 &&
+     * when no hooks are installed. A deferred SUBACK still committed the
+     * subscriptions, so it is persisted too. */
+    if ((rc > 0 || rc == MQTT_CODE_CONTINUE) &&
+            bc->session_expiry_sec != 0 &&
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_PutSubs(broker, bc->client_id);
     }
@@ -7868,8 +7870,10 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
     }
 
 #ifdef WOLFMQTT_BROKER_PERSIST
-    /* Re-snapshot subs (PutSubs converts count=0 into a DelSubs). */
-    if (rc > 0 && bc->session_expiry_sec != 0 &&
+    /* Re-snapshot subs (PutSubs converts count=0 into a DelSubs), including
+     * when the UNSUBACK write is deferred. */
+    if ((rc > 0 || rc == MQTT_CODE_CONTINUE) &&
+            bc->session_expiry_sec != 0 &&
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_PutSubs(broker, bc->client_id);
     }
