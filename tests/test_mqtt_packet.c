@@ -5630,6 +5630,25 @@ TEST(decode_suback_v5_props_freed_on_payload_overrun)
     ASSERT_NULL(ack.props);
 }
 
+/* MQTT 5.0 section 3.9.2: the v5 SUBACK variable header is the Packet
+ * Identifier followed by the Property Length, which is mandatory even when
+ * zero (section 2.2.2.1). A packet carrying only the Packet Identifier is
+ * malformed and must not decode as a SUBACK with zero reason codes. */
+TEST(decode_suback_v5_missing_props_len_rejected)
+{
+    byte buf[] = {
+        0x90, 0x02,                        /* SUBACK, remain_len = 2 */
+        0x00, 0x01                         /* packet_id, nothing after it */
+    };
+    MqttSubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_SubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* Pin v5's broadened set via the helper. */
 TEST(suback_return_code_v5_allowed_set)
 {
@@ -6211,6 +6230,24 @@ TEST(decode_unsuback_v5_props_past_remain_len_rejected)
     ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
     ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+/* MQTT 5.0 section 3.11.2: the v5 UNSUBACK variable header is the Packet
+ * Identifier followed by the mandatory Property Length (section 2.2.2.1). A
+ * packet carrying only the Packet Identifier is malformed. */
+TEST(decode_unsuback_v5_missing_props_len_rejected)
+{
+    byte buf[] = {
+        0xB0, 0x02,                        /* UNSUBACK, remain_len = 2 */
+        0x00, 0x01                         /* packet_id, nothing after it */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -7782,6 +7819,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_suback_v5_not_authorized_accepted);
     RUN_TEST(suback_return_code_v5_allowed_set);
     RUN_TEST(decode_suback_v5_props_freed_on_payload_overrun);
+    RUN_TEST(decode_suback_v5_missing_props_len_rejected);
 #endif
 
     /* MqttDecode_PublishResp */
@@ -7824,6 +7862,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_v5_longer_body_still_accepted);
     RUN_TEST(decode_unsuback_v5_reason_codes);
     RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
+    RUN_TEST(decode_unsuback_v5_missing_props_len_rejected);
 #endif
 #ifdef WOLFMQTT_BROKER
     RUN_TEST(encode_unsuback_packet_id_zero_rejected);

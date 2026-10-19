@@ -4631,6 +4631,8 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
          * requested topic; too few would be read as granted QoS 0 (fail-open). */
         if (subscribe->ack.return_code_count != subscribe->topic_count) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            (void)MqttClient_Flags(client,
+                MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
         }
         else {
             for (i = 0; i < subscribe->topic_count && i < MAX_MQTT_TOPICS; i++) {

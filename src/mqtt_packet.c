@@ -3279,6 +3279,14 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     if (remain_len < MQTT_DATA_LEN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
+#ifdef WOLFMQTT_V5
+    /* MQTT 5.0 section 3.9.2: a v5 SUBACK always carries a Property Length
+     * after the Packet Identifier, even when it is zero. */
+    if (subscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            remain_len <= MQTT_DATA_LEN_SIZE) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+#endif
 
     rx_payload = &rx_buf[header_len];
 
@@ -3667,10 +3675,12 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 
     /* MQTT 3.1.1 section 3.11.1: the variable header is exactly the two-byte
      * Packet Identifier and there is no payload, so Remaining Length is fixed
-     * at 2. v5 section 3.11 appends Properties and Reason Codes. */
+     * at 2. v5 section 3.11.2 appends a Property Length, which is present
+     * even when zero, so a v5 packet holding only the Packet Identifier is
+     * malformed. */
 #ifdef WOLFMQTT_V5
     if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-        if (remain_len < MQTT_DATA_LEN_SIZE) {
+        if (remain_len <= MQTT_DATA_LEN_SIZE) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
     }

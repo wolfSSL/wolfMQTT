@@ -2457,6 +2457,55 @@ TEST(subscribe_broker_rejection_returns_subscribe_rejected)
         subscribe.topics[0].return_code);
 }
 
+/* [MQTT-3.9.3-1] A SUBACK carries one return code per Topic Filter in the
+ * SUBSCRIBE. A count mismatch is a protocol violation, so the client must
+ * stop treating the connection as usable (MQTT 5.0 section 4.13.1), as
+ * MqttClient_Unsubscribe does for the matching UNSUBACK case. */
+TEST(subscribe_too_few_return_codes_clears_connected)
+{
+    int rc;
+    int i;
+    MqttSubscribe subscribe;
+    MqttTopic topics[2];
+    /* SUBACK v3.1.1: type=0x90, remain=3, packet_id=46, one return code
+     * (granted QoS 0) for two requested filters. */
+    static const byte suback[] = { 0x90, 0x03, 0x00, 0x2E, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, suback, sizeof(suback));
+    g_canned_len = (int)sizeof(suback);
+    g_canned_pos = 0;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(topics, 0, sizeof(topics));
+    topics[0].topic_filter = "test/one";
+    topics[0].qos = MQTT_QOS_0;
+    topics[1].topic_filter = "test/two";
+    topics[1].qos = MQTT_QOS_0;
+    subscribe.packet_id = 46;
+    subscribe.topic_count = 2;
+    subscribe.topics = topics;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Subscribe(&test_client, &subscribe);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
 #ifdef WOLFMQTT_V5
 /* A v5 UNSUBACK whose per-topic reason code has the high bit set means the
  * broker refused the unsubscribe; MqttClient_Unsubscribe must surface that as
@@ -8330,6 +8379,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(subscribe_null_client);
     RUN_TEST(subscribe_null_subscribe);
     RUN_TEST(subscribe_broker_rejection_returns_subscribe_rejected);
+    RUN_TEST(subscribe_too_few_return_codes_clears_connected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(unsubscribe_broker_rejection_returns_unsubscribe_rejected);
     RUN_TEST(unsubscribe_too_few_reason_codes_is_malformed);
