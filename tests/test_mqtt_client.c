@@ -7230,6 +7230,96 @@ TEST(wait_message_timeout_preserves_partial_vbi)
 }
 #endif /* WOLFMQTT_NONBLOCK */
 
+#ifndef WOLFMQTT_NONBLOCK
+/* Blocking-build read mock: hands out g_timeout_frame up to g_timeout_after
+ * bytes in total, then reports MQTT_CODE_ERROR_TIMEOUT. */
+static const byte* g_timeout_frame;
+static int g_timeout_after;
+static int g_timeout_pos;
+
+static int mock_net_read_then_timeout(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    int n;
+
+    (void)context;
+    (void)timeout_ms;
+    n = g_timeout_after - g_timeout_pos;
+    if (n <= 0) {
+        return MQTT_CODE_ERROR_TIMEOUT;
+    }
+    if (n > buf_len) {
+        n = buf_len;
+    }
+    XMEMCPY(buf, g_timeout_frame + g_timeout_pos, (size_t)n);
+    g_timeout_pos += n;
+    return n;
+}
+
+static int run_wait_timeout_after(const byte* frame, int after)
+{
+    int rc;
+
+    rc = test_init_client();
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = test_accept_message_cb;
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_CONNECT_SENT);
+    test_net.read = mock_net_read_then_timeout;
+    g_timeout_frame = frame;
+    g_timeout_after = after;
+    g_timeout_pos = 0;
+    g_msg_cb_calls = 0;
+    return MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+}
+
+/* v3.1.1 QoS 0 PUBLISH: Remaining Length 5, topic "ab", payload "x". */
+static const byte g_timeout_publish[] = {
+    0x30, 0x05, 0x00, 0x02, 'a', 'b', 'x'
+};
+
+/* A blocking read cannot resume a packet: once it times out after consuming
+ * part of one, the rest of that packet would be read as a new packet. The
+ * wait must fail the connection, not report an ordinary idle timeout. Here
+ * one byte of the fixed header arrives before the timeout. */
+TEST(wait_message_blocking_timeout_mid_header_fails_connection)
+{
+    int rc = run_wait_timeout_after(g_timeout_publish, 1);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(0, g_msg_cb_calls);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+/* The same once the fixed header is complete and part of the body is in. */
+TEST(wait_message_blocking_timeout_mid_body_fails_connection)
+{
+    int rc = run_wait_timeout_after(g_timeout_publish, 4);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(0, g_msg_cb_calls);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+
+/* A timeout before any byte of a packet arrives is an ordinary idle wait and
+ * leaves the connection up. */
+TEST(wait_message_blocking_idle_timeout_keeps_connection)
+{
+    int rc = run_wait_timeout_after(g_timeout_publish, 0);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_TIMEOUT, rc);
+    ASSERT_NE(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+#endif /* !WOLFMQTT_NONBLOCK */
+
 #ifdef WOLFMQTT_V5
 /* The client advertises Topic Alias Maximum 0 and keeps no inbound alias table,
  * so an empty Topic Name paired with a Topic Alias is a non-conforming server
@@ -8779,6 +8869,10 @@ void run_mqtt_client_tests(void)
 #endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(wait_message_timeout_preserves_partial_vbi);
+#else
+    RUN_TEST(wait_message_blocking_timeout_mid_header_fails_connection);
+    RUN_TEST(wait_message_blocking_timeout_mid_body_fails_connection);
+    RUN_TEST(wait_message_blocking_idle_timeout_keeps_connection);
 #endif
     RUN_TEST(wait_message_qos0_publish_no_ack);
     RUN_TEST(wait_message_qos1_publish_acks_puback);

@@ -2270,6 +2270,20 @@ wait_again:
                     /* advance state, since we received some data */
                     mms_stat->read = MQTT_MSG_HEADER;
                 }
+            #else
+                /* A blocking read cannot resume a packet: the partial state
+                 * is discarded below, but its bytes have already left the
+                 * transport, so the next read would parse the rest of this
+                 * packet as a new one. A timeout after part of a packet
+                 * arrived therefore ends the connection rather than reading
+                 * as an idle wait. */
+                if (rc == MQTT_CODE_ERROR_TIMEOUT &&
+                    (client->packet.stat > MQTT_PK_BEGIN ||
+                     client->read.pos > 0)) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_NETWORK);
+                    (void)MqttClient_Flags(client,
+                        MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
+                }
             #endif
                 break;
             }
