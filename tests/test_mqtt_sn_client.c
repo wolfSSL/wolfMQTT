@@ -1386,6 +1386,61 @@ TEST(sn_publish_incoming_null_msg_cb_errors_no_ack)
     ASSERT_EQ(0, g_mock.write_calls);
 }
 
+static int g_sn_wait_deliveries;
+static byte g_sn_wait_last_byte;
+
+static int sn_record_delivery(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client;
+    (void)msg_new;
+    (void)msg_done;
+    g_sn_wait_deliveries++;
+    if (msg->buffer != NULL && msg->buffer_len > 0) {
+        g_sn_wait_last_byte = msg->buffer[0];
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+/* SN_Client_WaitMessage waits on the client's shared msgSN object. Once a
+ * packet has been handled the next call must read a new one, not handle the
+ * previous packet again from its leftover payload state. Two QoS 0 PUBLISH
+ * frames (MQTT-SN 1.2 section 5.4.12: Length, MsgType, Flags, TopicId,
+ * MsgId, Data) with different data, waited for back to back. */
+TEST(sn_wait_message_reads_each_packet_once)
+{
+    static const byte pub1[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x00, 0x00, 0x0A,
+                                 0x00, 0x00, 0x11 };
+    static const byte pub2[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x00, 0x00, 0x0A,
+                                 0x00, 0x00, 0x22 };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_record_delivery;
+    g_sn_wait_deliveries = 0;
+    g_sn_wait_last_byte = 0;
+    mock_net_push(&g_mock, pub1, (int)sizeof(pub1));
+    mock_net_push(&g_mock, pub2, (int)sizeof(pub2));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_sn_wait_deliveries);
+    ASSERT_EQ(0x11, g_sn_wait_last_byte);
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_mock.in_idx);
+    ASSERT_EQ(2, g_sn_wait_deliveries);
+    ASSERT_EQ(0x22, g_sn_wait_last_byte);
+}
+
 #if WOLFMQTT_MAX_QOS >= 2
 static int g_sn_qos2_deliveries;
 
@@ -3510,6 +3565,7 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
+    RUN_TEST(sn_wait_message_reads_each_packet_once);
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
 #endif

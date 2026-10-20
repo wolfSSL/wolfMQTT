@@ -914,12 +914,11 @@ wait_again:
     client->sn_wait_packet_type = SN_MSG_TYPE_RESERVED;
     client->sn_wait_packet_id = 0;
     MqttReadStop(client, mms_stat);
-    if (rc == MQTT_CODE_CONTINUE) {
-        /* CONTINUE from an application callback is a terminal callback result,
-         * not an internal automatic-response retry. Consume the packet so a
-         * later wait cannot replay the callback. */
-        mms_stat->read = MQTT_MSG_BEGIN;
-    }
+    /* The packet is finished: handled, failed, or (for CONTINUE from an
+     * application callback, a terminal callback result rather than an
+     * automatic-response retry) consumed. Rewind so the next wait on this
+     * object reads a new packet instead of handling this one again. */
+    mms_stat->read = MQTT_MSG_BEGIN;
 
 #ifdef WOLFMQTT_NONBLOCK
     #ifdef WOLFMQTT_DEBUG_CLIENT
