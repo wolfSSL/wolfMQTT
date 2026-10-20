@@ -567,8 +567,9 @@ static void MqttClient_SessionIdRecord(MqttClient* client,
  * QoS 2 PUBLISH to the application and answered with PUBREC records its packet
  * id until the matching PUBREL arrives, so a retransmitted PUBLISH is
  * acknowledged again without a second delivery [MQTT-4.3.3-10]. These run on
- * the receive path (under lockRecv), so no extra locking is required. */
-static int MqttClient_RecvQos2_Contains(const MqttClient* client,
+ * the receive path (under lockRecv), so no extra locking is required. The
+ * MQTT-SN client shares them for its QoS 2 flow (MQTT-SN 1.2 section 6.7). */
+WOLFMQTT_LOCAL int MqttClient_RecvQos2_Contains(const MqttClient* client,
     word16 packet_id)
 {
     int i;
@@ -584,7 +585,7 @@ static int MqttClient_RecvQos2_Contains(const MqttClient* client,
     return 0;
 }
 
-static int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client)
+WOLFMQTT_LOCAL int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client)
 {
     int i;
 
@@ -599,7 +600,8 @@ static int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client)
     return 0;
 }
 
-static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
+WOLFMQTT_LOCAL void MqttClient_RecvQos2_Add(MqttClient* client,
+    word16 packet_id)
 {
     int i;
 
@@ -617,7 +619,8 @@ static void MqttClient_RecvQos2_Add(MqttClient* client, word16 packet_id)
     }
 }
 
-static void MqttClient_RecvQos2_Remove(MqttClient* client, word16 packet_id)
+WOLFMQTT_LOCAL void MqttClient_RecvQos2_Remove(MqttClient* client,
+    word16 packet_id)
 {
     int i;
 

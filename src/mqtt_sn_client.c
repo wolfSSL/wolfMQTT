@@ -262,6 +262,24 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
              * the callback may safely call a client send API. MQTT_MSG_WAIT
              * records successful delivery across a busy-writer retry. */
             if (wait_stat->ack == MQTT_MSG_BEGIN) {
+            #if WOLFMQTT_MAX_QOS >= 2
+                /* MQTT-SN 1.2 section 6.7: a QoS 2 PUBLISH is delivered once.
+                 * A retransmit of one still awaiting its PUBREL is answered
+                 * with PUBREC again but not delivered a second time. */
+                if (p_pub->qos == MQTT_QOS_2 &&
+                        MqttClient_RecvQos2_Contains(client,
+                            p_pub->packet_id)) {
+                    wait_stat->ack = MQTT_MSG_WAIT;
+                }
+                else if (p_pub->qos == MQTT_QOS_2 &&
+                        !MqttClient_RecvQos2_HasFreeSlot(client)) {
+                    /* A new id that cannot be tracked must not be delivered,
+                     * or its retransmit would be delivered again. MQTT-SN
+                     * cannot refuse it in-band, so fail without PUBREC. */
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+                }
+                else
+            #endif
                 if (client->msg_cb) {
                     /* if using the temp publish message buffer,
                        then populate message context with client context */
@@ -271,6 +289,12 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                     if (rc != MQTT_CODE_SUCCESS) {
                         return rc;
                     }
+                #if WOLFMQTT_MAX_QOS >= 2
+                    if (p_pub->qos == MQTT_QOS_2) {
+                        /* Delivered; remember the id until its PUBREL. */
+                        MqttClient_RecvQos2_Add(client, p_pub->packet_id);
+                    }
+                #endif
                     wait_stat->ack = MQTT_MSG_WAIT;
                 }
                 else {
@@ -353,6 +377,14 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
                 return rc;
             }
             packet_id = p_publish_resp->packet_id;
+
+        #if WOLFMQTT_MAX_QOS >= 2
+            /* PUBREL completes the inbound QoS 2 flow: drop the id so a later
+             * PUBLISH may reuse it. */
+            if (packet_type == SN_MSG_TYPE_PUBREL) {
+                MqttClient_RecvQos2_Remove(client, packet_id);
+            }
+        #endif
 
             /* If Qos then send response */
             if (packet_type == SN_MSG_TYPE_PUBREC ||
@@ -1531,6 +1563,13 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
             mc_connect->ack.return_code != SN_RC_ACCEPTED) {
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CONNECT_REFUSED);
     }
+#if WOLFMQTT_MAX_QOS >= 2
+    /* A clean session starts with no inbound QoS 2 flows in progress. */
+    if (rc == MQTT_CODE_SUCCESS && mc_connect->clean_session) {
+        XMEMSET(client->recv_qos2_pending, 0,
+            sizeof(client->recv_qos2_pending));
+    }
+#endif
 
     return rc;
 }

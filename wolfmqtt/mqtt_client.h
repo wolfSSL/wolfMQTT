@@ -1008,6 +1008,17 @@ WOLFMQTT_LOCAL int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
         word16 wait_packet_id);
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
+#if WOLFMQTT_MAX_QOS >= 2
+/* Inbound QoS 2 de-duplication table (recv_qos2_pending), shared by the MQTT
+ * and MQTT-SN clients. */
+WOLFMQTT_LOCAL int MqttClient_RecvQos2_Contains(const MqttClient* client,
+    word16 packet_id);
+WOLFMQTT_LOCAL int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client);
+WOLFMQTT_LOCAL void MqttClient_RecvQos2_Add(MqttClient* client,
+    word16 packet_id);
+WOLFMQTT_LOCAL void MqttClient_RecvQos2_Remove(MqttClient* client,
+    word16 packet_id);
+#endif
 
 /* Securely zero `len` bytes of `mem` (e.g. client->tx_buf) to scrub plaintext
  * such as credentials or will payloads before releasing the send lock. Uses a

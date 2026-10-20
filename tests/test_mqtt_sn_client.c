@@ -1386,6 +1386,85 @@ TEST(sn_publish_incoming_null_msg_cb_errors_no_ack)
     ASSERT_EQ(0, g_mock.write_calls);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
+static int g_sn_qos2_deliveries;
+
+static int sn_count_qos2_delivery(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client;
+    (void)msg;
+    (void)msg_new;
+    (void)msg_done;
+    g_sn_qos2_deliveries++;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* Count short-form (1-byte length) MQTT-SN frames of a type in the capture. */
+static int sn_out_count(const MockNet* net, byte packet_type)
+{
+    int count = 0;
+    int pos = 0;
+
+    while (pos + 1 < net->out_len && net->out[pos] >= 2) {
+        if (net->out[pos + 1] == packet_type) {
+            count++;
+        }
+        pos += net->out[pos];
+    }
+    return count;
+}
+
+/* MQTT-SN 1.2 section 6.7: a QoS 2 PUBLISH is answered with PUBREC and its
+ * delivery completes with PUBREL/PUBCOMP. A retransmitted PUBLISH (DUP set)
+ * for an id still awaiting PUBREL must be acknowledged again but not handed
+ * to the application a second time. Once PUBREL has released the id, a new
+ * PUBLISH may reuse it and is delivered. Frames: PUBLISH QoS 2 id 7 (flags
+ * 0x40), its DUP retransmit (0xC0), PUBREL id 7, a new PUBLISH id 7. */
+TEST(sn_qos2_retransmit_not_delivered_twice)
+{
+    static const byte pub[]  = { 0x09, SN_MSG_TYPE_PUBLISH, 0x40, 0x00, 0x0A,
+                                 0x00, 0x07, 0x01, 0x02 };
+    static const byte dup[]  = { 0x09, SN_MSG_TYPE_PUBLISH, 0xC0, 0x00, 0x0A,
+                                 0x00, 0x07, 0x01, 0x02 };
+    static const byte rel[]  = { 0x04, SN_MSG_TYPE_PUBREL, 0x00, 0x07 };
+    static const byte pub2[] = { 0x09, SN_MSG_TYPE_PUBLISH, 0x40, 0x00, 0x0A,
+                                 0x00, 0x07, 0x03, 0x04 };
+    int rc = MQTT_CODE_SUCCESS;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_count_qos2_delivery;
+    g_sn_qos2_deliveries = 0;
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+    mock_net_push(&g_mock, dup, (int)sizeof(dup));
+    mock_net_push(&g_mock, rel, (int)sizeof(rel));
+    mock_net_push(&g_mock, pub2, (int)sizeof(pub2));
+
+    /* Each frame is waited for on a fresh wait object, as in
+     * sn_will_response_reset_clears_return_code: a completed wait leaves
+     * client->msgSN at its payload state. */
+    for (i = 0; i < 40 && g_mock.in_idx < g_mock.in_count; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+        if (rc == MQTT_CODE_SUCCESS) {
+            XMEMSET(&g_client.msgSN, 0, sizeof(g_client.msgSN));
+        }
+        else if (rc != MQTT_CODE_CONTINUE) {
+            FAIL("SN_Client_WaitMessage failed");
+        }
+    }
+    /* Let a pending response from the last frame finish. */
+    for (i = 0; i < 4 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    ASSERT_EQ(2, g_sn_qos2_deliveries);
+    ASSERT_EQ(3, sn_out_count(&g_mock, SN_MSG_TYPE_PUBREC));
+    ASSERT_EQ(1, sn_out_count(&g_mock, SN_MSG_TYPE_PUBCOMP));
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
+
 #ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
 static int sn_mt_only_packet_count(const MockNet* net, byte packet_type)
 {
@@ -3431,6 +3510,9 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
+#endif
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);
     RUN_TEST(sn_ping_null_consecutive_success);
