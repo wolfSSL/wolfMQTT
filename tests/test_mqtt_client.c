@@ -309,6 +309,39 @@ TEST(deinit_after_init)
     ASSERT_TRUE(1);
 }
 
+/* The caller-provided buffers can still hold a serialized CONNECT (username,
+ * password, v5 authentication data) from an abandoned operation. Once the
+ * client is torn down the library no longer uses them, so DeInit must wipe
+ * them rather than hand them back to the application with that content. */
+TEST(deinit_scrubs_tx_rx_buffers)
+{
+    int rc;
+    int i;
+    int tx_clear = 1;
+    int rx_clear = 1;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    XMEMSET(test_tx_buf, 0x5A, sizeof(test_tx_buf));
+    XMEMSET(test_rx_buf, 0x5A, sizeof(test_rx_buf));
+
+    MqttClient_DeInit(&test_client);
+    test_client_inited = 0;
+
+    for (i = 0; i < (int)sizeof(test_tx_buf); i++) {
+        if (test_tx_buf[i] != 0) {
+            tx_clear = 0;
+        }
+    }
+    for (i = 0; i < (int)sizeof(test_rx_buf); i++) {
+        if (test_rx_buf[i] != 0) {
+            rx_clear = 0;
+        }
+    }
+    ASSERT_TRUE(tx_clear);
+    ASSERT_TRUE(rx_clear);
+}
+
 /* ============================================================================
  * MqttClient_Connect Tests
  * ============================================================================ */
@@ -8493,6 +8526,7 @@ void run_mqtt_client_tests(void)
     /* MqttClient_DeInit tests */
     RUN_TEST(deinit_null_client);
     RUN_TEST(deinit_after_init);
+    RUN_TEST(deinit_scrubs_tx_rx_buffers);
 
     /* MqttClient_Connect tests */
     RUN_TEST(connect_null_client);

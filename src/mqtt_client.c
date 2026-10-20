@@ -2903,6 +2903,14 @@ void MqttClient_DeInit(MqttClient *client)
             }
         }
 #endif
+        /* The caller's buffers can still hold a serialized CONNECT or AUTH
+         * from an abandoned operation; the client no longer uses them. */
+        if (client->tx_buf != NULL && client->tx_buf_len > 0) {
+            CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+        }
+        if (client->rx_buf != NULL && client->rx_buf_len > 0) {
+            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
+        }
     }
 }
 
