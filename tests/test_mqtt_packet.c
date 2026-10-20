@@ -1781,6 +1781,35 @@ TEST(encode_publish_v5_response_topic_wildcard_rejected)
     MqttProps_Free(pub.props);
 }
 
+/* MqttProps_FindType is public API: it must return the first property of the
+ * requested type, NULL when the list has none, and NULL for an empty list. */
+TEST(props_find_type)
+{
+    MqttProp* head = NULL;
+    MqttProp* first;
+    MqttProp* second;
+    MqttProp* third;
+
+    ASSERT_NULL(MqttProps_FindType(NULL, MQTT_PROP_USER_PROP));
+
+    first = MqttProps_Add(&head);
+    ASSERT_TRUE(first != NULL);
+    first->type = MQTT_PROP_CONTENT_TYPE;
+    second = MqttProps_Add(&head);
+    ASSERT_TRUE(second != NULL);
+    second->type = MQTT_PROP_USER_PROP;
+    third = MqttProps_Add(&head);
+    ASSERT_TRUE(third != NULL);
+    third->type = MQTT_PROP_USER_PROP;
+
+    ASSERT_TRUE(MqttProps_FindType(head, MQTT_PROP_CONTENT_TYPE) == first);
+    /* The first match wins when a type repeats. */
+    ASSERT_TRUE(MqttProps_FindType(head, MQTT_PROP_USER_PROP) == second);
+    ASSERT_NULL(MqttProps_FindType(head, MQTT_PROP_RESP_TOPIC));
+
+    MqttProps_Free(head);
+}
+
 /* A single message may not carry more than the internal
  * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
  * shared property pool. 40 User Property entries exceeds that cap. The cap
@@ -7129,6 +7158,33 @@ TEST(auth_v5_success_no_props_roundtrip)
     ASSERT_NULL(dec.props);
 }
 
+/* MQTT 5.0 section 3.15.2.2.2: an AUTH that carries Properties must include
+ * the Authentication Method; omitting it is a Protocol Error. The short form
+ * of section 3.15.2.1 applies only to a Success AUTH with no Properties, so a
+ * Success AUTH with only a Reason String must be refused, not encoded. */
+TEST(encode_auth_v5_success_props_without_method_rejected)
+{
+    byte buf[32];
+    MqttAuth enc;
+    MqttProp prop;
+    int rc;
+    char reason[] = "ok";
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    XMEMSET(&prop, 0, sizeof(prop));
+    XMEMSET(buf, 0xA5, sizeof(buf));
+    prop.type = MQTT_PROP_REASON_STR;
+    prop.data_str.str = reason;
+    prop.data_str.len = (word16)XSTRLEN(reason);
+    prop.next = NULL;
+    enc.reason_code = MQTT_REASON_SUCCESS;
+    enc.props = &prop;
+
+    rc = MqttEncode_Auth(buf, (int)sizeof(buf), &enc);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0xA5, buf[0]);
+}
+
 TEST(auth_v5_invalid_reason_code_rejected)
 {
     /* A reason code outside {SUCCESS, CONT_AUTH, REAUTH} must not decode
@@ -7590,6 +7646,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_byte_property_out_of_range_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
+    RUN_TEST(props_find_type);
     RUN_TEST(decode_publish_v5_property_count_capped);
     RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
     RUN_TEST(decode_publish_v5_duplicate_subscription_id_accepted);
@@ -7926,6 +7983,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(auth_v5_reauth_decodes_without_error);
     RUN_TEST(auth_v5_success_remaining_length_zero);
     RUN_TEST(auth_v5_success_no_props_roundtrip);
+    RUN_TEST(encode_auth_v5_success_props_without_method_rejected);
     RUN_TEST(auth_v5_invalid_reason_code_rejected);
     RUN_TEST(decode_auth_v5_reason_code_past_buf_rejected);
 #endif

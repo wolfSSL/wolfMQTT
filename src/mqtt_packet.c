@@ -4145,9 +4145,13 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     }
 
     /* [MQTT-4.12] AUTH (REAUTH/CONT_AUTH) must carry an Authentication Method
-     * property; reject if the list is empty or lacks it. */
+     * property; reject if the list is empty or lacks it. A Success AUTH may
+     * omit Properties entirely (MQTT 5.0 section 3.15.2.1), but once it has
+     * any, the Authentication Method is required too (section 3.15.2.2.2). */
     if ((auth->reason_code == MQTT_REASON_CONT_AUTH) ||
-        (auth->reason_code == MQTT_REASON_REAUTH)) {
+        (auth->reason_code == MQTT_REASON_REAUTH) ||
+        ((auth->reason_code == MQTT_REASON_SUCCESS) &&
+         (auth->props != NULL))) {
         auth_prop = auth->props;
         while (auth_prop != NULL && auth_prop->type != MQTT_PROP_AUTH_METHOD) {
             auth_prop = auth_prop->next;
@@ -4466,6 +4470,19 @@ int MqttProps_Free(MqttProp *head)
     (void)wm_SemUnlock(&clientPropStack_lock);
 #endif
     return ret;
+}
+
+/* Find the first property of a specific type. Returns NULL if none */
+MqttProp* MqttProps_FindType(MqttProp *head, MqttPropertyType type)
+{
+    while (head != NULL) {
+        if (head->type == type) {
+            break;
+        }
+        head = head->next;
+    }
+
+    return head;
 }
 
 #endif /* WOLFMQTT_V5 */
