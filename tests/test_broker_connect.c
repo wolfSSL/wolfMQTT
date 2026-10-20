@@ -12210,6 +12210,71 @@ TEST(persist_iter_skips_fifo_without_blocking)
     ASSERT_EQ(0, WEXITSTATUS(status));
 }
 
+/* kv_iter and kv_del take the same opaque key bytes, so any key the POSIX
+ * backend yields while iterating must be removable through kv_del; the static
+ * DelOutQueue loop repeats iterate-and-delete until nothing matches and would
+ * otherwise never finish. The broker names records in lowercase hex, so a
+ * record file named in uppercase hex (created outside the broker) must not
+ * be yielded as a key that kv_del then cannot find. */
+TEST(persist_iter_keys_are_deletable)
+{
+    static const byte blob[] = "x";
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    char ns_path[640];
+    char rec_path[680];
+    MqttBrokerPersistHooks hooks;
+    PersistIterCapture capture;
+    char* root;
+    FILE* f;
+    int paths_ok = 0;
+    int init_rc;
+    int iter1_rc = MQTT_CODE_ERROR_SYSTEM;
+    int del_rc = MQTT_CODE_SUCCESS;
+    int iter2_rc = MQTT_CODE_ERROR_SYSTEM;
+    int iter2_calls = -1;
+
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&capture, 0, sizeof(capture));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    if (snprintf(ns_path, sizeof(ns_path), "%s/7", root) > 0 &&
+            snprintf(rec_path, sizeof(rec_path), "%s/ABCD.bin",
+                ns_path) > 0) {
+        paths_ok = 1;
+    }
+    ASSERT_TRUE(paths_ok);
+    ASSERT_EQ(0, mkdir(ns_path, 0700));
+    f = fopen(rec_path, "wb");
+    ASSERT_NOT_NULL(f);
+    ASSERT_EQ(sizeof(blob), fwrite(blob, 1, sizeof(blob), f));
+    ASSERT_EQ(0, fclose(f));
+
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        iter1_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
+            &capture);
+        if (capture.calls > 0) {
+            del_rc = hooks.kv_del(hooks.ctx, 7, capture.key,
+                capture.key_len);
+        }
+        XMEMSET(&capture, 0, sizeof(capture));
+        iter2_rc = hooks.kv_iter(hooks.ctx, 7, persist_test_iter_cb,
+            &capture);
+        iter2_calls = capture.calls;
+        MqttBrokerNet_PersistPosix_Free(&hooks);
+    }
+
+    (void)unlink(rec_path);
+    (void)rmdir(ns_path);
+    (void)rmdir(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, iter1_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, del_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, iter2_rc);
+    ASSERT_EQ(0, iter2_calls);
+}
+
 #ifdef __MACH__
 /* macOS exposes /tmp as a trusted operating-system symlink to /private/tmp.
  * A persistence root below that standard alias must initialize without
@@ -13895,6 +13960,7 @@ int main(int argc, char** argv)
     #endif
     RUN_TEST(persist_parent_component_rejected_as_bad_argument);
     RUN_TEST(persist_iter_skips_fifo_without_blocking);
+    RUN_TEST(persist_iter_keys_are_deletable);
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(persist_restore_packet_id_wrap_preserves_fifo);
     #ifdef WOLFMQTT_NONBLOCK

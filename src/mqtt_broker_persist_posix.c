@@ -120,7 +120,10 @@ static void wmqb_hex_encode(char* out, const byte* in, word16 in_len)
 }
 
 /* hex decode a NUL-terminated hex string into out. Returns the byte
- * length on success, -1 on malformed input. */
+ * length on success, -1 on malformed input. Only lowercase is accepted, the
+ * form wmqb_hex_encode writes: an uppercase name decodes to a key whose
+ * get/del path is the lowercase name, so iterating it would yield a record
+ * that can never be deleted. */
 static int wmqb_hex_decode(const char* in, byte* out, word16 out_cap)
 {
     word16 n;
@@ -145,12 +148,10 @@ static int wmqb_hex_decode(const char* in, byte* out, word16 out_cap)
         char c = in[2 * i];
         if (c >= '0' && c <= '9') hi = (byte)(c - '0');
         else if (c >= 'a' && c <= 'f') hi = (byte)(10 + c - 'a');
-        else if (c >= 'A' && c <= 'F') hi = (byte)(10 + c - 'A');
         else return -1;
         c = in[2 * i + 1];
         if (c >= '0' && c <= '9') lo = (byte)(c - '0');
         else if (c >= 'a' && c <= 'f') lo = (byte)(10 + c - 'a');
-        else if (c >= 'A' && c <= 'F') lo = (byte)(10 + c - 'A');
         else return -1;
         out[i] = (byte)((hi << 4) | lo);
     }
