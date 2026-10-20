@@ -2103,10 +2103,12 @@ TEST(connect_credentials_scrubbed_after_accept)
     MqttBroker_Free(&broker);
 }
 
+#ifdef WOLFMQTT_NONBLOCK
 /* A refused CONNECT whose CONNACK cannot be written at once keeps the client
  * until the write finishes or times out. Its credentials are not needed for
  * that, so they must be wiped as on the accepted path rather than stay in
- * rx_buf and the username/password copies for the whole deferred write. */
+ * rx_buf and the username/password copies for the whole deferred write.
+ * Only nonblocking builds defer the write; a blocking write completes it. */
 TEST(connect_refused_deferred_connack_scrubs_credentials)
 {
     MqttBroker broker;
@@ -2156,6 +2158,7 @@ TEST(connect_refused_deferred_connack_scrubs_credentials)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_NONBLOCK */
 #endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
@@ -14260,7 +14263,9 @@ int main(int argc, char** argv)
     RUN_TEST(broker_set_auth_pass_shorter_second_no_residue);
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_credentials_scrubbed_after_accept);
+#ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(connect_refused_deferred_connack_scrubs_credentials);
+#endif
 #endif
 #endif
 #ifdef ENABLE_MQTT_TLS
