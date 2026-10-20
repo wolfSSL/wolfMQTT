@@ -2480,6 +2480,11 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     packet_id = wmqb_r_u16(p); p += 2;
+    /* The key repeats the Packet Identifier; both copies must agree, and a
+     * queued QoS > 0 message never has identifier 0 [MQTT-2.2.1-3]. */
+    if (packet_id == 0 || packet_id != wmqb_r_u16(&key[cid_len + 1])) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
     enq_time = wmqb_r_u64(p); p += 8;
     enqueue_seq = wmqb_r_u64(p); p += 8;
     if (enqueue_seq == 0) {

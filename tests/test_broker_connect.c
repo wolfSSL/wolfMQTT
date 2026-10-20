@@ -11751,6 +11751,86 @@ TEST(persist_restore_packet_id_wrap_preserves_fifo)
     MqttBroker_Free(&source);
 }
 
+/* An OUTQ record is keyed by client_id || 0x00 || Packet Identifier and also
+ * carries the identifier in its body. Restore must only load a record whose
+ * two copies agree and are non-zero ([MQTT-2.2.1-3]: a QoS > 0 PUBLISH has a
+ * non-zero Packet Identifier). A record whose key disagrees with its body
+ * could not be deleted by the identifier it would be acknowledged under, and
+ * could collide with another queued entry. */
+TEST(persist_restore_rejects_outq_packet_id_mismatch)
+{
+    MqttBroker source;
+    MqttBroker restored;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    PersistOrderStore store;
+    BrokerOutPub out;
+    BrokerOrphanSession* orphan;
+    PersistOrderRecord* rec;
+    char topic[] = "t";
+
+    install_mock_net(&net);
+    XMEMSET(&source, 0, sizeof(source));
+    XMEMSET(&restored, 0, sizeof(restored));
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(&store, 0, sizeof(store));
+    hooks.kv_put = persist_order_put;
+    hooks.kv_get = persist_order_get;
+    hooks.kv_iter = persist_order_iter;
+    hooks.ctx = &store;
+#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+    hooks.derive_key = persist_order_derive_key;
+#endif
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&source, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&source, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&source));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_PutOrphanSession(&source,
+        "cid", MQTT_CONNECT_PROTOCOL_LEVEL_4, 0xFFFFFFFFu,
+        (WOLFMQTT_BROKER_TIME_T)1));
+
+    XMEMSET(&out, 0, sizeof(out));
+    out.topic = topic;
+    out.qos = MQTT_QOS_1;
+    out.state = BROKER_OUTQ_QUEUED;
+    out.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    out.enq_time = (WOLFMQTT_BROKER_TIME_T)1;
+    /* Packet Identifier 1: valid. */
+    out.enqueue_seq = 1;
+    out.packet_id = 1;
+    ASSERT_EQ(MQTT_CODE_SUCCESS,
+        BrokerPersist_PutOutPub(&source, "cid", &out));
+    /* Packet Identifier 2, then its key retagged to 3. */
+    out.enqueue_seq = 2;
+    out.packet_id = 2;
+    ASSERT_EQ(MQTT_CODE_SUCCESS,
+        BrokerPersist_PutOutPub(&source, "cid", &out));
+    /* Packet Identifier 0 in both key and body. */
+    out.enqueue_seq = 3;
+    out.packet_id = 0;
+    (void)BrokerPersist_PutOutPub(&source, "cid", &out);
+    ASSERT_EQ(3, store.outq_count);
+
+    rec = &store.outq[1];
+    ASSERT_EQ(3 + 3, (int)rec->key_len);   /* "cid" 0x00 pid_hi pid_lo */
+    ASSERT_EQ(0x02, rec->key[5]);
+    rec->key[5] = 0x03;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&restored, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS,
+        MqttBroker_SetPersistHooks(&restored, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&restored));
+
+    orphan = restored.orphan_sessions;
+    ASSERT_NOT_NULL(orphan);
+    ASSERT_EQ(1, orphan->out_q_count);
+    ASSERT_NOT_NULL(orphan->out_q_head);
+    ASSERT_EQ(1, orphan->out_q_head->packet_id);
+
+    MqttBroker_Free(&restored);
+    MqttBroker_Free(&source);
+}
+
 #ifdef WOLFMQTT_NONBLOCK
 typedef struct PersistSubsCount {
     int puts;
@@ -14032,6 +14112,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_iter_keys_are_deletable);
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(persist_restore_packet_id_wrap_preserves_fifo);
+    RUN_TEST(persist_restore_rejects_outq_packet_id_mismatch);
     #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(persist_subs_written_when_ack_deferred);
     RUN_TEST(persist_partial_publish_restart_keeps_dup);
