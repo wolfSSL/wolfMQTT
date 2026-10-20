@@ -386,9 +386,18 @@ typedef struct MqttBrokerPersistHooks {
      * truncate it. */
     int (*kv_put)(void* ctx, byte ns, const byte* key, word16 key_len,
                   const byte* blob, word32 blob_len);
+    /* On input *inout_len is the capacity of out; on success it is set to
+     * the record length. Return MQTT_CODE_ERROR_NOT_FOUND for a missing key
+     * and MQTT_CODE_ERROR_OUT_OF_BUFFER when the record is larger than the
+     * buffer - never a truncated success, since restore treats an oversized
+     * META record as a schema mismatch. */
     int (*kv_get)(void* ctx, byte ns, const byte* key, word16 key_len,
                   byte* out, word32* inout_len);
     int (*kv_del)(void* ctx, byte ns, const byte* key, word16 key_len);
+    /* Calls cb for each record in namespace ns. Every key passed to cb must
+     * be accepted unchanged by kv_get and kv_del: the broker deletes records
+     * it finds while iterating and repeats until none match, so a key that
+     * kv_del cannot remove makes that loop spin. */
     int (*kv_iter)(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
                    void* cb_ctx);
 

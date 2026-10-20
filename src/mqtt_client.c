@@ -2795,6 +2795,14 @@ read_cleanup:
     }
 #endif
 
+    /* The matched packet is finished. A packet that needed no reply leaves
+     * the wait at its payload state; rewind it so the next wait on this
+     * object (MqttClient_WaitMessage always uses client->msg) reads a new
+     * packet instead of handling this one again. */
+    if (mms_stat->read == MQTT_MSG_PAYLOAD ||
+            mms_stat->read == MQTT_MSG_PAYLOAD2) {
+        mms_stat->read = MQTT_MSG_BEGIN;
+    }
 
     return rc;
 }
@@ -2924,14 +2932,9 @@ void MqttClient_DeInit(MqttClient *client)
             }
         }
 #endif
-        /* The caller's buffers can still hold a serialized CONNECT or AUTH
-         * from an abandoned operation; the client no longer uses them. */
-        if (client->tx_buf != NULL && client->tx_buf_len > 0) {
-            CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
-        }
-        if (client->rx_buf != NULL && client->rx_buf_len > 0) {
-            CLIENT_FORCE_ZERO(client->rx_buf, client->rx_buf_len);
-        }
+        /* tx_buf and rx_buf belong to the caller, who may already have freed
+         * them (the bundled examples do), so they are not touched here.
+         * MqttClient_NetDisconnect scrubs them while they are still in use. */
     }
 }
 
@@ -3215,22 +3218,20 @@ static int MqttClient_CheckConnectSent(MqttClient *client)
  * allowed in that window, so they use MqttClient_CheckConnectSent alone. */
 static int MqttClient_CheckSendAllowed(MqttClient *client)
 {
-    int rc;
-#ifdef WOLFMQTT_V5
     word32 flags = 0;
-#endif
+    int rc;
 
-    rc = MqttClient_CheckConnectSent(client);
-#ifdef WOLFMQTT_V5
-    if (rc == MQTT_CODE_SUCCESS) {
-        rc = MqttClient_ReadFlags(client, &flags);
+    /* One snapshot of the flags for every condition. */
+    rc = MqttClient_ReadFlags(client, &flags);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
     }
-    if (rc == MQTT_CODE_SUCCESS &&
+    if ((flags & MQTT_CLIENT_FLAG_CONNECT_SENT) == 0 ||
+            (flags & MQTT_CLIENT_FLAG_DISCONNECT_SENT) != 0 ||
             (flags & MQTT_CLIENT_FLAG_AUTH_PENDING) != 0) {
-        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_STAT);
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_STAT);
     }
-#endif
-    return rc;
+    return MQTT_CODE_SUCCESS;
 }
 
 #ifndef WOLFMQTT_NO_TIME
@@ -3507,6 +3508,16 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         }
     #endif
 
+    #ifdef WOLFMQTT_V5
+        /* [MQTT-3.1.2-30] With an Authentication Method, only AUTH or
+         * DISCONNECT may follow until the CONNACK. Raised before any CONNECT
+         * byte can reach the peer, so neither another sender nor a reader
+         * that processes the CONNACK can see the window open late. */
+        if (client->auth_method_set) {
+            (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_AUTH_PENDING);
+        }
+    #endif
+
         mc_connect->stat.write = MQTT_MSG_HEADER;
     }
     if (mc_connect->stat.write == MQTT_MSG_HEADER) {
@@ -3531,14 +3542,6 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
              * out. Resuming this same write re-enters past MQTT_MSG_BEGIN, so
              * the once-per-connection guard does not see it. */
             (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
-        #ifdef WOLFMQTT_V5
-            /* [MQTT-3.1.2-30] With an Authentication Method, only AUTH or
-             * DISCONNECT may follow until the CONNACK. */
-            if (client->auth_method_set) {
-                (void)MqttClient_Flags(client, 0,
-                    MQTT_CLIENT_FLAG_AUTH_PENDING);
-            }
-        #endif
         #ifndef WOLFMQTT_NO_SESSION_REPLAY
             if (MqttClient_ConnectIsPersistent(mc_connect)) {
                 (void)MqttClient_Flags(client, 0,
@@ -3572,6 +3575,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
             /* The handshake state set above stands or not on whether bytes
              * reached the peer, so a retry is refused only when some of this
              * CONNECT is already out there. */
+        #ifdef WOLFMQTT_V5
+            if (wrote == 0) {
+                /* No CONNECT reached the peer, so no CONNACK is coming. */
+                (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_AUTH_PENDING,
+                    0);
+            }
+        #endif
             MqttClient_CancelMessage(client, (MqttObject*)mc_connect);
             return rc;
         }
@@ -4924,11 +4934,15 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     return rc;
 }
 
-static int MqttClient_PingTimeoutDisconnect(MqttClient *client)
+/* Also used when a keep-alive ping times out, see MqttClient_Ping_ex. */
+int MqttClient_NetDisconnect_Wait(MqttClient *client)
 {
 #ifdef WOLFMQTT_MULTITHREAD
     int rc;
 
+    if (client == NULL) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
     /* A message callback can hold lockRecv while starting a publish, so take
      * the I/O locks in that same direction. Once both are held, no read or
      * write callback can still reference socket, TLS, or curl state while the
@@ -5051,7 +5065,7 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
      * direct Ping callers while the automatic keep-alive path maps it to a
      * network error. */
     if (rc == MQTT_CODE_ERROR_TIMEOUT) {
-        (void)MqttClient_PingTimeoutDisconnect(client);
+        (void)MqttClient_NetDisconnect_Wait(client);
     }
 
     return rc;

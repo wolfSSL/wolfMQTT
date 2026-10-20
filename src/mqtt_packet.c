@@ -1859,11 +1859,9 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
      * Corner case: a peer claiming level 6 but sending a v5-shape wire
      * (extra properties-length VBI present) will misparse on the v3.1.1
      * path and the strict tail-consumption check below returns
-     * MALFORMED_DATA, which the broker translates to a silent socket
-     * close - CONNACK 0x01 is emitted only when the v3.1.1-shape decode
-     * succeeds. This is a best-effort spec compliance trade-off; clients
-     * that misrepresent their protocol level should not expect the broker
-     * to reverse-engineer the wire shape. */
+     * MALFORMED_DATA. protocol_level is already recorded at that point, so
+     * the broker still answers any unsupported level with CONNACK 0x01
+     * [MQTT-3.1.2-2], whether or not the body decodes. */
     if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         /* Decode Length of Properties */
         if (rx_buf_len < (rx_payload - rx_buf)) {

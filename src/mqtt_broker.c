@@ -2135,16 +2135,6 @@ static void BrokerClient_FreeOutQueue(BrokerClient* bc)
     bc->out_q_pending_len = 0;
 }
 
-/* Send as many QUEUED entries from out_q as the inflight cap allows.
- *
- * Ordering: walks from out_q_head, never reorders. Already-sent entries
- * (state != QUEUED) are stepped over - their PUBLISH already hit the
- * wire in publish order. The cap stops the drain at the first QUEUED
- * QoS>0 entry that would exceed BROKER_MAX_INFLIGHT_PER_SUB (or the v5
- * client's Receive Maximum, whichever is smaller). [MQTT-4.6.0-3] is
- * preserved: even a QUEUED QoS 0 behind a capped QoS>0 stays put. Returns the
- * number of completed writes, MQTT_CODE_CONTINUE for an in-progress write,
- * or a negative error for a terminal write failure. */
 /* Unlink cur (preceded by prev) from bc's out_q, drop any persisted copy and
  * free it. Returns the entry that followed cur. */
 static BrokerOutPub* BrokerClient_OutQRemove(BrokerClient* bc,
@@ -2175,6 +2165,16 @@ static BrokerOutPub* BrokerClient_OutQRemove(BrokerClient* bc,
     return next;
 }
 
+/* Send as many QUEUED entries from out_q as the inflight cap allows.
+ *
+ * Ordering: walks from out_q_head, never reorders. Already-sent entries
+ * (state != QUEUED) are stepped over - their PUBLISH already hit the
+ * wire in publish order. The cap stops the drain at the first QUEUED
+ * QoS>0 entry that would exceed BROKER_MAX_INFLIGHT_PER_SUB (or the v5
+ * client's Receive Maximum, whichever is smaller). [MQTT-4.6.0-3] is
+ * preserved: even a QUEUED QoS 0 behind a capped QoS>0 stays put. Returns the
+ * number of completed writes, MQTT_CODE_CONTINUE for an in-progress write,
+ * or a negative error for a terminal write failure. */
 static int BrokerClient_DrainOutQueue(BrokerClient* bc)
 {
     BrokerOutPub* cur;
@@ -7473,12 +7473,12 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 BrokerClient_PublishWill(broker, old);
             }
             else {
-                BrokerSend_Disconnect(old,
-                    MQTT_REASON_SESSION_TAKEN_OVER);
 #ifdef WOLFMQTT_BROKER_WILL
                 /* MQTT 5.0 section 3.1.4: a resumed Session suppresses a
                  * delayed Will [MQTT-3.1.3-9]; an ending Session or a zero
-                 * Will Delay publishes it now. */
+                 * Will Delay publishes it now. Done before the DISCONNECT so
+                 * a copy for the old connection itself (subscribed to its
+                 * own Will topic) is not written after it [MQTT-3.14.4-1]. */
                 if (old->will_delay_sec > 0 && !mc.clean_session &&
                         old->session_expiry_sec != 0) {
                     BrokerClient_ClearWill(old);
@@ -7488,6 +7488,8 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                     BrokerClient_PublishWill(broker, old);
                 }
 #endif
+                BrokerSend_Disconnect(old,
+                    MQTT_REASON_SESSION_TAKEN_OVER);
             }
 #else
             BrokerClient_PublishWill(broker, old);
@@ -7764,8 +7766,8 @@ send_connack:
      * re-auth path. Scrub them all now so credentials reside in memory only
      * for the duration of CONNECT processing rather than the whole session.
      * Refused/failed CONNECTs return earlier and are wiped when the caller
-     * frees the client, or above if their CONNACK is deferred. Mirrors the client-side CLIENT_FORCE_ZERO hardening
-     * in mqtt_client.c. */
+     * frees the client, or above if their CONNACK is deferred. Mirrors the
+     * client-side CLIENT_FORCE_ZERO hardening in mqtt_client.c. */
     BrokerClient_ScrubConnect(bc, rx_len);
 
     return rc;
@@ -7776,6 +7778,9 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
 {
     int rc;
     int i;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    int subs_changed = 0;
+#endif
     MqttSubscribe sub;
     MqttTopic topic_buf[MAX_MQTT_TOPICS];
     byte return_codes[MAX_MQTT_TOPICS];
@@ -7785,6 +7790,7 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
     sub.protocol_level = bc->protocol_level;
 #endif
     XMEMSET(topic_buf, 0, sizeof(topic_buf));
+    XMEMSET(return_codes, 0, sizeof(return_codes));
     sub.topics = topic_buf;
 
     WBLOG_INFO(broker, "broker: SUBSCRIBE recv sock=%d len=%d", (int)bc->sock, rx_len);
@@ -7847,6 +7853,11 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
         #endif
             {
                 sub_rc = BrokerSubs_Add(broker, bc, f, flen, topic_qos);
+            #ifdef WOLFMQTT_BROKER_PERSIST
+                if (sub_rc >= 0) {
+                    subs_changed = 1;
+                }
+            #endif
             }
             if (sub_rc < 0) {
                 granted_qos = (MqttQoS)fail_code;
@@ -7930,20 +7941,20 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
      * avoid reading past the end of the return_codes array */
     rc = BrokerSend_SubAck(bc, sub.packet_id, return_codes, i);
 
+#ifdef WOLFMQTT_BROKER_RETAINED
+subscribe_cleanup:
+#endif
 #ifdef WOLFMQTT_BROKER_PERSIST
     /* Shadow-write the full subscription list for this client. Only
      * meaningful for clean_session=0 sessions; the persist layer no-ops
-     * when no hooks are installed. A deferred SUBACK still committed the
-     * subscriptions, so it is persisted too. */
-    if ((rc > 0 || rc == MQTT_CODE_CONTINUE) &&
-            bc->session_expiry_sec != 0 &&
+     * when no hooks are installed. Keyed on the in-memory list having
+     * changed, not on the SUBACK write: a deferred or failed SUBACK, or a
+     * retained delivery that failed after some filters were added, leaves
+     * those subscriptions in the Session all the same. */
+    if (subs_changed && bc->session_expiry_sec != 0 &&
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_PutSubs(broker, bc->client_id);
     }
-#endif
-
-#ifdef WOLFMQTT_BROKER_RETAINED
-subscribe_cleanup:
 #endif
 #ifdef WOLFMQTT_V5
     if (sub.props) {
@@ -7958,6 +7969,9 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
 {
     int rc;
     int i;
+#ifdef WOLFMQTT_BROKER_PERSIST
+    int subs_changed = 0;
+#endif
     MqttUnsubscribe unsub;
     MqttUnsubscribeAck ack;
     MqttTopic topic_buf[MAX_MQTT_TOPICS];
@@ -7988,16 +8002,19 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
 #endif
         if (f && MqttDecode_Num((byte*)f - MQTT_DATA_LEN_SIZE,
                 &flen, MQTT_DATA_LEN_SIZE) == MQTT_DATA_LEN_SIZE) {
-#ifdef WOLFMQTT_V5
             if (BrokerSubs_Remove(broker, bc, f, flen)) {
+            #ifdef WOLFMQTT_V5
                 reasons[i] = MQTT_REASON_SUCCESS;
+            #endif
+            #ifdef WOLFMQTT_BROKER_PERSIST
+                subs_changed = 1;
+            #endif
             }
+        #ifdef WOLFMQTT_V5
             else {
                 reasons[i] = MQTT_REASON_NO_SUB_EXIST;
             }
-#else
-            BrokerSubs_Remove(broker, bc, f, flen);
-#endif
+        #endif
         }
     }
 
@@ -8024,10 +8041,9 @@ static int BrokerHandle_Unsubscribe(BrokerClient* bc, int rx_len,
     }
 
 #ifdef WOLFMQTT_BROKER_PERSIST
-    /* Re-snapshot subs (PutSubs converts count=0 into a DelSubs), including
-     * when the UNSUBACK write is deferred. */
-    if ((rc > 0 || rc == MQTT_CODE_CONTINUE) &&
-            bc->session_expiry_sec != 0 &&
+    /* Re-snapshot subs (PutSubs converts count=0 into a DelSubs) whenever a
+     * subscription was removed, whatever the UNSUBACK write returned. */
+    if (subs_changed && bc->session_expiry_sec != 0 &&
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_PutSubs(broker, bc->client_id);
     }

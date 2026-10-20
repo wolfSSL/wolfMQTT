@@ -845,6 +845,11 @@ WOLFMQTT_API int MqttEncode_Vbi(byte *buf, word32 x);
 /* Packet Encoders/Decoders */
 WOLFMQTT_API int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,
     MqttConnect *connect);
+/* Decode a CONNACK. In v5 builds set connect_ack->protocol_level first: it
+ * selects the v5 form (Properties after the return code) and which return
+ * codes are valid. A code outside the MQTT 3.1.1 section 3.2.2.3 table, or
+ * the MQTT 5.0 section 3.2.2.2 table at level 5, is rejected with
+ * MQTT_CODE_ERROR_MALFORMED_DATA. */
 WOLFMQTT_API int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack);
 WOLFMQTT_API int MqttEncode_Publish(byte *tx_buf, int tx_buf_len,
@@ -900,6 +905,12 @@ WOLFMQTT_API int MqttDecode_Auth(byte *rx_buf, int rx_buf_len,
     MqttAuth *auth);
 WOLFMQTT_API int MqttEncode_Auth(byte *tx_buf, int tx_buf_len,
     MqttAuth *auth);
+/* Encode or decode a v5 property list. packet selects the allow-list the
+ * properties are checked against (MQTT 5.0 section 2.2.2.2). Will Properties
+ * have their own list (section 3.1.3.2), selected with
+ * MQTT_PACKET_TYPE_RESERVED; MQTT_PACKET_TYPE_CONNECT covers only the CONNECT
+ * Properties, so Will Delay Interval and Message Expiry Interval are rejected
+ * there. */
 WOLFMQTT_API int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
     byte* buf);
 WOLFMQTT_API int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
@@ -913,8 +924,13 @@ WOLFMQTT_API int MqttProps_Init(void);
  * functions are no longer in use through that reference. Calls must not run
  * concurrently with each other. */
 WOLFMQTT_API int MqttProps_ShutDown(void);
+/* Append a cleared property to the end of the list at *head and return it,
+ * or NULL if no property can be allocated. */
 WOLFMQTT_API MqttProp* MqttProps_Add(MqttProp **head);
+/* Release every property in the list starting at head. */
 WOLFMQTT_API int MqttProps_Free(MqttProp *head);
+/* Return the first property in the list starting at head whose type is
+ * type, or NULL if the list is empty or holds none. */
 WOLFMQTT_API MqttProp* MqttProps_FindType(MqttProp *head,
     MqttPropertyType type);
 #endif

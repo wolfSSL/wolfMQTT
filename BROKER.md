@@ -175,11 +175,29 @@ message whose topic is longer than 123 bytes is not kept. The broker still
 serves them from memory while it runs. Use a custom backend through
 `MqttBroker_SetPersistHooks()` if longer identifiers must persist.
 
+A custom backend must follow the same contract as the POSIX one. `kv_get`
+treats `*inout_len` as the buffer capacity on input and sets the record length
+on success, returns `MQTT_CODE_ERROR_NOT_FOUND` for a missing key, and returns
+`MQTT_CODE_ERROR_OUT_OF_BUFFER` - never a truncated success - for a record
+larger than the buffer. Every key `kv_iter` hands to its callback must be
+accepted unchanged by `kv_get` and `kv_del`; the broker deletes records it
+finds while iterating and repeats until none match.
+
 | Macro | Default | Description |
 |---|---|---|
 | `BROKER_MAX_PERSIST_SESSIONS` | 64 | Dynamic-memory persistent sessions (connected and offline); a new persistent CONNECT beyond it is refused, existing sessions are never evicted |
 | `BROKER_MAX_OFFLINE_MSGS_PER_SUB` | 32 | Offline queue depth per session |
 | `WOLFMQTT_BROKER_PERSIST_SCHEMA_VER` | 5 | On-disk record schema version |
+
+Because existing persistent sessions are never evicted, any client allowed to
+connect can use up `BROKER_MAX_PERSIST_SESSIONS` by opening persistent sessions
+under fresh client IDs (a v3.1.1 CleanSession 0 session never expires); after
+that, persistent CONNECTs with new client IDs are refused until sessions end,
+and with persistence enabled the sessions survive a restart. Clients that
+resume their own session are unaffected. Configure broker credentials
+(`-u`/`-P`), size the cap for the deployment, and prefer bounded v5 Session
+Expiry Intervals where this matters. The previous drop-oldest
+policy let the same client destroy other clients' saved sessions instead.
 
 ### Encryption at rest
 

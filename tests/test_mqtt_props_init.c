@@ -31,6 +31,8 @@ static int sem_fail_lock_skip;
 static int quota_write_calls;
 static MqttClient* sem_flag_client;
 static word32 sem_flag_bits;
+static MqttClient* io_lock_client;
+static int io_locks_held_at_close;
 
 #ifdef ENABLE_MQTT_CURL
     #define TEST_CLIENT_LOCK_COUNT 4
@@ -96,11 +98,11 @@ int wm_SemFree(wm_Sem* sem)
 int wm_SemLock(wm_Sem* sem)
 {
     /* Fail one acquisition of sem_fail_lock made while
-     * sem_fail_lock_while_held is owned, after skipping sem_fail_lock_skip
-     * such acquisitions, so a test can target a single lock inside a larger
-     * operation. */
-    if (sem == sem_fail_lock && sem_fail_lock_while_held != NULL &&
-            sem_fail_lock_while_held->lock_count > 0) {
+     * sem_fail_lock_while_held is owned (or any acquisition when it is NULL),
+     * after skipping sem_fail_lock_skip such acquisitions, so a test can
+     * target a single lock inside a larger operation. */
+    if (sem == sem_fail_lock && (sem_fail_lock_while_held == NULL ||
+            sem_fail_lock_while_held->lock_count > 0)) {
         if (sem_fail_lock_skip > 0) {
             sem_fail_lock_skip--;
         }
@@ -633,6 +635,127 @@ static int test_keepalive_flag_read_takes_client_lock(void)
     return 0;
 }
 
+static int io_lock_disconnect_calls;
+
+static int io_lock_net_disconnect(void* context)
+{
+    (void)context;
+    io_lock_disconnect_calls++;
+    if (io_lock_client != NULL) {
+        io_locks_held_at_close =
+            (io_lock_client->lockRecv.lock_count > 0 &&
+             io_lock_client->lockSend.lock_count > 0);
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+/* MqttClient_NetDisconnect_Wait releases the transport only while holding
+ * lockRecv and lockSend, so no read or write on another thread can still be
+ * using socket or TLS state when it is freed. The transport's disconnect
+ * callback records whether both I/O locks were held when it ran. */
+static int test_net_disconnect_wait_holds_io_locks(void)
+{
+    int rc;
+    MqttClient client;
+    MqttNet net;
+    byte tx_buf[64];
+    byte rx_buf[64];
+
+    reset_sem_state();
+    XMEMSET(&net, 0, sizeof(net));
+    net.connect = ping_net_connect;
+    net.read = ping_net_read;
+    net.write = ping_net_write;
+    net.disconnect = io_lock_net_disconnect;
+
+    rc = MqttClient_Init(&client, &net, NULL, tx_buf, sizeof(tx_buf),
+        rx_buf, sizeof(rx_buf), 1000);
+    if (rc != MQTT_CODE_SUCCESS) {
+        fprintf(stderr, "disconnect-wait client initialization returned %d\n",
+            rc);
+        return 1;
+    }
+    (void)MqttClient_Flags(&client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    io_lock_client = &client;
+    io_locks_held_at_close = 0;
+
+    rc = MqttClient_NetDisconnect_Wait(&client);
+    io_lock_client = NULL;
+
+    if (rc != MQTT_CODE_SUCCESS || !io_locks_held_at_close ||
+            client.lockRecv.lock_count != 0 ||
+            client.lockSend.lock_count != 0 ||
+            (MqttClient_Flags(&client, 0, 0) &
+                MQTT_CLIENT_FLAG_IS_CONNECTED) != 0) {
+        fprintf(stderr,
+            "disconnect-wait rc=%d locks_held=%d recv=%d send=%d\n",
+            rc, io_locks_held_at_close, client.lockRecv.lock_count,
+            client.lockSend.lock_count);
+        MqttClient_DeInit(&client);
+        return 1;
+    }
+
+    MqttClient_DeInit(&client);
+    return 0;
+}
+
+/* If lockSend cannot be taken, MqttClient_NetDisconnect_Wait must release
+ * the lockRecv it already holds and leave the transport alone; if lockRecv
+ * cannot be taken, it must not touch the transport either. */
+static int run_net_disconnect_wait_lock_failure(int fail_send)
+{
+    int rc;
+    MqttClient client;
+    MqttNet net;
+    byte tx_buf[64];
+    byte rx_buf[64];
+    int fail = 0;
+
+    reset_sem_state();
+    XMEMSET(&net, 0, sizeof(net));
+    net.connect = ping_net_connect;
+    net.read = ping_net_read;
+    net.write = ping_net_write;
+    net.disconnect = io_lock_net_disconnect;
+
+    rc = MqttClient_Init(&client, &net, NULL, tx_buf, sizeof(tx_buf),
+        rx_buf, sizeof(rx_buf), 1000);
+    if (rc != MQTT_CODE_SUCCESS) {
+        fprintf(stderr, "lock-failure client initialization returned %d\n",
+            rc);
+        return 1;
+    }
+    (void)MqttClient_Flags(&client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    io_lock_disconnect_calls = 0;
+    if (fail_send) {
+        sem_fail_lock = &client.lockSend;
+        sem_fail_lock_while_held = &client.lockRecv;
+    }
+    else {
+        sem_fail_lock = &client.lockRecv;
+        sem_fail_lock_while_held = NULL;
+    }
+
+    rc = MqttClient_NetDisconnect_Wait(&client);
+    sem_fail_lock = NULL;
+    sem_fail_lock_while_held = NULL;
+
+    if (rc != MQTT_CODE_ERROR_SYSTEM || io_lock_disconnect_calls != 0 ||
+            client.lockRecv.lock_count != 0 ||
+            client.lockSend.lock_count != 0 ||
+            (MqttClient_Flags(&client, 0, 0) &
+                MQTT_CLIENT_FLAG_IS_CONNECTED) == 0) {
+        fprintf(stderr,
+            "disconnect-wait fail_send=%d rc=%d closes=%d recv=%d send=%d\n",
+            fail_send, rc, io_lock_disconnect_calls,
+            client.lockRecv.lock_count, client.lockSend.lock_count);
+        fail = 1;
+    }
+
+    MqttClient_DeInit(&client);
+    return fail;
+}
+
 int main(void)
 {
     if (test_sn_null_ping_resets_terminal_read_state() != 0) {
@@ -660,6 +783,15 @@ int main(void)
         return 1;
     }
     if (test_keepalive_flag_read_takes_client_lock() != 0) {
+        return 1;
+    }
+    if (test_net_disconnect_wait_holds_io_locks() != 0) {
+        return 1;
+    }
+    if (run_net_disconnect_wait_lock_failure(1) != 0) {
+        return 1;
+    }
+    if (run_net_disconnect_wait_lock_failure(0) != 0) {
         return 1;
     }
     return 0;

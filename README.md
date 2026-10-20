@@ -150,6 +150,7 @@ These are the network connect / disconnect interfaces that wrap the MqttNet call
 
 * `int MqttClient_NetConnect(MqttClient *client, const char* host, word16 port, int timeout_ms, int use_tls, MqttTlsCb cb);`
 * `int MqttClient_NetDisconnect(MqttClient *client);`
+* `int MqttClient_NetDisconnect_Wait(MqttClient *client);` - like `MqttClient_NetDisconnect`, but in `WOLFMQTT_MULTITHREAD` builds waits for other threads' network I/O on the client to finish first. Do not call it from a message callback.
 
 Helper functions:
 

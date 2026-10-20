@@ -983,6 +983,24 @@ TEST(sn_willmsg_encode_failure_scrubs_tx_buf)
         }
     }
     ASSERT_NO_PENDRESP();
+
+    /* The connect state is rewound, so a retry with the same SN_Connect and
+     * a Will Message that fits sends a new CONNECT and completes. */
+    ASSERT_EQ(MQTT_MSG_BEGIN, mc.stat.write);
+    ASSERT_EQ(0, mc.will_done); /* SN_WILL_DONE_NONE, private to the client */
+    mc.will.willMsg = (byte*)"offline";
+    mc.will.willMsgLen = 7;
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    mock_net_push(&g_mock, CONNACK_FRAME,      (int)sizeof(CONNACK_FRAME));
+    g_mock.out_len = 0;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_mock.out_len >= 2);
+    ASSERT_EQ(SN_MSG_TYPE_CONNECT, g_mock.out[1]);
+    ASSERT_NO_PENDRESP();
 }
 
 /* ============================================================================
@@ -1511,6 +1529,63 @@ TEST(sn_qos2_retransmit_not_delivered_twice)
     ASSERT_EQ(2, g_sn_qos2_deliveries);
     ASSERT_EQ(3, sn_out_count(&g_mock, SN_MSG_TYPE_PUBREC));
     ASSERT_EQ(1, sn_out_count(&g_mock, SN_MSG_TYPE_PUBCOMP));
+}
+
+/* A new QoS 2 id that does not fit the de-duplication table cannot be
+ * tracked, so it is refused with MQTT_CODE_ERROR_PACKET_ID rather than
+ * delivered: delivered untracked, its retransmit would reach the application
+ * again (MQTT-SN 1.2 section 6.7). No PUBREC is sent. */
+TEST(sn_qos2_full_table_refuses_new_id)
+{
+    static const byte pub[] = { 0x09, SN_MSG_TYPE_PUBLISH, 0x40, 0x00, 0x0A,
+                                0x01, 0x00, 0x01, 0x02 };   /* id 0x0100 */
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_count_qos2_delivery;
+    g_sn_qos2_deliveries = 0;
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        g_client.recv_qos2_pending[i] = (word16)(i + 1);
+    }
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+    ASSERT_EQ(0, g_sn_qos2_deliveries);
+    ASSERT_EQ(0, sn_out_count(&g_mock, SN_MSG_TYPE_PUBREC));
+}
+
+/* A clean-session CONNECT starts with no inbound QoS 2 flows, so the
+ * de-duplication table is cleared once the gateway accepts it; a
+ * non-clean-session CONNECT resumes and keeps it. */
+static int sn_connect_keeps_qos2_id(int clean_session)
+{
+    SN_Connect mc;
+    int rc;
+
+    if (sn_client_init(0) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    g_client.recv_qos2_pending[0] = 0x0042;
+    mock_net_push(&g_mock, CONNACK_FRAME, (int)sizeof(CONNACK_FRAME));
+    sn_will_setup_connect(&mc);
+    mc.enable_lwt = 0;
+    mc.clean_session = (byte)clean_session;
+    rc = sn_connect_pump(&mc, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    return g_client.recv_qos2_pending[0] == 0x0042;
+}
+
+TEST(sn_qos2_table_cleared_by_clean_session_connect)
+{
+    ASSERT_EQ(0, sn_connect_keeps_qos2_id(1));
+    ASSERT_EQ(1, sn_connect_keeps_qos2_id(0));
 }
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
@@ -3562,6 +3637,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_wait_message_reads_each_packet_once);
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
+    RUN_TEST(sn_qos2_full_table_refuses_new_id);
+    RUN_TEST(sn_qos2_table_cleared_by_clean_session_connect);
 #endif
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);

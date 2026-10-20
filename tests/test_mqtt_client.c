@@ -309,16 +309,37 @@ TEST(deinit_after_init)
     ASSERT_TRUE(1);
 }
 
-/* The caller-provided buffers can still hold a serialized CONNECT (username,
- * password, v5 authentication data) from an abandoned operation. Once the
- * client is torn down the library no longer uses them, so DeInit must wipe
- * them rather than hand them back to the application with that content. */
-TEST(deinit_scrubs_tx_rx_buffers)
+TEST(net_disconnect_wait_null_client)
+{
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, MqttClient_NetDisconnect_Wait(NULL));
+}
+
+/* Without other threads the waiting disconnect closes the transport like
+ * MqttClient_NetDisconnect. */
+TEST(net_disconnect_wait_closes_transport)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_CONNECT_SENT);
+
+    rc = MqttClient_NetDisconnect_Wait(&test_client);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        (MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_CONNECT_SENT)));
+}
+
+/* tx_buf and rx_buf belong to the caller, and the bundled examples free them
+ * before calling MqttClient_DeInit, so DeInit must not write to them: doing
+ * so would write into freed heap memory. Marker bytes must survive DeInit. */
+TEST(deinit_leaves_caller_buffers_untouched)
 {
     int rc;
     int i;
-    int tx_clear = 1;
-    int rx_clear = 1;
+    int tx_kept = 1;
+    int rx_kept = 1;
 
     rc = test_init_client();
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
@@ -329,17 +350,17 @@ TEST(deinit_scrubs_tx_rx_buffers)
     test_client_inited = 0;
 
     for (i = 0; i < (int)sizeof(test_tx_buf); i++) {
-        if (test_tx_buf[i] != 0) {
-            tx_clear = 0;
+        if (test_tx_buf[i] != 0x5A) {
+            tx_kept = 0;
         }
     }
     for (i = 0; i < (int)sizeof(test_rx_buf); i++) {
-        if (test_rx_buf[i] != 0) {
-            rx_clear = 0;
+        if (test_rx_buf[i] != 0x5A) {
+            rx_kept = 0;
         }
     }
-    ASSERT_TRUE(tx_clear);
-    ASSERT_TRUE(rx_clear);
+    ASSERT_TRUE(tx_kept);
+    ASSERT_TRUE(rx_kept);
 }
 
 /* ============================================================================
@@ -1176,7 +1197,8 @@ TEST(auth_without_connect_method_rejected)
  * Authentication Method property. Exercises MqttConnect_HasAuthMethod and its
  * per-connection assignment in MqttClient_Connect rather than poking
  * client->auth_method_set directly. */
-static int run_connect_v5_with_auth_method(int with_method)
+static int run_connect_v5_with_auth_method_write(int with_method,
+    MqttNetWriteCb write_cb)
 {
     int rc;
     int i;
@@ -1185,7 +1207,7 @@ static int run_connect_v5_with_auth_method(int with_method)
     /* v5 CONNACK: accepted, Session Present = 0, no properties. */
     static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
 
-    test_net.write = mock_net_write_accept;
+    test_net.write = write_cb;
     test_net.read = mock_net_read_canned;
     XMEMCPY(g_canned_buf, connack, sizeof(connack));
     g_canned_len = (int)sizeof(connack);
@@ -1208,6 +1230,12 @@ static int run_connect_v5_with_auth_method(int with_method)
         rc = MqttClient_Connect(&test_client, &connect);
     }
     return rc;
+}
+
+static int run_connect_v5_with_auth_method(int with_method)
+{
+    return run_connect_v5_with_auth_method_write(with_method,
+        mock_net_write_accept);
 }
 
 /* Positive control: after a CONNECT that did carry an Authentication Method,
@@ -1398,7 +1426,140 @@ TEST(connect_auth_pending_allows_disconnect)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_TRUE(g_frames_written > 0);
 }
+
+/* UNSUBSCRIBE is refused in the [MQTT-3.1.2-30] window like PUBLISH, and the
+ * automatic keep-alive does not send a PINGREQ there even when one is due. */
+TEST(connect_auth_pending_blocks_unsubscribe_and_keepalive)
+{
+    int rc;
+    MqttConnect connect;
+    MqttProp method_prop;
+    MqttUnsubscribe unsub;
+    MqttTopic topic;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = start_connect_v5_auth_pending(&connect, &method_prop);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    g_frames_written = 0;
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "t";
+    unsub.packet_id = 2;
+    unsub.topic_count = 1;
+    unsub.topics = &topic;
+    rc = MqttClient_Unsubscribe(&test_client, &unsub);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, rc);
+
+    /* A keep-alive ping is due: nothing has been sent since time 0. */
+    test_client.keep_alive_sec = 60;
+    test_client.last_tx_time = 0;
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(0, g_frames_written);
+}
+
+/* AUTH stays allowed in the window [MQTT-3.1.2-30]: it is how the exchange
+ * proceeds. */
+TEST(connect_auth_pending_allows_auth)
+{
+    int rc;
+    MqttConnect connect;
+    MqttProp method_prop;
+    MqttAuth auth;
+    MqttProp* prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = start_connect_v5_auth_pending(&connect, &method_prop);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    auth.reason_code = MQTT_REASON_CONT_AUTH;
+    prop = MqttClient_PropsAdd(&auth.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_AUTH_METHOD;
+    prop->data_str.str = (char*)"SCRAM-SHA-256";
+    prop->data_str.len = (word16)XSTRLEN("SCRAM-SHA-256");
+
+    g_frames_written = 0;
+    rc = MqttClient_Auth(&test_client, &auth);
+    ASSERT_NE(MQTT_CODE_ERROR_STAT, rc);
+    ASSERT_TRUE(g_frames_written > 0);
+
+    MqttClient_PropsFree(auth.props);
+}
+
+/* The window belongs to its Network Connection: after one that never got its
+ * CONNACK is closed, a new connection whose CONNECT has no Authentication
+ * Method is not held back by it. */
+TEST(connect_auth_pending_cleared_by_reconnect)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttProp method_prop;
+    MqttPublish publish;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = start_connect_v5_auth_pending(&connect, &method_prop);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    rc = run_connect_v5_with_auth_method(0);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_frames_written = 0;
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_frames_written > 0);
+}
 #endif /* WOLFMQTT_NONBLOCK */
+
+static int g_auth_pending_at_connect_write;
+
+static int mock_net_write_note_auth_pending(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    if (buf != NULL && buf_len > 0 &&
+            ((buf[0] >> 4) & 0x0F) == MQTT_PACKET_TYPE_CONNECT) {
+        g_auth_pending_at_connect_write =
+            (test_client.flags & MQTT_CLIENT_FLAG_AUTH_PENDING) != 0;
+    }
+    return mock_net_write_accept(context, buf, buf_len, timeout_ms);
+}
+
+/* [MQTT-3.1.2-30] The window must already be closed to other senders when
+ * the CONNECT reaches the peer; raising it only after the write would let
+ * another thread send in between, or leave it stuck if a reader processed the
+ * CONNACK first. The write callback records the flag as the CONNECT goes out,
+ * and the CONNACK then clears it. */
+TEST(connect_auth_pending_raised_before_connect_write)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_auth_pending_at_connect_write = 0;
+
+    rc = run_connect_v5_with_auth_method_write(1,
+        mock_net_write_note_auth_pending);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_auth_pending_at_connect_write);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_AUTH_PENDING));
+}
 
 /* MQTT 3.1.1 section 2.2.1 lists packet type 15 as Reserved/Forbidden; AUTH
  * exists only from v5. A session negotiated at protocol level 4 must treat a
@@ -4779,6 +4940,73 @@ TEST(publish_allowed_past_replay_pool_when_connack_ends_session)
 }
 #endif /* WOLFMQTT_V5 */
 
+#if WOLFMQTT_MAX_QOS >= 2
+/* A QoS 2 PUBLISH can leave without a replay slot (here a CleanSession 1
+ * connection sends it unretained while the pool is full). When its PUBREC
+ * arrives after a slot has freed, the PUBREL state must still be recorded
+ * for it [MQTT-4.4.0-1]: the client's own in-flight reservation awaiting
+ * PUBCOMP identifies it as this client's QoS 2 message. */
+TEST(pubrec_for_unslotted_qos2_records_pubrel)
+{
+    int rc;
+    int i;
+    int found = 0;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+    /* PUBACK for id 1 (MQTT 3.1.1 section 3.4), then PUBREC for id
+     * MQTT_MAX_REPLAY_MSGS + 1 (section 3.5). */
+    byte acks[8] = { 0x40, 0x02, 0x00, 0x01, 0x50, 0x02, 0x00, 0x00 };
+    word16 qos2_id = (word16)(MQTT_MAX_REPLAY_MSGS + 1);
+
+    acks[6] = (byte)(qos2_id >> 8);
+    acks[7] = (byte)qos2_id;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Fill the pool with QoS 1 messages, then send the QoS 2 one. */
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        init_qos_publish(&publish, MQTT_QOS_1, (word16)(i + 1), "t",
+            payload, (word32)(sizeof(payload) - 1));
+        ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&publish));
+    }
+    init_qos_publish(&publish, MQTT_QOS_2, qos2_id, "t", payload,
+        (word32)(sizeof(payload) - 1));
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&publish));
+
+    rc = run_wait_pubrecs(acks, (int)sizeof(acks));
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        if (test_client.replay[i].packet_id == qos2_id &&
+                test_client.replay[i].qos == MQTT_QOS_2 &&
+                test_client.replay[i].pubrelSent) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
+
 /* A CleanSession 1 Session ends with the Network Connection, so nothing is
  * ever replayed and a full pool must not limit how many messages are in
  * flight. */
@@ -5419,6 +5647,86 @@ TEST(publish_stream_cb_nonblock_resume_no_tail_drop)
 }
 #endif /* WOLFMQTT_NONBLOCK */
 
+static byte g_connect_wire[512];
+static int  g_connect_wire_len;
+
+static int mock_net_write_capture(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)timeout_ms;
+    if (buf != NULL && buf_len > 0 &&
+            g_connect_wire_len + buf_len <= (int)sizeof(g_connect_wire)) {
+        XMEMCPY(g_connect_wire + g_connect_wire_len, buf, (size_t)buf_len);
+        g_connect_wire_len += buf_len;
+    }
+    return buf_len; /* accept the whole chunk */
+}
+
+/* A PUBLISH whose fixed and variable header exactly fill tx_buf leaves no room
+ * for payload in the first write. The whole payload must then follow in later
+ * writes instead of the client issuing an empty write after the header. */
+TEST(publish_header_fills_tx_buf_sends_payload)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* CONNACK v3.1.1: type=0x20, remain=2, flags=0x00, return_code=0x00. */
+    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
+    /* MQTT 3.1.1 section 3.3: PUBLISH QoS 0, Remaining Length 8, Topic Name
+     * "t" (length 1), no Packet Identifier, payload "hello". */
+    static const byte expected[] = {
+        0x30, 0x08, 0x00, 0x01, 't', 'h', 'e', 'l', 'l', 'o'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "test_client";
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Fixed header (2) plus Topic Name (3) exactly fill tx_buf */
+    test_client.tx_buf_len = 5;
+    test_net.write = mock_net_write_capture;
+    g_connect_wire_len = 0;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = payload;
+    publish.total_len = (word32)(sizeof(payload) - 1);
+    publish.buffer_len = publish.total_len;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && (rc == MQTT_CODE_CONTINUE ||
+            rc == MQTT_CODE_PUB_CONTINUE); i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    test_client.tx_buf_len = TEST_TX_BUF_SIZE;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ((int)sizeof(expected), g_connect_wire_len);
+    ASSERT_EQ(0, XMEMCMP(expected, g_connect_wire, sizeof(expected)));
+}
+
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 1
 /* Drives one QoS>0 publish to completion against the canned-response mock and
  * returns the final MqttClient_Publish result. The caller stages the broker's
@@ -5987,21 +6295,6 @@ TEST(connect_resume_declined_clears_qos2_dedup)
     ASSERT_EQ(0, test_client.recv_qos2_pending[0]);
 }
 
-static byte g_connect_wire[512];
-static int  g_connect_wire_len;
-
-static int mock_net_write_capture(void *context, const byte* buf, int buf_len,
-    int timeout_ms)
-{
-    (void)context; (void)timeout_ms;
-    if (buf != NULL && buf_len > 0 &&
-            g_connect_wire_len + buf_len <= (int)sizeof(g_connect_wire)) {
-        XMEMCPY(g_connect_wire + g_connect_wire_len, buf, (size_t)buf_len);
-        g_connect_wire_len += buf_len;
-    }
-    return buf_len; /* accept the whole chunk */
-}
-
 /* Point *props at the property block of the captured v5 CONNECT and return its
  * length, or -1 if the frame is truncated. Layout: type byte, Remaining Length
  * (VBI), 10-byte variable header ("MQTT" + level + flags + keep alive), then
@@ -6033,70 +6326,6 @@ static int connect_wire_props(const byte* wire, int len, const byte** props)
     return prop_len;
 }
 
-/* A PUBLISH whose fixed and variable header exactly fill tx_buf leaves no room
- * for payload in the first write. The whole payload must then follow in later
- * writes instead of the client issuing an empty write after the header. */
-TEST(publish_header_fills_tx_buf_sends_payload)
-{
-    int rc;
-    int i;
-    MqttConnect connect;
-    MqttPublish publish;
-    static byte payload[] = "hello";
-    /* CONNACK v3.1.1: type=0x20, remain=2, flags=0x00, return_code=0x00. */
-    static const byte connack[] = { 0x20, 0x02, 0x00, 0x00 };
-    /* MQTT 3.1.1 section 3.3: PUBLISH QoS 0, Remaining Length 8, Topic Name
-     * "t" (length 1), no Packet Identifier, payload "hello". */
-    static const byte expected[] = {
-        0x30, 0x08, 0x00, 0x01, 't', 'h', 'e', 'l', 'l', 'o'
-    };
-
-    rc = test_init_client();
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-#ifdef WOLFMQTT_V5
-    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
-#endif
-
-    test_net.write = mock_net_write_accept;
-    test_net.read = mock_net_read_canned;
-    XMEMCPY(g_canned_buf, connack, sizeof(connack));
-    g_canned_len = (int)sizeof(connack);
-    g_canned_pos = 0;
-
-    XMEMSET(&connect, 0, sizeof(connect));
-    connect.keep_alive_sec = 60;
-    connect.clean_session = 1;
-    connect.client_id = "test_client";
-
-    rc = MQTT_CODE_CONTINUE;
-    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
-        rc = MqttClient_Connect(&test_client, &connect);
-    }
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-
-    /* Fixed header (2) plus Topic Name (3) exactly fill tx_buf */
-    test_client.tx_buf_len = 5;
-    test_net.write = mock_net_write_capture;
-    g_connect_wire_len = 0;
-
-    XMEMSET(&publish, 0, sizeof(publish));
-    publish.qos = MQTT_QOS_0;
-    publish.topic_name = "t";
-    publish.buffer = payload;
-    publish.total_len = (word32)(sizeof(payload) - 1);
-    publish.buffer_len = publish.total_len;
-
-    rc = MQTT_CODE_CONTINUE;
-    for (i = 0; i < 10 && (rc == MQTT_CODE_CONTINUE ||
-            rc == MQTT_CODE_PUB_CONTINUE); i++) {
-        rc = MqttClient_Publish(&test_client, &publish);
-    }
-    test_client.tx_buf_len = TEST_TX_BUF_SIZE;
-
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-    ASSERT_EQ((int)sizeof(expected), g_connect_wire_len);
-    ASSERT_EQ(0, XMEMCMP(expected, g_connect_wire, sizeof(expected)));
-}
 
 /* [MQTT-3.3.4] The inbound QoS 2 dedup table holds MQTT_MAX_RECV_QOS2 packet
  * ids; without an advertised Receive Maximum a server may keep more QoS 2
@@ -7274,6 +7503,43 @@ static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
     return MQTT_CODE_SUCCESS;
 }
 
+/* MqttClient_WaitMessage waits on the client's shared msg object. Once a
+ * packet that needs no reply (here an unsolicited PUBACK, MQTT 3.1.1 section
+ * 3.4) has been handled, the next call must read the next packet, not handle
+ * the PUBACK again. Frames: PUBACK id 9, then a QoS 0 PUBLISH on "t". */
+TEST(wait_message_reads_each_packet_once)
+{
+    int rc;
+    static const byte frames[] = {
+        0x40, 0x02, 0x00, 0x09,
+        0x30, 0x04, 0x00, 0x01, 't', 'x'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_CONNECT_SENT);
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, frames, sizeof(frames));
+    g_canned_len = (int)sizeof(frames);
+    g_canned_pos = 0;
+
+    rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(4, g_canned_pos);
+
+    rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+    ASSERT_EQ(1, g_msg_cb_calls);
+}
+
 #ifdef WOLFMQTT_NONBLOCK
 static int g_partial_vbi_read_step;
 static byte g_partial_vbi_publish[131];
@@ -7445,6 +7711,7 @@ TEST(wait_message_blocking_idle_timeout_keeps_connection)
  * PUBLISH that cannot be resolved; it must be rejected, not delivered to the
  * callback with a zero-length topic. This fixed wire fixture reaches the
  * preliminary packet decode used by MqttClient_WaitMessage. */
+
 TEST(wait_message_v5_empty_topic_with_alias_rejected)
 {
     int rc;
@@ -8735,7 +9002,9 @@ void run_mqtt_client_tests(void)
     /* MqttClient_DeInit tests */
     RUN_TEST(deinit_null_client);
     RUN_TEST(deinit_after_init);
-    RUN_TEST(deinit_scrubs_tx_rx_buffers);
+    RUN_TEST(deinit_leaves_caller_buffers_untouched);
+    RUN_TEST(net_disconnect_wait_null_client);
+    RUN_TEST(net_disconnect_wait_closes_transport);
 
     /* MqttClient_Connect tests */
     RUN_TEST(connect_null_client);
@@ -8765,7 +9034,11 @@ void run_mqtt_client_tests(void)
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(connect_auth_pending_blocks_other_packets);
     RUN_TEST(connect_auth_pending_allows_disconnect);
+    RUN_TEST(connect_auth_pending_blocks_unsubscribe_and_keepalive);
+    RUN_TEST(connect_auth_pending_allows_auth);
+    RUN_TEST(connect_auth_pending_cleared_by_reconnect);
 #endif
+    RUN_TEST(connect_auth_pending_raised_before_connect_write);
     RUN_TEST(wait_message_v311_rejects_auth_packet_type);
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
@@ -8820,6 +9093,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_refused_when_replay_pool_full_on_persistent_session);
     RUN_TEST(unsolicited_pubrec_does_not_fill_replay_pool);
     RUN_TEST(pubrec_for_qos1_id_keeps_publish_replay);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(pubrec_for_unslotted_qos2_records_pubrel);
+#endif
     RUN_TEST(publish_allowed_past_replay_pool_on_clean_session);
 #ifdef WOLFMQTT_V5
     RUN_TEST(publish_allowed_past_replay_pool_when_connack_ends_session);
@@ -8909,7 +9185,6 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_clientid_change_clears_qos2_dedup);
     RUN_TEST(connect_clean1_clears_qos2_dedup);
     RUN_TEST(connect_resume_declined_clears_qos2_dedup);
-    RUN_TEST(publish_header_fills_tx_buf_sends_payload);
     RUN_TEST(connect_v5_advertises_receive_max);
     RUN_TEST(connect_v5_app_receive_max_preserved);
 #endif
@@ -8997,6 +9272,8 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_blocking_timeout_mid_body_fails_connection);
     RUN_TEST(wait_message_blocking_idle_timeout_keeps_connection);
 #endif
+    RUN_TEST(wait_message_reads_each_packet_once);
+    RUN_TEST(publish_header_fills_tx_buf_sends_payload);
     RUN_TEST(wait_message_qos0_publish_no_ack);
     RUN_TEST(wait_message_qos1_publish_acks_puback);
     RUN_TEST(wait_message_qos2_publish_acks_pubrec);
