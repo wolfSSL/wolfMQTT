@@ -866,10 +866,11 @@ typedef struct MqttBroker {
 #ifndef WOLFMQTT_STATIC_MEMORY
     /* Linked list of disconnected persistent sessions. Each entry holds
      * its own outbound queue + identity so messages published while the
-     * owning client is offline are retained until reconnect (or
-     * BROKER_MAX_PERSIST_SESSIONS forces drop-oldest eviction). Subs
-     * pointing at orphaned sessions keep sub->client=NULL; fan-out
-     * branches on that to look up the orphan by client_id. */
+     * owning client is offline are retained until reconnect. CONNECT refuses
+     * a new persistent Session once BROKER_MAX_PERSIST_SESSIONS are held, so
+     * existing ones are not evicted to make room. Subs pointing at orphaned
+     * sessions keep sub->client=NULL; fan-out branches on that to look up
+     * the orphan by client_id. */
     BrokerOrphanSession* orphan_sessions;
     int                  orphan_session_count;
 #endif

@@ -3648,6 +3648,32 @@ static BrokerOrphanSession* BrokerOrphan_Find(MqttBroker* broker,
     return NULL;
 }
 
+/* Persistent Sessions held by ClientIds other than client_id: saved offline
+ * Sessions plus established connections whose Session outlives them. A
+ * Session client_id already holds is excluded, since resuming or taking it
+ * over does not add one. */
+static int BrokerSession_CountOthers(MqttBroker* broker,
+    const char* client_id)
+{
+    BrokerOrphanSession* o;
+    BrokerClient* c;
+    int count = 0;
+
+    for (o = broker->orphan_sessions; o != NULL; o = o->next) {
+        if (o->client_id != NULL && XSTRCMP(o->client_id, client_id) != 0) {
+            count++;
+        }
+    }
+    for (c = broker->clients; c != NULL; c = c->next) {
+        if (c->session_established && c->session_expiry_sec != 0 &&
+                BROKER_STR_VALID(c->client_id) &&
+                XSTRCMP(c->client_id, client_id) != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
 /* Free everything an orphan owns (queue entries + client_id) but do
  * NOT unlink from broker->orphan_sessions; the caller does that. */
 static void BrokerOrphan_FreeContents(BrokerOrphanSession* o)
@@ -3880,7 +3906,8 @@ static BrokerOrphanSession* BrokerOrphan_Take(MqttBroker* broker,
     #endif
     }
 
-    /* Cap check; evict oldest if at limit. */
+    /* Backstop only: BrokerHandle_Connect refuses a new persistent Session at
+     * BROKER_MAX_PERSIST_SESSIONS, so the cap is not normally reached here. */
     while (broker->orphan_session_count >= BROKER_MAX_PERSIST_SESSIONS) {
         if (!BrokerOrphan_EvictOldest(broker)) {
             break;
@@ -7393,6 +7420,28 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         BrokerStaticOrphan_Sweep(broker, WOLFMQTT_BROKER_GET_TIME_S());
         orphan = BrokerStaticOrphan_Find(broker, bc->client_id);
         had_static_session = (orphan != NULL);
+    }
+#else
+    /* Bound persistent Sessions the same way: at BROKER_MAX_PERSIST_SESSIONS
+     * a new one is refused here, rather than admitted and later made room for
+     * by evicting another client's saved Session when this one goes offline.
+     * Resuming or taking over this ClientId's own Session is not counted. */
+    if (bc->session_expiry_sec != 0 && BROKER_STR_VALID(bc->client_id) &&
+            BrokerSession_CountOthers(broker, bc->client_id) >=
+                BROKER_MAX_PERSIST_SESSIONS) {
+        WBLOG_ERR(broker,
+            "broker: persistent-session quota exceeded sock=%d",
+            (int)bc->sock);
+    #ifdef WOLFMQTT_V5
+        if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            ack.return_code = MQTT_REASON_QUOTA_EXCEEDED;
+        }
+        else
+    #endif
+        {
+            ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+        }
+        goto send_connack;
     }
 #endif
 

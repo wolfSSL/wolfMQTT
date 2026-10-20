@@ -2162,6 +2162,92 @@ TEST(connect_refused_deferred_connack_scrubs_credentials)
 #endif /* WOLFMQTT_NONBLOCK */
 #endif /* WOLFMQTT_BROKER_AUTH */
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* One v3.1.1 CONNECT with CleanSession 0 for ClientId "c<NNN>" (MQTT 3.1.1
+ * section 3.1), optionally followed by DISCONNECT, through mock client 0.
+ * Returns the CONNACK return code, or -1 if none was written. */
+static int session_cap_connect(MqttBroker* broker, int n, int disconnect)
+{
+    static const byte disc[] = { 0xE0, 0x00 };
+    byte connect[] = {
+        0x10, 16,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C, /* level 4, CleanSession 0 */
+        0x00, 0x04, 'c', '0', '0', '0'
+    };
+    int i;
+
+    connect[15] = (byte)('0' + (n / 100) % 10);
+    connect[16] = (byte)('0' + (n / 10) % 10);
+    connect[17] = (byte)('0' + n % 10);
+    reset_mock_state(connect, sizeof(connect));
+    if (disconnect) {
+        mock_client_input_append(0, disc, sizeof(disc));
+    }
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(broker);
+        if (g_client_closed) {
+            break;
+        }
+    }
+    if (g_out_len < 4 || g_out_buf[0] != 0x20) {
+        return -1;
+    }
+    return g_out_buf[3];
+}
+
+static int session_cap_has_orphan(MqttBroker* broker, const char* client_id)
+{
+    BrokerOrphanSession* o;
+
+    for (o = broker->orphan_sessions; o != NULL; o = o->next) {
+        if (o->client_id != NULL && XSTRCMP(o->client_id, client_id) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* With BROKER_MAX_PERSIST_SESSIONS persistent Sessions held, a CONNECT asking
+ * for another one must be refused (CONNACK 0x03 Server unavailable, MQTT
+ * 3.1.1 section 3.2.2.3) rather than accepted and later admitted by evicting
+ * another client's saved Session. A client resuming its own Session does not
+ * add one and is still accepted. */
+TEST(connect_persistent_session_cap_refuses_new_session)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int n;
+    int rc;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    for (n = 0; n < BROKER_MAX_PERSIST_SESSIONS; n++) {
+        rc = session_cap_connect(&broker, n, 1);
+        if (rc != MQTT_CONNECT_ACK_CODE_ACCEPTED) {
+            FAIL("persistent session below the cap was not accepted");
+        }
+    }
+    ASSERT_EQ(BROKER_MAX_PERSIST_SESSIONS, broker.orphan_session_count);
+
+    /* A new ClientId would be one Session too many. */
+    rc = session_cap_connect(&broker, BROKER_MAX_PERSIST_SESSIONS, 1);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL, rc);
+    ASSERT_EQ(BROKER_MAX_PERSIST_SESSIONS, broker.orphan_session_count);
+    ASSERT_TRUE(session_cap_has_orphan(&broker, "c000"));
+
+    /* The oldest client resumes its own Session at the cap. */
+    rc = session_cap_connect(&broker, 0, 0);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, rc);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY */
+
 #ifdef WOLFMQTT_V5
 /* Return the Reason Code byte of the first DISCONNECT packet in a captured
  * stream, or -1 if none carries a reason code. A v5 DISCONNECT with a
@@ -14301,6 +14387,9 @@ int main(int argc, char** argv)
     RUN_TEST(connect_unsupported_level_6_refused);
     RUN_TEST(connect_unsupported_level_127_refused);
     RUN_TEST(connect_unsupported_level_undecodable_refused);
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(connect_persistent_session_cap_refuses_new_session);
+#endif
 #ifndef WOLFMQTT_V5
     RUN_TEST(connect_v5_to_non_v5_broker_refused);
 #endif
