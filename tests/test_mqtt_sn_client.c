@@ -101,6 +101,8 @@ typedef struct MockNet {
     int         write_fail_rc; /* if nonzero, write() returns this instead of
                                 * accepting the buffer (simulate short/failed
                                 * write) */
+    int         write_fail_type; /* fail only this MQTT-SN packet type, 0 =
+                                  * every write */
     int         write_chunk;   /* maximum bytes accepted per write */
     int         write_zero_count; /* zero-progress writes before accepting */
     int         read_zero_count;  /* zero-progress reads before delivering */
@@ -233,7 +235,8 @@ static int mock_write(void *ctx, const byte* buf, int buf_len, int timeout_ms)
 #endif
 
     net->write_calls++;
-    if (net->write_fail_rc != 0) {
+    if (net->write_fail_rc != 0 && (net->write_fail_type == 0 ||
+            (buf_len > 1 && buf[1] == net->write_fail_type))) {
         /* Simulate a short/failed write so the caller's rc != xfer error path is
          * exercised. The buffer is left as the caller encoded it (not captured),
          * matching a real transport that errored mid-send. */
@@ -861,6 +864,48 @@ TEST(sn_connect_lwt_no_continue)
  * sn_subscribe_rejected. Without the guard this connect would report
  * MQTT_CODE_SUCCESS over a link the gateway actually refused. Runs in every SN
  * build. */
+/* SN_Client_Connect is resumable and keyed off mc_connect->stat.write. When
+ * the Will exchange after CONNECT fails, the call must leave the object ready
+ * to start over: write state back at BEGIN and, in multithread builds, the
+ * CONNACK pending response unlinked. A retry with the same SN_Connect then
+ * sends a new CONNECT; the gateway only issues WILLTOPICREQ in reply to one
+ * (MQTT-SN 1.2 section 6.3). The first attempt fails because the WILLTOPIC
+ * write fails at the transport. */
+TEST(sn_connect_will_error_allows_retry)
+{
+    SN_Connect mc;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
+    g_mock.write_fail_type = SN_MSG_TYPE_WILLTOPIC;
+
+    sn_will_setup_connect(&mc);
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_TRUE(rc < 0);
+    ASSERT_TRUE(rc != MQTT_CODE_CONTINUE);
+    ASSERT_EQ(MQTT_MSG_BEGIN, mc.stat.write);
+    ASSERT_NO_PENDRESP();
+
+    /* Retry with the same object: CONNECT goes out again first. */
+    g_mock.write_fail_rc = 0;
+    g_mock.write_fail_type = 0;
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    mock_net_push(&g_mock, CONNACK_FRAME,      (int)sizeof(CONNACK_FRAME));
+    g_mock.out_len = 0;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, mc.ack.return_code);
+    ASSERT_TRUE(g_mock.out_len >= 2);
+    ASSERT_EQ(SN_MSG_TYPE_CONNECT, g_mock.out[1]);
+    ASSERT_NO_PENDRESP();
+}
+
 TEST(sn_connect_refused)
 {
     SN_Connect mc;
@@ -3327,6 +3372,7 @@ int main(int argc, char** argv)
     /* Happy path runs in every SN build (blocking and non-blocking). */
     RUN_TEST(sn_connect_lwt_no_continue);
     RUN_TEST(sn_connect_refused);
+    RUN_TEST(sn_connect_will_error_allows_retry);
     RUN_TEST(sn_will_payload_scrubbed_after_send);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
     RUN_TEST(sn_willtopicupd_null_topic_sends_delete);

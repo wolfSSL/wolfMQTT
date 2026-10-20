@@ -1395,6 +1395,23 @@ enum {
     SN_WILL_DONE_TOPIC = 2  /* will topic sent, message still pending */
 };
 
+/* The Will exchange after CONNECT failed. Release the CONNACK pending
+ * response and rewind the state so a retry with the same SN_Connect sends a
+ * new CONNECT; the gateway only requests the Will in reply to one. */
+static void SN_Client_ConnectReset(MqttClient *client, SN_Connect *mc_connect)
+{
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) == 0) {
+        MqttClient_RespList_Remove(client, &mc_connect->pendResp);
+        wm_SemUnlock(&client->lockClient);
+    }
+#else
+    (void)client;
+#endif
+    mc_connect->stat.write = MQTT_MSG_BEGIN;
+    mc_connect->will_done = SN_WILL_DONE_NONE;
+}
+
 int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 {
     int rc = 0;
@@ -1469,6 +1486,9 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         if (mc_connect->will_done == SN_WILL_DONE_NONE) {
             rc = SN_WillTopic(client, &mc_connect->will);
             if (rc != 0) {
+                if (rc != MQTT_CODE_CONTINUE) {
+                    SN_Client_ConnectReset(client, mc_connect);
+                }
                 return rc;
             }
             mc_connect->will_done = SN_WILL_DONE_TOPIC;
@@ -1476,6 +1496,9 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 
         rc = SN_WillMessage(client, &mc_connect->will);
         if (rc != 0) {
+            if (rc != MQTT_CODE_CONTINUE) {
+                SN_Client_ConnectReset(client, mc_connect);
+            }
             return rc;
         }
         mc_connect->will_done = SN_WILL_DONE_ALL;
