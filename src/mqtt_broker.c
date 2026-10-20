@@ -6645,7 +6645,18 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 
     WBLOG_INFO(broker, "broker: CONNECT recv sock=%d len=%d", (int)bc->sock, rx_len);
     rc = MqttDecode_Connect(bc->rx_buf, rx_len, &mc);
-    if (rc < 0) {
+    /* The decoder records the Protocol Level once the Protocol Name checks
+     * out, before the rest of the packet, whose layout depends on that
+     * level. A CONNECT for a level this build does not support may then fail
+     * to decode, yet [MQTT-3.1.2-2] still calls for CONNACK 0x01: let it
+     * reach the unsupported-level refusal below. Level 0 means the decoder
+     * stopped before reading it. */
+    if (rc < 0 && (mc.protocol_level == 0 ||
+            mc.protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_4
+        #ifdef WOLFMQTT_V5
+            || mc.protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5
+        #endif
+            )) {
         WBLOG_ERR(broker, "broker: CONNECT decode failed rc=%d", rc);
     #ifdef WOLFMQTT_V5
         if (mc.props) { (void)MqttProps_Free(mc.props); }

@@ -1129,6 +1129,71 @@ TEST(connect_unsupported_level_127_refused)
     run_unsupported_level(0x7F);
 }
 
+/* The body of a CONNECT is laid out by its Protocol Level, so a level this
+ * build does not speak may not decode at all. [MQTT-3.1.2-2] still requires
+ * CONNACK 0x01 rather than a silent close, which is also what lets an MQTT 5
+ * client fall back to 3.1.1 against a broker built without v5. */
+static void run_undecodable_unsupported_level(const byte* connect,
+    size_t connect_len)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(0x02, g_out_buf[1]);
+    ASSERT_EQ(0x00, g_out_buf[2]);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_PROTO, g_out_buf[3]);
+    ASSERT_TRUE(g_client_closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+TEST(connect_unsupported_level_undecodable_refused)
+{
+    /* Level 6, ClientId length 5 with one byte present: malformed whether
+     * the body is read with or without a v5 Property Length. */
+    static const byte connect[] = {
+        0x10, 13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x06, /* unsupported protocol level */
+        0x02, /* CleanSession=1 */
+        0x00, 0x3C,
+        0x00, 0x05, 'A'
+    };
+
+    run_undecodable_unsupported_level(connect, sizeof(connect));
+}
+
+#ifndef WOLFMQTT_V5
+TEST(connect_v5_to_non_v5_broker_refused)
+{
+    /* A well-formed MQTT 5 CONNECT (MQTT 5.0 section 3.1.2) with a Session
+     * Expiry Interval property. Read as 3.1.1, the Property Length 0x05 and
+     * the property identifier 0x11 become a 0x0511-byte ClientId length. */
+    static const byte connect[] = {
+        0x10, 19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, /* MQTT 5.0 */
+        0x02, /* CleanStart=1 */
+        0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C, /* Session Expiry = 60 */
+        0x00, 0x01, 'A'
+    };
+
+    run_undecodable_unsupported_level(connect, sizeof(connect));
+}
+#endif
+
 #ifdef WOLFMQTT_BROKER_AUTH
 /* Regression: [MQTT-3.1.3.5] Password is Binary Data and may legally
  * contain 0x00. The broker must not use XSTRLEN-based length recovery on
@@ -13617,6 +13682,10 @@ int main(int argc, char** argv)
     RUN_TEST(connect_unsupported_level_3_refused);
     RUN_TEST(connect_unsupported_level_6_refused);
     RUN_TEST(connect_unsupported_level_127_refused);
+    RUN_TEST(connect_unsupported_level_undecodable_refused);
+#ifndef WOLFMQTT_V5
+    RUN_TEST(connect_v5_to_non_v5_broker_refused);
+#endif
 #ifdef WOLFMQTT_BROKER_AUTH
     RUN_TEST(connect_v311_binary_password_with_embedded_nul_refused);
     RUN_TEST(connect_v311_binary_password_exact_match_accepted);
