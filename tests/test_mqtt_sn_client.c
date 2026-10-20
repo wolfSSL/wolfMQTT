@@ -1496,15 +1496,9 @@ TEST(sn_qos2_retransmit_not_delivered_twice)
     mock_net_push(&g_mock, rel, (int)sizeof(rel));
     mock_net_push(&g_mock, pub2, (int)sizeof(pub2));
 
-    /* Each frame is waited for on a fresh wait object, as in
-     * sn_will_response_reset_clears_return_code: a completed wait leaves
-     * client->msgSN at its payload state. */
     for (i = 0; i < 40 && g_mock.in_idx < g_mock.in_count; i++) {
         rc = SN_Client_WaitMessage(&g_client, 1000);
-        if (rc == MQTT_CODE_SUCCESS) {
-            XMEMSET(&g_client.msgSN, 0, sizeof(g_client.msgSN));
-        }
-        else if (rc != MQTT_CODE_CONTINUE) {
+        if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
             FAIL("SN_Client_WaitMessage failed");
         }
     }
