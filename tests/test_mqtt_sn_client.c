@@ -952,6 +952,39 @@ TEST(sn_will_payload_scrubbed_after_send)
     sn_will_scrub_check(0 /* no CONTINUE */);
 }
 
+/* When the WILLMSG cannot be encoded (here the Will Message is larger than
+ * tx_buf), SN_WillMessage releases the writer after wiping tx_buf, like the
+ * other encode-failure paths. The wipe must cover the whole buffer: tx_buf is
+ * pre-filled to stand in for earlier traffic, and none of it may remain. */
+TEST(sn_willmsg_encode_failure_scrubs_tx_buf)
+{
+    SN_Connect mc;
+    int rc, i;
+    static byte big_msg[600]; /* larger than the 512-byte test tx_buf */
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    XMEMSET(g_client.tx_buf, 0x5A, (size_t)g_client.tx_buf_len);
+    XMEMSET(big_msg, 'w', sizeof(big_msg));
+
+    sn_will_setup_connect(&mc);
+    mc.will.willMsg = big_msg;
+    mc.will.willMsgLen = (word16)sizeof(big_msg);
+    ASSERT_TRUE((int)sizeof(big_msg) > g_client.tx_buf_len);
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_TRUE(rc < 0);
+    ASSERT_TRUE(rc != MQTT_CODE_CONTINUE);
+    for (i = 0; i < g_client.tx_buf_len; i++) {
+        if (g_client.tx_buf[i] != 0) {
+            FAIL("tx_buf not wiped after WILLMSG encode failure");
+        }
+    }
+    ASSERT_NO_PENDRESP();
+}
+
 /* ============================================================================
  * SN will-message-update scrub test (#3138)
  *
@@ -3374,6 +3407,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connect_refused);
     RUN_TEST(sn_connect_will_error_allows_retry);
     RUN_TEST(sn_will_payload_scrubbed_after_send);
+    RUN_TEST(sn_willmsg_encode_failure_scrubs_tx_buf);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
     RUN_TEST(sn_willtopicupd_null_topic_sends_delete);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);

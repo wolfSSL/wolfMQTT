@@ -1320,7 +1320,9 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
                 will->stat.write = MQTT_MSG_PAYLOAD;
             }
             else {
-                CLIENT_FORCE_ZERO(client->tx_buf, client->write.len);
+                /* write.len was not set for this packet; wipe the whole
+                 * buffer as the other encode-failure paths do. */
+                CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
                 MqttWriteStop(client, &will->stat);
                 will->stat.write = MQTT_MSG_BEGIN;
                 break;
