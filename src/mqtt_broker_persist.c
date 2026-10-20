@@ -211,8 +211,23 @@ static INLINE int wmqb_read_header(const byte* buf, word32 buf_len,
     return 0;
 }
 
+#if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) || \
+    !defined(WOLFMQTT_STATIC_MEMORY)
+/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
+static void wmqb_force_zero(void* mem, word32 len)
+{
+    volatile byte* p = (volatile byte*)mem;
+    if (p == NULL) {
+        return;
+    }
+    while (len > 0) {
+        *p++ = 0;
+        len--;
+    }
+}
+#endif
+
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
-static void wmqb_force_zero(void* mem, word32 len);
 
 /* Lazy-init key cache. Single-threaded broker - no lock needed. The
  * application-provided derive_key hook fills 32 bytes on first request.
@@ -255,19 +270,6 @@ static int wmqb_get_key(MqttBroker* broker)
  * rekeying only when persist_key_cache changes would amortize the AES
  * key schedule. Requires deciding the threading model first - today
  * the broker is single-threaded so a single shared context is safe. */
-/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
-static void wmqb_force_zero(void* mem, word32 len)
-{
-    volatile byte* p = (volatile byte*)mem;
-    if (p == NULL) {
-        return;
-    }
-    while (len > 0) {
-        *p++ = 0;
-        len--;
-    }
-}
-
 /* AES-GCM additional data: the record header followed by where the record
  * is stored, encoded unambiguously as namespace(1) || key_len(2, big
  * endian) || key. A ciphertext moved to another namespace or storage key
@@ -1767,6 +1769,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
 
         payload_len = wmqb_r_u32(p); p += 4;
         if ((word32)(end - p) < payload_len) {
+            wmqb_force_zero(m->topic, (word32)topic_len + 1);
             WOLFMQTT_FREE(m->topic);
             WOLFMQTT_FREE(m);
             return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -1774,6 +1777,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         if (payload_len > 0) {
             m->payload = (byte*)WOLFMQTT_MALLOC(payload_len);
             if (m->payload == NULL) {
+                wmqb_force_zero(m->topic, (word32)topic_len + 1);
                 WOLFMQTT_FREE(m->topic);
                 WOLFMQTT_FREE(m);
                 return MQTT_CODE_ERROR_MEMORY;
@@ -2520,6 +2524,7 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
 
     payload_len = wmqb_r_u32(p); p += 4;
     if ((word32)(end - p) < payload_len) {
+        wmqb_force_zero(e->topic, (word32)topic_len + 1);
         WOLFMQTT_FREE(e->topic);
         WOLFMQTT_FREE(e);
         return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -2527,6 +2532,7 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     if (payload_len > 0) {
         e->payload = (byte*)WOLFMQTT_MALLOC(payload_len);
         if (e->payload == NULL) {
+            wmqb_force_zero(e->topic, (word32)topic_len + 1);
             WOLFMQTT_FREE(e->topic);
             WOLFMQTT_FREE(e);
             return MQTT_CODE_ERROR_MEMORY;

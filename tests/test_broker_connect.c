@@ -45,6 +45,7 @@
     #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
         #include <wolfssl/wolfcrypt/aes.h>
     #endif
+    #include <dirent.h>
     #include <errno.h>
     #include <fcntl.h>
     #include <sys/socket.h>
@@ -144,7 +145,8 @@ static void broker_test_disable_alloc_failure(void)
 }
 #endif
 
-#ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+#if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) || \
+    (defined(WOLFMQTT_BROKER_PERSIST) && !defined(WOLFMQTT_STATIC_MEMORY))
 static void broker_test_capture_free(size_t allocation_size)
 {
     g_capture_alloc_size = allocation_size;
@@ -12571,6 +12573,277 @@ TEST(persist_root_writable_permissions_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, persist_test_init_root_mode(0777));
 }
 
+#if !defined(WOLFMQTT_STATIC_MEMORY) && \
+    !defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
+/* Drop the last cut bytes of the only record in root/<ns> and lower the
+ * header's body length to match (record header: magic(4) version(2) kind(1)
+ * wrap(1) body_len(4, big-endian)), so the record stays self-consistent and
+ * only the payload length inside the body overruns. Returns 0 on success. */
+static int persist_truncate_only_record(const char* root, byte ns,
+    long cut)
+{
+    char dir_path[640];
+    char rec_path[1024];
+    byte hdr[12];
+    struct stat st;
+    struct dirent* ent;
+    DIR* d;
+    FILE* f;
+    word32 body_len;
+    int rc = -1;
+
+    if (snprintf(dir_path, sizeof(dir_path), "%s/%u", root,
+            (unsigned)ns) <= 0) {
+        return -1;
+    }
+    d = opendir(dir_path);
+    if (d == NULL) {
+        return -1;
+    }
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] != '.') {
+            break;
+        }
+    }
+    if (ent != NULL &&
+            snprintf(rec_path, sizeof(rec_path), "%s/%s", dir_path,
+                ent->d_name) > 0 &&
+            stat(rec_path, &st) == 0 && st.st_size > cut + (long)sizeof(hdr)) {
+        f = fopen(rec_path, "r+b");
+        if (f != NULL) {
+            if (fread(hdr, 1, sizeof(hdr), f) == sizeof(hdr)) {
+                body_len = ((word32)hdr[8] << 24) | ((word32)hdr[9] << 16) |
+                    ((word32)hdr[10] << 8) | (word32)hdr[11];
+                body_len -= (word32)cut;
+                hdr[8] = (byte)(body_len >> 24);
+                hdr[9] = (byte)(body_len >> 16);
+                hdr[10] = (byte)(body_len >> 8);
+                hdr[11] = (byte)body_len;
+                if (fseek(f, 0, SEEK_SET) == 0 &&
+                        fwrite(hdr, 1, sizeof(hdr), f) == sizeof(hdr)) {
+                    rc = 0;
+                }
+            }
+            if (fclose(f) != 0) {
+                rc = -1;
+            }
+        }
+        if (rc == 0 && truncate(rec_path, st.st_size - cut) != 0) {
+            rc = -1;
+        }
+    }
+    (void)closedir(d);
+    return rc;
+}
+
+/* Remove root/<ns>/<record> left by the POSIX backend. */
+static void persist_remove_tree(const char* root)
+{
+    char dir_path[640];
+    char rec_path[1024];
+    struct dirent* ent;
+    struct dirent* sub;
+    DIR* d;
+    DIR* sd;
+
+    d = opendir(root);
+    if (d == NULL) {
+        return;
+    }
+    while ((ent = readdir(d)) != NULL) {
+        if (ent->d_name[0] == '.') {
+            continue;
+        }
+        if (snprintf(dir_path, sizeof(dir_path), "%s/%s", root,
+                ent->d_name) <= 0) {
+            continue;
+        }
+        sd = opendir(dir_path);
+        if (sd == NULL) {
+            (void)unlink(dir_path);
+            continue;
+        }
+        while ((sub = readdir(sd)) != NULL) {
+            if (sub->d_name[0] != '.' &&
+                    snprintf(rec_path, sizeof(rec_path), "%s/%s", dir_path,
+                        sub->d_name) > 0) {
+                (void)unlink(rec_path);
+            }
+        }
+        (void)closedir(sd);
+        (void)rmdir(dir_path);
+    }
+    (void)closedir(d);
+    (void)rmdir(root);
+}
+
+/* Whether the captured freed allocation was all zero. */
+static int persist_captured_free_zeroed(void)
+{
+    size_t i;
+
+    for (i = 0; i < g_capture_freed_len; i++) {
+        if (g_capture_freed[i] != 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* A 40-character topic: its heap copy is 41 bytes, a size nothing else
+ * allocates during these restores, so the free capture sees only it. */
+#define PERSIST_SCRUB_TOPIC "secret/plant-7/valve-control/setpoint-01"
+
+/* Restore copies a persisted topic to the heap before it reads the payload.
+ * When the record turns out to be malformed the copy is freed; topic strings
+ * are application data the broker scrubs before freeing elsewhere, so it must
+ * be wiped first. The record is cut short on disk so its declared payload
+ * overruns the file. */
+TEST(persist_restore_malformed_retained_scrubs_topic)
+{
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    MqttBroker source;
+    MqttBroker restored;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    BrokerRetainedMsg rm;
+    char topic[] = PERSIST_SCRUB_TOPIC;
+    byte payload[8] = { 'p', 'a', 'y', 'l', 'o', 'a', 'd', '!' };
+    char* root;
+    int init_rc;
+    int put_rc = MQTT_CODE_ERROR_SYSTEM;
+    int cut_rc = -1;
+    int restore_rc = MQTT_CODE_ERROR_SYSTEM;
+    int seen = 0;
+    int zeroed = 0;
+    int retained_empty = 0;
+
+    install_mock_net(&net);
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        XMEMSET(&source, 0, sizeof(source));
+        XMEMSET(&rm, 0, sizeof(rm));
+        rm.topic = topic;
+        rm.payload = payload;
+        rm.payload_len = (word32)sizeof(payload);
+        rm.qos = MQTT_QOS_0;
+        rm.store_time = (WOLFMQTT_BROKER_TIME_T)1;
+        if (MqttBroker_Init(&source, &net) == MQTT_CODE_SUCCESS &&
+                MqttBroker_SetPersistHooks(&source, &hooks) ==
+                    MQTT_CODE_SUCCESS &&
+                BrokerPersist_Restore(&source) == MQTT_CODE_SUCCESS) {
+            put_rc = BrokerPersist_PutRetained(&source, &rm);
+        }
+        MqttBroker_Free(&source);
+        cut_rc = persist_truncate_only_record(root,
+            BROKER_PERSIST_NS_RETAINED, (long)sizeof(payload));
+
+        XMEMSET(&restored, 0, sizeof(restored));
+        broker_test_capture_free(sizeof(topic));
+        if (MqttBroker_Init(&restored, &net) == MQTT_CODE_SUCCESS &&
+                MqttBroker_SetPersistHooks(&restored, &hooks) ==
+                    MQTT_CODE_SUCCESS) {
+            restore_rc = BrokerPersist_Restore(&restored);
+        }
+        seen = g_capture_free_seen;
+        zeroed = persist_captured_free_zeroed();
+        broker_test_disable_free_capture();
+        retained_empty = (restored.retained == NULL);
+        MqttBroker_Free(&restored);
+        MqttBrokerNet_PersistPosix_Free(&hooks);
+    }
+    persist_remove_tree(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, put_rc);
+    ASSERT_EQ(0, cut_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, restore_rc);
+    ASSERT_TRUE(retained_empty);
+    ASSERT_TRUE(seen);
+    ASSERT_TRUE(zeroed);
+}
+
+/* The same for a queued outbound message of an offline Session. */
+TEST(persist_restore_malformed_outq_scrubs_topic)
+{
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    MqttBroker source;
+    MqttBroker restored;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    BrokerOutPub out;
+    char topic[] = PERSIST_SCRUB_TOPIC;
+    byte payload[8] = { 'p', 'a', 'y', 'l', 'o', 'a', 'd', '!' };
+    char* root;
+    int init_rc;
+    int put_rc = MQTT_CODE_ERROR_SYSTEM;
+    int cut_rc = -1;
+    int restore_rc = MQTT_CODE_ERROR_SYSTEM;
+    int seen = 0;
+    int zeroed = 0;
+    int queue_len = -1;
+
+    install_mock_net(&net);
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        XMEMSET(&source, 0, sizeof(source));
+        XMEMSET(&out, 0, sizeof(out));
+        out.topic = topic;
+        out.payload = payload;
+        out.payload_len = (word32)sizeof(payload);
+        out.qos = MQTT_QOS_1;
+        out.packet_id = 1;
+        out.state = BROKER_OUTQ_QUEUED;
+        out.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+        out.enq_time = (WOLFMQTT_BROKER_TIME_T)1;
+        out.enqueue_seq = 1;
+        if (MqttBroker_Init(&source, &net) == MQTT_CODE_SUCCESS &&
+                MqttBroker_SetPersistHooks(&source, &hooks) ==
+                    MQTT_CODE_SUCCESS &&
+                BrokerPersist_Restore(&source) == MQTT_CODE_SUCCESS &&
+                BrokerPersist_PutOrphanSession(&source, "cid",
+                    MQTT_CONNECT_PROTOCOL_LEVEL_4, 0xFFFFFFFFu,
+                    (WOLFMQTT_BROKER_TIME_T)1) == MQTT_CODE_SUCCESS) {
+            put_rc = BrokerPersist_PutOutPub(&source, "cid", &out);
+        }
+        MqttBroker_Free(&source);
+        cut_rc = persist_truncate_only_record(root, BROKER_PERSIST_NS_OUTQ,
+            (long)sizeof(payload));
+
+        XMEMSET(&restored, 0, sizeof(restored));
+        broker_test_capture_free(sizeof(topic));
+        if (MqttBroker_Init(&restored, &net) == MQTT_CODE_SUCCESS &&
+                MqttBroker_SetPersistHooks(&restored, &hooks) ==
+                    MQTT_CODE_SUCCESS) {
+            restore_rc = BrokerPersist_Restore(&restored);
+        }
+        seen = g_capture_free_seen;
+        zeroed = persist_captured_free_zeroed();
+        broker_test_disable_free_capture();
+        if (restored.orphan_sessions != NULL) {
+            queue_len = restored.orphan_sessions->out_q_count;
+        }
+        MqttBroker_Free(&restored);
+        MqttBrokerNet_PersistPosix_Free(&hooks);
+    }
+    persist_remove_tree(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, put_rc);
+    ASSERT_EQ(0, cut_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, restore_rc);
+    ASSERT_EQ(0, queue_len);
+    ASSERT_TRUE(seen);
+    ASSERT_TRUE(zeroed);
+}
+#endif /* !WOLFMQTT_STATIC_MEMORY && !WOLFMQTT_BROKER_PERSIST_ENCRYPT */
+
 /* kv_get fills at most *inout_len bytes. A record larger than that must be
  * reported as MQTT_CODE_ERROR_OUT_OF_BUFFER rather than returned truncated as
  * if it were the whole record; the META check relies on that result to treat
@@ -14285,6 +14558,11 @@ int main(int argc, char** argv)
     RUN_TEST(persist_put_rejects_existing_temp_symlink);
     RUN_TEST(persist_put_del_report_namespace_fsync_failure);
     RUN_TEST(persist_get_reports_record_larger_than_buffer);
+#if !defined(WOLFMQTT_STATIC_MEMORY) && \
+    !defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
+    RUN_TEST(persist_restore_malformed_retained_scrubs_topic);
+    RUN_TEST(persist_restore_malformed_outq_scrubs_topic);
+#endif
     RUN_TEST(persist_iter_reports_unreadable_record);
     RUN_TEST(persist_iter_skips_socket_and_symlink_entries);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
