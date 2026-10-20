@@ -25,6 +25,10 @@ static wm_Sem* sem_watch_recv_lock;
 static MqttMsgStat* sem_watch_ping_stat;
 static int sem_stale_ping_locks;
 static int sem_watched_recv_locks;
+static wm_Sem* sem_fail_lock;
+static wm_Sem* sem_fail_lock_while_held;
+static int sem_fail_lock_skip;
+static int quota_write_calls;
 
 #ifdef ENABLE_MQTT_CURL
     #define TEST_CLIENT_LOCK_COUNT 4
@@ -52,6 +56,10 @@ static void reset_sem_state(void)
     sem_watch_ping_stat = NULL;
     sem_stale_ping_locks = 0;
     sem_watched_recv_locks = 0;
+    sem_fail_lock = NULL;
+    sem_fail_lock_while_held = NULL;
+    sem_fail_lock_skip = 0;
+    quota_write_calls = 0;
 }
 
 int wm_SemInit(wm_Sem* sem)
@@ -83,6 +91,20 @@ int wm_SemFree(wm_Sem* sem)
 
 int wm_SemLock(wm_Sem* sem)
 {
+    /* Fail one acquisition of sem_fail_lock made while
+     * sem_fail_lock_while_held is owned, after skipping sem_fail_lock_skip
+     * such acquisitions, so a test can target a single lock inside a larger
+     * operation. */
+    if (sem == sem_fail_lock && sem_fail_lock_while_held != NULL &&
+            sem_fail_lock_while_held->lock_count > 0) {
+        if (sem_fail_lock_skip > 0) {
+            sem_fail_lock_skip--;
+        }
+        else {
+            sem_fail_lock = NULL;
+            return MQTT_CODE_ERROR_SYSTEM;
+        }
+    }
     sem->lock_count++;
     if (sem == sem_watch_recv_lock) {
         sem_watched_recv_locks++;
@@ -479,6 +501,80 @@ static int test_failed_property_free_retried(void)
     return 0;
 }
 
+static int quota_net_write(void* context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context;
+    (void)buf;
+    (void)timeout_ms;
+    quota_write_calls++;
+    return buf_len;
+}
+
+/* [MQTT-3.3.4-9] The Client MUST NOT send more QoS 1/2 PUBLISH packets than
+ * the server's Receive Maximum allows. If lockClient cannot be taken to
+ * reserve a unit, the quota was never checked, so the PUBLISH must be refused
+ * rather than sent. The quota is exhausted here so any send exceeds it. */
+static int test_recv_quota_lock_failure_refuses_publish(void)
+{
+    int rc;
+    MqttClient client;
+    MqttNet net;
+    MqttPublish publish;
+    byte tx_buf[64];
+    byte rx_buf[64];
+    byte payload[1] = { 'x' };
+
+    reset_sem_state();
+    XMEMSET(&net, 0, sizeof(net));
+    XMEMSET(&publish, 0, sizeof(publish));
+    net.connect = ping_net_connect;
+    net.read = ping_net_read;
+    net.write = quota_net_write;
+    net.disconnect = ping_net_disconnect;
+
+    rc = MqttClient_Init(&client, &net, NULL, tx_buf, sizeof(tx_buf),
+        rx_buf, sizeof(rx_buf), 1000);
+    if (rc != MQTT_CODE_SUCCESS) {
+        fprintf(stderr, "quota client initialization returned %d\n", rc);
+        return 1;
+    }
+    (void)MqttClient_Flags(&client, 0,
+        MQTT_CLIENT_FLAG_CONNECT_SENT | MQTT_CLIENT_FLAG_IS_CONNECTED);
+    client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    client.server_recv_max_negotiated = 1;
+    client.server_recv_max = 0;
+
+    publish.qos = MQTT_QOS_1;
+    publish.packet_id = 1;
+    publish.topic_name = "t";
+    publish.buffer = payload;
+    publish.total_len = (word32)sizeof(payload);
+
+    /* With lockSend held, MqttWriteStart first takes lockClient to mark the
+     * writer active; the next lockClient acquisition is the Receive Maximum
+     * reservation, which is the one that fails. */
+    sem_fail_lock = &client.lockClient;
+    sem_fail_lock_while_held = &client.lockSend;
+    sem_fail_lock_skip = 1;
+    rc = MqttClient_Publish(&client, &publish);
+    sem_fail_lock = NULL;
+    sem_fail_lock_while_held = NULL;
+
+    if (rc != MQTT_CODE_ERROR_SYSTEM || quota_write_calls != 0 ||
+            publish.stat.recvQuotaHeld != 0 || client.server_recv_max != 0) {
+        fprintf(stderr,
+            "quota lock failure returned %d, writes=%d held=%d quota=%u\n",
+            rc, quota_write_calls, publish.stat.recvQuotaHeld,
+            (unsigned)client.server_recv_max);
+        MqttClient_DeInit(&client);
+        return 1;
+    }
+
+    MqttClient_DeInit(&client);
+    return 0;
+}
+
 int main(void)
 {
     if (test_sn_null_ping_resets_terminal_read_state() != 0) {
@@ -500,6 +596,9 @@ int main(void)
         return 1;
     }
     if (test_repeated_client_deinit_preserves_property_owner() != 0) {
+        return 1;
+    }
+    if (test_recv_quota_lock_failure_refuses_publish() != 0) {
         return 1;
     }
     return 0;

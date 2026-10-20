@@ -448,14 +448,17 @@ WOLFMQTT_LOCAL void MqttReadStop(MqttClient* client, MqttMsgStat* stat)
  * duplicate, or unmatched ack cannot credit the quota twice. */
 /* Atomically test-and-reserve one quota unit under lockClient (fixes the
  * unlocked exhaustion race). Returns 1 if a unit is held for this publish
- * (already held, or newly reserved), 0 if the quota is exhausted. */
+ * (already held, or newly reserved), 0 if the quota is exhausted, or a
+ * negative error code if lockClient could not be taken, in which case the
+ * quota was not checked and nothing is reserved. */
 static int MqttClient_RecvQuotaReserve(MqttClient* client,
     MqttPublish* publish)
 {
     int reserved = 0;
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) != 0) {
-        return 1; /* lock failure: do not fail the publish on a quota race */
+    int rc = wm_SemLock(&client->lockClient);
+    if (rc != 0) {
+        return rc;
     }
 #endif
     if (publish->stat.recvQuotaHeld) {
@@ -4134,14 +4137,20 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
              * non-blocking one keeps its pending response for the reader, so
              * both reserve. */
             if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
-                publish->qos > MQTT_QOS_0 &&
+                publish->qos > MQTT_QOS_0
             #if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
-                !writeOnly &&
+                && !writeOnly
             #endif
-                !MqttClient_RecvQuotaReserve(client, publish))
+                )
             {
-                MqttWriteStop(client, &publish->stat);
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+                rc = MqttClient_RecvQuotaReserve(client, publish);
+                if (rc <= 0) {
+                    MqttWriteStop(client, &publish->stat);
+                    if (rc == 0) {
+                        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+                    }
+                    return rc;
+                }
             }
         #endif
 
