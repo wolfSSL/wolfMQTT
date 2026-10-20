@@ -4475,6 +4475,106 @@ TEST(publish_refused_when_replay_pool_full_on_persistent_session)
     ASSERT_EQ(0, frames);
 }
 
+/* Feed fixed v3.1.1 PUBREC frames (MQTT 3.1.1 section 3.5: 0x50, Remaining
+ * Length 2, Packet Identifier) through MqttClient_WaitMessage until all are
+ * consumed. */
+static int run_wait_pubrecs(const byte* frames, int frames_len)
+{
+    int rc = MQTT_CODE_SUCCESS;
+    int i;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, frames, (size_t)frames_len);
+    g_canned_len = frames_len;
+    g_canned_pos = 0;
+    for (i = 0; i < 40 && g_canned_pos < g_canned_len; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+        if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    return rc;
+}
+
+/* The replay pool holds this client's own unacknowledged QoS > 0 PUBLISHes
+ * [MQTT-4.4.0-1]. A PUBREC naming an identifier the client never published
+ * is not part of its Session state (MQTT 5.0 section 3.6.2.1 calls it Packet
+ * Identifier not found), so it must not take a pool slot: a server sending
+ * one per slot would otherwise make every later QoS > 0 publish on this
+ * persistent Session fail for lack of room. */
+TEST(unsolicited_pubrec_does_not_fill_replay_pool)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish publish;
+    byte pubrecs[4 * MQTT_MAX_REPLAY_MSGS];
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    ASSERT_TRUE((int)sizeof(pubrecs) <= (int)sizeof(g_canned_buf));
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        pubrecs[4 * i] = 0x50;
+        pubrecs[4 * i + 1] = 0x02;
+        pubrecs[4 * i + 2] = 0x02;
+        pubrecs[4 * i + 3] = (byte)(0x01 + i); /* ids 0x0201.. */
+    }
+    rc = run_wait_pubrecs(pubrecs, (int)sizeof(pubrecs));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x0300, "t", payload,
+        (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    /* Sent and left unacknowledged, not refused for lack of a slot. */
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+}
+
+/* A PUBREC is the QoS 2 response; for the identifier of an outstanding QoS 1
+ * PUBLISH it does not advance that exchange. The QoS 1 message is still
+ * unacknowledged, so a resumed Session must re-send the PUBLISH
+ * [MQTT-4.4.0-1], not a PUBREL. */
+TEST(pubrec_for_qos1_id_keeps_publish_replay)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+    /* PUBREC for Packet Identifier 0x0110, the QoS 1 publish below. */
+    static const byte pubrec[] = { 0x50, 0x02, 0x01, 0x10 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x0110, "sensor/temp", payload,
+        (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+
+    (void)run_wait_pubrecs(pubrec, (int)sizeof(pubrec));
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    replay_mock_reset();
+    rc = run_reconnect_with(&connect, 1, replay_mock_write);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    ASSERT_EQ(2, g_replay_frames);
+    ASSERT_EQ(MQTT_PACKET_TYPE_CONNECT, g_replay_types[0]);
+    ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH, g_replay_types[1]);
+}
+
 #ifdef WOLFMQTT_V5
 /* MQTT 5.0 section 3.2.2.3.2: a Session Expiry Interval in CONNACK replaces
  * the one requested in CONNECT. When the server negotiates it down to 0 the
@@ -8471,6 +8571,8 @@ void run_mqtt_client_tests(void)
 #if !defined(WOLFMQTT_NO_SESSION_REPLAY) && WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(reconnect_replays_unacked_qos1_publish);
     RUN_TEST(publish_refused_when_replay_pool_full_on_persistent_session);
+    RUN_TEST(unsolicited_pubrec_does_not_fill_replay_pool);
+    RUN_TEST(pubrec_for_qos1_id_keeps_publish_replay);
     RUN_TEST(publish_allowed_past_replay_pool_on_clean_session);
 #ifdef WOLFMQTT_V5
     RUN_TEST(publish_allowed_past_replay_pool_when_connack_ends_session);

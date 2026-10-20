@@ -77,6 +77,7 @@ WOLFMQTT_LOCAL void MqttClient_ForceZero(void* mem, word32 len)
 /* forward declarations */
 static int MqttClient_Publish_ReadPayload(MqttClient* client,
     MqttPublish* publish, int timeout_ms);
+static int MqttClient_SendIds_Find(const MqttClient* client, word16 packet_id);
 #ifdef WOLFMQTT_V5
 static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
     MqttMsgStat* stat,
@@ -755,16 +756,27 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
 
 /* QoS 2 advanced past PUBREC, so [MQTT-4.4.0-1] replays the PUBREL rather
  * than the PUBLISH. Recorded even when no copy was retained: a PUBREL needs
- * only the Packet Identifier. */
+ * only the Packet Identifier. Only this client's own QoS 2 PUBLISH counts: a
+ * PUBREC for an identifier it never published, or for a QoS 1 PUBLISH, is not
+ * Session state (MQTT 5.0 section 3.6.2.1, Packet Identifier not found) and
+ * must neither take a slot nor turn a QoS 1 replay into a PUBREL. A QoS 2
+ * PUBLISH sent without a slot (e.g. no topic to retain) is recognised by its
+ * in-flight reservation awaiting PUBCOMP. */
 static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id)
 {
     MqttReplayMsg* slot;
+    int i;
 
     if (packet_id == 0) {
         return;
     }
     slot = MqttClient_Replay_Find(client, packet_id);
     if (slot == NULL) {
+        i = MqttClient_SendIds_Find(client, packet_id);
+        if (i < 0 || client->send_inflight[i].ack_type !=
+                (byte)MQTT_PACKET_TYPE_PUBLISH_COMP) {
+            return;
+        }
         slot = MqttClient_Replay_Find(client, 0);
         if (slot == NULL) {
             return;
@@ -772,6 +784,9 @@ static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id)
         MqttClient_Replay_FreeSlot(slot);
         slot->packet_id = packet_id;
         slot->qos = MQTT_QOS_2;
+    }
+    else if (slot->qos != MQTT_QOS_2) {
+        return;
     }
     slot->pubrelSent = 1;
 }
