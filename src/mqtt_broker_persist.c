@@ -349,6 +349,7 @@ static int wmqb_encrypt_blob(MqttBroker* broker, byte ns,
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
@@ -361,11 +362,15 @@ static int wmqb_encrypt_blob(MqttBroker* broker, byte ns,
             WMQB_GCM_TAG_LEN,
             aad, aad_len) != 0) {          /* aad = header + location */
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
+    /* The Aes holds the expanded persistence key. wc_AesFree only clears
+     * it in newer wolfSSL releases, so wipe it here on every path. */
     wc_AesFree(&aes);
+    wmqb_force_zero(&aes, (word32)sizeof(aes));
     WOLFMQTT_FREE(aad);
     *ct_out = out;
     return 0;
@@ -418,6 +423,7 @@ static int wmqb_decrypt_blob(MqttBroker* broker, byte ns,
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
@@ -431,12 +437,14 @@ static int wmqb_decrypt_blob(MqttBroker* broker, byte ns,
             WMQB_GCM_TAG_LEN,
             aad, aad_len) != 0) {
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     wc_AesFree(&aes);
+    wmqb_force_zero(&aes, (word32)sizeof(aes));
     WOLFMQTT_FREE(aad);
     *plain_out = out;
     return 0;
