@@ -47,6 +47,7 @@
     #endif
     #include <dirent.h>
     #include <errno.h>
+    #include <limits.h>
     #include <fcntl.h>
     #include <sys/socket.h>
     #include <sys/stat.h>
@@ -12901,6 +12902,62 @@ TEST(persist_restore_malformed_outq_scrubs_topic)
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY && !WOLFMQTT_BROKER_PERSIST_ENCRYPT */
 
+/* The POSIX backend names a record "<hex key>.bin" and writes it through
+ * "<hex key>.bin.tmp", so a key can be at most (NAME_MAX - 8) / 2 bytes. A
+ * longer key must be refused up front as MQTT_CODE_ERROR_OUT_OF_BUFFER, the
+ * backend's documented "key too long" result, not surface later as a generic
+ * system error from the filesystem. */
+TEST(persist_key_longer_than_name_limit_rejected)
+{
+    byte key[2 * 256];
+    static const byte value[] = "v";
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    char ns_path[640];
+    MqttBrokerPersistHooks hooks;
+    byte out[8];
+    word32 out_len;
+    char* root;
+    int max_len = (NAME_MAX - 8) / 2;
+    int init_rc;
+    int fit_put_rc = MQTT_CODE_ERROR_SYSTEM;
+    int fit_del_rc = MQTT_CODE_ERROR_SYSTEM;
+    int long_put_rc = MQTT_CODE_SUCCESS;
+    int long_get_rc = MQTT_CODE_SUCCESS;
+    int long_del_rc = MQTT_CODE_SUCCESS;
+    int path_ok;
+
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    XMEMSET(key, 'k', sizeof(key));
+    ASSERT_TRUE(max_len + 1 <= (int)sizeof(key));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    path_ok = (snprintf(ns_path, sizeof(ns_path), "%s/7", root) > 0);
+    ASSERT_TRUE(path_ok);
+
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        fit_put_rc = hooks.kv_put(hooks.ctx, 7, key, (word16)max_len,
+            value, (word32)sizeof(value));
+        fit_del_rc = hooks.kv_del(hooks.ctx, 7, key, (word16)max_len);
+        long_put_rc = hooks.kv_put(hooks.ctx, 7, key, (word16)(max_len + 1),
+            value, (word32)sizeof(value));
+        out_len = (word32)sizeof(out);
+        long_get_rc = hooks.kv_get(hooks.ctx, 7, key, (word16)(max_len + 1),
+            out, &out_len);
+        long_del_rc = hooks.kv_del(hooks.ctx, 7, key, (word16)(max_len + 1));
+        MqttBrokerNet_PersistPosix_Free(&hooks);
+    }
+    (void)rmdir(ns_path);
+    (void)rmdir(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, fit_put_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, fit_del_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, long_put_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, long_get_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, long_del_rc);
+}
+
 /* kv_get fills at most *inout_len bytes. A record larger than that must be
  * reported as MQTT_CODE_ERROR_OUT_OF_BUFFER rather than returned truncated as
  * if it were the whole record; the META check relies on that result to treat
@@ -14618,6 +14675,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_put_rejects_existing_temp_symlink);
     RUN_TEST(persist_put_del_report_namespace_fsync_failure);
     RUN_TEST(persist_get_reports_record_larger_than_buffer);
+    RUN_TEST(persist_key_longer_than_name_limit_rejected);
 #if !defined(WOLFMQTT_STATIC_MEMORY) && \
     !defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT)
     RUN_TEST(persist_restore_malformed_retained_scrubs_topic);

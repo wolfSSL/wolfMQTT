@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -310,6 +311,16 @@ static int wmqb_open_ns(const WmqbPosixCtx* c, byte ns, int create,
     return 0;
 }
 
+/* Longest key this backend can store. A record is named "<hex key>.bin" and
+ * written through "<hex key>.bin.tmp", so 2 * key_len + 8 must fit in one
+ * file name component (NAME_MAX, 255 on common filesystems: 123 bytes). */
+#ifdef NAME_MAX
+    #define WMQB_NAME_MAX NAME_MAX
+#else
+    #define WMQB_NAME_MAX 255
+#endif
+#define WMQB_MAX_KEY_LEN ((WMQB_NAME_MAX - 8) / 2)
+
 static int wmqb_rec_name(const byte* key, word16 key_len, char* out,
     size_t out_cap)
 {
@@ -319,7 +330,7 @@ static int wmqb_rec_name(const byte* key, word16 key_len, char* out,
     if (key == NULL || out == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
-    if (key_len > 256) {
+    if (key_len > 256 || key_len > WMQB_MAX_KEY_LEN) {
         return MQTT_CODE_ERROR_OUT_OF_BUFFER;
     }
     wmqb_hex_encode(hex, key, key_len);

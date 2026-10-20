@@ -165,6 +165,16 @@ script or installer inherits the ambient umask - under a relaxed umask such as
 mkdir -p /var/lib/wolfmqtt && chmod 0700 /var/lib/wolfmqtt
 ```
 
+The POSIX backend names each record after its key in hex, so a key can be at
+most `(NAME_MAX - 8) / 2` bytes: 123 on filesystems with the usual 255-byte
+`NAME_MAX`. Sessions and subscriptions are keyed by client ID, retained
+messages by topic, and offline-queue entries by client ID plus 3 bytes. With
+this backend a client ID longer than 120 bytes loses its queued messages across
+a restart, one longer than 123 bytes loses its whole session, and a retained
+message whose topic is longer than 123 bytes is not kept. The broker still
+serves them from memory while it runs. Use a custom backend through
+`MqttBroker_SetPersistHooks()` if longer identifiers must persist.
+
 | Macro | Default | Description |
 |---|---|---|
 | `BROKER_MAX_PERSIST_SESSIONS` | 64 | Dynamic-memory persistent sessions retained across restarts |

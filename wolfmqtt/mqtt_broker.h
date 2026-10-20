@@ -381,8 +381,9 @@ typedef struct MqttBrokerPersistHooks {
      * implementations must honor key_len. Keys are derived from
      * peer-supplied client_ids and topics, which dynamic-memory builds do
      * not cap. A backend with a maximum key length (the POSIX backend
-     * accepts up to 256 bytes) must reject a longer key with an error
-     * rather than truncate it. */
+     * accepts up to (NAME_MAX - 8) / 2 bytes, 123 with the usual 255-byte
+     * NAME_MAX) must reject a longer key with an error rather than
+     * truncate it. */
     int (*kv_put)(void* ctx, byte ns, const byte* key, word16 key_len,
                   const byte* blob, word32 blob_len);
     int (*kv_get)(void* ctx, byte ns, const byte* key, word16 key_len,
