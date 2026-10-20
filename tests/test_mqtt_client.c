@@ -2457,6 +2457,141 @@ TEST(subscribe_broker_rejection_returns_subscribe_rejected)
         subscribe.topics[0].return_code);
 }
 
+/* MqttClient_Connect resets its ack wait state so one object can be reused
+ * across exchanges; Subscribe, Unsubscribe and Publish leave their ack wait
+ * state at PAYLOAD after a completed exchange. A second request on the same
+ * completed object must read its own ack from the network instead of
+ * re-dispatching what the first exchange left in rx_buf. Both acks are queued
+ * up front (v3.1.1 wire forms, MQTT 3.1.1 sections 3.4, 3.9 and 3.11); the
+ * second must be consumed and must be the one reported. */
+static void reuse_setup(const byte* acks, int acks_len)
+{
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, acks, (size_t)acks_len);
+    g_canned_len = acks_len;
+    g_canned_pos = 0;
+}
+
+TEST(subscribe_reused_object_reads_new_suback)
+{
+    int rc;
+    int i;
+    MqttSubscribe subscribe;
+    MqttTopic topics[1];
+    /* SUBACK id 1 granting QoS 0, then SUBACK id 2 granting QoS 1. */
+    static const byte acks[] = {
+        0x90, 0x03, 0x00, 0x01, 0x00,
+        0x90, 0x03, 0x00, 0x02, 0x01
+    };
+
+    reuse_setup(acks, (int)sizeof(acks));
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(topics, 0, sizeof(topics));
+    topics[0].topic_filter = "test/topic";
+    topics[0].qos = MQTT_QOS_1;
+    subscribe.topic_count = 1;
+    subscribe.topics = topics;
+
+    subscribe.packet_id = 1;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Subscribe(&test_client, &subscribe);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0x00, topics[0].return_code);
+
+    subscribe.packet_id = 2;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Subscribe(&test_client, &subscribe);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, subscribe.ack.packet_id);
+    ASSERT_EQ(0x01, topics[0].return_code);
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+}
+
+TEST(unsubscribe_reused_object_reads_new_unsuback)
+{
+    int rc;
+    int i;
+    MqttUnsubscribe unsub;
+    MqttTopic topics[1];
+    /* UNSUBACK id 3, then UNSUBACK id 4. */
+    static const byte acks[] = {
+        0xB0, 0x02, 0x00, 0x03,
+        0xB0, 0x02, 0x00, 0x04
+    };
+
+    reuse_setup(acks, (int)sizeof(acks));
+    XMEMSET(&unsub, 0, sizeof(unsub));
+    XMEMSET(topics, 0, sizeof(topics));
+    topics[0].topic_filter = "test/topic";
+    unsub.topic_count = 1;
+    unsub.topics = topics;
+
+    unsub.packet_id = 3;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Unsubscribe(&test_client, &unsub);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    unsub.packet_id = 4;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Unsubscribe(&test_client, &unsub);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(4, unsub.ack.packet_id);
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+}
+
+TEST(publish_qos1_reused_object_reads_new_puback)
+{
+    int rc;
+    int i;
+    MqttPublish publish;
+    byte payload[1] = { 'x' };
+    /* PUBACK id 5, then PUBACK id 6. */
+    static const byte acks[] = {
+        0x40, 0x02, 0x00, 0x05,
+        0x40, 0x02, 0x00, 0x06
+    };
+
+    reuse_setup(acks, (int)sizeof(acks));
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_1;
+    publish.topic_name = "test/topic";
+    publish.buffer = payload;
+    publish.total_len = (word32)sizeof(payload);
+
+    publish.packet_id = 5;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    publish.packet_id = 6;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(6, publish.resp.packet_id);
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+}
+
 /* [MQTT-3.9.3-1] A SUBACK carries one return code per Topic Filter in the
  * SUBSCRIBE. A count mismatch is a protocol violation, so the client must
  * stop treating the connection as usable (MQTT 5.0 section 4.13.1), as
@@ -8380,6 +8515,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(subscribe_null_subscribe);
     RUN_TEST(subscribe_broker_rejection_returns_subscribe_rejected);
     RUN_TEST(subscribe_too_few_return_codes_clears_connected);
+    RUN_TEST(subscribe_reused_object_reads_new_suback);
+    RUN_TEST(unsubscribe_reused_object_reads_new_unsuback);
+    RUN_TEST(publish_qos1_reused_object_reads_new_puback);
 #ifdef WOLFMQTT_V5
     RUN_TEST(unsubscribe_broker_rejection_returns_unsubscribe_rejected);
     RUN_TEST(unsubscribe_too_few_reason_codes_is_malformed);

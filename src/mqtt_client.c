@@ -4494,7 +4494,10 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
 #endif
         )
     {
+        /* Reset the response wait state too (see MqttClient_Subscribe) */
         publish->stat.write = MQTT_MSG_BEGIN;
+        publish->resp.stat.read = MQTT_MSG_BEGIN;
+        publish->resp.stat.ack = MQTT_MSG_BEGIN;
     }
     if (rc > 0) {
         rc = MQTT_CODE_SUCCESS;
@@ -4671,8 +4674,12 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
         }
     }
 
-    /* reset state */
+    /* reset state. The ack wait state is reset too, as in
+     * MqttClient_Connect: left at MQTT_MSG_PAYLOAD, a reuse of this object
+     * would skip the read and dispatch stale rx_buf contents. */
     subscribe->stat.write = MQTT_MSG_BEGIN;
+    subscribe->ack.stat.read = MQTT_MSG_BEGIN;
+    subscribe->ack.stat.ack = MQTT_MSG_BEGIN;
 
     return rc;
 }
@@ -4833,8 +4840,10 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     }
 #endif
 
-    /* reset state */
+    /* reset state, including the ack wait state (see MqttClient_Subscribe) */
     unsubscribe->stat.write = MQTT_MSG_BEGIN;
+    unsubscribe->ack.stat.read = MQTT_MSG_BEGIN;
+    unsubscribe->ack.stat.ack = MQTT_MSG_BEGIN;
 
     return rc;
 }
