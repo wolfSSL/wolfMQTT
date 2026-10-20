@@ -1118,6 +1118,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         }
         cur_prop->type = (MqttPropertyType)prop_type;
         tmp = rc;
+        /* The Identifier must fit in the remaining Property Length */
+        if ((word32)tmp > prop_len) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            break;
+        }
         buf += tmp;
         total += tmp;
         prop_len -= tmp;

@@ -7520,6 +7520,24 @@ TEST(decode_props_auth_data_without_method_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_NULL(props);
 }
+
+/* MQTT 5.0 section 2.2.2.1: the Property Length counts every byte of the
+ * properties, and section 2.2.2.2 encodes each Identifier as a Variable Byte
+ * Integer. An Identifier whose encoding runs past the declared Property
+ * Length is a Malformed Packet, and must be rejected before the remaining
+ * length is charged for it. Wire: Property Length 1, Identifier 0x80 0x01
+ * (two bytes, value 128). */
+TEST(decode_props_identifier_past_prop_len_rejected)
+{
+    byte buf[] = { 0x80, 0x01 };
+    MqttProp* props = NULL;
+    int rc;
+
+    rc = MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH, &props, buf,
+            (word32)sizeof(buf), 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -7971,6 +7989,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_pubcomp_v5_reason_code_out_of_table_rejected);
     RUN_TEST(decode_props_connack_max_packet_size_zero_rejected);
     RUN_TEST(decode_props_auth_data_without_method_rejected);
+    RUN_TEST(decode_props_identifier_past_prop_len_rejected);
 
     /* MqttEncode/Decode_Auth */
     RUN_TEST(encode_props_string_invalid_utf8_rejected);
