@@ -137,11 +137,16 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
 #elif defined(WOLFMQTT_POSIX_SEMAPHORES)
     /* Posix style semaphore */
     int wm_SemInit(wm_Sem *s) {
+        if (pthread_mutex_init(&s->mutex, NULL) != 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
     #ifndef WOLFMQTT_NO_COND_SIGNAL
         s->lockCount = 0;
-        pthread_cond_init(&s->cond, NULL);
+        if (pthread_cond_init(&s->cond, NULL) != 0) {
+            (void)pthread_mutex_destroy(&s->mutex);
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
     #endif
-        pthread_mutex_init(&s->mutex, NULL);
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
@@ -176,7 +181,14 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
     /* FreeRTOS binary semaphore */
     int wm_SemInit(wm_Sem *s) {
         *s = xSemaphoreCreateBinary();
-        xSemaphoreGive(*s);
+        if (*s == NULL) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MEMORY);
+        }
+        if (xSemaphoreGive(*s) != pdTRUE) {
+            vSemaphoreDelete(*s);
+            *s = NULL;
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
@@ -196,6 +208,9 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
     /* Windows semaphore object */
     int wm_SemInit(wm_Sem *s) {
         *s = CreateSemaphoreW( NULL, 1, 1, NULL);
+        if (*s == NULL) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
         return 0;
     }
     int wm_SemFree(wm_Sem *s) {
