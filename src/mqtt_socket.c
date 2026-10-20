@@ -521,7 +521,8 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
          * MqttClient_NetDisconnect. */
         MqttClient_Flags(client,
             (MQTT_CLIENT_FLAG_CONNECT_SENT |
-             MQTT_CLIENT_FLAG_DISCONNECT_SENT),
+             MQTT_CLIENT_FLAG_DISCONNECT_SENT |
+             MQTT_CLIENT_FLAG_AUTH_PENDING),
             MQTT_CLIENT_FLAG_IS_CONNECTED);
     }
 
@@ -736,7 +737,8 @@ int MqttSocket_Disconnect(MqttClient *client)
          * the next one must start with its own CONNECT [MQTT-3.1.0-1]. */
         MqttClient_Flags(client,
             (MQTT_CLIENT_FLAG_IS_CONNECTED | MQTT_CLIENT_FLAG_CONNECT_SENT |
-             MQTT_CLIENT_FLAG_DISCONNECT_SENT), 0);
+             MQTT_CLIENT_FLAG_DISCONNECT_SENT |
+             MQTT_CLIENT_FLAG_AUTH_PENDING), 0);
 
     #ifdef ENABLE_MQTT_CURL
         if (client->curl_initialized) {

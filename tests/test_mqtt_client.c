@@ -1281,6 +1281,125 @@ TEST(auth_with_connect_method_allowed)
     MqttClient_PropsFree(auth.props);
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Start a v5 CONNECT that carries an Authentication Method and return once it
+ * is on the wire but no CONNACK has arrived (the canned reader has nothing to
+ * deliver yet). */
+static int start_connect_v5_auth_pending(MqttConnect* connect,
+    MqttProp* method_prop)
+{
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    g_canned_len = 0;
+    g_canned_pos = 0;
+
+    XMEMSET(connect, 0, sizeof(*connect));
+    connect->keep_alive_sec = 60;
+    connect->clean_session = 1;
+    connect->client_id = "test_client";
+    XMEMSET(method_prop, 0, sizeof(*method_prop));
+    method_prop->type = MQTT_PROP_AUTH_METHOD;
+    method_prop->data_str.str = (char*)"SCRAM-SHA-256";
+    method_prop->data_str.len = (word16)XSTRLEN("SCRAM-SHA-256");
+    connect->props = method_prop;
+
+    return MqttClient_Connect(&test_client, connect);
+}
+
+/* [MQTT-3.1.2-30] After a CONNECT with an Authentication Method the Client
+ * MUST NOT send any packet other than AUTH or DISCONNECT until it receives
+ * CONNACK. A nonblocking MqttClient_Connect returns to the caller in that
+ * window, so PUBLISH, SUBSCRIBE and PINGREQ must be refused there, and
+ * allowed again once the CONNACK has been processed. */
+TEST(connect_auth_pending_blocks_other_packets)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttProp method_prop;
+    MqttPublish publish;
+    MqttSubscribe subscribe;
+    MqttTopic topic;
+    MqttPing ping;
+    /* v5 CONNACK: accepted, Session Present = 0, no properties. */
+    static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = start_connect_v5_auth_pending(&connect, &method_prop);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+    ASSERT_NE(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+        MQTT_CLIENT_FLAG_CONNECT_SENT));
+
+    g_frames_written = 0;
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    rc = MqttClient_Publish(&test_client, &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, rc);
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "t";
+    subscribe.packet_id = 1;
+    subscribe.topic_count = 1;
+    subscribe.topics = &topic;
+    rc = MqttClient_Subscribe(&test_client, &subscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, rc);
+
+    XMEMSET(&ping, 0, sizeof(ping));
+    rc = MqttClient_Ping_ex(&test_client, &ping);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, rc);
+    ASSERT_EQ(0, g_frames_written);
+
+    /* The CONNACK arrives: the handshake completes and PUBLISH is allowed. */
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    g_frames_written = 0;
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_frames_written > 0);
+}
+
+/* DISCONNECT stays allowed while the authentication exchange is pending
+ * [MQTT-3.1.2-30]. */
+TEST(connect_auth_pending_allows_disconnect)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttProp method_prop;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = start_connect_v5_auth_pending(&connect, &method_prop);
+    ASSERT_EQ(MQTT_CODE_CONTINUE, rc);
+
+    g_frames_written = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Disconnect(&test_client);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_frames_written > 0);
+}
+#endif /* WOLFMQTT_NONBLOCK */
+
 /* MQTT 3.1.1 section 2.2.1 lists packet type 15 as Reserved/Forbidden; AUTH
  * exists only from v5. A session negotiated at protocol level 4 must treat a
  * received type-15 packet as a protocol violation [MQTT-4.8.0-1] even in a
@@ -8643,6 +8762,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(connect_v5_scrubs_connack_auth_data_from_rx_buf);
     RUN_TEST(auth_without_connect_method_rejected);
     RUN_TEST(auth_with_connect_method_allowed);
+#ifdef WOLFMQTT_NONBLOCK
+    RUN_TEST(connect_auth_pending_blocks_other_packets);
+    RUN_TEST(connect_auth_pending_allows_disconnect);
+#endif
     RUN_TEST(wait_message_v311_rejects_auth_packet_type);
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);

@@ -1772,6 +1772,10 @@ static int MqttClient_HandlePacket(MqttClient* client,
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, packet_obj, &packet_type, &packet_qos,
                 &packet_id, 1);
+        #ifdef WOLFMQTT_V5
+            /* The CONNACK ends the [MQTT-3.1.2-30] authentication window. */
+            (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_AUTH_PENDING, 0);
+        #endif
             break;
         }
         case MQTT_PACKET_TYPE_PUBLISH:
@@ -3205,6 +3209,30 @@ static int MqttClient_CheckConnectSent(MqttClient *client)
     return MQTT_CODE_SUCCESS;
 }
 
+/* Gate for PUBLISH, SUBSCRIBE, UNSUBSCRIBE and PINGREQ: CONNECT must have been
+ * sent, and [MQTT-3.1.2-30] forbids them while a CONNECT with an
+ * Authentication Method still awaits its CONNACK. DISCONNECT and AUTH stay
+ * allowed in that window, so they use MqttClient_CheckConnectSent alone. */
+static int MqttClient_CheckSendAllowed(MqttClient *client)
+{
+    int rc;
+#ifdef WOLFMQTT_V5
+    word32 flags = 0;
+#endif
+
+    rc = MqttClient_CheckConnectSent(client);
+#ifdef WOLFMQTT_V5
+    if (rc == MQTT_CODE_SUCCESS) {
+        rc = MqttClient_ReadFlags(client, &flags);
+    }
+    if (rc == MQTT_CODE_SUCCESS &&
+            (flags & MQTT_CLIENT_FLAG_AUTH_PENDING) != 0) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_STAT);
+    }
+#endif
+    return rc;
+}
+
 #ifndef WOLFMQTT_NO_TIME
 /* Apply the auto keep-alive decision once a connect attempt has reached a
  * final result. Shared by the normal handshake tail and by the
@@ -3503,6 +3531,14 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
              * out. Resuming this same write re-enters past MQTT_MSG_BEGIN, so
              * the once-per-connection guard does not see it. */
             (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
+        #ifdef WOLFMQTT_V5
+            /* [MQTT-3.1.2-30] With an Authentication Method, only AUTH or
+             * DISCONNECT may follow until the CONNACK. */
+            if (client->auth_method_set) {
+                (void)MqttClient_Flags(client, 0,
+                    MQTT_CLIENT_FLAG_AUTH_PENDING);
+            }
+        #endif
         #ifndef WOLFMQTT_NO_SESSION_REPLAY
             if (MqttClient_ConnectIsPersistent(mc_connect)) {
                 (void)MqttClient_Flags(client, 0,
@@ -4130,7 +4166,7 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
     }
 
     /* [MQTT-3.1.0-1] CONNECT must be the first packet on the connection. */
-    rc = MqttClient_CheckConnectSent(client);
+    rc = MqttClient_CheckSendAllowed(client);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
@@ -4577,7 +4613,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
     }
 
     /* [MQTT-3.1.0-1] CONNECT must be the first packet on the connection. */
-    rc = MqttClient_CheckConnectSent(client);
+    rc = MqttClient_CheckSendAllowed(client);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
@@ -4737,7 +4773,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
     }
 
     /* [MQTT-3.1.0-1] CONNECT must be the first packet on the connection. */
-    rc = MqttClient_CheckConnectSent(client);
+    rc = MqttClient_CheckSendAllowed(client);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
@@ -4926,7 +4962,7 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
     }
 
     /* [MQTT-3.1.0-1] CONNECT must be the first packet on the connection. */
-    rc = MqttClient_CheckConnectSent(client);
+    rc = MqttClient_CheckSendAllowed(client);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
@@ -5390,6 +5426,11 @@ static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
         return rc;
     }
     if ((flags & MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE) != 0) {
+        return MQTT_CODE_SUCCESS;
+    }
+    /* No PINGREQ while an authentication exchange awaits its CONNACK
+     * [MQTT-3.1.2-30]. */
+    if ((flags & MQTT_CLIENT_FLAG_AUTH_PENDING) != 0) {
         return MQTT_CODE_SUCCESS;
     }
 

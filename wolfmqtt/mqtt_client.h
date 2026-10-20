@@ -197,7 +197,13 @@ enum MqttClientFlags {
      * section 3.2.2.3.2). Managed by the library - set or cleared by
      * MqttClient_Connect and updated from the CONNACK. Applications must
      * not set or clear it through MqttClient_Flags. */
-    MQTT_CLIENT_FLAG_PERSISTENT_SESSION = 0x01 << 10
+    MQTT_CLIENT_FLAG_PERSISTENT_SESSION = 0x01 << 10,
+    /* A v5 CONNECT carrying an Authentication Method has been written and no
+     * CONNACK has arrived yet. [MQTT-3.1.2-30] allows only AUTH or DISCONNECT
+     * in that window, so the other send APIs refuse. Managed by the library -
+     * set by MqttClient_Connect, cleared when the CONNACK is processed and by
+     * MqttSocket_Connect and MqttSocket_Disconnect. */
+    MQTT_CLIENT_FLAG_AUTH_PENDING = 0x01 << 11
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
