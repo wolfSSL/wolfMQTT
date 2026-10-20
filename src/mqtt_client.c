@@ -2718,8 +2718,7 @@ read_cleanup:
          * race a concurrent publisher inside wolfSSL_write in MT builds. Gated
          * on recvFatal so a local ack-encode failure (e.g. an out-of-table
          * Reason Code) does not disconnect an otherwise healthy peer. */
-        if (recvFatal && MqttClient_IsFatalProtoError(rc) &&
-            (client->flags & MQTT_CLIENT_FLAG_IS_CONNECTED) != 0) {
+        if (recvFatal && MqttClient_IsFatalProtoError(rc)) {
             (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
         }
         return rc;
@@ -5313,14 +5312,20 @@ static int MqttClient_KeepAlive(MqttClient *client, MqttObject* msg)
     int rc = MQTT_CODE_SUCCESS;
     int mid_transfer;
     word32 now, elapsed, threshold;
+    word32 flags = 0;
 
     if (client == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
     /* Disabled at runtime by the application (e.g. it schedules its own ping),
-     * independent of the keep-alive negotiated with the broker. */
-    if ((client->flags & MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE) != 0) {
+     * independent of the keep-alive negotiated with the broker. Read under
+     * lockClient, since another thread may change the flags. */
+    rc = MqttClient_ReadFlags(client, &flags);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    if ((flags & MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE) != 0) {
         return MQTT_CODE_SUCCESS;
     }
 

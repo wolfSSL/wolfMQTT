@@ -29,6 +29,8 @@ static wm_Sem* sem_fail_lock;
 static wm_Sem* sem_fail_lock_while_held;
 static int sem_fail_lock_skip;
 static int quota_write_calls;
+static MqttClient* sem_flag_client;
+static word32 sem_flag_bits;
 
 #ifdef ENABLE_MQTT_CURL
     #define TEST_CLIENT_LOCK_COUNT 4
@@ -60,6 +62,8 @@ static void reset_sem_state(void)
     sem_fail_lock_while_held = NULL;
     sem_fail_lock_skip = 0;
     quota_write_calls = 0;
+    sem_flag_client = NULL;
+    sem_flag_bits = 0;
 }
 
 int wm_SemInit(wm_Sem* sem)
@@ -106,6 +110,11 @@ int wm_SemLock(wm_Sem* sem)
         }
     }
     sem->lock_count++;
+    /* Model another thread that updated client->flags under lockClient and
+     * released it just as this acquisition succeeded. */
+    if (sem_flag_client != NULL && sem == &sem_flag_client->lockClient) {
+        sem_flag_client->flags |= sem_flag_bits;
+    }
     if (sem == sem_watch_recv_lock) {
         sem_watched_recv_locks++;
     }
@@ -575,6 +584,55 @@ static int test_recv_quota_lock_failure_refuses_publish(void)
     return 0;
 }
 
+/* client->flags is shared with other threads and guarded by lockClient in
+ * multithread builds, so the keep-alive check of NO_AUTO_KEEPALIVE must read
+ * it under that lock. Here another thread disables automatic keep-alive under
+ * lockClient; a read that bypasses the lock misses that update and sends a
+ * PINGREQ the application has turned off. The ping is otherwise due:
+ * keep-alive is negotiated and nothing has been sent since time 0. */
+static int test_keepalive_flag_read_takes_client_lock(void)
+{
+    int rc;
+    MqttClient client;
+    MqttNet net;
+    byte tx_buf[64];
+    byte rx_buf[64];
+
+    reset_sem_state();
+    XMEMSET(&net, 0, sizeof(net));
+    net.connect = ping_net_connect;
+    net.read = ping_net_read;
+    net.write = quota_net_write;
+    net.disconnect = ping_net_disconnect;
+
+    rc = MqttClient_Init(&client, &net, NULL, tx_buf, sizeof(tx_buf),
+        rx_buf, sizeof(rx_buf), 1000);
+    if (rc != MQTT_CODE_SUCCESS) {
+        fprintf(stderr, "keep-alive client initialization returned %d\n", rc);
+        return 1;
+    }
+    (void)MqttClient_Flags(&client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT |
+        MQTT_CLIENT_FLAG_IS_CONNECTED);
+    client.keep_alive_sec = 60;
+    client.last_tx_time = 0;
+
+    sem_flag_client = &client;
+    sem_flag_bits = MQTT_CLIENT_FLAG_NO_AUTO_KEEPALIVE;
+    rc = MqttClient_WaitMessage_ex(&client, &client.msg, 1000);
+    sem_flag_client = NULL;
+
+    if (quota_write_calls != 0) {
+        fprintf(stderr,
+            "keep-alive ignored a locked flag update: rc=%d writes=%d\n",
+            rc, quota_write_calls);
+        MqttClient_DeInit(&client);
+        return 1;
+    }
+
+    MqttClient_DeInit(&client);
+    return 0;
+}
+
 int main(void)
 {
     if (test_sn_null_ping_resets_terminal_read_state() != 0) {
@@ -599,6 +657,9 @@ int main(void)
         return 1;
     }
     if (test_recv_quota_lock_failure_refuses_publish() != 0) {
+        return 1;
+    }
+    if (test_keepalive_flag_read_takes_client_lock() != 0) {
         return 1;
     }
     return 0;
