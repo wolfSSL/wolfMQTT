@@ -8885,6 +8885,32 @@ static int BrokerClient_ResumeDirect(MqttBroker* broker, BrokerClient* bc)
 /* -------------------------------------------------------------------------- */
 /* Per-client processing (called from Step)                                    */
 /* -------------------------------------------------------------------------- */
+/* MQTT 5.0 section 4.13.1: after a Malformed Packet (malformed != 0) or a
+ * Protocol Error in a packet other than CONNECT, a v5 Server SHOULD send
+ * DISCONNECT with the Reason Code before closing the Network Connection.
+ * BrokerSend_Disconnect sends nothing below v5, so this then only closes. */
+static void BrokerClient_ErrorClose(MqttBroker* broker, BrokerClient* bc,
+    int malformed)
+{
+#ifdef WOLFMQTT_V5
+    byte reason = (byte)(malformed ? MQTT_REASON_MALFORMED_PACKET :
+        MQTT_REASON_PROTOCOL_ERR);
+
+  #ifndef WOLFMQTT_STATIC_MEMORY
+    if (BrokerSend_Disconnect(bc, reason) == MQTT_CODE_CONTINUE) {
+        /* Finish writing the DISCONNECT on a later step before closing. */
+        bc->close_after_direct = 1;
+        return;
+    }
+  #else
+    (void)BrokerSend_Disconnect(bc, reason);
+  #endif
+#else
+    (void)malformed;
+#endif
+    BrokerClient_AbnormalClose(broker, bc);
+}
+
 static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
 {
     int rc;
@@ -9033,7 +9059,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 "sock=%d [MQTT-2.2.2-2]",
                 type, bc->rx_buf[0], (int)bc->sock);
             if (bc->connected) {
-                BrokerClient_AbnormalClose(broker, bc);
+                BrokerClient_ErrorClose(broker, bc, 1);
             }
             else {
                 BrokerSubs_RemoveClient(broker, bc);
@@ -9055,7 +9081,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             WBLOG_ERR(broker,
                 "broker: second CONNECT on sock=%d [MQTT-3.1.0-2]",
                 (int)bc->sock);
-            BrokerClient_AbnormalClose(broker, bc);
+            BrokerClient_ErrorClose(broker, bc, 0);
             return 0;
         }
         switch (type) {
@@ -9208,7 +9234,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                  * only - Remaining Length MUST be 0. Reject malformed
                  * PINGREQ before sending PINGRESP. */
                 if (bc->client.packet.remain_len != 0) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_ErrorClose(broker, bc, 1);
                     return 0;
                 }
                 /* A failed PINGRESP write is an I/O error like any other
@@ -9348,7 +9374,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 WBLOG_ERR(broker,
                     "broker: unhandled packet type %u sock=%d",
                     type, (int)bc->sock);
-                BrokerClient_AbnormalClose(broker, bc);
+                BrokerClient_ErrorClose(broker, bc, 0);
                 return 0;
         }
 #ifdef ENABLE_MQTT_WEBSOCKET

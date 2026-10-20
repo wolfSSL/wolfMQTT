@@ -9773,6 +9773,99 @@ TEST(disconnect_v5_session_expiry_raise_sends_protocol_error)
     MqttBroker_Free(&broker);
 }
 
+/* MQTT 5.0 section 4.13.1: a Server that detects a Malformed Packet or
+ * Protocol Error in a packet other than CONNECT SHOULD send DISCONNECT with
+ * the Reason Code before closing. Connect a v5 client, send one bad packet,
+ * and return the Reason Code of the DISCONNECT the broker sent (-1 if none);
+ * *closed reports whether the connection was closed. */
+static int v5_bad_packet_disconnect_reason(const byte* bad, size_t bad_len,
+    int* closed)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int reason;
+    /* v5 CONNECT, CleanStart, keep alive 60, no properties, ClientId "A". */
+    static const byte connect[] = {
+        0x10, 14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        *closed = 0;
+        return -2;
+    }
+    reset_mock_state(connect, sizeof(connect));
+    mock_client_input_append(0, bad, bad_len);
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    reason = first_disconnect_reason(g_out_buf, g_out_len);
+    *closed = g_client_closed;
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    return reason;
+}
+
+/* [MQTT-2.2.2-2] PUBACK fixed-header flags must be 0000: Malformed Packet. */
+TEST(v5_invalid_fixed_header_flags_sends_malformed_disconnect)
+{
+    static const byte puback[] = { 0x41, 0x02, 0x00, 0x01 };
+    int closed = 0;
+
+    ASSERT_EQ(MQTT_REASON_MALFORMED_PACKET,
+        v5_bad_packet_disconnect_reason(puback, sizeof(puback), &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* [MQTT-3.1.0-2] A second CONNECT is a Protocol Error. */
+TEST(v5_second_connect_sends_protocol_error_disconnect)
+{
+    static const byte connect[] = {
+        0x10, 14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+    int closed = 0;
+
+    ASSERT_EQ(MQTT_REASON_PROTOCOL_ERR,
+        v5_bad_packet_disconnect_reason(connect, sizeof(connect), &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* MQTT 5.0 section 3.12: PINGREQ has no variable header or payload, so a
+ * non-zero Remaining Length is a Malformed Packet. */
+TEST(v5_pingreq_with_body_sends_malformed_disconnect)
+{
+    static const byte pingreq[] = { 0xC0, 0x01, 0x00 };
+    int closed = 0;
+
+    ASSERT_EQ(MQTT_REASON_MALFORMED_PACKET,
+        v5_bad_packet_disconnect_reason(pingreq, sizeof(pingreq), &closed));
+    ASSERT_TRUE(closed);
+}
+
+/* MQTT 5.0 section 4.12: without an Authentication Method in CONNECT the
+ * Client must not send AUTH, so an AUTH here is a Protocol Error. Wire: AUTH
+ * with Remaining Length 0 (Success, section 3.15.2.1). */
+TEST(v5_unexpected_auth_sends_protocol_error_disconnect)
+{
+    static const byte auth[] = { 0xF0, 0x00 };
+    int closed = 0;
+
+    ASSERT_EQ(MQTT_REASON_PROTOCOL_ERR,
+        v5_bad_packet_disconnect_reason(auth, sizeof(auth), &closed));
+    ASSERT_TRUE(closed);
+}
+
 /* v5 CONNECT with Clean Start=0, no Session Expiry: must default to 0,
  * not the v3.1.1 0xFFFFFFFF "never" sentinel. */
 TEST(connect_v5_clean0_no_se_prop_orphan_expiry_zero)
@@ -14063,6 +14156,10 @@ int main(int argc, char** argv)
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_v5_receive_max_zero_protocol_error);
     RUN_TEST(disconnect_v5_session_expiry_raise_sends_protocol_error);
+    RUN_TEST(v5_invalid_fixed_header_flags_sends_malformed_disconnect);
+    RUN_TEST(v5_second_connect_sends_protocol_error_disconnect);
+    RUN_TEST(v5_pingreq_with_body_sends_malformed_disconnect);
+    RUN_TEST(v5_unexpected_auth_sends_protocol_error_disconnect);
 #endif
 #endif
 #ifdef WOLFMQTT_V5
