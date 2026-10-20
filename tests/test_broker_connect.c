@@ -2102,6 +2102,60 @@ TEST(connect_credentials_scrubbed_after_accept)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* A refused CONNECT whose CONNACK cannot be written at once keeps the client
+ * until the write finishes or times out. Its credentials are not needed for
+ * that, so they must be wiped as on the accepted path rather than stay in
+ * rx_buf and the username/password copies for the whole deferred write. */
+TEST(connect_refused_deferred_connack_scrubs_credentials)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* bc;
+    /* CONNECT v3.1.1, ClientId "id", Username "alice", Password "wrongPW1"
+     * (the broker expects "s3cr3tPW"). connect_flags 0xC2 = username +
+     * password + clean session. */
+    static const byte connect[] = {
+        0x10, 31,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04,
+        0xC2,
+        0x00, 0x3C,
+        0x00, 0x02, 'i', 'd',
+        0x00, 0x05, 'a', 'l', 'i', 'c', 'e',
+        0x00, 0x08, 'w', 'r', 'o', 'n', 'g', 'P', 'W', '1'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    broker.auth_user = "alice";
+    broker.auth_pass = "s3cr3tPW";
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    /* Only one CONNACK byte goes out, so the refusal is deferred. */
+    g_clients[0].write_limit_once = 1;
+    run_broker_one_connect(&broker);
+
+    bc = broker.clients;
+    ASSERT_NOT_NULL(bc);
+    ASSERT_EQ(1, (int)bc->connack_refused);
+    ASSERT_EQ(0, (int)bc->connected);
+
+    ASSERT_EQ(0, (int)bc->password_len);
+    if (bc->password != NULL) {
+        ASSERT_EQ(0, region_contains((const byte*)bc->password, 8,
+            "wrongPW1", 8));
+    }
+    ASSERT_EQ(0, region_contains(bc->rx_buf, (int)sizeof(connect),
+        "wrongPW1", 8));
+    ASSERT_EQ(0, region_contains(bc->rx_buf, (int)sizeof(connect),
+        "alice", 5));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_BROKER_AUTH */
 
 #ifdef WOLFMQTT_V5
@@ -14206,6 +14260,7 @@ int main(int argc, char** argv)
     RUN_TEST(broker_set_auth_pass_shorter_second_no_residue);
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(connect_credentials_scrubbed_after_accept);
+    RUN_TEST(connect_refused_deferred_connack_scrubs_credentials);
 #endif
 #endif
 #ifdef ENABLE_MQTT_TLS

@@ -6605,6 +6605,28 @@ static int BrokerSend_Disconnect(BrokerClient* bc, byte reason_code)
 /* Packet handlers                                                             */
 /* -------------------------------------------------------------------------- */
 
+/* Wipe the plaintext CONNECT in bc->rx_buf (the decoded username, password
+ * and v5 authentication data point into it) and the bc->username /
+ * bc->password copies. Nothing reads them once CONNECT is handled. */
+static void BrokerClient_ScrubConnect(BrokerClient* bc, int rx_len)
+{
+    BROKER_FORCE_ZERO(bc->rx_buf, (word32)rx_len);
+#ifdef WOLFMQTT_BROKER_AUTH
+#ifdef WOLFMQTT_STATIC_MEMORY
+    BROKER_FORCE_ZERO(bc->username, BROKER_MAX_USERNAME_LEN);
+    BROKER_FORCE_ZERO(bc->password, BROKER_MAX_PASSWORD_LEN);
+#else
+    if (bc->username != NULL) {
+        BROKER_FORCE_ZERO(bc->username, XSTRLEN(bc->username) + 1);
+    }
+    if (bc->password != NULL) {
+        BROKER_FORCE_ZERO(bc->password, (size_t)bc->password_len + 1);
+    }
+#endif
+    bc->password_len = 0;
+#endif
+}
+
 /* Returns: > 0 success, 0 auth rejected (CONNACK sent with refused),
  *          < 0 error */
 static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
@@ -7617,9 +7639,11 @@ send_connack:
              * Closing now would deliver only the bytes already written, so the
              * client could never read why it was refused. Keep the socket open
              * until BrokerClient_ResumeConnAck finishes the write; it then
-             * performs the close. */
+             * performs the close. The credentials are not needed for that,
+             * so wipe them now instead of when the client is freed. */
             bc->connack_pending_len = ack_len;
             bc->connack_refused = 1;
+            BrokerClient_ScrubConnect(bc, rx_len);
         }
 #endif
         return 0;
@@ -7691,23 +7715,9 @@ send_connack:
      * re-auth path. Scrub them all now so credentials reside in memory only
      * for the duration of CONNECT processing rather than the whole session.
      * Refused/failed CONNECTs return earlier and are wiped when the caller
-     * frees the client. Mirrors the client-side CLIENT_FORCE_ZERO hardening
+     * frees the client, or above if their CONNACK is deferred. Mirrors the client-side CLIENT_FORCE_ZERO hardening
      * in mqtt_client.c. */
-    BROKER_FORCE_ZERO(bc->rx_buf, (word32)rx_len);
-#ifdef WOLFMQTT_BROKER_AUTH
-#ifdef WOLFMQTT_STATIC_MEMORY
-    BROKER_FORCE_ZERO(bc->username, BROKER_MAX_USERNAME_LEN);
-    BROKER_FORCE_ZERO(bc->password, BROKER_MAX_PASSWORD_LEN);
-#else
-    if (bc->username != NULL) {
-        BROKER_FORCE_ZERO(bc->username, XSTRLEN(bc->username) + 1);
-    }
-    if (bc->password != NULL) {
-        BROKER_FORCE_ZERO(bc->password, (size_t)bc->password_len + 1);
-    }
-#endif
-    bc->password_len = 0;
-#endif
+    BrokerClient_ScrubConnect(bc, rx_len);
 
     return rc;
 }
