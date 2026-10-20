@@ -12478,6 +12478,64 @@ TEST(persist_root_writable_permissions_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, persist_test_init_root_mode(0777));
 }
 
+/* kv_get fills at most *inout_len bytes. A record larger than that must be
+ * reported as MQTT_CODE_ERROR_OUT_OF_BUFFER rather than returned truncated as
+ * if it were the whole record; the META check relies on that result to treat
+ * an oversized record as a schema mismatch. */
+TEST(persist_get_reports_record_larger_than_buffer)
+{
+    static const byte key[] = { 0x9a };
+    static const byte value[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+    char root_template[] = "./wolfmqtt-persist-XXXXXX";
+    char ns_path[640];
+    char rec_path[680];
+    MqttBrokerPersistHooks hooks;
+    byte out[sizeof(value)];
+    word32 out_len;
+    char* root;
+    int init_rc;
+    int put_rc = MQTT_CODE_ERROR_SYSTEM;
+    int short_rc = MQTT_CODE_SUCCESS;
+    int exact_rc = MQTT_CODE_ERROR_SYSTEM;
+    word32 exact_len = 0;
+    int paths_ok = 0;
+
+    XMEMSET(&hooks, 0, sizeof(hooks));
+    root = mkdtemp(root_template);
+    ASSERT_NOT_NULL(root);
+    if (snprintf(ns_path, sizeof(ns_path), "%s/7", root) > 0 &&
+            snprintf(rec_path, sizeof(rec_path), "%s/9a.bin",
+                ns_path) > 0) {
+        paths_ok = 1;
+    }
+    ASSERT_TRUE(paths_ok);
+
+    init_rc = MqttBrokerNet_PersistPosix_Init(&hooks, root);
+    if (init_rc == MQTT_CODE_SUCCESS) {
+        put_rc = hooks.kv_put(hooks.ctx, 7, key, (word16)sizeof(key),
+            value, (word32)sizeof(value));
+        out_len = 4;
+        short_rc = hooks.kv_get(hooks.ctx, 7, key, (word16)sizeof(key),
+            out, &out_len);
+        out_len = (word32)sizeof(out);
+        exact_rc = hooks.kv_get(hooks.ctx, 7, key, (word16)sizeof(key),
+            out, &out_len);
+        exact_len = out_len;
+        MqttBrokerNet_PersistPosix_Free(&hooks);
+    }
+
+    (void)unlink(rec_path);
+    (void)rmdir(ns_path);
+    (void)rmdir(root);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, init_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, put_rc);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, short_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, exact_rc);
+    ASSERT_EQ((word32)sizeof(value), exact_len);
+    ASSERT_EQ(0, XMEMCMP(out, value, sizeof(value)));
+}
+
 /* A rename or unlink is not durable until its namespace directory is
  * flushed, so the POSIX backend must report a failed directory fsync rather
  * than claim the update was committed. */
@@ -14129,6 +14187,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_root_writable_permissions_rejected);
     RUN_TEST(persist_put_rejects_existing_temp_symlink);
     RUN_TEST(persist_put_del_report_namespace_fsync_failure);
+    RUN_TEST(persist_get_reports_record_larger_than_buffer);
     RUN_TEST(persist_iter_reports_unreadable_record);
     RUN_TEST(persist_iter_skips_socket_and_symlink_entries);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT

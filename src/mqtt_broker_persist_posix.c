@@ -456,6 +456,8 @@ static int wmqb_posix_get(void* ctx, byte ns, const byte* key,
     ssize_t r;
     word32 cap;
     word32 read_total = 0;
+    byte probe;
+    int probe_eintr = 0;
 
     if (c == NULL || key == NULL || inout_len == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
@@ -505,6 +507,18 @@ static int wmqb_posix_get(void* ctx, byte ns, const byte* key,
                 return MQTT_CODE_ERROR_SYSTEM;
             }
             read_total += (word32)r;
+        }
+    }
+    /* A full buffer need not be the whole record. Probe for one more byte
+     * so a larger record is reported, not returned truncated. */
+    if (read_total == cap) {
+        do {
+            r = read(fd, &probe, 1);
+        } while (r < 0 && errno == EINTR && probe_eintr++ < 16);
+        if (r != 0) {
+            (void)close(fd);
+            return (r > 0) ? MQTT_CODE_ERROR_OUT_OF_BUFFER :
+                MQTT_CODE_ERROR_SYSTEM;
         }
     }
     (void)close(fd);
