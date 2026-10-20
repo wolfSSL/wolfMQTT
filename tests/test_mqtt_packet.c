@@ -2501,6 +2501,37 @@ TEST(decode_connack_refused_without_session_present_accepted)
     ASSERT_TRUE(rc > 0);
 }
 
+/* MQTT 3.1.1 section 3.2.2.3 assigns return codes 0-5 and reserves 6-255, so
+ * a CONNACK carrying a reserved code is a protocol violation, not an
+ * ordinary refusal. */
+TEST(decode_connack_v311_reserved_return_code_rejected)
+{
+    ASSERT_TRUE(decode_connack_flags(0x00,
+        MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH) > 0); /* 0x05, last assigned */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x00, 0x06));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x00, 0xFF));
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.2.2.2 lists the CONNACK Reason Codes; 0x01 is not one
+ * of them. Wire: CONNACK, Remaining Length 3, flags 0, reason 0x01,
+ * Property Length 0. */
+TEST(decode_connack_v5_unassigned_reason_code_rejected)
+{
+    byte buf[] = { 0x20, 0x03, 0x00, 0x01, 0x00 };
+    MqttConnectAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(ack.props);
+}
+#endif
+
 #ifdef WOLFMQTT_BROKER
 /* [MQTT-3.2.2-4] Session Present must be zero when a connection is refused.
  * The encoder must not produce a CONNACK that the matching decoder rejects. */
@@ -7712,6 +7743,10 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connack_flags_all_bits_rejected);
     RUN_TEST(decode_connack_refused_with_session_present_rejected);
     RUN_TEST(decode_connack_refused_without_session_present_accepted);
+    RUN_TEST(decode_connack_v311_reserved_return_code_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_connack_v5_unassigned_reason_code_rejected);
+#endif
 #ifdef WOLFMQTT_BROKER
     RUN_TEST(encode_connack_refused_with_session_present_rejected);
 #endif

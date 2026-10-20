@@ -1470,10 +1470,10 @@ TEST(connect_refused_connack_preserves_v5_defaults)
     int rc;
     int i;
     MqttConnect connect;
-    /* Same properties as the acceptance test, but return_code=0x05
-     * (not authorized). */
+    /* Same properties as the acceptance test, but reason code 0x87 (Not
+     * authorized, MQTT 5.0 section 3.2.2.2). */
     static const byte connack[] = {
-        0x20, 0x0C, 0x00, 0x05, 0x09,
+        0x20, 0x0C, 0x00, 0x87, 0x09,
         0x24, 0x01,
         0x25, 0x00,
         0x27, 0x00, 0x00, 0x04, 0x00
@@ -1500,7 +1500,7 @@ TEST(connect_refused_connack_preserves_v5_defaults)
     }
 
     ASSERT_EQ(MQTT_CODE_ERROR_CONNECT_REFUSED, rc);
-    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH, connect.ack.return_code);
+    ASSERT_EQ(MQTT_REASON_NOT_AUTHORIZED, connect.ack.return_code);
     /* Pre-CONNACK defaults established by MqttClient_Connect must be intact. */
     ASSERT_EQ((byte)WOLFMQTT_MAX_QOS, test_client.max_qos);
     ASSERT_EQ(1, test_client.retain_avail);

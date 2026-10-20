@@ -2087,6 +2087,49 @@ cleanup:
 }
 #endif /* WOLFMQTT_BROKER */
 
+/* Validate against MQTT v3.1.1 section 3.2.2.3 or the MQTT 5.0 CONNACK
+ * Reason Code table in section 3.2.2.2. Used by the decoder and, in broker
+ * builds, the encoder. */
+static int MqttPacket_ConnectAckReturnCodeValid(byte code,
+    byte protocol_level)
+{
+#ifdef WOLFMQTT_V5
+    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        switch (code) {
+            case MQTT_REASON_SUCCESS:
+            case MQTT_REASON_UNSPECIFIED_ERR:
+            case MQTT_REASON_MALFORMED_PACKET:
+            case MQTT_REASON_PROTOCOL_ERR:
+            case MQTT_REASON_IMPL_SPECIFIC_ERR:
+            case MQTT_REASON_UNSUP_PROTO_VER:
+            case MQTT_REASON_CLIENT_ID_NOT_VALID:
+            case MQTT_REASON_BAD_USER_OR_PASS:
+            case MQTT_REASON_NOT_AUTHORIZED:
+            case MQTT_REASON_SERVER_UNAVAILABLE:
+            case MQTT_REASON_SERVER_BUSY:
+            case MQTT_REASON_BANNED:
+            case MQTT_REASON_BAD_AUTH_METHOD:
+            case MQTT_REASON_TOPIC_NAME_INVALID:
+            case MQTT_REASON_PACKET_TOO_LARGE:
+            case MQTT_REASON_QUOTA_EXCEEDED:
+            case MQTT_REASON_PAYLOAD_FORMAT_INVALID:
+            case MQTT_REASON_RETAIN_NOT_SUPPORTED:
+            case MQTT_REASON_QOS_NOT_SUPPORTED:
+            case MQTT_REASON_USE_ANOTHER_SERVER:
+            case MQTT_REASON_SERVER_MOVED:
+            case MQTT_REASON_CON_RATE_EXCEED:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+#else
+    (void)protocol_level;
+#endif
+
+    return code <= MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH;
+}
+
 int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack)
 {
@@ -2137,6 +2180,18 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     if (connect_ack) {
         connect_ack->flags = *rx_payload++;
         connect_ack->return_code = *rx_payload++;
+
+        /* A code outside the table for this protocol version is a protocol
+         * violation, not an ordinary refusal. */
+    #ifdef WOLFMQTT_V5
+        if (!MqttPacket_ConnectAckReturnCodeValid(connect_ack->return_code,
+                connect_ack->protocol_level)) {
+    #else
+        if (!MqttPacket_ConnectAckReturnCodeValid(connect_ack->return_code,
+                MQTT_CONNECT_PROTOCOL_LEVEL_4)) {
+    #endif
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         /* [MQTT-3.2.2-1] Bits 7-1 of the Connect Acknowledge Flags byte are
          * reserved and MUST be 0. Any other value is a protocol violation;
@@ -2201,48 +2256,6 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
 }
 
 #ifdef WOLFMQTT_BROKER
-/* Validate against MQTT v3.1.1 section 3.2.2.3 or the MQTT 5.0 CONNACK
- * Reason Code table in section 3.2.2.2. */
-static int MqttPacket_ConnectAckReturnCodeValid(byte code,
-    byte protocol_level)
-{
-#ifdef WOLFMQTT_V5
-    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-        switch (code) {
-            case MQTT_REASON_SUCCESS:
-            case MQTT_REASON_UNSPECIFIED_ERR:
-            case MQTT_REASON_MALFORMED_PACKET:
-            case MQTT_REASON_PROTOCOL_ERR:
-            case MQTT_REASON_IMPL_SPECIFIC_ERR:
-            case MQTT_REASON_UNSUP_PROTO_VER:
-            case MQTT_REASON_CLIENT_ID_NOT_VALID:
-            case MQTT_REASON_BAD_USER_OR_PASS:
-            case MQTT_REASON_NOT_AUTHORIZED:
-            case MQTT_REASON_SERVER_UNAVAILABLE:
-            case MQTT_REASON_SERVER_BUSY:
-            case MQTT_REASON_BANNED:
-            case MQTT_REASON_BAD_AUTH_METHOD:
-            case MQTT_REASON_TOPIC_NAME_INVALID:
-            case MQTT_REASON_PACKET_TOO_LARGE:
-            case MQTT_REASON_QUOTA_EXCEEDED:
-            case MQTT_REASON_PAYLOAD_FORMAT_INVALID:
-            case MQTT_REASON_RETAIN_NOT_SUPPORTED:
-            case MQTT_REASON_QOS_NOT_SUPPORTED:
-            case MQTT_REASON_USE_ANOTHER_SERVER:
-            case MQTT_REASON_SERVER_MOVED:
-            case MQTT_REASON_CON_RATE_EXCEED:
-                return 1;
-            default:
-                return 0;
-        }
-    }
-#else
-    (void)protocol_level;
-#endif
-
-    return code <= MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH;
-}
-
 int MqttEncode_ConnectAck(byte *tx_buf, int tx_buf_len,
     MqttConnectAck *connect_ack)
 {
