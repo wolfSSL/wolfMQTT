@@ -924,6 +924,38 @@ TEST(sn_willmsgupd_payload_scrubbed_after_send)
     sn_will_msg_update_scrub_check(0 /* no CONTINUE */);
 }
 
+/* MQTT-SN 1.2 section 5.4.19: an empty WILLTOPICUPD (no Flags, no WillTopic)
+ * asks the gateway to delete the stored Will topic and Will message.
+ * SN_Client_WillTopicUpdate must send that form when the SN_Will carries no
+ * topic, then complete on the WILLTOPICRESP (section 5.4.20). */
+TEST(sn_willtopicupd_null_topic_sends_delete)
+{
+    SN_Will will;
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    /* WILLTOPICUPD: Length=2, MsgType=0x1A, nothing else. */
+    static const byte expect[] = { 0x02, SN_MSG_TYPE_WILLTOPICUPD };
+    /* WILLTOPICRESP: Length=3, MsgType=0x1B, ReturnCode=accepted. */
+    static const byte resp[] = { 0x03, SN_MSG_TYPE_WILLTOPICRESP,
+                                 SN_RC_ACCEPTED };
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    mock_net_push(&g_mock, resp, (int)sizeof(resp));
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = NULL;
+
+    for (i = 0; i < 50 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WillTopicUpdate(&g_client, &will);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, will.resp.topicResp.return_code);
+    ASSERT_EQ((int)sizeof(expect), g_mock.out_len);
+    ASSERT_EQ(0, XMEMCMP(expect, g_mock.out, sizeof(expect)));
+    ASSERT_NO_PENDRESP();
+}
+
 /* #3138 error-path coverage. The success-path tests above never reach the
  * rc != xfer branch because mock_write() always accepts the whole buffer, so
  * the error-path CLIENT_FORCE_ZERO (and the pendResp removal beside it) would go
@@ -3297,6 +3329,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connect_refused);
     RUN_TEST(sn_will_payload_scrubbed_after_send);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
+    RUN_TEST(sn_willtopicupd_null_topic_sends_delete);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);
 #ifdef WOLFMQTT_MULTITHREAD
     RUN_TEST(sn_willmsgupd_scrubbed_on_response_registration_error);

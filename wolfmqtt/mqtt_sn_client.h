@@ -80,13 +80,15 @@ WOLFMQTT_API int SN_Client_Connect(
     MqttClient *client,
     SN_Connect *connect);
 
-/*! \brief      Encodes and sends the MQTT-SN Will Topic Update packet. Sending
-                a NULL 'will' indicates that the client wishes to delete the
-                Will topic and the Will message stored in the server.
+/*! \brief      Encodes and sends the MQTT-SN Will Topic Update packet. Setting
+                will->willTopic to NULL sends an empty Will Topic Update,
+                which asks the server to delete the stored Will topic and
+                Will message.
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      will        Pointer to SN_Will structure initialized
-                            with topic and message parameters. NULL is valid.
+                            with topic and message parameters. Must not be
+                            NULL; it also holds the request state.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */

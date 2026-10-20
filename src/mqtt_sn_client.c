@@ -1527,9 +1527,10 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
             return rc;
         }
 
-        /* Encode Will Topic Update */
+        /* Encode Will Topic Update. With no topic, send the empty form that
+         * deletes the stored Will (MQTT-SN 1.2 section 5.4.19). */
         rc = SN_Encode_WillTopicUpdate(client->tx_buf,
-                client->tx_buf_len, will);
+                client->tx_buf_len, (will->willTopic != NULL) ? will : NULL);
     #ifdef WOLFMQTT_DEBUG_CLIENT
         PRINTF("MqttClient_EncodePacket: Len %d, Type %s (%d)",
             rc, SN_Packet_TypeDesc(SN_MSG_TYPE_WILLTOPICUPD),
