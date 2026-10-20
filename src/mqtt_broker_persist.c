@@ -2410,7 +2410,7 @@ static void wmqb_restore_drop_ended(MqttBroker* broker,
                 if (rc != 0) {
                     WMQB_LOG_ERR(broker,
                         "broker: persist drop ended session failed "
-                        "client_id=%s rc=%d", cid, rc);
+                        "client_id=%s rc=%d", BrokerLog_Sanitize(cid), rc);
                 }
                 WOLFMQTT_FREE(cid);
             }
@@ -2597,7 +2597,7 @@ static void wmqb_restore_expiry_sweep(MqttBroker* broker)
             WMQB_LOG_INFO(broker,
                 "broker: persist expired session client_id=%s "
                 "(expiry=%us)",
-                cur->client_id == NULL ? "(null)" : cur->client_id,
+                BrokerLog_Sanitize(cur->client_id),
                 (unsigned)cur->session_expiry_sec);
             /* Shared teardown lives in mqtt_broker.c so the eviction
              * path and this expiry-sweep path can't drift. Drops

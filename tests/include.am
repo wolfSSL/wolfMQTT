@@ -69,7 +69,7 @@ endif
 # Test framework headers
 noinst_HEADERS += tests/unit_test.h tests/test_broker_alloc.h \
                   tests/test_mqtt_props_config.h tests/test_mqtt_curl_config.h \
-                  tests/test_mqtt_sem_config.h
+                  tests/test_mqtt_sem_config.h tests/test_broker_log_config.h
 
 # MQTT-SN packet decoder tests. The SN_Decode_* routines are WOLFMQTT_LOCAL
 # (hidden) so they cannot be linked from libwolfmqtt; src/mqtt_sn_packet.c is
@@ -169,6 +169,23 @@ tests_test_broker_connect_CPPFLAGS = -I$(top_srcdir) \
     -include $(top_srcdir)/tests/test_broker_alloc.h $(AM_CPPFLAGS)
 tests_test_broker_connect_LDADD    = src/libwolfmqtt.la $(LIB_STATIC_ADD)
 tests_test_broker_connect_DEPENDENCIES = src/libwolfmqtt.la
+
+# Broker log sanitization tests: logging enabled, with PRINTF redirected into
+# a capture buffer in the test.
+check_PROGRAMS += tests/test_broker_log
+tests_test_broker_log_SOURCES = \
+    tests/test_broker_log.c \
+    src/mqtt_broker.c \
+    src/mqtt_broker_persist.c \
+    src/mqtt_broker_persist_posix.c
+tests_test_broker_log_CFLAGS = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
+    -DNO_MAIN_DRIVER '-DPRINTF(...)=wolfmqtt_test_log(__VA_ARGS__)' \
+    '-DWOLFMQTT_BROKER_GET_TIME_S()=wolfmqtt_test_broker_time_s()' \
+    '-DBROKER_SLEEP_MS(ms)=do{}while(0)' $(AM_CFLAGS)
+tests_test_broker_log_CPPFLAGS = -I$(top_srcdir) \
+    -include $(top_srcdir)/tests/test_broker_log_config.h $(AM_CPPFLAGS)
+tests_test_broker_log_LDADD = src/libwolfmqtt.la $(LIB_STATIC_ADD)
+tests_test_broker_log_DEPENDENCIES = src/libwolfmqtt.la
 
 check_PROGRAMS += tests/test_broker_connect_static
 tests_test_broker_connect_static_SOURCES = \

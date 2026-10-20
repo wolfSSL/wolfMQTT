@@ -1017,6 +1017,12 @@ WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
     BrokerOrphanSession* o);
 #endif
 
+#ifndef WOLFMQTT_BROKER_NO_LOG
+/* Escape control bytes in a peer-controlled string before it is logged.
+ * Defined in mqtt_broker.c; shared with the persistence layer. */
+WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src);
+#endif
+
 /* CLI wrapper interface */
 WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);
 

@@ -133,7 +133,7 @@ typedef char wolfmqtt_broker_time_t_must_be_unsigned[
  * arguments can appear in one log statement; the broker log path is single
  * threaded (as is PRINTF itself). Output is NUL-terminated and truncated to
  * fit. NULL src yields "(null)". */
-static const char* BrokerLog_Sanitize(const char* src)
+WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src)
 {
     static const char hex_digits[] = "0123456789abcdef";
     static char pool[BROKER_LOG_SAN_POOL][BROKER_LOG_SAN_SZ];
