@@ -846,6 +846,15 @@ wait_again:
                     mms_stat, &response_pending, timeout_ms);
 
             if (rc == MQTT_CODE_CONTINUE) {
+            #ifdef WOLFMQTT_MULTITHREAD
+                /* A resumed wait finds the entry again, so release it now
+                 * and let its owner unlink it meanwhile. */
+                if (pendResp != NULL &&
+                        wm_SemLock(&client->lockClient) == 0) {
+                    MqttClient_RespList_EndProcessing(client, pendResp);
+                    wm_SemUnlock(&client->lockClient);
+                }
+            #endif
                 break;
             }
 
@@ -860,6 +869,7 @@ wait_again:
                 if (wm_SemLock(&client->lockClient) == 0) {
                     pendResp->packetDone = 1;
                     pendResp->packet_ret = rc;
+                    MqttClient_RespList_EndProcessing(client, pendResp);
                 #ifdef WOLFMQTT_DEBUG_CLIENT
                     PRINTF("PendResp Marked Done %p", pendResp);
                 #endif
@@ -1430,24 +1440,32 @@ enum {
 
 /* The Will exchange after CONNECT failed. Release the CONNACK pending
  * response and rewind the state so a retry with the same SN_Connect sends a
- * new CONNECT; the gateway only requests the Will in reply to one. */
-static void SN_Client_ConnectReset(MqttClient *client, SN_Connect *mc_connect)
+ * new CONNECT; the gateway only requests the Will in reply to one. A reader
+ * may already be decoding an early CONNACK into mc_connect, so the entry is
+ * unlinked only once it is idle, and the state is left alone if that fails. */
+static int SN_Client_ConnectReset(MqttClient *client, SN_Connect *mc_connect)
 {
+    int rc = MQTT_CODE_SUCCESS;
+
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &mc_connect->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveIdle(client, &mc_connect->pendResp);
 #else
     (void)client;
 #endif
-    mc_connect->stat.write = MQTT_MSG_BEGIN;
-    mc_connect->will_done = SN_WILL_DONE_NONE;
+    if (rc == MQTT_CODE_SUCCESS) {
+        mc_connect->stat.write = MQTT_MSG_BEGIN;
+        mc_connect->will_done = SN_WILL_DONE_NONE;
+    }
+    return rc;
 }
 
 int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 {
     int rc = 0;
+    int reset_rc;
+#if WOLFMQTT_MAX_QOS >= 2
+    int session_id_matched;
+#endif
 
     /* Validate required arguments */
     if ((client == NULL) || (mc_connect == NULL)) {
@@ -1520,7 +1538,10 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
             rc = SN_WillTopic(client, &mc_connect->will);
             if (rc != 0) {
                 if (rc != MQTT_CODE_CONTINUE) {
-                    SN_Client_ConnectReset(client, mc_connect);
+                    reset_rc = SN_Client_ConnectReset(client, mc_connect);
+                    if (reset_rc != MQTT_CODE_SUCCESS) {
+                        rc = reset_rc;
+                    }
                 }
                 return rc;
             }
@@ -1530,7 +1551,10 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         rc = SN_WillMessage(client, &mc_connect->will);
         if (rc != 0) {
             if (rc != MQTT_CODE_CONTINUE) {
-                SN_Client_ConnectReset(client, mc_connect);
+                reset_rc = SN_Client_ConnectReset(client, mc_connect);
+                if (reset_rc != MQTT_CODE_SUCCESS) {
+                    rc = reset_rc;
+                }
             }
             return rc;
         }
@@ -1563,10 +1587,16 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_CONNECT_REFUSED);
     }
 #if WOLFMQTT_MAX_QOS >= 2
-    /* A clean session starts with no inbound QoS 2 flows in progress. */
-    if (rc == MQTT_CODE_SUCCESS && mc_connect->clean_session) {
-        XMEMSET(client->recv_qos2_pending, 0,
-            sizeof(client->recv_qos2_pending));
+    /* A clean session, or a session for a different ClientId, starts with
+     * no inbound QoS 2 flows in progress. */
+    if (rc == MQTT_CODE_SUCCESS) {
+        session_id_matched =
+            MqttClient_SessionIdMatches(client, mc_connect->client_id);
+        MqttClient_SessionIdRecord(client, mc_connect->client_id);
+        if (mc_connect->clean_session || !session_id_matched) {
+            XMEMSET(client->recv_qos2_pending, 0,
+                sizeof(client->recv_qos2_pending));
+        }
     }
 #endif
 

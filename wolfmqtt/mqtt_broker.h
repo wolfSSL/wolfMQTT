@@ -132,6 +132,10 @@
 #ifndef BROKER_MAX_WILL_PAYLOAD_LEN
     #define BROKER_MAX_WILL_PAYLOAD_LEN 256
 #endif
+/* Static-memory room for a v5 Will's encoded publishable properties. */
+#ifndef BROKER_MAX_WILL_PROPS_LEN
+    #define BROKER_MAX_WILL_PROPS_LEN 128
+#endif
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
 #endif
@@ -262,8 +266,9 @@
      * wrap_mode byte out of the schema-version field. Bumped 2 -> 3 when
      * the NS_SESSION record gained an orphan_since timestamp. Bumped 3 -> 4
      * when NS_OUTQ gained an explicit enqueue sequence, then 4 -> 5 when it
-     * gained retransmission state. */
-    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 5
+     * gained retransmission state, then 5 -> 6 when it gained v5 Properties
+     * and an explicit Message Expiry presence flag. */
+    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 6
 #endif
 
 /* Header wrap_mode byte values (record body framing on disk). */
@@ -536,18 +541,17 @@ typedef struct BrokerOutPub {
      * MQTT-4.4.0-1, then clears the flag. */
     byte    retransmit_dup; /* 0 or 1 */
     byte    partial_send;   /* QoS 0 PUBLISH started on the old socket */
+    byte    has_expiry;     /* v5 Message Expiry Interval present */
     WOLFMQTT_BROKER_TIME_T enq_time;
     word64  enqueue_seq;    /* persistent FIFO order within this session */
-    word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
+    word32  expiry_sec;     /* v5 Message Expiry Interval when has_expiry */
     byte    protocol_level; /* echoed back to subscriber on send */
 #ifdef WOLFMQTT_V5
     /* Deep copy (BrokerProps_Clone) of the originating PUBLISH's v5
      * Application Message properties (Payload Format Indicator, Content
      * Type, Response Topic, Correlation Data, User Property, etc.), or
      * NULL if none. Owned by this entry; freed once by BrokerOutPub_Free
-     * via BrokerProps_FreeClone - never via MqttProps_Free().
-     * Not serialized by the persist layer: a queued message replayed after a
-     * broker restart is delivered without these properties. */
+     * via BrokerProps_FreeClone - never via MqttProps_Free(). */
     MqttProp* props;
 #endif
     struct BrokerOutPub* next;
@@ -721,6 +725,19 @@ typedef struct BrokerClient {
      * direct_pending_len. Once that write finishes or fails, the client is
      * closed instead of reading another packet. */
     unsigned int  close_after_direct : 1;
+    /* The connection is being taken over and closes once its own Will has
+     * been published, so nothing new may start writing to it. */
+    unsigned int  takeover_closing : 1;
+#endif
+#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_V5)
+    /* Encoded Will Properties carried onto the Will PUBLISH, i.e. all but
+     * the Will Delay Interval (MQTT 5.0 section 3.1.3.2). */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte          will_props[BROKER_MAX_WILL_PROPS_LEN];
+#else
+    byte*         will_props;
+#endif
+    word16        will_props_len;
 #endif
 } BrokerClient;
 
@@ -783,6 +800,15 @@ typedef struct BrokerPendingWill {
     MqttQoS qos;
     byte    retain;
     WOLFMQTT_BROKER_TIME_T publish_time; /* absolute time to publish */
+#ifdef WOLFMQTT_V5
+    /* Encoded Will Properties, as in BrokerClient.will_props. */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    props[BROKER_MAX_WILL_PROPS_LEN];
+#else
+    byte*   props;
+#endif
+    word16  props_len;
+#endif
 } BrokerPendingWill;
 #endif /* WOLFMQTT_BROKER_WILL */
 
@@ -1026,6 +1052,12 @@ WOLFMQTT_LOCAL void BrokerStaticOrphan_DropFull(MqttBroker* broker,
  * and restore-time expiry sweep so the two paths can't drift. */
 WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
     BrokerOrphanSession* o);
+#ifdef WOLFMQTT_V5
+/* v5 Properties of a queued PUBLISH, for the persistence layer. */
+WOLFMQTT_LOCAL int BrokerOutPub_EncodeProps(const BrokerOutPub* e, byte* buf);
+WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
+    word32 len);
+#endif
 #endif
 
 #ifndef WOLFMQTT_BROKER_NO_LOG

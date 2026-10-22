@@ -187,7 +187,7 @@ finds while iterating and repeats until none match.
 |---|---|---|
 | `BROKER_MAX_PERSIST_SESSIONS` | 64 | Dynamic-memory persistent sessions (connected and offline); a new persistent CONNECT beyond it is refused, existing sessions are never evicted |
 | `BROKER_MAX_OFFLINE_MSGS_PER_SUB` | 32 | Offline queue depth per session |
-| `WOLFMQTT_BROKER_PERSIST_SCHEMA_VER` | 5 | On-disk record schema version |
+| `WOLFMQTT_BROKER_PERSIST_SCHEMA_VER` | 6 | On-disk record schema version |
 
 Because existing persistent sessions are never evicted, any client allowed to
 connect can use up `BROKER_MAX_PERSIST_SESSIONS` by opening persistent sessions

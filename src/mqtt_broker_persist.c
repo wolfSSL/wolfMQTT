@@ -1032,7 +1032,7 @@ static int wmqb_outq_build_key(const char* client_id, word16 packet_id,
  *     2    1    retain
  *     3    1    protocol_level
  *     4    1    retransmit_dup
- *     5    1    _reserved
+ *     5    1    flags          (bit 0: Message Expiry Interval present)
  *     6    2    packet_id      (redundant with key, simplifies decode)
  *     8    8    enq_time
  *    16    8    enqueue_seq
@@ -1040,7 +1040,9 @@ static int wmqb_outq_build_key(const char* client_id, word16 packet_id,
  *    28    2    topic_len
  *    30    N    topic
  *  30+N    4    payload_len
- *  34+N    M    payload                                                       */
+ *  34+N    M    payload
+ *  34+N+M  4    props_len
+ *  38+N+M  P    props          (v5 PUBLISH Properties, no length prefix)    */
 int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     const struct BrokerOutPub* e)
 {
@@ -1062,6 +1064,7 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     byte   key[256 + 3];
     word16 key_len;
     int    rc;
+    int    props_len = 0;
 
     if (broker == NULL || broker->persist == NULL ||
             client_id == NULL || p_e == NULL) {
@@ -1086,8 +1089,14 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     if (rc != 0) {
         return rc;
     }
+#ifdef WOLFMQTT_V5
+    props_len = BrokerOutPub_EncodeProps(p_e, NULL);
+    if (props_len < 0) {
+        return props_len;
+    }
+#endif
     body_len = 1 + 1 + 1 + 1 + 2 + 2 + 8 + 8 + 4 + 2 + topic_len + 4
-                + payload_len;
+                + payload_len + 4 + (word32)props_len;
     total_len = WMQB_HDR_LEN + body_len;
     buf = (byte*)WOLFMQTT_MALLOC(total_len);
     if (buf == NULL) {
@@ -1100,7 +1109,7 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     *bp++ = p_e->retain;
     *bp++ = p_e->protocol_level;
     *bp++ = p_e->retransmit_dup;
-    *bp++ = 0;  /* _reserved */
+    *bp++ = p_e->has_expiry ? 1 : 0;
     wmqb_w_u16(bp, p_e->packet_id); bp += 2;
     wmqb_w_u64(bp, (word64)p_e->enq_time); bp += 8;
     wmqb_w_u64(bp, p_e->enqueue_seq); bp += 8;
@@ -1111,9 +1120,18 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     if (payload_len > 0 && p_e->payload != NULL) {
         XMEMCPY(bp, p_e->payload, payload_len);
     }
+    bp += payload_len;
+    wmqb_w_u32(bp, (word32)props_len); bp += 4;
+#ifdef WOLFMQTT_V5
+    if (props_len > 0 && BrokerOutPub_EncodeProps(p_e, bp) != props_len) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+    }
+#endif
 
-    rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_OUTQ,
-        key, key_len, buf, total_len);
+    if (rc == 0) {
+        rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_OUTQ,
+            key, key_len, buf, total_len);
+    }
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     wmqb_force_zero(buf, total_len);
 #endif
@@ -2458,10 +2476,12 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     byte   retain;
     byte   protocol_level;
     byte   retransmit_dup;
+    byte   flags;
     word16 packet_id;
     word64 enq_time;
     word64 enqueue_seq;
     word32 expiry_sec;
+    word32 props_len;
     BrokerOutPub** prev_link;
     BrokerOutPub*  iter;
 
@@ -2487,8 +2507,8 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     retain = *p++;
     protocol_level = *p++;
     retransmit_dup = *p++;
-    p++; /* _reserved */
-    if (retransmit_dup > 1) {
+    flags = *p++;
+    if (retransmit_dup > 1 || (flags & ~0x01) != 0) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     packet_id = wmqb_r_u16(p); p += 2;
@@ -2531,7 +2551,15 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     p += topic_len;
 
     payload_len = wmqb_r_u32(p); p += 4;
-    if ((word32)(end - p) < payload_len) {
+    if ((word32)(end - p) < payload_len ||
+            (word32)(end - p) - payload_len < 4) {
+        wmqb_force_zero(e->topic, (word32)topic_len + 1);
+        WOLFMQTT_FREE(e->topic);
+        WOLFMQTT_FREE(e);
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    props_len = wmqb_r_u32(p + payload_len);
+    if ((word32)(end - p) - payload_len - 4 != props_len) {
         wmqb_force_zero(e->topic, (word32)topic_len + 1);
         WOLFMQTT_FREE(e->topic);
         WOLFMQTT_FREE(e);
@@ -2548,6 +2576,22 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
         XMEMCPY(e->payload, p, payload_len);
     }
     e->payload_len = payload_len;
+    e->has_expiry = (byte)(flags & 0x01);
+    p += payload_len + 4;
+#ifdef WOLFMQTT_V5
+    rc = BrokerOutPub_DecodeProps(e, p, props_len);
+    if (rc != 0) {
+        if (e->payload != NULL) {
+            wmqb_force_zero(e->payload, payload_len);
+            WOLFMQTT_FREE(e->payload);
+        }
+        wmqb_force_zero(e->topic, (word32)topic_len + 1);
+        WOLFMQTT_FREE(e->topic);
+        WOLFMQTT_FREE(e);
+        return (rc == MQTT_CODE_ERROR_MEMORY) ? rc :
+            MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+#endif
     e->qos = (MqttQoS)qos;
     e->packet_id = packet_id;
     e->retain = retain;

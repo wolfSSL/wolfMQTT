@@ -196,6 +196,7 @@ tests_test_broker_connect_static_SOURCES = \
 tests_test_broker_connect_static_CFLAGS = -DWOLFMQTT_BROKER \
     -DWOLFMQTT_BROKER_CUSTOM_NET -DWOLFMQTT_BROKER_NO_LOG \
     -DWOLFMQTT_STATIC_MEMORY -DNO_MAIN_DRIVER \
+    -DBROKER_MAX_WILL_PAYLOAD_LEN=320 \
     '-DWOLFMQTT_BROKER_GET_TIME_S()=wolfmqtt_test_broker_time_s()' \
     '-DBROKER_SLEEP_MS(ms)=do{}while(0)' $(AM_CFLAGS)
 tests_test_broker_connect_static_CPPFLAGS = -I$(top_srcdir) \

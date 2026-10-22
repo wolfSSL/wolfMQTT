@@ -150,7 +150,7 @@ These are the network connect / disconnect interfaces that wrap the MqttNet call
 
 * `int MqttClient_NetConnect(MqttClient *client, const char* host, word16 port, int timeout_ms, int use_tls, MqttTlsCb cb);`
 * `int MqttClient_NetDisconnect(MqttClient *client);`
-* `int MqttClient_NetDisconnect_Wait(MqttClient *client);` - like `MqttClient_NetDisconnect`, but in `WOLFMQTT_MULTITHREAD` builds waits for other threads' network I/O on the client to finish first. Do not call it from a message callback.
+* `int MqttClient_NetDisconnect_Wait(MqttClient *client);` - like `MqttClient_NetDisconnect`, but in `WOLFMQTT_MULTITHREAD` builds waits for other threads' network I/O on the client to finish first. Do not call it from a message, property or publish payload callback; where thread identities are available it returns `MQTT_CODE_ERROR_STAT` there instead of deadlocking.
 
 Helper functions:
 
@@ -225,6 +225,8 @@ This example exercises the multithreading capabilities of the client library. Th
 The multi-threading feature can also be used with the non-blocking socket (--enable-nonblock).
 
 If you are having issues with thread synchronization on Linux consider using not the conditional signal (`WOLFMQTT_NO_COND_SIGNAL`).
+
+With `WOLFMQTT_NO_COND_SIGNAL`, or with `WOLFMQTT_USER_THREADING` unless `WOLFMQTT_SEM_SIGNAL` is defined, a write-only publish or `MqttClient_CancelMessage` whose response another thread is decoding waits for that thread to release the receive lock instead of being signalled. A thread that blocks in `MqttClient_WaitMessage` can then hold them up until its read returns.
 
 ### Atomic publish and subscribe examples
 In the `examples/pub-sub` folder, there are two simple client examples:

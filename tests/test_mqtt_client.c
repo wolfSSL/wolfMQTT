@@ -5727,6 +5727,33 @@ TEST(publish_header_fills_tx_buf_sends_payload)
     ASSERT_EQ(0, XMEMCMP(expected, g_connect_wire, sizeof(expected)));
 }
 
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_THREAD_ID_T)
+/* WaitType stops a read twice. The repeat, after the first released lockRecv,
+ * must not reset the read state of a reader that has since taken it, or that
+ * reader would no longer be known to own lockRecv. */
+TEST(read_stop_repeat_keeps_new_reader_state)
+{
+    MqttMsgStat first;
+    MqttMsgStat second;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, test_init_client());
+    XMEMSET(&first, 0, sizeof(first));
+    XMEMSET(&second, 0, sizeof(second));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttReadStart(&test_client, &first));
+    MqttReadStop(&test_client, &first);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttReadStart(&test_client, &second));
+    MqttReadStop(&test_client, &first);
+
+    ASSERT_EQ(1, test_client.read.isActive);
+    ASSERT_EQ(1, test_client.read_owner_valid);
+    ASSERT_EQ(1, second.isReadActive);
+    MqttReadStop(&test_client, &second);
+    ASSERT_EQ(0, test_client.read.isActive);
+    ASSERT_EQ(0, test_client.read_owner_valid);
+}
+#endif
+
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 1
 /* Drives one QoS>0 publish to completion against the canned-response mock and
  * returns the final MqttClient_Publish result. The caller stages the broker's
@@ -6805,6 +6832,746 @@ TEST(publish_writeonly_v5_no_dangling_pendresp_on_success)
     /* No unit was reserved, so the quota is untouched. */
     ASSERT_EQ(1, test_client.server_recv_max);
 }
+
+#if defined(WOLFMQTT_PROPERTY_CB) && \
+    (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
+/* A reader thread that matches a PUBACK to a write-only publish decodes into
+ * that publish object outside lockClient. The publisher must not return, and so
+ * let its caller free the object, until that reader is done with it. The v5
+ * property callback runs inside the decode, so it parks the reader there. */
+typedef struct WriteOnlyAckRaceCtx {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    MqttPublish publish;
+    int ack_pos;
+    int published;
+    int in_decode;
+    int publish_returned;
+    int returned_during_decode;
+    int sync_error;
+    int publish_rc;
+    int acks;          /* copies of g_race_puback to serve */
+    int prop_calls;
+    int next_read;     /* reader entered the read after the acks */
+    int returned_during_next_read;
+    int reader_done;
+} WriteOnlyAckRaceCtx;
+
+/* PUBACK, MQTT 5.0 section 3.4: Packet Identifier 23, Reason Code 0x00 and a
+ * Reason String property (0x1F) "ok" so the property callback runs. */
+static const byte g_race_puback[] = {
+    0x40, 0x09,             /* PUBACK, Remaining Length 9 */
+    0x00, 0x17,             /* Packet Identifier 23 */
+    0x00,                   /* Reason Code: Success */
+    0x05,                   /* Property Length 5 */
+    0x1F, 0x00, 0x02,       /* Reason String, length 2 */
+    'o', 'k'
+};
+
+/* Wait on the race condition variable until *flag is set or one second
+ * passes. Called with race->mutex held. */
+static void writeonly_ack_race_wait(WriteOnlyAckRaceCtx* race,
+    const int* flag)
+{
+    struct timespec deadline;
+    int wait_rc = 0;
+
+    if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+        race->sync_error = 1;
+        return;
+    }
+    deadline.tv_sec++;
+    while (*flag == 0 && wait_rc == 0) {
+        wait_rc = pthread_cond_timedwait(&race->cond, &race->mutex,
+            &deadline);
+    }
+    if (wait_rc != 0 && wait_rc != ETIMEDOUT) {
+        race->sync_error = 1;
+    }
+}
+
+/* Holds the PUBLISH write until the reader is inside the PUBACK decode, so the
+ * publisher checks its pending response at the worst moment. */
+static int mock_net_write_writeonly_ack_race(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)context;
+
+    (void)timeout_ms;
+    if (buf_len > 0 && (buf[0] >> 4) == MQTT_PACKET_TYPE_PUBLISH) {
+        if (pthread_mutex_lock(&race->mutex) != 0) {
+            race->sync_error = 1;
+            return MQTT_CODE_ERROR_SYSTEM;
+        }
+        race->published = 1;
+        if (pthread_cond_broadcast(&race->cond) != 0) {
+            race->sync_error = 1;
+        }
+        writeonly_ack_race_wait(race, &race->in_decode);
+        if (race->in_decode == 0) {
+            race->sync_error = 1;
+        }
+        if (pthread_mutex_unlock(&race->mutex) != 0) {
+            race->sync_error = 1;
+            return MQTT_CODE_ERROR_SYSTEM;
+        }
+    }
+    return buf_len;
+}
+
+/* Serves the PUBACK once the PUBLISH is out, then reports an idle timeout. */
+static int mock_net_read_writeonly_ack_race(void *context, byte* buf,
+    int buf_len, int timeout_ms)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)context;
+    int n;
+
+    (void)timeout_ms;
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    writeonly_ack_race_wait(race, &race->published);
+    n = (int)sizeof(g_race_puback) - race->ack_pos;
+    if (race->published == 0 || n <= 0) {
+        n = MQTT_CODE_ERROR_TIMEOUT;
+    }
+    else {
+        if (n > buf_len) {
+            n = buf_len;
+        }
+        XMEMCPY(buf, g_race_puback + race->ack_pos, n);
+        race->ack_pos += n;
+    }
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    return n;
+}
+
+/* Runs on the reader thread while it decodes into the publisher's object. */
+static int writeonly_ack_race_prop_cb(MqttClient* client, MqttProp* head,
+    void* ctx)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)ctx;
+
+    (void)client;
+    (void)head;
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    race->in_decode = 1;
+    if (pthread_cond_broadcast(&race->cond) != 0) {
+        race->sync_error = 1;
+    }
+    writeonly_ack_race_wait(race, &race->publish_returned);
+    race->returned_during_decode = race->publish_returned;
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+static void* writeonly_ack_race_reader_thread(void* arg)
+{
+    (void)arg;
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    return NULL;
+}
+
+static void* writeonly_ack_race_publish_thread(void* arg)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)arg;
+    int rc;
+
+    rc = MqttClient_Publish_WriteOnly(&test_client, &race->publish, NULL);
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return NULL;
+    }
+    race->publish_rc = rc;
+    race->publish_returned = 1;
+    if (pthread_cond_broadcast(&race->cond) != 0 ||
+            pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+    }
+    return NULL;
+}
+
+TEST(publish_writeonly_waits_for_reader_decoding_ack)
+{
+    static WriteOnlyAckRaceCtx race;
+    static byte payload[] = "hello";
+    pthread_t reader_thread;
+    pthread_t publish_thread;
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    XMEMSET(&race, 0, sizeof(race));
+    ASSERT_EQ(0, pthread_mutex_init(&race.mutex, NULL));
+    ASSERT_EQ(0, pthread_cond_init(&race.cond, NULL));
+
+    race.publish.qos = MQTT_QOS_1;
+    race.publish.packet_id = 23;
+    race.publish.topic_name = "test/topic";
+    race.publish.buffer = payload;
+    race.publish.total_len = (word32)(sizeof(payload) - 1);
+    race.publish.buffer_len = race.publish.total_len;
+    race.publish_rc = MQTT_CODE_ERROR_SYSTEM;
+    test_net.context = &race;
+    test_net.write = mock_net_write_writeonly_ack_race;
+    test_net.read = mock_net_read_writeonly_ack_race;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_SetPropertyCallback(&test_client,
+        writeonly_ack_race_prop_cb, &race));
+
+    ASSERT_EQ(0, pthread_create(&reader_thread, NULL,
+        writeonly_ack_race_reader_thread, &race));
+    ASSERT_EQ(0, pthread_create(&publish_thread, NULL,
+        writeonly_ack_race_publish_thread, &race));
+    ASSERT_EQ(0, pthread_join(publish_thread, NULL));
+    ASSERT_EQ(0, pthread_join(reader_thread, NULL));
+
+    ASSERT_EQ(0, race.sync_error);
+    ASSERT_EQ(1, race.in_decode);
+    /* The publisher did not return while the reader was inside its object. */
+    ASSERT_EQ(0, race.returned_during_decode);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, race.publish_rc);
+    ASSERT_NULL(test_client.firstPendResp);
+
+    ASSERT_EQ(0, pthread_cond_destroy(&race.cond));
+    ASSERT_EQ(0, pthread_mutex_destroy(&race.mutex));
+}
+
+/* Serves race->acks copies of g_race_puback once the PUBLISH is out. The read
+ * after them waits for the publisher to return, as a dedicated reader blocks
+ * in its next read, then reports an idle timeout. */
+static int mock_net_read_writeonly_acks(void *context, byte* buf,
+    int buf_len, int timeout_ms)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)context;
+    int total;
+    int n;
+    int i;
+
+    (void)timeout_ms;
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    writeonly_ack_race_wait(race, &race->published);
+    total = (int)sizeof(g_race_puback) * race->acks;
+    n = total - race->ack_pos;
+    if (race->published == 0) {
+        n = MQTT_CODE_ERROR_TIMEOUT;
+    }
+    else if (n <= 0) {
+        race->next_read = 1;
+        if (pthread_cond_broadcast(&race->cond) != 0) {
+            race->sync_error = 1;
+        }
+        writeonly_ack_race_wait(race, &race->publish_returned);
+        race->returned_during_next_read = race->publish_returned;
+        n = MQTT_CODE_ERROR_TIMEOUT;
+    }
+    else {
+        if (n > buf_len) {
+            n = buf_len;
+        }
+        for (i = 0; i < n; i++) {
+            buf[i] = g_race_puback[(race->ack_pos + i) %
+                (int)sizeof(g_race_puback)];
+        }
+        race->ack_pos += n;
+    }
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    return n;
+}
+
+/* Parks the reader in the decode of the last ack until the publisher returns
+ * or one second passes. Earlier acks pass straight through. */
+static int writeonly_last_ack_prop_cb(MqttClient* client, MqttProp* head,
+    void* ctx)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)ctx;
+
+    (void)client;
+    (void)head;
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    race->prop_calls++;
+    if (race->prop_calls == race->acks) {
+        race->in_decode = 1;
+        if (pthread_cond_broadcast(&race->cond) != 0) {
+            race->sync_error = 1;
+        }
+        writeonly_ack_race_wait(race, &race->publish_returned);
+        race->returned_during_decode = race->publish_returned;
+    }
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+/* Sets up a write-only QoS 1 publish raced against a WaitMessage reader that
+ * receives race->acks PUBACKs for it, runs both threads and joins them. */
+static int writeonly_acks_run(WriteOnlyAckRaceCtx* race, int acks,
+    MqttPropertyCb prop_cb)
+{
+    static byte payload[] = "hello";
+    pthread_t reader_thread;
+    pthread_t publish_thread;
+
+    if (test_init_client() != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    test_client_connect_sent();
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    XMEMSET(race, 0, sizeof(*race));
+    if (pthread_mutex_init(&race->mutex, NULL) != 0 ||
+            pthread_cond_init(&race->cond, NULL) != 0) {
+        return -1;
+    }
+    race->acks = acks;
+    race->publish.qos = MQTT_QOS_1;
+    race->publish.packet_id = 23;
+    race->publish.topic_name = "test/topic";
+    race->publish.buffer = payload;
+    race->publish.total_len = (word32)(sizeof(payload) - 1);
+    race->publish.buffer_len = race->publish.total_len;
+    race->publish_rc = MQTT_CODE_ERROR_SYSTEM;
+    test_net.context = race;
+    test_net.write = mock_net_write_writeonly_ack_race;
+    test_net.read = mock_net_read_writeonly_acks;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    if (MqttClient_SetPropertyCallback(&test_client, prop_cb, race) !=
+            MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    if (pthread_create(&reader_thread, NULL,
+            writeonly_ack_race_reader_thread, race) != 0) {
+        return -1;
+    }
+    if (pthread_create(&publish_thread, NULL,
+            writeonly_ack_race_publish_thread, race) != 0) {
+        (void)pthread_join(reader_thread, NULL);
+        return -1;
+    }
+    if (pthread_join(publish_thread, NULL) != 0 ||
+            pthread_join(reader_thread, NULL) != 0) {
+        return -1;
+    }
+    if (pthread_cond_destroy(&race->cond) != 0 ||
+            pthread_mutex_destroy(&race->mutex) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+/* Lets the publisher reach its wait before the reader leaves the decode. */
+static int writeonly_brief_ack_prop_cb(MqttClient* client, MqttProp* head,
+    void* ctx)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)ctx;
+    struct timespec pause;
+
+    (void)client;
+    (void)head;
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    race->prop_calls++;
+    race->in_decode = 1;
+    if (pthread_cond_broadcast(&race->cond) != 0) {
+        race->sync_error = 1;
+    }
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return MQTT_CODE_ERROR_SYSTEM;
+    }
+    pause.tv_sec = 0;
+    pause.tv_nsec = 100 * 1000 * 1000;
+    (void)nanosleep(&pause, NULL);
+    return MQTT_CODE_SUCCESS;
+}
+
+#ifdef WOLFMQTT_SEM_SIGNAL
+/* A dedicated reader retakes lockRecv for its next blocking read as soon as it
+ * finishes the ack. A publisher waiting for that decode to end must be woken
+ * by it, not left waiting until the reader's next read returns. */
+TEST(publish_writeonly_not_held_by_reader_next_read)
+{
+    static WriteOnlyAckRaceCtx race;
+
+    ASSERT_EQ(0, writeonly_acks_run(&race, 1, writeonly_brief_ack_prop_cb));
+    ASSERT_EQ(0, race.sync_error);
+    ASSERT_EQ(1, race.in_decode);
+    ASSERT_EQ(1, race.next_read);
+    ASSERT_EQ(1, race.returned_during_next_read);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, race.publish_rc);
+    ASSERT_NULL(test_client.firstPendResp);
+}
+#endif
+
+/* A duplicate PUBACK matches the entry the first one already completed, and
+ * the reader decodes it into the same publish object. The publisher must not
+ * take the completed entry and return while that decode runs. */
+TEST(publish_writeonly_waits_for_duplicate_ack_decode)
+{
+    static WriteOnlyAckRaceCtx race;
+
+    ASSERT_EQ(0, writeonly_acks_run(&race, 2, writeonly_last_ack_prop_cb));
+    ASSERT_EQ(0, race.sync_error);
+    ASSERT_EQ(2, race.prop_calls);
+    ASSERT_EQ(1, race.in_decode);
+    ASSERT_EQ(0, race.returned_during_decode);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, race.publish_rc);
+    ASSERT_NULL(test_client.firstPendResp);
+}
+
+/* Holds the PUBLISH write until the reader has failed on the PUBACK. */
+static int mock_net_write_after_reader(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)context;
+
+    (void)timeout_ms;
+    if (buf_len > 0 && (buf[0] >> 4) == MQTT_PACKET_TYPE_PUBLISH) {
+        if (pthread_mutex_lock(&race->mutex) != 0) {
+            race->sync_error = 1;
+            return MQTT_CODE_ERROR_SYSTEM;
+        }
+        race->published = 1;
+        if (pthread_cond_broadcast(&race->cond) != 0) {
+            race->sync_error = 1;
+        }
+        writeonly_ack_race_wait(race, &race->reader_done);
+        if (race->reader_done == 0) {
+            race->sync_error = 1;
+        }
+        if (pthread_mutex_unlock(&race->mutex) != 0) {
+            race->sync_error = 1;
+            return MQTT_CODE_ERROR_SYSTEM;
+        }
+    }
+    return buf_len;
+}
+
+/* Fails the decode of the PUBACK after the reader has claimed the entry. */
+static int failing_ack_prop_cb(MqttClient* client, MqttProp* head, void* ctx)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)ctx;
+
+    (void)client;
+    (void)head;
+    race->prop_calls++;
+    return MQTT_CODE_ERROR_SYSTEM;
+}
+
+static void* failing_ack_reader_thread(void* arg)
+{
+    WriteOnlyAckRaceCtx* race = (WriteOnlyAckRaceCtx*)arg;
+
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return NULL;
+    }
+    race->reader_done = 1;
+    if (pthread_cond_broadcast(&race->cond) != 0 ||
+            pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+    }
+    return NULL;
+}
+
+/* A reader that fails while decoding into another thread's entry must release
+ * its claim, or the owner would wait forever for the decode to end. */
+TEST(publish_writeonly_after_reader_decode_error)
+{
+    static WriteOnlyAckRaceCtx race;
+    static byte payload[] = "hello";
+    pthread_t reader_thread;
+    pthread_t publish_thread;
+    struct timespec deadline;
+    int wait_rc = 0;
+    int returned;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, test_init_client());
+    test_client_connect_sent();
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    XMEMSET(&race, 0, sizeof(race));
+    ASSERT_EQ(0, pthread_mutex_init(&race.mutex, NULL));
+    ASSERT_EQ(0, pthread_cond_init(&race.cond, NULL));
+    race.publish.qos = MQTT_QOS_1;
+    race.publish.packet_id = 23;
+    race.publish.topic_name = "test/topic";
+    race.publish.buffer = payload;
+    race.publish.total_len = (word32)(sizeof(payload) - 1);
+    race.publish.buffer_len = race.publish.total_len;
+    race.publish_rc = MQTT_CODE_ERROR_SYSTEM;
+    test_net.context = &race;
+    race.acks = 1;
+    test_net.write = mock_net_write_after_reader;
+    test_net.read = mock_net_read_writeonly_acks;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_SetPropertyCallback(&test_client,
+        failing_ack_prop_cb, &race));
+
+    ASSERT_EQ(0, pthread_create(&reader_thread, NULL,
+        failing_ack_reader_thread, &race));
+    ASSERT_EQ(0, pthread_create(&publish_thread, NULL,
+        writeonly_ack_race_publish_thread, &race));
+    ASSERT_EQ(0, pthread_join(reader_thread, NULL));
+
+    ASSERT_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
+    deadline.tv_sec += 2;
+    ASSERT_EQ(0, pthread_mutex_lock(&race.mutex));
+    while (race.publish_returned == 0 && wait_rc == 0) {
+        wait_rc = pthread_cond_timedwait(&race.cond, &race.mutex, &deadline);
+    }
+    returned = race.publish_returned;
+    ASSERT_EQ(0, pthread_mutex_unlock(&race.mutex));
+    if (!returned) {
+        /* Stuck waiting: leave the thread behind rather than hang the run. */
+        (void)pthread_detach(publish_thread);
+        test_client_inited = 0;
+    }
+    ASSERT_EQ(1, returned);
+    ASSERT_EQ(0, pthread_join(publish_thread, NULL));
+    ASSERT_EQ(0, race.sync_error);
+    ASSERT_EQ(1, race.prop_calls);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, race.publish_rc);
+    ASSERT_NULL(test_client.firstPendResp);
+    ASSERT_EQ(0, pthread_cond_destroy(&race.cond));
+    ASSERT_EQ(0, pthread_mutex_destroy(&race.mutex));
+}
+
+#ifdef WOLFMQTT_THREAD_ID_T
+/* A property callback runs on the thread that holds lockRecv while it decodes
+ * an ack. Client calls from it that would wait on that lock must refuse with
+ * MQTT_CODE_ERROR_STAT rather than self-deadlock. The publish runs on its own
+ * thread so a deadlock fails the test instead of hanging it. */
+#define CB_REENTRY_CANCEL         0
+#define CB_REENTRY_NET_DISCONNECT 1
+
+typedef struct CbReentryCtx {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    MqttPublish publish;
+    int action;
+    int cb_called;
+    int cb_rc;
+    int publish_rc;
+    int done;
+} CbReentryCtx;
+
+static int cb_reentry_prop_cb(MqttClient* client, MqttProp* head, void* ctx)
+{
+    CbReentryCtx* reentry = (CbReentryCtx*)ctx;
+
+    (void)head;
+    reentry->cb_called = 1;
+    if (reentry->action == CB_REENTRY_CANCEL) {
+        reentry->cb_rc = MqttClient_CancelMessage(client,
+            (MqttObject*)&reentry->publish);
+    }
+    else {
+        reentry->cb_rc = MqttClient_NetDisconnect_Wait(client);
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+static void* cb_reentry_publish_thread(void* arg)
+{
+    CbReentryCtx* reentry = (CbReentryCtx*)arg;
+    int rc;
+
+    rc = MqttClient_Publish(&test_client, &reentry->publish);
+    (void)pthread_mutex_lock(&reentry->mutex);
+    reentry->publish_rc = rc;
+    reentry->done = 1;
+    (void)pthread_cond_broadcast(&reentry->cond);
+    (void)pthread_mutex_unlock(&reentry->mutex);
+    return NULL;
+}
+
+/* Runs a blocking QoS 1 publish whose PUBACK carries a property, with the
+ * property callback doing reentry->action. Returns 0 once the publish
+ * finished, or -1 if it is still stuck after two seconds. */
+static int cb_reentry_run(CbReentryCtx* reentry, int action)
+{
+    static byte payload[] = "hello";
+    pthread_t publish_thread;
+    struct timespec deadline;
+    int wait_rc = 0;
+    int finished;
+
+    if (test_init_client() != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    test_client_connect_sent();
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    XMEMSET(reentry, 0, sizeof(*reentry));
+    if (pthread_mutex_init(&reentry->mutex, NULL) != 0 ||
+            pthread_cond_init(&reentry->cond, NULL) != 0) {
+        return -1;
+    }
+    reentry->action = action;
+    reentry->cb_rc = MQTT_CODE_SUCCESS;
+    reentry->publish.qos = MQTT_QOS_1;
+    reentry->publish.packet_id = 23;
+    reentry->publish.topic_name = "test/topic";
+    reentry->publish.buffer = payload;
+    reentry->publish.total_len = (word32)(sizeof(payload) - 1);
+    reentry->publish.buffer_len = reentry->publish.total_len;
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, g_race_puback, sizeof(g_race_puback));
+    g_canned_len = (int)sizeof(g_race_puback);
+    g_canned_pos = 0;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    if (MqttClient_SetPropertyCallback(&test_client, cb_reentry_prop_cb,
+            reentry) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+
+    if (pthread_create(&publish_thread, NULL, cb_reentry_publish_thread,
+            reentry) != 0 ||
+            clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+        return -1;
+    }
+    deadline.tv_sec += 2;
+    (void)pthread_mutex_lock(&reentry->mutex);
+    while (reentry->done == 0 && wait_rc == 0) {
+        wait_rc = pthread_cond_timedwait(&reentry->cond, &reentry->mutex,
+            &deadline);
+    }
+    finished = reentry->done;
+    (void)pthread_mutex_unlock(&reentry->mutex);
+    if (!finished) {
+        /* Deadlocked: leave the thread behind rather than hang the run. */
+        (void)pthread_detach(publish_thread);
+        test_client_inited = 0;
+        return -1;
+    }
+    (void)pthread_join(publish_thread, NULL);
+    (void)pthread_cond_destroy(&reentry->cond);
+    (void)pthread_mutex_destroy(&reentry->mutex);
+    return 0;
+}
+
+TEST(cancel_from_own_ack_property_cb_refuses)
+{
+    static CbReentryCtx reentry;
+
+    ASSERT_EQ(0, cb_reentry_run(&reentry, CB_REENTRY_CANCEL));
+    ASSERT_EQ(1, reentry.cb_called);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, reentry.cb_rc);
+    /* The refused cancel left the exchange intact, so it completes. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, reentry.publish_rc);
+    ASSERT_NULL(test_client.firstPendResp);
+}
+
+TEST(net_disconnect_wait_from_property_cb_refuses)
+{
+    static CbReentryCtx reentry;
+
+    ASSERT_EQ(0, cb_reentry_run(&reentry, CB_REENTRY_NET_DISCONNECT));
+    ASSERT_EQ(1, reentry.cb_called);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, reentry.cb_rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, reentry.publish_rc);
+}
+
+static pthread_mutex_t g_pub_cb_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_pub_cb_cond = PTHREAD_COND_INITIALIZER;
+static int g_pub_cb_disconnect_rc;
+static int g_pub_cb_disconnect_called;
+static int g_pub_cb_disconnect_done;
+
+/* Runs while the publish holds lockSend. */
+static int pub_cb_net_disconnect_wait(MqttPublish* publish)
+{
+    g_pub_cb_disconnect_called = 1;
+    g_pub_cb_disconnect_rc = MqttClient_NetDisconnect_Wait(&test_client);
+    XMEMSET(publish->buffer, 'x', publish->buffer_len);
+    return (int)publish->buffer_len;
+}
+
+static void* pub_cb_disconnect_thread(void* arg)
+{
+    MqttPublish* publish = (MqttPublish*)arg;
+
+    (void)MqttClient_Publish_ex(&test_client, publish,
+        pub_cb_net_disconnect_wait);
+    (void)pthread_mutex_lock(&g_pub_cb_mutex);
+    g_pub_cb_disconnect_done = 1;
+    (void)pthread_cond_broadcast(&g_pub_cb_cond);
+    (void)pthread_mutex_unlock(&g_pub_cb_mutex);
+    return NULL;
+}
+
+TEST(net_disconnect_wait_from_publish_payload_cb_refuses)
+{
+    static byte payload[8];
+    static MqttPublish publish;
+    pthread_t publish_thread;
+    struct timespec deadline;
+    int wait_rc = 0;
+    int finished;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, test_init_client());
+    test_client_connect_sent();
+    test_net.write = mock_net_write_accept;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    g_pub_cb_disconnect_rc = MQTT_CODE_SUCCESS;
+    g_pub_cb_disconnect_called = 0;
+    g_pub_cb_disconnect_done = 0;
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = payload;
+    publish.buffer_len = (word32)sizeof(payload);
+    publish.total_len = (word32)sizeof(payload);
+
+    ASSERT_EQ(0, pthread_create(&publish_thread, NULL,
+        pub_cb_disconnect_thread, &publish));
+    ASSERT_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
+    deadline.tv_sec += 2;
+    ASSERT_EQ(0, pthread_mutex_lock(&g_pub_cb_mutex));
+    while (g_pub_cb_disconnect_done == 0 && wait_rc == 0) {
+        wait_rc = pthread_cond_timedwait(&g_pub_cb_cond, &g_pub_cb_mutex,
+            &deadline);
+    }
+    finished = g_pub_cb_disconnect_done;
+    ASSERT_EQ(0, pthread_mutex_unlock(&g_pub_cb_mutex));
+    if (!finished) {
+        /* Deadlocked: leave the thread behind rather than hang the run. */
+        (void)pthread_detach(publish_thread);
+        test_client_inited = 0;
+    }
+    ASSERT_EQ(1, finished);
+    ASSERT_EQ(0, pthread_join(publish_thread, NULL));
+    ASSERT_EQ(1, g_pub_cb_disconnect_called);
+    ASSERT_EQ(MQTT_CODE_ERROR_STAT, g_pub_cb_disconnect_rc);
+}
+#endif /* WOLFMQTT_THREAD_ID_T */
+#endif /* WOLFMQTT_PROPERTY_CB && (__MACH__ || WOLFMQTT_POSIX_SEMAPHORES) */
 #endif /* !WOLFMQTT_NONBLOCK */
 
 #ifdef WOLFMQTT_NONBLOCK
@@ -9229,8 +9996,25 @@ void run_mqtt_client_tests(void)
     RUN_TEST(disconnect_clears_recv_quota_ownership);
 #else
     RUN_TEST(publish_writeonly_v5_no_dangling_pendresp_on_success);
+#if defined(WOLFMQTT_PROPERTY_CB) && \
+    (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
+    RUN_TEST(publish_writeonly_waits_for_reader_decoding_ack);
+#ifdef WOLFMQTT_SEM_SIGNAL
+    RUN_TEST(publish_writeonly_not_held_by_reader_next_read);
+#endif
+    RUN_TEST(publish_writeonly_waits_for_duplicate_ack_decode);
+    RUN_TEST(publish_writeonly_after_reader_decode_error);
+#ifdef WOLFMQTT_THREAD_ID_T
+    RUN_TEST(cancel_from_own_ack_property_cb_refuses);
+    RUN_TEST(net_disconnect_wait_from_property_cb_refuses);
+    RUN_TEST(net_disconnect_wait_from_publish_payload_cb_refuses);
 #endif
 #endif
+#endif
+#endif
+#endif
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_THREAD_ID_T)
+    RUN_TEST(read_stop_repeat_keeps_new_reader_state);
 #endif
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_NONBLOCK)
 #if WOLFMQTT_MAX_QOS >= 1

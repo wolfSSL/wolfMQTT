@@ -92,7 +92,9 @@
     /* Multi-threading uses binary semaphores */
     #if defined(WOLFMQTT_USER_THREADING)
         /* User provides API's and wm_Sem type.
-         * Add your wc_Sem into user_settings.h */
+         * Add your wc_Sem into user_settings.h. Define WOLFMQTT_SEM_SIGNAL
+         * if wm_SemUnlock may be called by a thread other than the one that
+         * locked the semaphore. */
 
     #elif defined(__MACH__)
         /* Apple Style Dispatch Semaphore */
@@ -101,6 +103,7 @@
         typedef struct {
             dispatch_semaphore_t sem;
         } wm_Sem;
+        #define WOLFMQTT_SEM_SIGNAL
         #define WOLFMQTT_THREAD_ID_T pthread_t
         #define WOLFMQTT_THREAD_SELF() pthread_self()
         #define WOLFMQTT_THREAD_EQUAL(a, b) pthread_equal((a), (b))
@@ -116,6 +119,9 @@
         #endif
             pthread_mutex_t mutex;
         } wm_Sem;
+        #ifndef WOLFMQTT_NO_COND_SIGNAL
+            #define WOLFMQTT_SEM_SIGNAL
+        #endif
         #define WOLFMQTT_THREAD_ID_T pthread_t
         #define WOLFMQTT_THREAD_SELF() pthread_self()
         #define WOLFMQTT_THREAD_EQUAL(a, b) pthread_equal((a), (b))
@@ -125,6 +131,7 @@
         #include <FreeRTOS.h>
         #include <semphr.h>
         typedef SemaphoreHandle_t wm_Sem;
+        #define WOLFMQTT_SEM_SIGNAL
         #if defined(INCLUDE_xTaskGetCurrentTaskHandle) && \
             (INCLUDE_xTaskGetCurrentTaskHandle == 1)
             #define WOLFMQTT_THREAD_ID_T TaskHandle_t
@@ -138,6 +145,7 @@
         #include <ws2tcpip.h>
         #include <windows.h>
         typedef HANDLE wm_Sem;
+        #define WOLFMQTT_SEM_SIGNAL
         #define WOLFMQTT_THREAD_ID_T DWORD
         #define WOLFMQTT_THREAD_SELF() GetCurrentThreadId()
         #define WOLFMQTT_THREAD_EQUAL(a, b) ((a) == (b))
@@ -145,6 +153,7 @@
     #elif defined(THREADX)
         #include <tx_api.h>
         typedef TX_SEMAPHORE wm_Sem;
+        #define WOLFMQTT_SEM_SIGNAL
         #define WOLFMQTT_THREAD_ID_T TX_THREAD*
         #define WOLFMQTT_THREAD_SELF() tx_thread_identify()
         #define WOLFMQTT_THREAD_EQUAL(a, b) ((a) == (b))

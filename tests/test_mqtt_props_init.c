@@ -33,6 +33,16 @@ static MqttClient* sem_flag_client;
 static word32 sem_flag_bits;
 static MqttClient* io_lock_client;
 static int io_locks_held_at_close;
+/* Counts lockClient acquisitions on sem_track_client made while
+ * sem_track_while_held is owned, and records which one changed
+ * sem_track_bit in client->flags, so a later run can fail exactly that one. */
+static MqttClient* sem_track_client;
+static wm_Sem* sem_track_while_held;
+static word32 sem_track_bit;
+static word32 sem_track_before;
+static int sem_track_count;
+static int sem_track_counted;
+static int sem_track_toggle_at;
 
 #ifdef ENABLE_MQTT_CURL
     #define TEST_CLIENT_LOCK_COUNT 4
@@ -66,6 +76,13 @@ static void reset_sem_state(void)
     quota_write_calls = 0;
     sem_flag_client = NULL;
     sem_flag_bits = 0;
+    sem_track_client = NULL;
+    sem_track_while_held = NULL;
+    sem_track_bit = 0;
+    sem_track_before = 0;
+    sem_track_count = 0;
+    sem_track_counted = 0;
+    sem_track_toggle_at = 0;
 }
 
 int wm_SemInit(wm_Sem* sem)
@@ -112,6 +129,13 @@ int wm_SemLock(wm_Sem* sem)
         }
     }
     sem->lock_count++;
+    if (sem_track_client != NULL && sem == &sem_track_client->lockClient &&
+            (sem_track_while_held == NULL ||
+             sem_track_while_held->lock_count > 0)) {
+        sem_track_count++;
+        sem_track_counted = 1;
+        sem_track_before = sem_track_client->flags & sem_track_bit;
+    }
     /* Model another thread that updated client->flags under lockClient and
      * released it just as this acquisition succeeded. */
     if (sem_flag_client != NULL && sem == &sem_flag_client->lockClient) {
@@ -138,6 +162,15 @@ int wm_SemLock(wm_Sem* sem)
 
 int wm_SemUnlock(wm_Sem* sem)
 {
+    if (sem_track_client != NULL && sem == &sem_track_client->lockClient &&
+            sem_track_counted) {
+        sem_track_counted = 0;
+        if (sem_track_toggle_at == 0 &&
+                (sem_track_client->flags & sem_track_bit) !=
+                    sem_track_before) {
+            sem_track_toggle_at = sem_track_count;
+        }
+    }
     if (sem->lock_count == 0) {
         sem_invalid_unlock_calls++;
     }
@@ -756,6 +789,235 @@ static int run_net_disconnect_wait_lock_failure(int fail_send)
     return fail;
 }
 
+typedef struct AuthWindowNet {
+    int connack_pos;
+    int writes;
+} AuthWindowNet;
+
+/* v5 CONNACK (MQTT 5.0 section 3.2): accepted, Session Present 0, Property
+ * Length 0. */
+static const byte auth_window_connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+static int auth_window_net_read(void* context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    AuthWindowNet* an = (AuthWindowNet*)context;
+    int n = (int)sizeof(auth_window_connack) - an->connack_pos;
+
+    (void)timeout_ms;
+    if (n <= 0) {
+        return MQTT_CODE_ERROR_TIMEOUT;
+    }
+    if (n > buf_len) {
+        n = buf_len;
+    }
+    XMEMCPY(buf, auth_window_connack + an->connack_pos, (size_t)n);
+    an->connack_pos += n;
+    return n;
+}
+
+static int auth_window_net_write(void* context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    AuthWindowNet* an = (AuthWindowNet*)context;
+
+    (void)buf;
+    (void)timeout_ms;
+    an->writes++;
+    return buf_len;
+}
+
+/* Runs one v5 CONNECT, carrying an Authentication Method when with_method is
+ * set, against a CONNACK. When fail_at is non-zero, the fail_at'th lockClient
+ * acquisition made while while_held is owned fails. Otherwise the run records
+ * in sem_track_toggle_at which acquisition changed AUTH_PENDING. */
+static int run_auth_window_connect(MqttClient* client, AuthWindowNet* an,
+    int with_method, wm_Sem* (*while_held)(MqttClient*), int fail_at)
+{
+    MqttConnect connect;
+    MqttProp method_prop;
+    int rc;
+
+    XMEMSET(an, 0, sizeof(*an));
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "auth";
+    if (with_method) {
+        XMEMSET(&method_prop, 0, sizeof(method_prop));
+        method_prop.type = MQTT_PROP_AUTH_METHOD;
+        method_prop.data_str.str = (char*)"m";
+        method_prop.data_str.len = 1;
+        connect.props = &method_prop;
+    }
+    (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_CONNECT_SENT,
+        MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    sem_track_client = client;
+    sem_track_while_held = while_held(client);
+    sem_track_bit = MQTT_CLIENT_FLAG_AUTH_PENDING;
+    sem_track_count = 0;
+    sem_track_counted = 0;
+    sem_track_toggle_at = 0;
+    if (fail_at > 0) {
+        sem_fail_lock = &client->lockClient;
+        sem_fail_lock_while_held = while_held(client);
+        sem_fail_lock_skip = fail_at - 1;
+    }
+    rc = MqttClient_Connect(client, &connect);
+    sem_fail_lock = NULL;
+    sem_fail_lock_while_held = NULL;
+    sem_fail_lock_skip = 0;
+    sem_track_client = NULL;
+    return rc;
+}
+
+static wm_Sem* auth_window_send_lock(MqttClient* client)
+{
+    return &client->lockSend;
+}
+
+static wm_Sem* auth_window_recv_lock(MqttClient* client)
+{
+    return &client->lockRecv;
+}
+
+static int auth_window_client_init(MqttClient* client, MqttNet* net,
+    AuthWindowNet* an, byte* tx_buf, byte* rx_buf, int buf_len)
+{
+    XMEMSET(net, 0, sizeof(*net));
+    net->context = an;
+    net->connect = ping_net_connect;
+    net->read = auth_window_net_read;
+    net->write = auth_window_net_write;
+    net->disconnect = ping_net_disconnect;
+    return MqttClient_Init(client, net, NULL, tx_buf, buf_len, rx_buf,
+        buf_len, 1000);
+}
+
+/* [MQTT-3.1.2-30] With an Authentication Method only AUTH or DISCONNECT may
+ * follow CONNECT until the CONNACK. If lockClient fails while raising that
+ * window, the CONNECT must not be sent, since nothing would hold back other
+ * packets, and no lock or pending response may be left behind. */
+static int test_auth_window_set_lock_failure(void)
+{
+    int rc;
+    int set_at;
+    MqttClient client;
+    MqttNet net;
+    AuthWindowNet an;
+    byte tx_buf[64];
+    byte rx_buf[64];
+    int fail = 0;
+
+    reset_sem_state();
+    rc = auth_window_client_init(&client, &net, &an, tx_buf, rx_buf,
+        (int)sizeof(tx_buf));
+    if (rc != MQTT_CODE_SUCCESS) {
+        fprintf(stderr, "auth-window client initialization returned %d\n",
+            rc);
+        return 1;
+    }
+
+    /* Learn which acquisition under lockSend raises the window. */
+    rc = run_auth_window_connect(&client, &an, 1, auth_window_send_lock, 0);
+    set_at = sem_track_toggle_at;
+    MqttClient_DeInit(&client);
+    if (rc != MQTT_CODE_SUCCESS || set_at == 0) {
+        fprintf(stderr, "auth-window dry run rc=%d set_at=%d\n", rc, set_at);
+        return 1;
+    }
+
+    reset_sem_state();
+    rc = auth_window_client_init(&client, &net, &an, tx_buf, rx_buf,
+        (int)sizeof(tx_buf));
+    if (rc != MQTT_CODE_SUCCESS) {
+        return 1;
+    }
+    rc = run_auth_window_connect(&client, &an, 1, auth_window_send_lock,
+        set_at);
+    if (rc != MQTT_CODE_ERROR_SYSTEM || an.writes != 0 ||
+            client.lockSend.lock_count != 0 ||
+            client.lockClient.lock_count != 0 ||
+            client.firstPendResp != NULL ||
+            (client.flags & MQTT_CLIENT_FLAG_CONNECT_SENT) != 0) {
+        fprintf(stderr,
+            "auth-window set failure rc=%d writes=%d send=%d client=%d "
+            "pend=%p flags=0x%x\n", rc, an.writes,
+            client.lockSend.lock_count, client.lockClient.lock_count,
+            (void*)client.firstPendResp, (unsigned)client.flags);
+        fail = 1;
+    }
+
+    MqttClient_DeInit(&client);
+    return fail;
+}
+
+/* If lockClient fails while the CONNACK closes the authentication window, the
+ * CONNACK must fail rather than leave the window silently open-ended, and the
+ * next CONNECT must reset the stale flag. */
+static int test_auth_window_clear_lock_failure(void)
+{
+    int rc;
+    int clear_at;
+    MqttClient client;
+    MqttNet net;
+    AuthWindowNet an;
+    byte tx_buf[64];
+    byte rx_buf[64];
+    int fail = 0;
+
+    reset_sem_state();
+    rc = auth_window_client_init(&client, &net, &an, tx_buf, rx_buf,
+        (int)sizeof(tx_buf));
+    if (rc != MQTT_CODE_SUCCESS) {
+        fprintf(stderr, "auth-window client initialization returned %d\n",
+            rc);
+        return 1;
+    }
+
+    /* Learn which acquisition under lockRecv closes the window. */
+    rc = run_auth_window_connect(&client, &an, 1, auth_window_recv_lock, 0);
+    clear_at = sem_track_toggle_at;
+    MqttClient_DeInit(&client);
+    if (rc != MQTT_CODE_SUCCESS || clear_at == 0) {
+        fprintf(stderr, "auth-window dry run rc=%d clear_at=%d\n", rc,
+            clear_at);
+        return 1;
+    }
+
+    reset_sem_state();
+    rc = auth_window_client_init(&client, &net, &an, tx_buf, rx_buf,
+        (int)sizeof(tx_buf));
+    if (rc != MQTT_CODE_SUCCESS) {
+        return 1;
+    }
+    rc = run_auth_window_connect(&client, &an, 1, auth_window_recv_lock,
+        clear_at);
+    if (rc != MQTT_CODE_ERROR_SYSTEM ||
+            client.lockRecv.lock_count != 0 ||
+            client.lockClient.lock_count != 0) {
+        fprintf(stderr, "auth-window clear failure rc=%d recv=%d client=%d\n",
+            rc, client.lockRecv.lock_count, client.lockClient.lock_count);
+        fail = 1;
+    }
+
+    /* A later CONNECT without a method resets the window it left set. */
+    if (!fail) {
+        rc = run_auth_window_connect(&client, &an, 0, auth_window_send_lock,
+            0);
+        if (rc != MQTT_CODE_SUCCESS ||
+                (client.flags & MQTT_CLIENT_FLAG_AUTH_PENDING) != 0) {
+            fprintf(stderr, "auth-window reconnect rc=%d flags=0x%x\n", rc,
+                (unsigned)client.flags);
+            fail = 1;
+        }
+    }
+
+    MqttClient_DeInit(&client);
+    return fail;
+}
+
 int main(void)
 {
     if (test_sn_null_ping_resets_terminal_read_state() != 0) {
@@ -792,6 +1054,12 @@ int main(void)
         return 1;
     }
     if (run_net_disconnect_wait_lock_failure(0) != 0) {
+        return 1;
+    }
+    if (test_auth_window_set_lock_failure() != 0) {
+        return 1;
+    }
+    if (test_auth_window_clear_lock_failure() != 0) {
         return 1;
     }
     return 0;

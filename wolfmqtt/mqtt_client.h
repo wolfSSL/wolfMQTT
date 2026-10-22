@@ -467,7 +467,9 @@ typedef struct _MqttClient {
     byte   init_flags; /* Internal resource-initialization flags. */
     #ifdef WOLFMQTT_THREAD_ID_T
     byte   write_owner_valid; /* lockSend owner is known. */
+    byte   read_owner_valid;  /* lockRecv owner is known. */
     WOLFMQTT_THREAD_ID_T write_owner;
+    WOLFMQTT_THREAD_ID_T read_owner;
     #endif
     wm_Sem lockSend;
     wm_Sem lockRecv;
@@ -542,6 +544,13 @@ typedef struct _MqttClient {
      * MQTT_AUTH_METHOD_MAX the value is not stored and re-auth is refused. */
     word16 auth_method_len;
     byte   auth_method[MQTT_AUTH_METHOD_MAX];
+#endif
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_SEM_SIGNAL)
+    /* Posted when a reader stops decoding into a pending response, so a
+     * thread unlinking that entry need not wait on lockRecv, which a
+     * dedicated reader retakes for its next blocking read. */
+    wm_Sem decodeDone;
+    word16 decodeWaiters; /* threads waiting on decodeDone, under lockClient */
 #endif
 } MqttClient;
 
@@ -937,7 +946,15 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 /*! \brief      In a multi-threaded and non-blocking mode this allows you to
                 cancel an MQTT object that was previously submitted.
  *  \note This function performs no network I/O. In multi-threaded
-                builds it may wait to take the client locks.
+                builds it may wait to take the client locks, and waits for
+                another thread that is decoding a response into msg to
+                finish, so msg may be freed on return. Do not call it from
+                a callback (message, property or publish payload) while a
+                response is being decoded into msg, such as a property
+                callback for msg's own ack. Where the platform provides
+                thread identities (WOLFMQTT_THREAD_ID_T) it detects this and
+                returns MQTT_CODE_ERROR_STAT without cancelling; otherwise it
+                deadlocks.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -1015,10 +1032,13 @@ WOLFMQTT_API int MqttClient_NetDisconnect(
                 then the send lock before releasing the transport, so a read
                 or write in progress on another thread completes (or times
                 out) first and nothing can use transport or TLS state while it
-                is freed. It must not be called from a message callback or
-                other code already holding those locks, which would deadlock;
-                use MqttClient_NetDisconnect there. In other builds it is the
-                same as MqttClient_NetDisconnect.
+                is freed. It must not be called from a callback (message,
+                property or publish payload) or other code already holding
+                those locks; use MqttClient_NetDisconnect there. Where the
+                platform provides thread identities (WOLFMQTT_THREAD_ID_T) it
+                detects this and returns MQTT_CODE_ERROR_STAT instead of
+                deadlocking. In other builds it is the same as
+                MqttClient_NetDisconnect.
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
@@ -1065,6 +1085,10 @@ WOLFMQTT_LOCAL int MqttClient_RespList_Add(MqttClient *client,
         void *packet_obj);
 WOLFMQTT_LOCAL int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
         word16 wait_packet_id);
+WOLFMQTT_LOCAL void MqttClient_RespList_EndProcessing(MqttClient *client,
+        MqttPendResp *resp);
+WOLFMQTT_LOCAL int MqttClient_RespList_RemoveIdle(MqttClient *client,
+        MqttPendResp *rmResp);
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
 #if WOLFMQTT_MAX_QOS >= 2
@@ -1077,6 +1101,14 @@ WOLFMQTT_LOCAL void MqttClient_RecvQos2_Add(MqttClient* client,
     word16 packet_id);
 WOLFMQTT_LOCAL void MqttClient_RecvQos2_Remove(MqttClient* client,
     word16 packet_id);
+#endif
+#ifdef WOLFMQTT_SESSION_ID_TRACK
+/* ClientId of the Session whose state the client holds, shared by the MQTT
+ * and MQTT-SN clients. */
+WOLFMQTT_LOCAL int MqttClient_SessionIdMatches(const MqttClient* client,
+    const char* client_id);
+WOLFMQTT_LOCAL void MqttClient_SessionIdRecord(MqttClient* client,
+    const char* client_id);
 #endif
 
 /* Securely zero `len` bytes of `mem` (e.g. client->tx_buf) to scrub plaintext
