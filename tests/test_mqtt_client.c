@@ -674,12 +674,24 @@ TEST(connect_rejects_nonzero_inbound_topic_alias_max)
 static byte g_canned_buf[64];
 static int g_canned_len;
 static int g_canned_pos;
+/* -1 samples the outbound reservations on the next read: for a reconnect,
+ * after CONNECT is on the wire and before CONNACK. 0 disables. */
+static int g_hold_probe_id;
 
 static int mock_net_read_canned(void *context, byte* buf, int buf_len,
     int timeout_ms)
 {
     int n;
     (void)context; (void)timeout_ms;
+    if (g_hold_probe_id < 0) {
+        g_hold_probe_id = 0;
+        for (n = 0; n < MQTT_MAX_SEND_INFLIGHT; n++) {
+            if (test_client.send_inflight[n].packet_id != 0) {
+                g_hold_probe_id = (int)test_client.send_inflight[n].packet_id;
+                break;
+            }
+        }
+    }
     n = g_canned_len - g_canned_pos;
     if (n <= 0) {
         return 0; /* exhausted -> MQTT_CODE_CONTINUE under nonblock */
@@ -4007,6 +4019,7 @@ TEST(reconnect_without_session_present_replays_nothing)
     ASSERT_EQ(1, g_frames_written); /* the CONNECT only */
 }
 
+
 /* A send is allowed once CONNECT reaches the transport, so a publish can be
  * retained while this handshake still waits for CONNACK. It belongs to the
  * Session being established, which the entry's onThisConn tag records. The
@@ -4047,21 +4060,6 @@ static void seed_replay_slot(int idx, word16 packet_id, byte on_this_conn)
 #endif
 }
 
-/* A SUBSCRIBE admitted once CONNECT is on the wire, reduced to the state it
- * leaves behind: its Packet Identifier reservation. */
-static word16 g_reserve_sub_id = 0x1234;
-static int mock_net_write_reserve_subscribe_id(void *context, const byte* buf,
-    int buf_len, int timeout_ms)
-{
-    int rc = mock_net_write_accept(context, buf, buf_len, timeout_ms);
-
-    if (buf_len > 0 && (buf[0] >> 4) == MQTT_PACKET_TYPE_CONNECT) {
-        test_client.send_inflight[0].packet_id = g_reserve_sub_id;
-        test_client.send_inflight[0].ack_type = MQTT_PACKET_TYPE_SUBSCRIBE_ACK;
-        test_client.send_inflight[0].owner = &test_client.msg;
-    }
-    return rc;
-}
 
 static int mock_net_write_seed_publish(void *context, const byte* buf,
     int buf_len, int timeout_ms)
@@ -4119,14 +4117,14 @@ TEST(fresh_session_reset_keeps_publish_from_this_connection)
     ASSERT_STR_EQ("new/1", test_client.replay[1].topic);
 }
 
-/* A reserved Packet Identifier does not prove where a replay entry came from:
- * the table also holds SUBSCRIBE and UNSUBSCRIBE reservations. A request sent
- * after CONNECT that happens to reuse an ended Session's identifier must not
- * make a fresh CONNACK keep that Session's PUBLISH, which could otherwise be
- * replayed into a later Session. */
-TEST(fresh_session_reset_drops_old_publish_behind_subscribe_id)
+/* A retained entry's Packet Identifier stays reserved across the handshake:
+ * [MQTT-2.3.1-2] allows one use at a time and [MQTT-4.4.0-1] still owes it a
+ * re-send. A fresh Session gives it back. */
+TEST(handshake_holds_retained_packet_id)
 {
     int rc;
+    int i;
+    int held = 0;
     MqttConnect connect;
     MqttPublish publish;
     static byte payload[] = "hello";
@@ -4144,22 +4142,74 @@ TEST(fresh_session_reset_drops_old_publish_behind_subscribe_id)
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
     ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
     ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+    /* No reservations survive the disconnect, so the hold below is the
+     * handshake's own. */
+    for (i = 0; i < MQTT_MAX_SEND_INFLIGHT; i++) {
+        if (test_client.send_inflight[i].packet_id != 0) {
+            held++;
+        }
+    }
+    ASSERT_EQ(0, held);
 
-    /* A SUBSCRIBE on the new connection takes the same identifier. Nothing is
-     * seeded into the pool: slot 0 is already the ended Session's entry. */
-    g_seed_slot = -1;
-    test_net.write = mock_net_write_accept;
-    rc = run_reconnect_with(&connect, 0, mock_net_write_reserve_subscribe_id);
+    g_hold_probe_id = -1; /* arm the sample */
+    rc = run_reconnect_with(&connect, 0, mock_net_write_accept);
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-    ASSERT_EQ(0x1234, (int)test_client.send_inflight[0].packet_id);
 
-    /* Discarded: it was never this connection's, whoever holds the id now. */
+    /* Held while the handshake was in flight. */
+    ASSERT_EQ(0x1234, g_hold_probe_id);
+
+    /* The Session came back fresh, so the entry and its identifier both go. */
     ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+    held = 0;
+    for (i = 0; i < MQTT_MAX_SEND_INFLIGHT; i++) {
+        if (test_client.send_inflight[i].packet_id == 0x1234) {
+            held++;
+        }
+    }
+    ASSERT_EQ(0, held);
 }
 
-/* The resumed-Session walk must re-send only what the previous connection left
- * unacknowledged. An entry published after CONNECT is already in flight here,
- * so replaying it would deliver it twice. */
+/* Resumed instead: the entry is owed a re-send, so the hold stays and the
+ * identifier is still reserved once the handshake completes. */
+TEST(resume_keeps_retained_packet_id_reserved)
+{
+    int rc;
+    int i;
+    int held = 0;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_hold_probe_id = -1;
+    rc = run_reconnect_with(&connect, 1, mock_net_write_accept);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    ASSERT_EQ(0x1234, g_hold_probe_id);
+    /* Still retained and still reserved, awaiting its acknowledgement. */
+    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+    for (i = 0; i < MQTT_MAX_SEND_INFLIGHT; i++) {
+        if (test_client.send_inflight[i].packet_id == 0x1234) {
+            held++;
+        }
+    }
+    ASSERT_EQ(1, held);
+}
+
+/* The resumed walk re-sends only what the previous connection left
+ * unacknowledged; an entry published after CONNECT is already in flight. */
 TEST(resume_does_not_replay_publish_from_this_connection)
 {
     int rc;
@@ -4188,45 +4238,6 @@ TEST(resume_does_not_replay_publish_from_this_connection)
     ASSERT_EQ(0x5678, (int)test_client.replay[0].packet_id);
 }
 
-/* [MQTT-2.3.1-2] allows one use of an identifier at a time. If a request on
- * the new connection already holds the one an ended Session's entry needs, the
- * replay cannot go out, and it must not take that live request's reservation
- * over either. */
-TEST(resume_drops_replay_whose_id_is_taken_on_this_connection)
-{
-    int rc;
-    MqttConnect connect;
-    MqttPublish publish;
-    static byte payload[] = "hello";
-
-    rc = test_init_client();
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-#ifdef WOLFMQTT_V5
-    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
-#endif
-    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
-
-    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
-        payload, (word32)(sizeof(payload) - 1));
-    rc = run_publish_unacked(&publish);
-    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
-    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
-    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
-
-    g_seed_slot = -1;
-    g_frames_written = 0;
-    rc = run_reconnect_with(&connect, 1, mock_net_write_reserve_subscribe_id);
-    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
-
-    /* The CONNECT only: the entry could not be re-sent. */
-    ASSERT_EQ(1, g_frames_written);
-    /* Dropped rather than replayed behind the live request. */
-    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
-    /* And the SUBSCRIBE still owns its reservation, unchanged. */
-    ASSERT_EQ(0x1234, (int)test_client.send_inflight[0].packet_id);
-    ASSERT_EQ(MQTT_PACKET_TYPE_SUBSCRIBE_ACK,
-        (int)test_client.send_inflight[0].ack_type);
-}
 
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
     !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
@@ -10227,9 +10238,9 @@ void run_mqtt_client_tests(void)
 #endif
     RUN_TEST(reconnect_without_session_present_replays_nothing);
     RUN_TEST(fresh_session_reset_keeps_publish_from_this_connection);
-    RUN_TEST(fresh_session_reset_drops_old_publish_behind_subscribe_id);
+    RUN_TEST(handshake_holds_retained_packet_id);
     RUN_TEST(resume_does_not_replay_publish_from_this_connection);
-    RUN_TEST(resume_drops_replay_whose_id_is_taken_on_this_connection);
+    RUN_TEST(resume_keeps_retained_packet_id_reserved);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
     !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(fresh_session_reset_frees_replay_under_client_lock);

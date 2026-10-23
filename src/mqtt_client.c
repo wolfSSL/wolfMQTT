@@ -90,6 +90,12 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
 #if !defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_NONBLOCK)
 static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
 #endif
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+static void MqttClient_SendIds_Drop_Locked(MqttClient* client,
+    word16 packet_id);
+static int MqttClient_SendIdReserve_Locked(MqttClient* client, word16 packet_id,
+    void* owner, int isRetransmit, MqttPacketType ack_type);
+#endif
 #ifdef WOLFMQTT_MULTITHREAD
 
 #ifdef WOLFMQTT_USER_THREADING
@@ -894,6 +900,14 @@ static int MqttClient_ConnectIsPersistent(const MqttConnect* mc_connect)
     return (mc_connect->clean_session == 0) ? 1 : 0;
 }
 
+static MqttPacketType MqttClient_Replay_AckType(const MqttReplayMsg* slot)
+{
+    if (slot->pubrelSent || slot->qos == MQTT_QOS_2) {
+        return MQTT_PACKET_TYPE_PUBLISH_COMP;
+    }
+    return MQTT_PACKET_TYPE_PUBLISH_ACK;
+}
+
 /* Everything retained so far belongs to the Session that is ending; a send
  * admitted once CONNECT is on the wire tags itself. Reports a lock failure:
  * stale tags would have the handshake skip or keep the wrong entries. */
@@ -908,6 +922,14 @@ static int MqttClient_Replay_NewConnSafe(MqttClient* client)
 #endif
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
         client->replay[i].onThisConn = 0;
+        /* Hold for the handshake: [MQTT-2.3.1-2] allows one use at a time
+         * and [MQTT-4.4.0-1] still owes these a re-send. Released below on a
+         * fresh Session. */
+        if (client->replay[i].packet_id != 0) {
+            (void)MqttClient_SendIdReserve_Locked(client,
+                client->replay[i].packet_id, &client->replay[i], 1,
+                MqttClient_Replay_AckType(&client->replay[i]));
+        }
     }
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
@@ -932,6 +954,8 @@ static int MqttClient_Replay_ResetSafe(MqttClient* client)
         if (client->replay[i].onThisConn) {
             continue;
         }
+        /* Release the handshake hold. */
+        MqttClient_SendIds_Drop_Locked(client, client->replay[i].packet_id);
         MqttClient_Replay_FreeSlot(&client->replay[i]);
     }
     client->replayIdx = MQTT_MAX_REPLAY_MSGS;
@@ -1081,6 +1105,25 @@ static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
  * lock: releasing first and removing afterwards would let a publisher reuse
  * the identifier in between, and this ack would then delete the new
  * exchange's replay state. */
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+/* Caller holds client->lockClient. Unlike MqttClient_SendIdRelease, drops only
+ * the reservation; the caller is already disposing of the replay entry. */
+static void MqttClient_SendIds_Drop_Locked(MqttClient* client, word16 packet_id)
+{
+    int i;
+
+    if (packet_id == 0) {
+        return;
+    }
+    i = MqttClient_SendIds_Find(client, packet_id);
+    if (i >= 0) {
+        client->send_inflight[i].packet_id = 0;
+        client->send_inflight[i].owner = NULL;
+        client->send_inflight[i].ack_type = (byte)MQTT_PACKET_TYPE_RESERVED;
+    }
+}
+#endif
+
 static void MqttClient_SendIdRelease(MqttClient* client, word16 packet_id,
     MqttPacketType ack_type)
 {
@@ -4068,11 +4111,9 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
         else {
             int i;
 
-            /* The server resumed the Session, so these messages are still in
-             * flight as far as it is concerned: keep their Packet Identifiers
-             * reserved (MqttClient_Connect cleared the table above) and
-             * re-send them [MQTT-4.4.0-1]. A send thread reaches these same
-             * slots, so the walk holds the client lock. */
+            /* Resumed Session: still in flight to the server and go out
+             * again [MQTT-4.4.0-1], identifiers held since the handshake. A
+             * send thread reaches these slots, so the walk holds the lock. */
 #ifdef WOLFMQTT_MULTITHREAD
             rc = wm_SemLock(&client->lockClient);
             if (rc != MQTT_CODE_SUCCESS) {
@@ -4087,28 +4128,13 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
                 }
                 if (!client->replay[i].pubrelSent &&
                         !client->replay[i].haveCopy) {
-                    /* Nothing to re-send: the payload was never retained, so
-                     * [MQTT-4.4.0-1] cannot be honoured for this one. Drop it
-                     * instead of reserving an identifier that no
-                     * acknowledgement will ever release [MQTT-2.3.1-3]. */
+                    /* Payload never retained, so [MQTT-4.4.0-1] cannot be
+                     * honoured: drop it and release the identifier, which no
+                     * acknowledgement would free [MQTT-2.3.1-3]. */
+                    MqttClient_SendIds_Drop_Locked(client,
+                        client->replay[i].packet_id);
                     MqttClient_Replay_FreeSlot(&client->replay[i]);
-                    continue;
                 }
-                if (MqttClient_SendIds_Find(client,
-                        client->replay[i].packet_id) >= 0) {
-                    /* A live request holds the identifier and
-                     * [MQTT-2.3.1-2] allows one use at a time, so drop this
-                     * rather than take its reservation over. */
-                    MqttClient_Replay_FreeSlot(&client->replay[i]);
-                    continue;
-                }
-                (void)MqttClient_SendIdReserve_Locked(client,
-                    client->replay[i].packet_id, &client->replay[i], 1,
-                    client->replay[i].pubrelSent ?
-                        MQTT_PACKET_TYPE_PUBLISH_COMP :
-                        ((client->replay[i].qos == MQTT_QOS_2) ?
-                            MQTT_PACKET_TYPE_PUBLISH_COMP :
-                            MQTT_PACKET_TYPE_PUBLISH_ACK));
             }
 #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockClient);
