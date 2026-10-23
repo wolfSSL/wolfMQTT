@@ -7084,19 +7084,45 @@ static int will_bytes_found(const byte* hay, size_t hay_len,
     return 0;
 }
 
+#ifndef WOLFMQTT_DYN_PROP
+/* Take every free entry of the shared property pool, so a decode through it
+ * fails as it would under load. Release with MqttProps_Free. */
+static MqttProp* will_test_exhaust_prop_pool(void)
+{
+    MqttProp* head = NULL;
+
+    while (MqttProps_Add(&head) != NULL) {
+    }
+    return head;
+}
+#endif
+
+/* Most User Properties will_props_reach_live_subscriber can carry while the
+ * CONNECT and PUBLISH Remaining Lengths stay one byte long. */
+#define WILL_TEST_MAX_USER_PROPS 12
+
 /* A v5 Will carries its Will Properties, other than the Will Delay Interval,
  * onto the Will PUBLISH in their original order (MQTT 5.0 section 3.1.3.2,
- * [MQTT-3.1.3-10]). With_delay adds a Will Delay Interval; Session Expiry 0
- * then publishes through the pending-Will path at once. Returns 1 when a
- * live v5 subscriber receives the expected PUBLISH. */
-static int will_props_reach_live_subscriber(int with_delay)
+ * [MQTT-3.1.3-10]). The Will Properties are a Content Type "t" followed by
+ * user_props User Properties "k" = "v". With_delay adds a Will Delay
+ * Interval; Session Expiry 0 then publishes through the pending-Will path at
+ * once. With exhaust_pool the shared property pool is full while the Will is
+ * published, which must not drop or strip it. Returns 1 when a live v5
+ * subscriber receives exactly the expected PUBLISH. */
+static int will_props_reach_live_subscriber(int with_delay, int exhaust_pool,
+    int user_props)
 {
     MqttBroker broker;
     MqttBrokerNet net;
+#ifndef WOLFMQTT_DYN_PROP
+    MqttProp* held = NULL;
+#endif
     int i;
     int found;
-    byte connect_pub[48];
+    byte connect_pub[128];
+    byte expected[128];
     int pos = 0;
+    int exp_pos = 0;
     /* v5 CONNECT, Clean Start, no properties, ClientId "S" */
     static const byte connect_sub[] = {
         0x10, 0x0E,
@@ -7111,24 +7137,21 @@ static int will_props_reach_live_subscriber(int with_delay)
     };
     /* Will Delay Interval (0x18) 5 seconds */
     static const byte will_delay[] = { 0x18, 0x00, 0x00, 0x00, 0x05 };
-    /* Content Type (0x03) "t", then User Property (0x26) "k" = "v" */
-    static const byte will_props[] = {
-        0x03, 0x00, 0x01, 't',
+    /* Content Type (0x03) "t" */
+    static const byte content_type[] = { 0x03, 0x00, 0x01, 't' };
+    /* User Property (0x26) "k" = "v" */
+    static const byte user_prop[] = {
         0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v'
     };
-    /* Expected v5 QoS 0 PUBLISH (MQTT 5.0 section 3.3): topic "lwt",
-     * Properties length 11 holding the two properties above, payload "bye".
-     * Remaining Length 20. */
-    static const byte expected[] = {
-        0x30, 0x14,
-        0x00, 0x03, 'l', 'w', 't',
-        0x0B,
-        0x03, 0x00, 0x01, 't',
-        0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v',
-        'b', 'y', 'e'
-    };
-    int props_len = (int)sizeof(will_props) +
-        (with_delay ? (int)sizeof(will_delay) : 0);
+    int pub_props_len;
+    int props_len;
+
+    if (user_props < 0 || user_props > WILL_TEST_MAX_USER_PROPS) {
+        return -1;
+    }
+    pub_props_len = (int)sizeof(content_type) +
+        user_props * (int)sizeof(user_prop);
+    props_len = pub_props_len + (with_delay ? (int)sizeof(will_delay) : 0);
 
     /* v5 CONNECT (MQTT 5.0 section 3.1): Will Flag and Clean Start, keep
      * alive 60, no CONNECT properties, ClientId "P", Will Properties, Will
@@ -7144,10 +7167,30 @@ static int will_props_reach_live_subscriber(int with_delay)
         XMEMCPY(&connect_pub[pos], will_delay, sizeof(will_delay));
         pos += (int)sizeof(will_delay);
     }
-    XMEMCPY(&connect_pub[pos], will_props, sizeof(will_props));
-    pos += (int)sizeof(will_props);
+    XMEMCPY(&connect_pub[pos], content_type, sizeof(content_type));
+    pos += (int)sizeof(content_type);
+    for (i = 0; i < user_props; i++) {
+        XMEMCPY(&connect_pub[pos], user_prop, sizeof(user_prop));
+        pos += (int)sizeof(user_prop);
+    }
     XMEMCPY(&connect_pub[pos], "\x00\x03lwt\x00\x03" "bye", 10);
     pos += 10;
+
+    /* Expected v5 QoS 0 PUBLISH (MQTT 5.0 section 3.3): topic "lwt", the
+     * Will Properties without the Will Delay Interval, payload "bye". */
+    expected[exp_pos++] = 0x30;
+    expected[exp_pos++] = (byte)(5 + 1 + pub_props_len + 3);
+    XMEMCPY(&expected[exp_pos], "\x00\x03lwt", 5);
+    exp_pos += 5;
+    expected[exp_pos++] = (byte)pub_props_len;
+    XMEMCPY(&expected[exp_pos], content_type, sizeof(content_type));
+    exp_pos += (int)sizeof(content_type);
+    for (i = 0; i < user_props; i++) {
+        XMEMCPY(&expected[exp_pos], user_prop, sizeof(user_prop));
+        exp_pos += (int)sizeof(user_prop);
+    }
+    XMEMCPY(&expected[exp_pos], "bye", 3);
+    exp_pos += 3;
 
     install_mock_net(&net);
     XMEMSET(&broker, 0, sizeof(broker));
@@ -7163,13 +7206,34 @@ static int will_props_reach_live_subscriber(int with_delay)
     for (i = 0; i < 16; i++) {
         MqttBroker_Step(&broker);
     }
+#ifndef WOLFMQTT_DYN_PROP
+    if (exhaust_pool) {
+        held = will_test_exhaust_prop_pool();
+        if (held == NULL) {
+            exhaust_pool = -1;
+        }
+    }
+#else
+    if (exhaust_pool) {
+        exhaust_pool = -1; /* no shared pool to exhaust */
+    }
+#endif
     g_clients[1].read_err = 1;
     for (i = 0; i < 16; i++) {
         MqttBroker_Step(&broker);
     }
+#ifndef WOLFMQTT_DYN_PROP
+    if (held != NULL) {
+        (void)MqttProps_Free(held);
+    }
+#endif
 
     found = will_bytes_found(g_clients[0].out_buf, g_clients[0].out_len,
-        expected, sizeof(expected));
+        expected, (size_t)exp_pos);
+    if (count_packets_of_type(g_clients[0].out_buf, g_clients[0].out_len,
+            MQTT_PACKET_TYPE_PUBLISH) != 1 || exhaust_pool < 0) {
+        found = 0;
+    }
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
@@ -7178,13 +7242,56 @@ static int will_props_reach_live_subscriber(int with_delay)
 
 TEST(will_props_forwarded_to_live_subscriber)
 {
-    ASSERT_EQ(1, will_props_reach_live_subscriber(0));
+    ASSERT_EQ(1, will_props_reach_live_subscriber(0, 0, 1));
 }
 
 TEST(delayed_will_props_forwarded_to_live_subscriber)
 {
-    ASSERT_EQ(1, will_props_reach_live_subscriber(1));
+    ASSERT_EQ(1, will_props_reach_live_subscriber(1, 0, 1));
 }
+
+#ifndef WOLFMQTT_DYN_PROP
+#ifdef WOLFMQTT_STATIC_MEMORY
+/* User Properties, after the Content Type, in the largest Will this static
+ * build accepts that will_props_reach_live_subscriber can carry. */
+#define WILL_TEST_STATIC_USER_PROPS_BY_LEN ((BROKER_MAX_WILL_PROPS_LEN - 4) / 7)
+#define WILL_TEST_STATIC_USER_PROPS_BY_ENTRIES \
+    (BROKER_WILL_PROPS_STACK_ENTRIES - 1)
+#define WILL_TEST_STATIC_USER_PROPS_MIN2(a, b) (((a) < (b)) ? (a) : (b))
+#define WILL_TEST_STATIC_USER_PROPS WILL_TEST_STATIC_USER_PROPS_MIN2( \
+    WILL_TEST_STATIC_USER_PROPS_MIN2(WILL_TEST_STATIC_USER_PROPS_BY_LEN, \
+        WILL_TEST_STATIC_USER_PROPS_BY_ENTRIES), WILL_TEST_MAX_USER_PROPS)
+#endif
+
+/* Will Properties are rebuilt without the shared property pool, so a full
+ * pool can neither drop the Will nor strip its properties, on the immediate
+ * or the deferred path. In a static build the largest accepted Will still
+ * fits the stack entries. */
+TEST(will_props_published_with_prop_pool_exhausted)
+{
+    ASSERT_EQ(1, will_props_reach_live_subscriber(0, 1, 0));
+    ASSERT_EQ(1, will_props_reach_live_subscriber(1, 1, 0));
+#if !defined(WOLFMQTT_STATIC_MEMORY) || BROKER_WILL_PROPS_STACK_ENTRIES >= 2
+    ASSERT_EQ(1, will_props_reach_live_subscriber(0, 1, 1));
+    ASSERT_EQ(1, will_props_reach_live_subscriber(1, 1, 1));
+#endif
+#ifdef WOLFMQTT_STATIC_MEMORY
+    ASSERT_EQ(1, will_props_reach_live_subscriber(0, 1,
+        WILL_TEST_STATIC_USER_PROPS));
+#endif
+}
+#endif
+
+#if !defined(WOLFMQTT_STATIC_MEMORY) && \
+    BROKER_WILL_PROPS_STACK_ENTRIES < WILL_TEST_MAX_USER_PROPS
+/* A dynamic build rebuilds a Will with more properties than the stack
+ * entries on the heap; all of them still reach the subscriber in order. */
+TEST(will_props_beyond_stack_entries_forwarded)
+{
+    ASSERT_EQ(1, will_props_reach_live_subscriber(0, 0,
+        WILL_TEST_MAX_USER_PROPS));
+}
+#endif
 
 #if WOLFMQTT_MAX_QOS >= 1
 /* A delayed Will can fire after every client has been freed, which releases
@@ -16612,6 +16719,13 @@ int main(int argc, char** argv)
     RUN_TEST(delayed_will_props_forwarded_to_live_subscriber);
 #if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(delayed_will_props_decoded_with_no_clients);
+#endif
+#ifndef WOLFMQTT_DYN_PROP
+    RUN_TEST(will_props_published_with_prop_pool_exhausted);
+#endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && \
+    BROKER_WILL_PROPS_STACK_ENTRIES < WILL_TEST_MAX_USER_PROPS
+    RUN_TEST(will_props_beyond_stack_entries_forwarded);
 #endif
 #if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(queued_will_expired_before_delivery_dropped);

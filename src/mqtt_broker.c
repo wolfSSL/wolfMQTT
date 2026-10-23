@@ -1974,7 +1974,6 @@ WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
     MqttProp* decoded = NULL;
     const MqttProp* prop;
     int rc;
-    int shut_rc;
     int expiry_found = 0;
 
     if (e == NULL || e->props != NULL || (buf == NULL && len > 0)) {
@@ -1984,12 +1983,8 @@ WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
         return e->has_expiry ? MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA)
             : 0;
     }
-    /* Restore runs before any client exists, so nothing else holds the
-     * shared property pool lock yet. */
-    rc = MqttProps_Init();
-    if (rc != MQTT_CODE_SUCCESS) {
-        return rc;
-    }
+    /* The broker's own property pool reference (MqttBroker_Init) covers
+     * restore, which runs before any client exists. */
     rc = MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH, &decoded, (byte*)buf,
         len, len);
     if (rc >= 0 && (word32)rc != len) {
@@ -2015,12 +2010,6 @@ WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
     }
     if (decoded != NULL) {
         (void)MqttProps_Free(decoded);
-    }
-    shut_rc = MqttProps_ShutDown();
-    if (rc >= 0 && shut_rc != MQTT_CODE_SUCCESS) {
-        BrokerProps_FreeClone(e->props);
-        e->props = NULL;
-        rc = shut_rc;
     }
     return (rc < 0) ? rc : 0;
 }
@@ -5514,6 +5503,135 @@ static int BrokerWill_EncodeProps(const MqttProp* props, byte* buf)
     return (rc < 0) ? rc : len;
 }
 
+#ifdef WOLFMQTT_STATIC_MEMORY
+/* Number of publishable Will Properties in props. */
+static int BrokerWill_CountProps(const MqttProp* props)
+{
+    int count = 0;
+
+    for (; props != NULL; props = props->next) {
+        if (BrokerWill_IsPublishProp(props)) {
+            count++;
+        }
+    }
+    return count;
+}
+#endif
+
+/* Take one 2-byte-length-prefixed field (MQTT 5.0 section 1.5.4/1.5.6) from
+ * buf at *pos. */
+static int BrokerWill_TakeField(const byte* buf, word16 len, word16* pos,
+    const byte** data, word16* data_len)
+{
+    if (len - *pos < 2) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+    *data_len = (word16)(((word16)buf[*pos] << 8) | buf[*pos + 1]);
+    *pos = (word16)(*pos + 2);
+    if (len - *pos < *data_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+    *data = &buf[*pos];
+    *pos = (word16)(*pos + *data_len);
+    return 0;
+}
+
+/* Rebuild Will Properties written by BrokerWill_EncodeProps as a list in
+ * nodes, without the shared property pool, so a Will can always be published
+ * with them. String and binary values point into buf, which must outlive the
+ * list. With nodes NULL the properties are only counted. Returns the count
+ * or a negative error. */
+static int BrokerWill_DecodeProps(const byte* buf, word16 len,
+    MqttProp* nodes, int max_nodes)
+{
+    MqttProp* prop = NULL;
+    const byte* data;
+    word16 data_len;
+    word16 pos = 0;
+    byte id;
+    int count = 0;
+    int rc = 0;
+
+    while (rc == 0 && pos < len) {
+        id = buf[pos++];
+        if (nodes != NULL) {
+            if (count >= max_nodes) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                break;
+            }
+            prop = &nodes[count];
+            XMEMSET(prop, 0, sizeof(*prop));
+            prop->type = (MqttPropertyType)id;
+            if (count > 0) {
+                nodes[count - 1].next = prop;
+            }
+        }
+        switch (id) {
+            case MQTT_PROP_PAYLOAD_FORMAT_IND:
+                if (len - pos < 1) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
+                if (prop != NULL) {
+                    prop->data_byte = buf[pos];
+                }
+                pos++;
+                break;
+            case MQTT_PROP_MSG_EXPIRY_INTERVAL:
+                if (len - pos < 4) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                    break;
+                }
+                if (prop != NULL) {
+                    prop->data_int = ((word32)buf[pos] << 24) |
+                        ((word32)buf[pos + 1] << 16) |
+                        ((word32)buf[pos + 2] << 8) | (word32)buf[pos + 3];
+                }
+                pos = (word16)(pos + 4);
+                break;
+            case MQTT_PROP_CONTENT_TYPE:
+            case MQTT_PROP_RESP_TOPIC:
+                rc = BrokerWill_TakeField(buf, len, &pos, &data, &data_len);
+                if (rc == 0 && prop != NULL) {
+                    /* The encoder only reads through these pointers. */
+                    prop->data_str.str = (char*)data;
+                    prop->data_str.len = data_len;
+                }
+                break;
+            case MQTT_PROP_CORRELATION_DATA:
+                rc = BrokerWill_TakeField(buf, len, &pos, &data, &data_len);
+                if (rc == 0 && prop != NULL) {
+                    prop->data_bin.data = (byte*)data;
+                    prop->data_bin.len = data_len;
+                }
+                break;
+            case MQTT_PROP_USER_PROP:
+                rc = BrokerWill_TakeField(buf, len, &pos, &data, &data_len);
+                if (rc == 0 && prop != NULL) {
+                    prop->data_str.str = (char*)data;
+                    prop->data_str.len = data_len;
+                }
+                if (rc == 0) {
+                    rc = BrokerWill_TakeField(buf, len, &pos, &data,
+                        &data_len);
+                }
+                if (rc == 0 && prop != NULL) {
+                    prop->data_str2.str = (char*)data;
+                    prop->data_str2.len = data_len;
+                }
+                break;
+            default:
+                /* Only publishable Will Properties are ever stored. */
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                break;
+        }
+        if (rc == 0) {
+            count++;
+        }
+    }
+    return (rc < 0) ? rc : count;
+}
+
 /* Keep the publishable Will Properties until the Will is published. */
 static int BrokerClient_StoreWillProps(BrokerClient* bc,
     const MqttProp* props)
@@ -5877,7 +5995,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     const char* topic, const byte* payload, word16 payload_len,
     MqttQoS qos, byte retain
 #ifdef WOLFMQTT_V5
-    , byte* props_buf, word16 props_len
+    , const byte* props_buf, word16 props_len
 #endif
     );
 
@@ -6423,7 +6541,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     const char* topic, const byte* payload, word16 payload_len,
     MqttQoS qos, byte retain
 #ifdef WOLFMQTT_V5
-    , byte* props_buf, word16 props_len
+    , const byte* props_buf, word16 props_len
 #endif
     )
 {
@@ -6437,11 +6555,13 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     int t;
 #endif
 #ifdef WOLFMQTT_V5
+    MqttProp stack_props[BROKER_WILL_PROPS_STACK_ENTRIES];
+    MqttProp* nodes = stack_props;
     MqttProp* props = NULL;
     MqttProp* expiry_prop;
     word32 expiry = 0;
+    int node_count = BROKER_WILL_PROPS_STACK_ENTRIES;
     int prop_rc;
-    int props_ref = 0;
 #endif
 
     if (broker == NULL || topic == NULL) {
@@ -6452,26 +6572,33 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     /* The Will Properties travel with the Will on every delivery path
      * (MQTT 5.0 section 3.1.3.2). */
     if (props_buf != NULL && props_len > 0) {
-        /* A delayed Will can fire after the last client was freed, so hold
-         * the shared property pool lock for the decoded list's lifetime. */
-        prop_rc = MqttProps_Init();
-        if (prop_rc != MQTT_CODE_SUCCESS) {
-            WBLOG_ERR(broker,
-                "broker: will property pool init failed rc=%d topic=%s",
-                prop_rc, BrokerLog_Sanitize(topic));
-            return;
-        }
-        props_ref = 1;
-        prop_rc = MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH, &props,
-            props_buf, props_len, props_len);
-        if (prop_rc < 0) {
-            WBLOG_ERR(broker,
-                "broker: will properties decode failed rc=%d topic=%s",
-                prop_rc, BrokerLog_Sanitize(topic));
-            if (props != NULL) {
-                (void)MqttProps_Free(props);
-                props = NULL;
+        prop_rc = BrokerWill_DecodeProps(props_buf, props_len, NULL, 0);
+    #ifndef WOLFMQTT_STATIC_MEMORY
+        if (prop_rc > BROKER_WILL_PROPS_STACK_ENTRIES) {
+            nodes = (MqttProp*)WOLFMQTT_MALLOC(sizeof(MqttProp) *
+                (size_t)prop_rc);
+            if (nodes == NULL) {
+                nodes = stack_props;
+                prop_rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MEMORY);
             }
+            else {
+                node_count = prop_rc;
+            }
+        }
+    #endif
+        if (prop_rc > 0) {
+            prop_rc = BrokerWill_DecodeProps(props_buf, props_len, nodes,
+                node_count);
+        }
+        if (prop_rc > 0) {
+            props = nodes;
+        }
+        else if (prop_rc < 0) {
+            /* Not reachable for properties this broker encoded, except on
+             * heap exhaustion in a dynamic build. */
+            WBLOG_ERR(broker,
+                "broker: will properties rebuild failed rc=%d, publishing "
+                "without them topic=%s", prop_rc, BrokerLog_Sanitize(topic));
         }
         expiry_prop = BrokerProps_Find(props, MQTT_PROP_MSG_EXPIRY_INTERVAL);
         if (expiry_prop != NULL) {
@@ -6806,15 +6933,9 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     BrokerFanout_Free(&targets);
 #endif
 #ifdef WOLFMQTT_V5
-    if (props != NULL) {
-        (void)MqttProps_Free(props);
-    }
-    if (props_ref) {
-        prop_rc = MqttProps_ShutDown();
-        if (prop_rc != MQTT_CODE_SUCCESS) {
-            WBLOG_ERR(broker, "broker: will property pool release failed "
-                "rc=%d", prop_rc);
-        }
+    if (nodes != stack_props) {
+        BROKER_FORCE_ZERO(nodes, sizeof(MqttProp) * (size_t)node_count);
+        WOLFMQTT_FREE(nodes);
     }
 #endif
 }
@@ -7535,7 +7656,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_STATIC_MEMORY)
         /* Will Properties are v5 only. Refuse rather than drop any. */
         will_props_len = BrokerWill_EncodeProps(mc.lwt_msg->props, NULL);
-        if (will_props_len > BROKER_MAX_WILL_PROPS_LEN) {
+        if (will_props_len > BROKER_MAX_WILL_PROPS_LEN ||
+                BrokerWill_CountProps(mc.lwt_msg->props) >
+                    BROKER_WILL_PROPS_STACK_ENTRIES) {
             WBLOG_ERR(broker,
                 "broker: LWT properties too large (max %d) sock=%d",
                 BROKER_MAX_WILL_PROPS_LEN, (int)bc->sock);
@@ -9999,10 +10122,23 @@ check_timeouts:
 /* -------------------------------------------------------------------------- */
 int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net)
 {
+#ifdef WOLFMQTT_V5
+    int rc;
+#endif
+
     if (broker == NULL || net == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
     XMEMSET(broker, 0, sizeof(*broker));
+#ifdef WOLFMQTT_V5
+    /* Restored queue properties are decoded with the shared property pool,
+     * also before the first and after the last client holds a reference. */
+    rc = MqttProps_Init();
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    broker->props_ref = 1;
+#endif
     XMEMCPY(&broker->net, net, sizeof(MqttBrokerNet));
     broker->listen_sock = BROKER_SOCKET_INVALID;
     broker->port = MQTT_DEFAULT_PORT;
@@ -10627,6 +10763,14 @@ int MqttBroker_Free(MqttBroker* broker)
         sizeof(broker->persist_key_cache));
     broker->persist_key_loaded = 0;
 #endif
+#ifdef WOLFMQTT_V5
+    if (broker->props_ref) {
+        broker->props_ref = 0;
+        if (MqttProps_ShutDown() != MQTT_CODE_SUCCESS) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SYSTEM);
+        }
+    }
+#endif
 
     return MQTT_CODE_SUCCESS;
 }
@@ -10846,6 +10990,7 @@ int wolfmqtt_broker(int argc, char** argv)
             rc = wolfmqtt_broker_set_auth_pass(&broker, argv[++i],
                 auth_pass_buf, (word32)sizeof(auth_pass_buf));
             if (rc != MQTT_CODE_SUCCESS) {
+                (void)MqttBroker_Free(&broker);
                 return rc;
             }
         }
@@ -10896,11 +11041,13 @@ int wolfmqtt_broker(int argc, char** argv)
 #endif
         else if (XSTRCMP(argv[i], "-h") == 0) {
             BrokerUsage(argv[0]);
+            (void)MqttBroker_Free(&broker);
             BROKER_WIPE_AUTH_PASS();
             return 0;
         }
         else {
             BrokerUsage(argv[0]);
+            (void)MqttBroker_Free(&broker);
             BROKER_WIPE_AUTH_PASS();
             return MQTT_CODE_ERROR_BAD_ARG;
         }
@@ -10923,12 +11070,14 @@ int wolfmqtt_broker(int argc, char** argv)
             PRINTF("broker: ERROR persist+encrypt build needs -E <source> "
                 "(only \"dev\" is recognized; production deployments "
                 "must install MqttBrokerPersistHooks.derive_key)");
+            (void)MqttBroker_Free(&broker);
             BROKER_WIPE_AUTH_PASS();
             return MQTT_CODE_ERROR_BAD_ARG;
         }
         if (XSTRCMP(encrypt_key_source, "dev") != 0) {
             PRINTF("broker: ERROR unknown -E source \"%s\" "
                 "(only \"dev\" is recognized)", encrypt_key_source);
+            (void)MqttBroker_Free(&broker);
             BROKER_WIPE_AUTH_PASS();
             return MQTT_CODE_ERROR_BAD_ARG;
         }
@@ -10939,6 +11088,7 @@ int wolfmqtt_broker(int argc, char** argv)
         PRINTF("broker: ERROR persist+encrypt build has no built-in key "
             "source (rebuild with --enable-broker-persist-encrypt-dev-key "
             "for testing, or install MqttBrokerPersistHooks.derive_key)");
+        (void)MqttBroker_Free(&broker);
         BROKER_WIPE_AUTH_PASS();
         return MQTT_CODE_ERROR_BAD_ARG;
         #endif
@@ -10953,6 +11103,7 @@ int wolfmqtt_broker(int argc, char** argv)
                 "subdirectories must be owned by this user, must not be "
                 "group- or other-writable (mode 0700), and no path "
                 "component may be a symlink");
+            (void)MqttBroker_Free(&broker);
             BROKER_WIPE_AUTH_PASS();
             return rc;
         }

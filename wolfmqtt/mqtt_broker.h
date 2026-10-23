@@ -136,6 +136,23 @@
 #ifndef BROKER_MAX_WILL_PROPS_LEN
     #define BROKER_MAX_WILL_PROPS_LEN 128
 #endif
+/* Will Properties rebuilt on the stack when the Will is published, so that
+ * cannot fail on the shared property pool. In a static build this bounds
+ * them and a Will with more is refused at CONNECT; the default fits any
+ * Will within BROKER_MAX_WILL_PROPS_LEN, since every publishable property
+ * other than User Property appears at most once and a User Property takes at
+ * least 5 bytes. A dynamic build puts a larger Will on the heap. */
+#ifndef BROKER_WILL_PROPS_STACK_ENTRIES
+    #ifdef WOLFMQTT_STATIC_MEMORY
+        #define BROKER_WILL_PROPS_STACK_ENTRIES \
+            (5 + BROKER_MAX_WILL_PROPS_LEN / 5)
+    #else
+        #define BROKER_WILL_PROPS_STACK_ENTRIES 8
+    #endif
+#endif
+#if BROKER_WILL_PROPS_STACK_ENTRIES < 1
+    #error BROKER_WILL_PROPS_STACK_ENTRIES must be at least 1
+#endif
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
 #endif
@@ -922,13 +939,20 @@ typedef struct MqttBroker {
      * failure is reported once rather than on every step. */
     int accept_log_err;
     int accept_log_err_tls;
+#ifdef WOLFMQTT_V5
+    /* Holds one MqttProps_Init reference from MqttBroker_Init to
+     * MqttBroker_Free, so restored v5 queue properties can be decoded when
+     * no client is connected. */
+    byte props_ref;
+#endif
 } MqttBroker;
 
 /* -------------------------------------------------------------------------- */
 /* Public API                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/* Initialize the broker context with network callbacks */
+/* Initialize the broker context with network callbacks. Every successful
+ * call must be paired with MqttBroker_Free, which releases what it holds. */
 WOLFMQTT_API int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net);
 
 /* Run the broker main loop (blocking) */
