@@ -138,4 +138,6 @@ tests/test_mqtt_sn_client_mt_only
 tests/test_mqtt_sn_client_nodata
 tests/unit_tests
 tests/test_mqtt_props_init
+tests/test_mqtt_sem_init
+tests/test_broker_log
 tests/test_mqtt_curl_init

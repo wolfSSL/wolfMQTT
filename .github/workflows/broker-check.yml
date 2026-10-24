@@ -115,6 +115,10 @@ jobs:
             cflags: ""
             wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --disable-broker-retained"
             check_units: "yes"
+          - name: "Broker with persist + nonblock"
+            cflags: ""
+            wolfmqtt_opts: "--enable-broker --enable-v5 --enable-broker-persist --enable-nonblock"
+            check_units: "yes"
 
     steps:
     - name: Install dependencies

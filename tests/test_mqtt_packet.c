@@ -312,6 +312,8 @@ typedef struct PacketReadFixture {
     int data_len;
     int pos;
     int calls;
+    int max_chunk; /* bytes delivered per read, 0 for no limit */
+    int extra;     /* added to the reported length to simulate over-report */
 } PacketReadFixture;
 
 static int packet_read_fixture(void* context, byte* buf, int buf_len,
@@ -325,12 +327,15 @@ static int packet_read_fixture(void* context, byte* buf, int buf_len,
     if (read_len > buf_len) {
         read_len = buf_len;
     }
+    if (fixture->max_chunk > 0 && read_len > fixture->max_chunk) {
+        read_len = fixture->max_chunk;
+    }
     if (read_len <= 0) {
         return MQTT_CODE_ERROR_NETWORK;
     }
     XMEMCPY(buf, fixture->data + fixture->pos, (size_t)read_len);
     fixture->pos += read_len;
-    return read_len;
+    return read_len + fixture->extra;
 }
 
 static int packet_net_connect(void* context, const char* host, word16 port,
@@ -407,6 +412,242 @@ TEST(packet_read_rejects_buffer_shorter_than_max_header)
     ASSERT_EQ((int)sizeof(short_header), rc);
     ASSERT_EQ(0xA5, guarded[0]);
     ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+
+    MqttClient_DeInit(&client);
+}
+
+static int packet_write_count(void* context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    PacketReadFixture* fixture = (PacketReadFixture*)context;
+
+    (void)buf;
+    (void)timeout_ms;
+    fixture->calls++;
+    return buf_len + fixture->extra;
+}
+
+static int packet_io_client_init(MqttClient* client, MqttNet* net,
+    PacketReadFixture* fixture, byte* tx, int tx_len, byte* rx, int rx_len)
+{
+    XMEMSET(net, 0, sizeof(*net));
+    XMEMSET(fixture, 0, sizeof(*fixture));
+    net->context = fixture;
+    net->connect = packet_net_connect;
+    net->read = packet_read_fixture;
+    net->write = packet_write_count;
+    net->disconnect = packet_net_disconnect;
+    return MqttClient_Init(client, net, NULL, tx, tx_len, rx, rx_len, 0);
+}
+
+/* A corrupted negative socket position must be rejected before it is used
+ * as a buffer index or in the remaining-length arithmetic. */
+TEST(packet_read_write_reject_negative_socket_pos)
+{
+    static const byte ping_resp[] = { 0xD0, 0x00 };
+    byte client_rx[16];
+    byte client_tx[16];
+    byte buf[8];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = ping_resp;
+    fixture.data_len = (int)sizeof(ping_resp);
+
+    client.read.pos = -1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    XMEMSET(buf, 0, sizeof(buf));
+    client.write.pos = -1;
+    rc = MqttPacket_Write(&client, buf, 2);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    MqttClient_DeInit(&client);
+}
+
+/* Resuming in MQTT_PK_READ with corrupted header/remaining lengths must fail
+ * without reading, rather than computing an out-of-range return length. */
+TEST(packet_read_rejects_corrupt_resume_state)
+{
+    byte client_rx[16];
+    byte client_tx[16];
+    byte buf[8];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+
+    client.packet.stat = MQTT_PK_READ;
+    client.packet.header_len = -1;
+    client.packet.remain_len = 1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    client.packet.stat = MQTT_PK_READ;
+    client.packet.header_len = (int)sizeof(buf) + 1;
+    client.packet.remain_len = 1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    client.packet.stat = MQTT_PK_READ;
+    client.packet.header_len = 2;
+    client.packet.remain_len = -1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, fixture.calls);
+
+    MqttClient_DeInit(&client);
+}
+
+/* The running byte totals saturate instead of overflowing a signed int. */
+TEST(packet_read_write_total_saturates)
+{
+    static const byte ping_resp[] = { 0xD0, 0x00 };
+    static const byte ping_req[] = { 0xC0, 0x00 };
+    byte client_rx[16];
+    byte client_tx[16];
+    byte buf[8];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = ping_resp;
+    fixture.data_len = (int)sizeof(ping_resp);
+
+    client.read.total = 0x7FFFFFFF - 1;
+    rc = MqttPacket_Read(&client, buf, (int)sizeof(buf), 0);
+    ASSERT_EQ((int)sizeof(ping_resp), rc);
+    ASSERT_EQ(0x7FFFFFFF, client.read.total);
+    ASSERT_EQ(0, client.read.pos);
+
+    XMEMCPY(buf, ping_req, sizeof(ping_req));
+    client.write.total = 0x7FFFFFFF;
+    rc = MqttPacket_Write(&client, buf, (int)sizeof(ping_req));
+    ASSERT_EQ((int)sizeof(ping_req), rc);
+    ASSERT_EQ(0x7FFFFFFF, client.write.total);
+    ASSERT_EQ(0, client.write.pos);
+
+    MqttClient_DeInit(&client);
+}
+
+/* A callback that reports more bytes than requested must be clamped: the
+ * returned length stays exact and nothing outside the buffer is touched. */
+TEST(packet_read_write_clamp_over_reported_length)
+{
+    /* PUBLISH QoS 0: fixed header 0x30, Remaining Length 3,
+     * Topic Name length 0x0001, Topic Name "a" (MQTT 5.0 section 3.3) */
+    static const byte publish[] = { 0x30, 0x03, 0x00, 0x01, 0x61 };
+    static const byte ping_req[] = { 0xC0, 0x00 };
+    byte client_rx[16];
+    byte client_tx[16];
+    byte guarded[10];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = publish;
+    fixture.data_len = (int)sizeof(publish);
+    fixture.extra = 5;
+
+    XMEMSET(guarded, 0xA5, sizeof(guarded));
+    rc = MqttPacket_Read(&client, &guarded[1], (int)sizeof(guarded) - 2, 0);
+    ASSERT_EQ((int)sizeof(publish), rc);
+    ASSERT_EQ(0, XMEMCMP(&guarded[1], publish, sizeof(publish)));
+    ASSERT_EQ(0xA5, guarded[0]);
+    ASSERT_EQ(0xA5, guarded[sizeof(publish) + 1]);
+    ASSERT_EQ(0xA5, guarded[sizeof(guarded) - 1]);
+    ASSERT_EQ(0, client.read.pos);
+    ASSERT_EQ((int)sizeof(publish), fixture.pos);
+
+    XMEMCPY(guarded, ping_req, sizeof(ping_req));
+    rc = MqttPacket_Write(&client, guarded, (int)sizeof(ping_req));
+    ASSERT_EQ((int)sizeof(ping_req), rc);
+    ASSERT_EQ(0, client.write.pos);
+
+    MqttClient_DeInit(&client);
+}
+
+/* One byte per callback: blocking builds reassemble the packet in a single
+ * MqttPacket_Read; non-blocking builds resume from read.pos on each call. */
+TEST(packet_read_reassembles_one_byte_reads)
+{
+    /* PUBLISH QoS 0 with Remaining Length 128, encoded as the two-byte
+     * Variable Byte Integer 0x80 0x01 [MQTT-1.5.5]. Variable header is
+     * Topic Name length 0x0001 and "a"; the remaining 125 bytes are
+     * payload (MQTT 5.0 section 3.3). */
+    byte publish[3 + 128];
+    byte client_rx[16];
+    byte client_tx[16];
+    byte rx[160];
+    MqttClient client;
+    MqttNet net;
+    PacketReadFixture fixture;
+    int rc;
+    int i;
+#ifdef WOLFMQTT_NONBLOCK
+    int prev_pos = 0;
+    int iters = 0;
+#endif
+
+    publish[0] = 0x30;
+    publish[1] = 0x80;
+    publish[2] = 0x01;
+    publish[3] = 0x00;
+    publish[4] = 0x01;
+    publish[5] = 0x61;
+    for (i = 6; i < (int)sizeof(publish); i++) {
+        publish[i] = (byte)i;
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, packet_io_client_init(&client, &net,
+        &fixture, client_tx, (int)sizeof(client_tx), client_rx,
+        (int)sizeof(client_rx)));
+    fixture.data = publish;
+    fixture.data_len = (int)sizeof(publish);
+    fixture.max_chunk = 1;
+
+    XMEMSET(rx, 0, sizeof(rx));
+#ifdef WOLFMQTT_NONBLOCK
+    do {
+        rc = MqttPacket_Read(&client, rx, (int)sizeof(rx), 0);
+        if (rc == MQTT_CODE_CONTINUE) {
+            /* progress either continues the current read or starts the
+             * next one */
+            ASSERT_TRUE(client.read.pos == prev_pos + 1 ||
+                client.read.pos == 1);
+            prev_pos = client.read.pos;
+        }
+        iters++;
+    } while (rc == MQTT_CODE_CONTINUE && iters <= (int)sizeof(publish));
+#else
+    rc = MqttPacket_Read(&client, rx, (int)sizeof(rx), 0);
+#endif
+    ASSERT_EQ((int)sizeof(publish), rc);
+    ASSERT_EQ(0, XMEMCMP(rx, publish, sizeof(publish)));
+    ASSERT_EQ(0, client.read.pos);
+    ASSERT_EQ((int)sizeof(publish), fixture.calls);
 
     MqttClient_DeInit(&client);
 }
@@ -1540,6 +1781,35 @@ TEST(encode_publish_v5_response_topic_wildcard_rejected)
     MqttProps_Free(pub.props);
 }
 
+/* MqttProps_FindType is public API: it must return the first property of the
+ * requested type, NULL when the list has none, and NULL for an empty list. */
+TEST(props_find_type)
+{
+    MqttProp* head = NULL;
+    MqttProp* first;
+    MqttProp* second;
+    MqttProp* third;
+
+    ASSERT_NULL(MqttProps_FindType(NULL, MQTT_PROP_USER_PROP));
+
+    first = MqttProps_Add(&head);
+    ASSERT_TRUE(first != NULL);
+    first->type = MQTT_PROP_CONTENT_TYPE;
+    second = MqttProps_Add(&head);
+    ASSERT_TRUE(second != NULL);
+    second->type = MQTT_PROP_USER_PROP;
+    third = MqttProps_Add(&head);
+    ASSERT_TRUE(third != NULL);
+    third->type = MQTT_PROP_USER_PROP;
+
+    ASSERT_TRUE(MqttProps_FindType(head, MQTT_PROP_CONTENT_TYPE) == first);
+    /* The first match wins when a type repeats. */
+    ASSERT_TRUE(MqttProps_FindType(head, MQTT_PROP_USER_PROP) == second);
+    ASSERT_NULL(MqttProps_FindType(head, MQTT_PROP_RESP_TOPIC));
+
+    MqttProps_Free(head);
+}
+
 /* A single message may not carry more than the internal
  * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
  * shared property pool. 40 User Property entries exceeds that cap. The cap
@@ -2119,6 +2389,36 @@ TEST(decode_auth_v5_props_cannot_cross_packet_end)
     ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
     ASSERT_NULL(auth.props);
 }
+
+/* MQTT 5.0 section 3.15.2.2.2: it is a Protocol Error to omit the
+ * Authentication Method from an AUTH packet's properties. */
+TEST(decode_auth_v5_missing_auth_method_rejected)
+{
+    /* Remaining Length 6: Reason 0x18 (Continue authentication), Property
+     * Length 4, Reason String (0x1F) "r", no Authentication Method. */
+    byte cont[] = {
+        0xF0, 0x06, MQTT_REASON_CONT_AUTH, 0x04,
+        MQTT_PROP_REASON_STR, 0x00, 0x01, 'r'
+    };
+    /* Same properties with Reason 0x00 (Success): the long form carries a
+     * property block, so the Authentication Method is still required. */
+    byte success[] = {
+        0xF0, 0x06, MQTT_REASON_SUCCESS, 0x04,
+        MQTT_PROP_REASON_STR, 0x00, 0x01, 'r'
+    };
+    MqttAuth auth;
+    int rc;
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    rc = MqttDecode_Auth(cont, (int)sizeof(cont), &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(auth.props);
+
+    XMEMSET(&auth, 0, sizeof(auth));
+    rc = MqttDecode_Auth(success, (int)sizeof(success), &auth);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(auth.props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* [MQTT-3.2.2-1] / [MQTT-3.2.2-4] CONNACK Flags receive-side validation.
@@ -2200,6 +2500,37 @@ TEST(decode_connack_refused_without_session_present_accepted)
     int rc = decode_connack_flags(0x00, MQTT_CONNECT_ACK_CODE_REFUSED_PROTO);
     ASSERT_TRUE(rc > 0);
 }
+
+/* MQTT 3.1.1 section 3.2.2.3 assigns return codes 0-5 and reserves 6-255, so
+ * a CONNACK carrying a reserved code is a protocol violation, not an
+ * ordinary refusal. */
+TEST(decode_connack_v311_reserved_return_code_rejected)
+{
+    ASSERT_TRUE(decode_connack_flags(0x00,
+        MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH) > 0); /* 0x05, last assigned */
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x00, 0x06));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA,
+        decode_connack_flags(0x00, 0xFF));
+}
+
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.2.2.2 lists the CONNACK Reason Codes; 0x01 is not one
+ * of them. Wire: CONNACK, Remaining Length 3, flags 0, reason 0x01,
+ * Property Length 0. */
+TEST(decode_connack_v5_unassigned_reason_code_rejected)
+{
+    byte buf[] = { 0x20, 0x03, 0x00, 0x01, 0x00 };
+    MqttConnectAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_ConnectAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(ack.props);
+}
+#endif
 
 #ifdef WOLFMQTT_BROKER
 /* [MQTT-3.2.2-4] Session Present must be zero when a connection is refused.
@@ -3531,6 +3862,77 @@ TEST(encode_connect_v5_invalid_will_property_rejected)
     rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_EQ(0xA5, buf[0]);
+}
+
+/* [MQTT-3.1.3.2] Payload Format Indicator and Content Type are Will
+ * Properties, so a CONNECT carrying them in the Will must encode. */
+TEST(encode_connect_v5_will_publish_properties_accepted)
+{
+    byte buf[64];
+    MqttConnect connect;
+    MqttMessage lwt;
+    MqttProp pfi;
+    MqttProp content_type;
+    int rc;
+    /* MQTT 5.0 section 3.1: CONNECT, Remaining Length 28 */
+    static const byte expected[] = {
+        0x10, 0x1C,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x04, 0x00, 0x00,         /* v5, Will Flag, Keep Alive 0 */
+        0x00,                           /* CONNECT Properties length 0 */
+        0x00, 0x03, 'c', 'i', 'd',      /* Client Identifier */
+        0x06,                           /* Will Properties length 6 */
+        0x01, 0x01,                     /* Payload Format Indicator 1 */
+        0x03, 0x00, 0x01, 't',          /* Content Type "t" */
+        0x00, 0x01, 'w',                /* Will Topic */
+        0x00, 0x00                      /* empty Will Payload */
+    };
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    XMEMSET(&pfi, 0, sizeof(pfi));
+    XMEMSET(&content_type, 0, sizeof(content_type));
+    connect.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    connect.client_id = "cid";
+    connect.enable_lwt = 1;
+    connect.lwt_msg = &lwt;
+    lwt.topic_name = "w";
+    pfi.type = MQTT_PROP_PAYLOAD_FORMAT_IND;
+    pfi.data_byte = 1;
+    pfi.next = &content_type;
+    content_type.type = MQTT_PROP_CONTENT_TYPE;
+    content_type.data_str.str = (char*)"t";
+    content_type.data_str.len = 1;
+    lwt.props = &pfi;
+
+    rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
+    ASSERT_EQ((int)sizeof(expected), rc);
+    ASSERT_EQ(0, XMEMCMP(expected, buf, sizeof(expected)));
+}
+
+/* MQTT 5.0 section 3.1.2.11: Message Expiry Interval and Will Delay Interval
+ * are not CONNECT Properties; they belong only in the Will Properties. */
+TEST(encode_connect_v5_will_only_properties_in_connect_rejected)
+{
+    byte buf[64];
+    MqttConnect connect;
+    MqttProp prop;
+    int rc;
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    XMEMSET(&prop, 0, sizeof(prop));
+    connect.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    connect.client_id = "cid";
+    connect.props = &prop;
+    prop.data_int = 30;
+
+    prop.type = MQTT_PROP_MSG_EXPIRY_INTERVAL;
+    rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    prop.type = MQTT_PROP_WILL_DELAY_INTERVAL;
+    rc = MqttEncode_Connect(buf, (int)sizeof(buf), &connect);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
 }
 
 TEST(encode_connect_v5_cyclic_will_properties_rejected)
@@ -5288,6 +5690,25 @@ TEST(decode_suback_v5_props_freed_on_payload_overrun)
     ASSERT_NULL(ack.props);
 }
 
+/* MQTT 5.0 section 3.9.2: the v5 SUBACK variable header is the Packet
+ * Identifier followed by the Property Length, which is mandatory even when
+ * zero (section 2.2.2.1). A packet carrying only the Packet Identifier is
+ * malformed and must not decode as a SUBACK with zero reason codes. */
+TEST(decode_suback_v5_missing_props_len_rejected)
+{
+    byte buf[] = {
+        0x90, 0x02,                        /* SUBACK, remain_len = 2 */
+        0x00, 0x01                         /* packet_id, nothing after it */
+    };
+    MqttSubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_SubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
+
 /* Pin v5's broadened set via the helper. */
 TEST(suback_return_code_v5_allowed_set)
 {
@@ -5869,6 +6290,24 @@ TEST(decode_unsuback_v5_props_past_remain_len_rejected)
     ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
     rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
     ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, rc);
+}
+
+/* MQTT 5.0 section 3.11.2: the v5 UNSUBACK variable header is the Packet
+ * Identifier followed by the mandatory Property Length (section 2.2.2.1). A
+ * packet carrying only the Packet Identifier is malformed. */
+TEST(decode_unsuback_v5_missing_props_len_rejected)
+{
+    byte buf[] = {
+        0xB0, 0x02,                        /* UNSUBACK, remain_len = 2 */
+        0x00, 0x01                         /* packet_id, nothing after it */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
 }
 #endif /* WOLFMQTT_V5 */
 
@@ -6591,6 +7030,39 @@ TEST(encode_props_boolean_byte_out_of_range_rejected)
     ASSERT_TRUE(rc > 0);
 }
 
+/* MQTT 5.0 sections 3.1.2.11.3 and 3.2.2.3.3: a Receive Maximum of 0 is a
+ * Protocol Error in both CONNECT and CONNACK. The encoder must refuse it in
+ * the length pass (buf == NULL) and the output pass. */
+TEST(encode_props_receive_max_zero_rejected)
+{
+    MqttProp prop;
+    byte buf[8];
+    /* Receive Maximum = 1: identifier 0x21, Two Byte Integer 0x0001
+     * (MQTT 5.0 sections 2.2.2.2 and 1.5.2) */
+    static const byte expect[] = { 0x21, 0x00, 0x01 };
+    int rc;
+
+    XMEMSET(&prop, 0, sizeof(prop));
+    prop.type = MQTT_PROP_RECEIVE_MAX;
+    prop.data_short = 0;
+    prop.next = NULL;
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, buf);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT_ACK, &prop, buf);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+
+    /* The smallest legal value still encodes. */
+    prop.data_short = 1;
+    XMEMSET(buf, 0, sizeof(buf));
+    rc = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT, &prop, buf);
+    ASSERT_EQ((int)sizeof(expect), rc);
+    ASSERT_EQ(0, XMEMCMP(buf, expect, sizeof(expect)));
+}
+
 /* ============================================================================
  * MqttEncode/Decode_Auth roundtrip
  *
@@ -6717,6 +7189,33 @@ TEST(auth_v5_success_no_props_roundtrip)
     ASSERT_NULL(dec.props);
 }
 
+/* MQTT 5.0 section 3.15.2.2.2: an AUTH that carries Properties must include
+ * the Authentication Method; omitting it is a Protocol Error. The short form
+ * of section 3.15.2.1 applies only to a Success AUTH with no Properties, so a
+ * Success AUTH with only a Reason String must be refused, not encoded. */
+TEST(encode_auth_v5_success_props_without_method_rejected)
+{
+    byte buf[32];
+    MqttAuth enc;
+    MqttProp prop;
+    int rc;
+    char reason[] = "ok";
+
+    XMEMSET(&enc, 0, sizeof(enc));
+    XMEMSET(&prop, 0, sizeof(prop));
+    XMEMSET(buf, 0xA5, sizeof(buf));
+    prop.type = MQTT_PROP_REASON_STR;
+    prop.data_str.str = reason;
+    prop.data_str.len = (word16)XSTRLEN(reason);
+    prop.next = NULL;
+    enc.reason_code = MQTT_REASON_SUCCESS;
+    enc.props = &prop;
+
+    rc = MqttEncode_Auth(buf, (int)sizeof(buf), &enc);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0xA5, buf[0]);
+}
+
 TEST(auth_v5_invalid_reason_code_rejected)
 {
     /* A reason code outside {SUCCESS, CONT_AUTH, REAUTH} must not decode
@@ -6803,6 +7302,74 @@ TEST(decode_connect_v5_will_props_session_expiry_rejected)
     dec.lwt_msg = &dec_lwt;
     rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+}
+
+/* [MQTT-3.1.3.2] Payload Format Indicator and Content Type are valid Will
+ * Properties and must decode. */
+TEST(decode_connect_v5_will_publish_properties_accepted)
+{
+    /* Hand-built v5 CONNECT, same layout as
+     * encode_connect_v5_will_publish_properties_accepted. */
+    byte buf[] = {
+        0x10, 0x1C,                         /* CONNECT, Remaining Length 28 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',    /* Protocol Name */
+        0x05, 0x04, 0x00, 0x00,            /* v5, Will Flag, Keep Alive */
+        0x00,                               /* CONNECT Properties length */
+        0x00, 0x03, 'c', 'i', 'd',         /* Client Identifier */
+        0x06,                               /* Will Properties length 6 */
+        0x01, 0x01,                         /* Payload Format Indicator 1 */
+        0x03, 0x00, 0x01, 't',             /* Content Type "t" */
+        0x00, 0x01, 'w',                   /* Will Topic */
+        0x00, 0x00                          /* empty Will Payload */
+    };
+    MqttConnect dec;
+    MqttMessage dec_lwt;
+    MqttProp* prop;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    XMEMSET(&dec_lwt, 0, sizeof(dec_lwt));
+    dec.lwt_msg = &dec_lwt;
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ((int)sizeof(buf), rc);
+    prop = dec_lwt.props;
+    ASSERT_NOT_NULL(prop);
+    ASSERT_EQ(MQTT_PROP_PAYLOAD_FORMAT_IND, prop->type);
+    ASSERT_EQ(1, prop->data_byte);
+    prop = prop->next;
+    ASSERT_NOT_NULL(prop);
+    ASSERT_EQ(MQTT_PROP_CONTENT_TYPE, prop->type);
+    ASSERT_EQ(1, prop->data_str.len);
+    ASSERT_EQ('t', prop->data_str.str[0]);
+    ASSERT_NULL(prop->next);
+    MqttProps_Free(dec_lwt.props);
+    MqttProps_Free(dec.props);
+}
+
+/* MQTT 5.0 section 3.1.2.11: Message Expiry Interval (0x02) and Will Delay
+ * Interval (0x18) are not CONNECT Properties. */
+TEST(decode_connect_v5_will_only_properties_in_connect_rejected)
+{
+    byte buf[] = {
+        0x10, 0x15,                         /* CONNECT, Remaining Length 21 */
+        0x00, 0x04, 'M', 'Q', 'T', 'T',    /* Protocol Name */
+        0x05, 0x02, 0x00, 0x00,            /* v5, Clean Start, Keep Alive */
+        0x05, 0x02, 0x00, 0x00, 0x00, 0x1E, /* Property, four byte value 30 */
+        0x00, 0x03, 'c', 'i', 'd'          /* Client Identifier */
+    };
+    MqttConnect dec;
+    int rc;
+
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY_MISMATCH, rc);
+    MqttProps_Free(dec.props);
+
+    buf[13] = MQTT_PROP_WILL_DELAY_INTERVAL;
+    XMEMSET(&dec, 0, sizeof(dec));
+    rc = MqttDecode_Connect(buf, (int)sizeof(buf), &dec);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY_MISMATCH, rc);
+    MqttProps_Free(dec.props);
 }
 #endif /* WOLFMQTT_BROKER && WOLFMQTT_V5 */
 
@@ -6984,6 +7551,24 @@ TEST(decode_props_auth_data_without_method_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
     ASSERT_NULL(props);
 }
+
+/* MQTT 5.0 section 2.2.2.1: the Property Length counts every byte of the
+ * properties, and section 2.2.2.2 encodes each Identifier as a Variable Byte
+ * Integer. An Identifier whose encoding runs past the declared Property
+ * Length is a Malformed Packet, and must be rejected before the remaining
+ * length is charged for it. Wire: Property Length 1, Identifier 0x80 0x01
+ * (two bytes, value 128). */
+TEST(decode_props_identifier_past_prop_len_rejected)
+{
+    byte buf[] = { 0x80, 0x01 };
+    MqttProp* props = NULL;
+    int rc;
+
+    rc = MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH, &props, buf,
+            (word32)sizeof(buf), 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(props);
+}
 #endif /* WOLFMQTT_V5 */
 
 /* ============================================================================
@@ -7032,6 +7617,11 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_vbi_overlong_2byte_127);
     RUN_TEST(encode_decode_vbi_roundtrip);
     RUN_TEST(packet_read_rejects_buffer_shorter_than_max_header);
+    RUN_TEST(packet_read_write_reject_negative_socket_pos);
+    RUN_TEST(packet_read_rejects_corrupt_resume_state);
+    RUN_TEST(packet_read_write_total_saturates);
+    RUN_TEST(packet_read_write_clamp_over_reported_length);
+    RUN_TEST(packet_read_reassembles_one_byte_reads);
 
     /* UTF-8 well-formedness validation [MQTT-1.5.3-1] */
 #ifdef WOLFMQTT_BROKER
@@ -7105,6 +7695,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_byte_property_out_of_range_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
+    RUN_TEST(props_find_type);
     RUN_TEST(decode_publish_v5_property_count_capped);
     RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
     RUN_TEST(decode_publish_v5_duplicate_subscription_id_accepted);
@@ -7142,6 +7733,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_disconnect_v5_props_cannot_cross_packet_end);
     RUN_TEST(decode_auth_v5_rejects_bytes_after_property_block);
     RUN_TEST(decode_auth_v5_props_cannot_cross_packet_end);
+    RUN_TEST(decode_auth_v5_missing_auth_method_rejected);
 #endif
     RUN_TEST(decode_connack_flags_session_present_accepted);
     RUN_TEST(decode_connack_flags_no_session_accepted);
@@ -7151,6 +7743,10 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connack_flags_all_bits_rejected);
     RUN_TEST(decode_connack_refused_with_session_present_rejected);
     RUN_TEST(decode_connack_refused_without_session_present_accepted);
+    RUN_TEST(decode_connack_v311_reserved_return_code_rejected);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(decode_connack_v5_unassigned_reason_code_rejected);
+#endif
 #ifdef WOLFMQTT_BROKER
     RUN_TEST(encode_connack_refused_with_session_present_rejected);
 #endif
@@ -7228,6 +7824,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_connect_lwt_topic_oversized_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(encode_connect_v5_invalid_will_property_rejected);
+    RUN_TEST(encode_connect_v5_will_publish_properties_accepted);
+    RUN_TEST(encode_connect_v5_will_only_properties_in_connect_rejected);
     RUN_TEST(encode_connect_v5_cyclic_will_properties_rejected);
     RUN_TEST(encode_connect_v5_excess_will_properties_rejected);
 #endif
@@ -7265,6 +7863,8 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_connect_v5_max_packet_size_zero_rejected);
     RUN_TEST(decode_connect_v5_auth_data_without_auth_method_rejected);
     RUN_TEST(decode_connect_v5_will_props_session_expiry_rejected);
+    RUN_TEST(decode_connect_v5_will_publish_properties_accepted);
+    RUN_TEST(decode_connect_v5_will_only_properties_in_connect_rejected);
     RUN_TEST(decode_connect_v5_empty_will_topic_rejected);
 #endif
 
@@ -7329,6 +7929,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_suback_v5_not_authorized_accepted);
     RUN_TEST(suback_return_code_v5_allowed_set);
     RUN_TEST(decode_suback_v5_props_freed_on_payload_overrun);
+    RUN_TEST(decode_suback_v5_missing_props_len_rejected);
 #endif
 
     /* MqttDecode_PublishResp */
@@ -7371,6 +7972,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_v5_longer_body_still_accepted);
     RUN_TEST(decode_unsuback_v5_reason_codes);
     RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
+    RUN_TEST(decode_unsuback_v5_missing_props_len_rejected);
 #endif
 #ifdef WOLFMQTT_BROKER
     RUN_TEST(encode_unsuback_packet_id_zero_rejected);
@@ -7422,17 +8024,20 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_pubcomp_v5_reason_code_out_of_table_rejected);
     RUN_TEST(decode_props_connack_max_packet_size_zero_rejected);
     RUN_TEST(decode_props_auth_data_without_method_rejected);
+    RUN_TEST(decode_props_identifier_past_prop_len_rejected);
 
     /* MqttEncode/Decode_Auth */
     RUN_TEST(encode_props_string_invalid_utf8_rejected);
     RUN_TEST(encode_props_user_prop_invalid_utf8_rejected);
     RUN_TEST(encode_props_duplicate_repeatability);
     RUN_TEST(encode_props_boolean_byte_out_of_range_rejected);
+    RUN_TEST(encode_props_receive_max_zero_rejected);
     RUN_TEST(auth_v5_cont_auth_roundtrip);
     RUN_TEST(auth_v5_reauth_roundtrip);
     RUN_TEST(auth_v5_reauth_decodes_without_error);
     RUN_TEST(auth_v5_success_remaining_length_zero);
     RUN_TEST(auth_v5_success_no_props_roundtrip);
+    RUN_TEST(encode_auth_v5_success_props_without_method_rejected);
     RUN_TEST(auth_v5_invalid_reason_code_rejected);
     RUN_TEST(decode_auth_v5_reason_code_past_buf_rejected);
 #endif

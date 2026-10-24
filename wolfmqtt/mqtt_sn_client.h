@@ -59,9 +59,9 @@ WOLFMQTT_API int SN_Client_SearchGW(
 
 /*! \brief      Encodes and sends the Connect packet and waits for the
                 Connect Acknowledgment packet. If Will is enabled, the gateway
-                prompts for LWT Topic and Message. Sending an empty will topic
-                indicates that the client wishes to delete the Will topic and
-                the Will message stored in the server.
+                prompts for LWT Topic and Message. The Will is always sent
+                with its flags, so an empty Will topic here does not use the
+                delete form (MQTT-SN 1.2 section 5.4.7).
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      connect     Pointer to SN_Connect structure initialized
@@ -80,13 +80,15 @@ WOLFMQTT_API int SN_Client_Connect(
     MqttClient *client,
     SN_Connect *connect);
 
-/*! \brief      Encodes and sends the MQTT-SN Will Topic Update packet. Sending
-                a NULL 'will' indicates that the client wishes to delete the
-                Will topic and the Will message stored in the server.
+/*! \brief      Encodes and sends the MQTT-SN Will Topic Update packet. Setting
+                will->willTopic to NULL sends an empty Will Topic Update,
+                which asks the server to delete the stored Will topic and
+                Will message.
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      will        Pointer to SN_Will structure initialized
-                            with topic and message parameters. NULL is valid.
+                            with topic and message parameters. Must not be
+                            NULL; it also holds the request state.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -96,7 +98,8 @@ WOLFMQTT_API int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will);
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      will        Pointer to SN_Will structure initialized
-                            with topic and message parameters. NULL is valid.
+                            with topic and message parameters. Must not be
+                            NULL.
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
@@ -185,8 +188,9 @@ WOLFMQTT_API int SN_Client_Unsubscribe(
 /*! \brief      Encodes and sends the MQTT-SN Disconnect packet. Client may
                 send the disconnect with a duration to indicate the client is
                 entering the "asleep" state.
- *  \note This is a non-blocking function that will try and send using
-                MqttNet.write
+ *  \note This function does not wait for a response. It sends using
+                MqttNet.write and, unless WOLFMQTT_NONBLOCK is defined,
+                blocks until the packet is written or the write fails.
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)

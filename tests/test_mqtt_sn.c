@@ -1055,6 +1055,32 @@ TEST(sn_encode_publish_short_topic_valid)
     ASSERT_EQ('i', tx_buf[8]);
 }
 
+/* MQTT-SN 1.2 section 5.3.4: TopicIdType 0b11 is reserved. A topic_type
+ * outside NORMAL/PREDEF/SHORT must be rejected, not masked into the flags. */
+TEST(sn_encode_publish_reserved_topic_type_rejected)
+{
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    byte payload[2] = { 'h', 'i' };
+    SN_Publish publish;
+    int rc;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos        = MQTT_QOS_1;
+    publish.topic_type = 3;
+    publish.topic_name = topic;
+    publish.packet_id  = 0x1234;
+    publish.buffer     = payload;
+    publish.total_len  = sizeof(payload);
+
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    publish.topic_type = 4;
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
 TEST(sn_encode_publish_ind_form_valid)
 {
     /* A 300-byte payload pushes the packet past SN_PACKET_MAX_SMALL_SIZE, so the
@@ -1525,6 +1551,28 @@ TEST(sn_encode_subscribe_short_topic_valid)
     ASSERT_EQ('p', tx_buf[6]);
 }
 
+/* MQTT-SN 1.2 section 5.3.4: TopicIdType 0b11 is reserved. A topic_type
+ * outside NORMAL/PREDEF/SHORT must be rejected, not masked into the flags. */
+TEST(sn_encode_subscribe_reserved_topic_type_rejected)
+{
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    SN_Subscribe subscribe;
+    int rc;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    subscribe.topic_type = 3;
+    subscribe.topicNameId = topic;
+    subscribe.packet_id = 0x1234;
+
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    subscribe.topic_type = 4;
+    rc = SN_Encode_Subscribe(tx_buf, (int)sizeof(tx_buf), &subscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+}
+
 /* ============================================================================
  * SN_Encode_Unsubscribe
  *
@@ -1631,6 +1679,28 @@ TEST(sn_encode_unsubscribe_short_topic_valid)
     ASSERT_EQ(0x34, tx_buf[4]);
     ASSERT_EQ('t', tx_buf[5]);
     ASSERT_EQ('p', tx_buf[6]);
+}
+
+/* MQTT-SN 1.2 section 5.3.4: TopicIdType 0b11 is reserved. A topic_type
+ * outside NORMAL/PREDEF/SHORT must be rejected, not masked into the flags. */
+TEST(sn_encode_unsubscribe_reserved_topic_type_rejected)
+{
+    byte tx_buf[32];
+    char topic[2] = { 't', 'p' };
+    SN_Unsubscribe unsubscribe;
+    int rc;
+
+    XMEMSET(&unsubscribe, 0, sizeof(unsubscribe));
+    unsubscribe.topic_type = 3;
+    unsubscribe.topicNameId = topic;
+    unsubscribe.packet_id = 0x1234;
+
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+
+    unsubscribe.topic_type = 4;
+    rc = SN_Encode_Unsubscribe(tx_buf, (int)sizeof(tx_buf), &unsubscribe);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
 }
 
 /* ============================================================================
@@ -1971,6 +2041,7 @@ int main(int argc, char** argv)
 
     /* SN_Encode_Publish */
     RUN_TEST(sn_encode_publish_short_topic_valid);
+    RUN_TEST(sn_encode_publish_reserved_topic_type_rejected);
     RUN_TEST(sn_encode_publish_ind_form_valid);
     RUN_TEST(sn_encode_publish_oversized_total_len_rejected);
     RUN_TEST(sn_encode_publish_total_len_int_max_rejected);
@@ -1999,6 +2070,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_subscribe_null_args_rejected);
     RUN_TEST(sn_encode_subscribe_normal_topic_valid);
     RUN_TEST(sn_encode_subscribe_short_topic_valid);
+    RUN_TEST(sn_encode_subscribe_reserved_topic_type_rejected);
 
     /* SN_Encode_Unsubscribe */
     RUN_TEST(sn_encode_unsubscribe_null_topic_normal_rejected);
@@ -2006,6 +2078,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_unsubscribe_null_args_rejected);
     RUN_TEST(sn_encode_unsubscribe_normal_topic_valid);
     RUN_TEST(sn_encode_unsubscribe_short_topic_valid);
+    RUN_TEST(sn_encode_unsubscribe_reserved_topic_type_rejected);
 
     /* SN_Encode_WillTopic */
     RUN_TEST(sn_encode_willtopic_null_topic_string_rejected);

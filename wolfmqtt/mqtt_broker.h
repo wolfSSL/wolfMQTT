@@ -132,6 +132,27 @@
 #ifndef BROKER_MAX_WILL_PAYLOAD_LEN
     #define BROKER_MAX_WILL_PAYLOAD_LEN 256
 #endif
+/* Static-memory room for a v5 Will's encoded publishable properties. */
+#ifndef BROKER_MAX_WILL_PROPS_LEN
+    #define BROKER_MAX_WILL_PROPS_LEN 128
+#endif
+/* Will Properties rebuilt on the stack when the Will is published, so that
+ * cannot fail on the shared property pool. In a static build this bounds
+ * them and a Will with more is refused at CONNECT; the default fits any
+ * Will within BROKER_MAX_WILL_PROPS_LEN, since every publishable property
+ * other than User Property appears at most once and a User Property takes at
+ * least 5 bytes. A dynamic build puts a larger Will on the heap. */
+#ifndef BROKER_WILL_PROPS_STACK_ENTRIES
+    #ifdef WOLFMQTT_STATIC_MEMORY
+        #define BROKER_WILL_PROPS_STACK_ENTRIES \
+            (5 + BROKER_MAX_WILL_PROPS_LEN / 5)
+    #else
+        #define BROKER_WILL_PROPS_STACK_ENTRIES 8
+    #endif
+#endif
+#if BROKER_WILL_PROPS_STACK_ENTRIES < 1
+    #error BROKER_WILL_PROPS_STACK_ENTRIES must be at least 1
+#endif
 #ifndef BROKER_MAX_PENDING_WILLS
     #define BROKER_MAX_PENDING_WILLS 4
 #endif
@@ -149,8 +170,8 @@
 #endif
 /* Maximum concurrent inbound QoS 2 packet IDs awaiting PUBREL per client.
  * Used to dedup duplicate PUBLISHes per [MQTT-4.3.3] (Method B). 16 covers
- * any reasonable client; a misbehaving client that exceeds this gets a
- * malformed-packet rejection. */
+ * any reasonable client; a misbehaving client that exceeds this is
+ * disconnected (v5 reason Quota Exceeded 0x97). */
 #ifndef BROKER_MAX_INBOUND_QOS2
     #define BROKER_MAX_INBOUND_QOS2 16
 #endif
@@ -262,8 +283,9 @@
      * wrap_mode byte out of the schema-version field. Bumped 2 -> 3 when
      * the NS_SESSION record gained an orphan_since timestamp. Bumped 3 -> 4
      * when NS_OUTQ gained an explicit enqueue sequence, then 4 -> 5 when it
-     * gained retransmission state. */
-    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 5
+     * gained retransmission state, then 5 -> 6 when it gained v5 Properties
+     * and an explicit Message Expiry presence flag. */
+    #define WOLFMQTT_BROKER_PERSIST_SCHEMA_VER 6
 #endif
 
 /* Header wrap_mode byte values (record body framing on disk). */
@@ -357,8 +379,9 @@ typedef struct MqttBrokerNet {
 /* The persistence layer is intentionally hook-based so the broker can run
  * on top of POSIX files, embedded flash, an external KV store, or an
  * in-RAM stub used by tests. Each hook returns 0 on success or a negative
- * error code. Shadow-write failures are logged while in-memory state remains
- * authoritative. Iterator failures during restore abort MqttBroker_Start.
+ * error code. Most shadow-write failures are not logged by the broker, so a
+ * hook should report its own errors; in-memory state remains authoritative.
+ * Iterator failures during restore abort MqttBroker_Start.
  *
  * The broker currently uses only the key/value API. At minimum kv_put,
  * kv_get, and kv_iter must be installed for sessions, subscriptions,
@@ -380,13 +403,23 @@ typedef struct MqttBrokerPersistHooks {
      * implementations must honor key_len. Keys are derived from
      * peer-supplied client_ids and topics, which dynamic-memory builds do
      * not cap. A backend with a maximum key length (the POSIX backend
-     * accepts up to 256 bytes) must reject a longer key with an error
-     * rather than truncate it. */
+     * accepts up to (NAME_MAX - 8) / 2 bytes, 123 with the usual 255-byte
+     * NAME_MAX) must reject a longer key with an error rather than
+     * truncate it. */
     int (*kv_put)(void* ctx, byte ns, const byte* key, word16 key_len,
                   const byte* blob, word32 blob_len);
+    /* On input *inout_len is the capacity of out; on success it is set to
+     * the record length. Return MQTT_CODE_ERROR_NOT_FOUND for a missing key
+     * and MQTT_CODE_ERROR_OUT_OF_BUFFER when the record is larger than the
+     * buffer - never a truncated success, since restore treats an oversized
+     * META record as a schema mismatch. */
     int (*kv_get)(void* ctx, byte ns, const byte* key, word16 key_len,
                   byte* out, word32* inout_len);
     int (*kv_del)(void* ctx, byte ns, const byte* key, word16 key_len);
+    /* Calls cb for each record in namespace ns. Every key passed to cb must
+     * be accepted unchanged by kv_get and kv_del: the broker deletes records
+     * it finds while iterating and repeats until none match, so a key that
+     * kv_del cannot remove makes that loop spin. */
     int (*kv_iter)(void* ctx, byte ns, MqttBrokerPersist_IterCb cb,
                    void* cb_ctx);
 
@@ -525,18 +558,17 @@ typedef struct BrokerOutPub {
      * MQTT-4.4.0-1, then clears the flag. */
     byte    retransmit_dup; /* 0 or 1 */
     byte    partial_send;   /* QoS 0 PUBLISH started on the old socket */
+    byte    has_expiry;     /* v5 Message Expiry Interval present */
     WOLFMQTT_BROKER_TIME_T enq_time;
     word64  enqueue_seq;    /* persistent FIFO order within this session */
-    word32  expiry_sec;     /* v5 Message Expiry Interval, 0 = no expiry */
+    word32  expiry_sec;     /* v5 Message Expiry Interval when has_expiry */
     byte    protocol_level; /* echoed back to subscriber on send */
 #ifdef WOLFMQTT_V5
     /* Deep copy (BrokerProps_Clone) of the originating PUBLISH's v5
      * Application Message properties (Payload Format Indicator, Content
      * Type, Response Topic, Correlation Data, User Property, etc.), or
      * NULL if none. Owned by this entry; freed once by BrokerOutPub_Free
-     * via BrokerProps_FreeClone - never via MqttProps_Free().
-     * Not serialized by the persist layer: a queued message replayed after a
-     * broker restart is delivered without these properties. */
+     * via BrokerProps_FreeClone - never via MqttProps_Free(). */
     MqttProp* props;
 #endif
     struct BrokerOutPub* next;
@@ -646,7 +678,7 @@ typedef struct BrokerClient {
      * not yet PUBREL'd. A duplicate PUBLISH carrying one of these IDs is
      * acked again (PUBREC) but NOT re-fanned-out to subscribers. The
      * BROKER_MAX_INBOUND_QOS2 cap is enforced in both memory modes; a
-     * client that exceeds it is disconnected with malformed-packet error.
+     * client that exceeds it is disconnected with Quota Exceeded (0x97).
      * Compiled out for capped-QoS builds (WOLFMQTT_MAX_QOS < 2). */
 #if WOLFMQTT_MAX_QOS >= 2
 #ifdef WOLFMQTT_STATIC_MEMORY
@@ -685,10 +717,10 @@ typedef struct BrokerClient {
     int           out_q_pending_len;
     /* Encoded length of a direct broker response still being written. */
     int           direct_pending_len;
-    /* v5 Receive Maximum advertised by this client in CONNECT, or 65535
-     * (per MQTT v5 sec 3.1.2.11.3) when the client did not include the
-     * property. For v3.1.1 clients this is left at 65535 - the cap
-     * comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
+    /* v5 Receive Maximum advertised by this client in CONNECT, or 0 when
+     * the client did not include the property or is a v3.1.1 client. 0
+     * means no per-client cap (the MQTT v5 section 3.1.2.11.3 default of
+     * 65535), so the cap comes from BROKER_MAX_INFLIGHT_PER_SUB alone. */
     word16        client_receive_max;
 #endif /* !WOLFMQTT_STATIC_MEMORY */
     word32        session_expiry_sec;
@@ -710,6 +742,19 @@ typedef struct BrokerClient {
      * direct_pending_len. Once that write finishes or fails, the client is
      * closed instead of reading another packet. */
     unsigned int  close_after_direct : 1;
+    /* The connection is being taken over and closes once its own Will has
+     * been published, so nothing new may start writing to it. */
+    unsigned int  takeover_closing : 1;
+#endif
+#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_V5)
+    /* Encoded Will Properties carried onto the Will PUBLISH, i.e. all but
+     * the Will Delay Interval (MQTT 5.0 section 3.1.3.2). */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte          will_props[BROKER_MAX_WILL_PROPS_LEN];
+#else
+    byte*         will_props;
+#endif
+    word16        will_props_len;
 #endif
 } BrokerClient;
 
@@ -772,6 +817,15 @@ typedef struct BrokerPendingWill {
     MqttQoS qos;
     byte    retain;
     WOLFMQTT_BROKER_TIME_T publish_time; /* absolute time to publish */
+#ifdef WOLFMQTT_V5
+    /* Encoded Will Properties, as in BrokerClient.will_props. */
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    props[BROKER_MAX_WILL_PROPS_LEN];
+#else
+    byte*   props;
+#endif
+    word16  props_len;
+#endif
 } BrokerPendingWill;
 #endif /* WOLFMQTT_BROKER_WILL */
 
@@ -864,10 +918,11 @@ typedef struct MqttBroker {
 #ifndef WOLFMQTT_STATIC_MEMORY
     /* Linked list of disconnected persistent sessions. Each entry holds
      * its own outbound queue + identity so messages published while the
-     * owning client is offline are retained until reconnect (or
-     * BROKER_MAX_PERSIST_SESSIONS forces drop-oldest eviction). Subs
-     * pointing at orphaned sessions keep sub->client=NULL; fan-out
-     * branches on that to look up the orphan by client_id. */
+     * owning client is offline are retained until reconnect. CONNECT refuses
+     * a new persistent Session once BROKER_MAX_PERSIST_SESSIONS are held, so
+     * existing ones are not evicted to make room. Subs pointing at orphaned
+     * sessions keep sub->client=NULL; fan-out branches on that to look up
+     * the orphan by client_id. */
     BrokerOrphanSession* orphan_sessions;
     int                  orphan_session_count;
 #endif
@@ -884,13 +939,20 @@ typedef struct MqttBroker {
      * failure is reported once rather than on every step. */
     int accept_log_err;
     int accept_log_err_tls;
+#ifdef WOLFMQTT_V5
+    /* Holds one MqttProps_Init reference from MqttBroker_Init to
+     * MqttBroker_Free, so restored v5 queue properties can be decoded when
+     * no client is connected. */
+    byte props_ref;
+#endif
 } MqttBroker;
 
 /* -------------------------------------------------------------------------- */
 /* Public API                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/* Initialize the broker context with network callbacks */
+/* Initialize the broker context with network callbacks. Every successful
+ * call must be paired with MqttBroker_Free, which releases what it holds. */
 WOLFMQTT_API int MqttBroker_Init(MqttBroker* broker, MqttBrokerNet* net);
 
 /* Run the broker main loop (blocking) */
@@ -994,8 +1056,9 @@ WOLFMQTT_LOCAL int BrokerPersist_DelOutPub(MqttBroker* broker,
 WOLFMQTT_LOCAL int BrokerPersist_DelOutQueue(MqttBroker* broker,
     const char* client_id);
 /* Startup-time restore on a freshly initialized, empty broker. Rebuilds the
- * in-memory tables before the first MqttBroker_Start accepts clients. Wipes
- * and re-stamps META when the persisted schema version does not match. */
+ * in-memory tables before the first MqttBroker_Start accepts clients. When the
+ * persisted schema version does not match it re-stamps META, first deleting
+ * every record in dynamic memory builds (static builds skip the wipe). */
 WOLFMQTT_LOCAL int BrokerPersist_Restore(MqttBroker* broker);
 /* Discard state loaded by a failed startup restore. Defined in
  * mqtt_broker.c because it uses the broker's shared teardown helpers. */
@@ -1013,6 +1076,18 @@ WOLFMQTT_LOCAL void BrokerStaticOrphan_DropFull(MqttBroker* broker,
  * and restore-time expiry sweep so the two paths can't drift. */
 WOLFMQTT_LOCAL void BrokerOrphan_DropFull(MqttBroker* broker,
     BrokerOrphanSession* o);
+#ifdef WOLFMQTT_V5
+/* v5 Properties of a queued PUBLISH, for the persistence layer. */
+WOLFMQTT_LOCAL int BrokerOutPub_EncodeProps(const BrokerOutPub* e, byte* buf);
+WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
+    word32 len);
+#endif
+#endif
+
+#ifndef WOLFMQTT_BROKER_NO_LOG
+/* Escape control bytes in a peer-controlled string before it is logged.
+ * Defined in mqtt_broker.c; shared with the persistence layer. */
+WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src);
 #endif
 
 /* CLI wrapper interface */

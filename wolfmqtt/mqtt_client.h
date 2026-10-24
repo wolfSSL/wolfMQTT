@@ -197,7 +197,13 @@ enum MqttClientFlags {
      * section 3.2.2.3.2). Managed by the library - set or cleared by
      * MqttClient_Connect and updated from the CONNACK. Applications must
      * not set or clear it through MqttClient_Flags. */
-    MQTT_CLIENT_FLAG_PERSISTENT_SESSION = 0x01 << 10
+    MQTT_CLIENT_FLAG_PERSISTENT_SESSION = 0x01 << 10,
+    /* A v5 CONNECT carrying an Authentication Method has been written and no
+     * CONNACK has arrived yet. [MQTT-3.1.2-30] allows only AUTH or DISCONNECT
+     * in that window, so the other send APIs refuse. Managed by the library -
+     * set by MqttClient_Connect, cleared when the CONNACK is processed and by
+     * MqttSocket_Connect and MqttSocket_Disconnect. */
+    MQTT_CLIENT_FLAG_AUTH_PENDING = 0x01 << 11
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
@@ -419,7 +425,7 @@ typedef struct _MqttClient {
 #endif
 
     MqttPkRead   packet; /* publish packet state - protected by read lock */
-    MqttPublishResp packetAck; /* publish ACK - protected by write lock */
+    MqttPublishResp packetAck; /* publish ACK - protected by lockClient */
     MqttSk       read;   /* read socket state - protected by read lock */
     MqttSk       write;  /* write socket state - protected by write lock */
 
@@ -461,7 +467,9 @@ typedef struct _MqttClient {
     byte   init_flags; /* Internal resource-initialization flags. */
     #ifdef WOLFMQTT_THREAD_ID_T
     byte   write_owner_valid; /* lockSend owner is known. */
+    byte   read_owner_valid;  /* lockRecv owner is known. */
     WOLFMQTT_THREAD_ID_T write_owner;
+    WOLFMQTT_THREAD_ID_T read_owner;
     #endif
     wm_Sem lockSend;
     wm_Sem lockRecv;
@@ -516,8 +524,8 @@ typedef struct _MqttClient {
 
     /* Outbound Packet Identifiers written on the current Network Connection
      * and not yet released by their acknowledgement. Cleared when a connection
-     * starts or ends, since the client keeps no outbound session state across
-     * one. */
+     * starts or ends; messages kept in replay[] have their identifiers
+     * reserved again when a resumed Session re-sends them. */
     MqttSendId send_inflight[MQTT_MAX_SEND_INFLIGHT];
 
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
@@ -536,6 +544,13 @@ typedef struct _MqttClient {
      * MQTT_AUTH_METHOD_MAX the value is not stored and re-auth is refused. */
     word16 auth_method_len;
     byte   auth_method[MQTT_AUTH_METHOD_MAX];
+#endif
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_SEM_SIGNAL)
+    /* Posted when a reader stops decoding into a pending response, so a
+     * thread unlinking that entry need not wait on lockRecv, which a
+     * dedicated reader retakes for its next blocking read. */
+    wm_Sem decodeDone;
+    word16 decodeWaiters; /* threads waiting on decodeDone, under lockClient */
 #endif
 } MqttClient;
 
@@ -570,6 +585,10 @@ WOLFMQTT_API int MqttClient_Init(
     int cmd_timeout_ms);
 
 /*! \brief      Cleans up resources allocated to the MqttClient structure
+ *  \note       Does not access the tx_buf and rx_buf passed to
+                MqttClient_Init, so the caller may free them before or after
+                this call. MqttClient_NetDisconnect scrubs both buffers when
+                the transport is closed.
  *  \param      client      Pointer to MqttClient structure
  */
 WOLFMQTT_API void MqttClient_DeInit(MqttClient *client);
@@ -649,7 +668,10 @@ WOLFMQTT_API int MqttClient_Connect(
                 Maximum QoS, Retain unavailable, Topic Alias above the server
                 maximum, or Receive Maximum quota exhausted),
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
-                Network Connection [MQTT-3.1.0-1],
+                Network Connection [MQTT-3.1.0-1], or while a v5 CONNECT
+                carrying an Authentication Method awaits its CONNACK
+                [MQTT-3.1.2-30] (only MqttClient_Auth and
+                MqttClient_Disconnect may be called then),
                 MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
                 awaiting its acknowledgement [MQTT-2.3.1-2],
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
@@ -717,7 +739,10 @@ WOLFMQTT_API int MqttClient_Publish_ex(
                 broker-rejection detection for QoS>0 is required.
  *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_CONTINUE (for non-blocking),
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
-                Network Connection [MQTT-3.1.0-1],
+                Network Connection [MQTT-3.1.0-1], or while a v5 CONNECT
+                carrying an Authentication Method awaits its CONNACK
+                [MQTT-3.1.2-30] (only MqttClient_Auth and
+                MqttClient_Disconnect may be called then),
                 MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
                 awaiting its acknowledgement [MQTT-2.3.1-2],
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
@@ -744,7 +769,10 @@ WOLFMQTT_API int MqttClient_Publish_WriteOnly(
                 v3.1.1 rejection is 0x80, v5 rejection is any reason_code
                 >= 0x80),
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
-                Network Connection [MQTT-3.1.0-1],
+                Network Connection [MQTT-3.1.0-1], or while a v5 CONNECT
+                carrying an Authentication Method awaits its CONNACK
+                [MQTT-3.1.2-30] (only MqttClient_Auth and
+                MqttClient_Disconnect may be called then),
                 MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
                 awaiting its acknowledgement [MQTT-2.3.1-2],
                 or another MQTT_CODE_ERROR_* for transport/protocol
@@ -762,7 +790,10 @@ WOLFMQTT_API int MqttClient_Subscribe(
                             with topic list.
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
-                Network Connection [MQTT-3.1.0-1],
+                Network Connection [MQTT-3.1.0-1], or while a v5 CONNECT
+                carrying an Authentication Method awaits its CONNACK
+                [MQTT-3.1.2-30] (only MqttClient_Auth and
+                MqttClient_Disconnect may be called then),
                 MQTT_CODE_ERROR_PACKET_ID if the Packet Identifier is still
                 awaiting its acknowledgement [MQTT-2.3.1-2],
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
@@ -777,7 +808,10 @@ WOLFMQTT_API int MqttClient_Unsubscribe(
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
-                Network Connection [MQTT-3.1.0-1],
+                Network Connection [MQTT-3.1.0-1], or while a v5 CONNECT
+                carrying an Authentication Method awaits its CONNACK
+                [MQTT-3.1.2-30] (only MqttClient_Auth and
+                MqttClient_Disconnect may be called then),
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Ping(
@@ -791,7 +825,10 @@ WOLFMQTT_API int MqttClient_Ping(
  *  \param      ping        Pointer to MqttPing structure
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
-                Network Connection [MQTT-3.1.0-1],
+                Network Connection [MQTT-3.1.0-1], or while a v5 CONNECT
+                carrying an Authentication Method awaits its CONNACK
+                [MQTT-3.1.2-30] (only MqttClient_Auth and
+                MqttClient_Disconnect may be called then),
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping);
@@ -811,10 +848,12 @@ WOLFMQTT_API int MqttClient_Auth(
 
 
 /*! \brief      Add a new property.
- *  Allocate a property structure and add it to the head of the list
-    pointed to by head. To be used prior to calling packet command.
+ *  Allocate a property structure and append it to the tail of the list
+    pointed to by head; *head is set only when the list is empty. To be
+    used prior to calling packet command.
  *  \param      head        Pointer-pointer to a property structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_BAD_ARG
+ *  \return     Pointer to the new property, or NULL if head is NULL or no
+                property could be allocated
  */
 WOLFMQTT_API MqttProp* MqttClient_PropsAdd(
     MqttProp **head);
@@ -831,8 +870,9 @@ WOLFMQTT_API int MqttClient_PropsFree(
 
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
- *  \note This is a non-blocking function that will try and send using
-                MqttNet.write
+ *  \note This function does not wait for a response. It sends using
+                MqttNet.write and, unless WOLFMQTT_NONBLOCK is defined,
+                blocks until the packet is written or the write fails.
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
@@ -844,8 +884,9 @@ WOLFMQTT_API int MqttClient_Disconnect(
 
 
 /*! \brief      Encodes and sends the MQTT Disconnect packet (no response)
- *  \note This is a non-blocking function that will try and send using
-                MqttNet.write
+ *  \note This function does not wait for a response. It sends using
+                MqttNet.write and, unless WOLFMQTT_NONBLOCK is defined,
+                blocks until the packet is written or the write fails.
  *  \param      client      Pointer to MqttClient structure
  *  \param      disconnect  Pointer to MqttDisconnect structure. NULL is valid.
  *  \return     MQTT_CODE_SUCCESS,
@@ -866,6 +907,13 @@ WOLFMQTT_API int MqttClient_Disconnect_ex(
                 connection disconnected (clears the connected flag); the
                 application should call MqttClient_NetDisconnect to tear down
                 the transport.
+ *  \note In builds without WOLFMQTT_NONBLOCK a partly received packet
+                cannot be resumed, so a read that times out after part of a
+                packet arrived returns MQTT_CODE_ERROR_NETWORK and marks the
+                connection disconnected, rather than MQTT_CODE_ERROR_TIMEOUT.
+                Use a timeout_ms long enough for one packet to arrive on the
+                link. A timeout before any byte of a packet still returns
+                MQTT_CODE_ERROR_TIMEOUT.
  *  \param      client      Pointer to MqttClient structure
  *  \param      timeout_ms  Milliseconds until read timeout
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -897,7 +945,16 @@ WOLFMQTT_API int MqttClient_WaitMessage_ex(
 #if defined(WOLFMQTT_MULTITHREAD) || defined(WOLFMQTT_NONBLOCK)
 /*! \brief      In a multi-threaded and non-blocking mode this allows you to
                 cancel an MQTT object that was previously submitted.
- *  \note This is a blocking function that will wait for MqttNet.read
+ *  \note This function performs no network I/O. In multi-threaded
+                builds it may wait to take the client locks, and waits for
+                another thread that is decoding a response into msg to
+                finish, so msg may be freed on return. Do not call it from
+                a callback (message, property or publish payload) while a
+                response is being decoded into msg, such as a property
+                callback for msg's own ack. Where the platform provides
+                thread identities (WOLFMQTT_THREAD_ID_T) it detects this and
+                returns MQTT_CODE_ERROR_STAT without cancelling; otherwise it
+                deadlocks.
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
@@ -914,8 +971,8 @@ WOLFMQTT_API int MqttClient_CancelMessage(
  *  \note This function assumes caller owns the object
  *  \param      client      Pointer to MqttClient structure
  *  \param      msg         Pointer to MqttObject structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
-                (see enum MqttPacketResponseCodes)
+ *  \return     1 if a read or write is pending, 0 if not, or a negative
+                MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_IsMessageActive(
     MqttClient *client,
@@ -955,11 +1012,38 @@ WOLFMQTT_API int MqttClient_NetConnect(
                 WOLFMQTT_MULTITHREAD builds a buffer whose read or write is
                 still active is left to its owner; release an abandoned
                 operation with MqttClient_CancelMessage, which scrubs it.
+ *  \note       In WOLFMQTT_MULTITHREAD builds this does not wait for other
+                threads: no other thread may be inside a client call that
+                reads or writes the network (for example blocked in
+                MqttClient_WaitMessage), or it could use transport or TLS
+                state while it is freed. Stop those threads first, or use
+                MqttClient_NetDisconnect_Wait. This function may be called
+                from a message callback.
  *  \param      client      Pointer to MqttClient structure
  *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_NetDisconnect(
+    MqttClient *client);
+
+/*! \brief      Performs a network disconnect after other threads' network I/O
+                on this client has finished
+ *  \note       In WOLFMQTT_MULTITHREAD builds this takes the receive lock and
+                then the send lock before releasing the transport, so a read
+                or write in progress on another thread completes (or times
+                out) first and nothing can use transport or TLS state while it
+                is freed. It must not be called from a callback (message,
+                property or publish payload) or other code already holding
+                those locks; use MqttClient_NetDisconnect there. Where the
+                platform provides thread identities (WOLFMQTT_THREAD_ID_T) it
+                detects this and returns MQTT_CODE_ERROR_STAT instead of
+                deadlocking. In other builds it is the same as
+                MqttClient_NetDisconnect.
+ *  \param      client      Pointer to MqttClient structure
+ *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+                (see enum MqttPacketResponseCodes)
+ */
+WOLFMQTT_API int MqttClient_NetDisconnect_Wait(
     MqttClient *client);
 
 /*! \brief      Gets number version of connected protocol version
@@ -1001,8 +1085,31 @@ WOLFMQTT_LOCAL int MqttClient_RespList_Add(MqttClient *client,
         void *packet_obj);
 WOLFMQTT_LOCAL int MqttClient_CheckPendResp(MqttClient *client, byte wait_type,
         word16 wait_packet_id);
+WOLFMQTT_LOCAL void MqttClient_RespList_EndProcessing(MqttClient *client,
+        MqttPendResp *resp);
+WOLFMQTT_LOCAL int MqttClient_RespList_RemoveIdle(MqttClient *client,
+        MqttPendResp *rmResp);
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
+#if WOLFMQTT_MAX_QOS >= 2
+/* Inbound QoS 2 de-duplication table (recv_qos2_pending), shared by the MQTT
+ * and MQTT-SN clients. */
+WOLFMQTT_LOCAL int MqttClient_RecvQos2_Contains(const MqttClient* client,
+    word16 packet_id);
+WOLFMQTT_LOCAL int MqttClient_RecvQos2_HasFreeSlot(const MqttClient* client);
+WOLFMQTT_LOCAL void MqttClient_RecvQos2_Add(MqttClient* client,
+    word16 packet_id);
+WOLFMQTT_LOCAL void MqttClient_RecvQos2_Remove(MqttClient* client,
+    word16 packet_id);
+#endif
+#ifdef WOLFMQTT_SESSION_ID_TRACK
+/* ClientId of the Session whose state the client holds, shared by the MQTT
+ * and MQTT-SN clients. */
+WOLFMQTT_LOCAL int MqttClient_SessionIdMatches(const MqttClient* client,
+    const char* client_id);
+WOLFMQTT_LOCAL void MqttClient_SessionIdRecord(MqttClient* client,
+    const char* client_id);
+#endif
 
 /* Securely zero `len` bytes of `mem` (e.g. client->tx_buf) to scrub plaintext
  * such as credentials or will payloads before releasing the send lock. Uses a

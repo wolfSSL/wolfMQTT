@@ -204,9 +204,10 @@ typedef enum _MqttQoS {
 } MqttQoS;
 
 /* Maximum QoS supported by this build. Legal values: 0, 1, 2. Default 2.
- * Define in user_settings.h to compile a QoS-capped client/broker. Wired
- * into broker CONNACK Maximum QoS property emission today; broader code
- * gating lives on the mqtt_qos_max branch. */
+ * Define in user_settings.h to compile a QoS-capped client/broker. Sets the
+ * client's max_qos and the broker's CONNACK Maximum QoS, clamps granted
+ * subscription and Will QoS, rejects inbound PUBLISH above the cap, and
+ * compiles out the QoS 2 state when below 2. */
 #ifndef WOLFMQTT_MAX_QOS
     #define WOLFMQTT_MAX_QOS 2
 #endif
@@ -844,6 +845,11 @@ WOLFMQTT_API int MqttEncode_Vbi(byte *buf, word32 x);
 /* Packet Encoders/Decoders */
 WOLFMQTT_API int MqttEncode_Connect(byte *tx_buf, int tx_buf_len,
     MqttConnect *connect);
+/* Decode a CONNACK. In v5 builds set connect_ack->protocol_level first: it
+ * selects the v5 form (Properties after the return code) and which return
+ * codes are valid. A code outside the MQTT 3.1.1 section 3.2.2.3 table, or
+ * the MQTT 5.0 section 3.2.2.2 table at level 5, is rejected with
+ * MQTT_CODE_ERROR_MALFORMED_DATA. */
 WOLFMQTT_API int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack);
 WOLFMQTT_API int MqttEncode_Publish(byte *tx_buf, int tx_buf_len,
@@ -899,19 +905,32 @@ WOLFMQTT_API int MqttDecode_Auth(byte *rx_buf, int rx_buf_len,
     MqttAuth *auth);
 WOLFMQTT_API int MqttEncode_Auth(byte *tx_buf, int tx_buf_len,
     MqttAuth *auth);
+/* Encode or decode a v5 property list. packet selects the allow-list the
+ * properties are checked against (MQTT 5.0 section 2.2.2.2). Will Properties
+ * have their own list (section 3.1.3.2), selected with
+ * MQTT_PACKET_TYPE_RESERVED; MQTT_PACKET_TYPE_CONNECT covers only the CONNECT
+ * Properties, so Will Delay Interval and Message Expiry Interval are rejected
+ * there. */
 WOLFMQTT_API int MqttEncode_Props(MqttPacketType packet, MqttProp* props,
     byte* buf);
 WOLFMQTT_API int MqttDecode_Props(MqttPacketType packet, MqttProp** props,
     byte* buf, word32 buf_len, word32 prop_len);
-/* Must be called once from a single thread before any concurrent access
- * to MQTTv5 property functions. Not thread-safe if called concurrently. */
+/* Reference counted: each call must be paired with one MqttProps_ShutDown
+ * call. MqttClient_Init and MqttClient_DeInit already make one pair per v5
+ * client. Calls must not run concurrently with each other. */
 WOLFMQTT_API int MqttProps_Init(void);
-/* Must be called once from a single thread after all concurrent access
- * to MQTTv5 property functions has ceased. Not thread-safe if called
- * concurrently. */
+/* Releases one MqttProps_Init reference. The shared property lock is freed
+ * when the last reference is released, so call it only after property
+ * functions are no longer in use through that reference. Calls must not run
+ * concurrently with each other. */
 WOLFMQTT_API int MqttProps_ShutDown(void);
+/* Append a cleared property to the end of the list at *head and return it,
+ * or NULL if no property can be allocated. */
 WOLFMQTT_API MqttProp* MqttProps_Add(MqttProp **head);
+/* Release every property in the list starting at head. */
 WOLFMQTT_API int MqttProps_Free(MqttProp *head);
+/* Return the first property in the list starting at head whose type is
+ * type, or NULL if the list is empty or holds none. */
 WOLFMQTT_API MqttProp* MqttProps_FindType(MqttProp *head,
     MqttPropertyType type);
 #endif

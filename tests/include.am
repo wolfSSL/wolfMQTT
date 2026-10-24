@@ -41,6 +41,20 @@ tests_test_mqtt_props_init_SOURCES = \
 tests_test_mqtt_props_init_CPPFLAGS = -I$(top_srcdir) \
     -include $(top_srcdir)/tests/test_mqtt_props_config.h $(AM_CPPFLAGS)
 
+# Native semaphore initialization tests. Build mqtt_client.c directly with
+# the POSIX mutex and condition-variable primitives renamed so their
+# initialization failures are deterministic.
+check_PROGRAMS += tests/test_mqtt_sem_init
+tests_test_mqtt_sem_init_SOURCES = \
+    tests/test_mqtt_sem_init.c \
+    src/mqtt_client.c \
+    src/mqtt_packet.c \
+    src/mqtt_socket.c \
+    src/mqtt_sn_client.c \
+    src/mqtt_sn_packet.c
+tests_test_mqtt_sem_init_CPPFLAGS = -I$(top_srcdir) \
+    -include $(top_srcdir)/tests/test_mqtt_sem_config.h $(AM_CPPFLAGS)
+
 # libcurl global lifecycle tests. Compile mqtt_socket.c directly so the test
 # can inject deterministic curl_global_init/cleanup results.
 if HAVE_LIBCURL
@@ -54,7 +68,8 @@ endif
 
 # Test framework headers
 noinst_HEADERS += tests/unit_test.h tests/test_broker_alloc.h \
-                  tests/test_mqtt_props_config.h tests/test_mqtt_curl_config.h
+                  tests/test_mqtt_props_config.h tests/test_mqtt_curl_config.h \
+                  tests/test_mqtt_sem_config.h tests/test_broker_log_config.h
 
 # MQTT-SN packet decoder tests. The SN_Decode_* routines are WOLFMQTT_LOCAL
 # (hidden) so they cannot be linked from libwolfmqtt; src/mqtt_sn_packet.c is
@@ -155,6 +170,23 @@ tests_test_broker_connect_CPPFLAGS = -I$(top_srcdir) \
 tests_test_broker_connect_LDADD    = src/libwolfmqtt.la $(LIB_STATIC_ADD)
 tests_test_broker_connect_DEPENDENCIES = src/libwolfmqtt.la
 
+# Broker log sanitization tests: logging enabled, with PRINTF redirected into
+# a capture buffer in the test.
+check_PROGRAMS += tests/test_broker_log
+tests_test_broker_log_SOURCES = \
+    tests/test_broker_log.c \
+    src/mqtt_broker.c \
+    src/mqtt_broker_persist.c \
+    src/mqtt_broker_persist_posix.c
+tests_test_broker_log_CFLAGS = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
+    -DNO_MAIN_DRIVER '-DPRINTF(...)=wolfmqtt_test_log(__VA_ARGS__)' \
+    '-DWOLFMQTT_BROKER_GET_TIME_S()=wolfmqtt_test_broker_time_s()' \
+    '-DBROKER_SLEEP_MS(ms)=do{}while(0)' $(AM_CFLAGS)
+tests_test_broker_log_CPPFLAGS = -I$(top_srcdir) \
+    -include $(top_srcdir)/tests/test_broker_log_config.h $(AM_CPPFLAGS)
+tests_test_broker_log_LDADD = src/libwolfmqtt.la $(LIB_STATIC_ADD)
+tests_test_broker_log_DEPENDENCIES = src/libwolfmqtt.la
+
 check_PROGRAMS += tests/test_broker_connect_static
 tests_test_broker_connect_static_SOURCES = \
     tests/test_broker_connect.c \
@@ -164,6 +196,7 @@ tests_test_broker_connect_static_SOURCES = \
 tests_test_broker_connect_static_CFLAGS = -DWOLFMQTT_BROKER \
     -DWOLFMQTT_BROKER_CUSTOM_NET -DWOLFMQTT_BROKER_NO_LOG \
     -DWOLFMQTT_STATIC_MEMORY -DNO_MAIN_DRIVER \
+    -DBROKER_MAX_WILL_PAYLOAD_LEN=320 \
     '-DWOLFMQTT_BROKER_GET_TIME_S()=wolfmqtt_test_broker_time_s()' \
     '-DBROKER_SLEEP_MS(ms)=do{}while(0)' $(AM_CFLAGS)
 tests_test_broker_connect_static_CPPFLAGS = -I$(top_srcdir) \

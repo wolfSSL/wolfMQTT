@@ -101,6 +101,8 @@ typedef struct MockNet {
     int         write_fail_rc; /* if nonzero, write() returns this instead of
                                 * accepting the buffer (simulate short/failed
                                 * write) */
+    int         write_fail_type; /* fail only this MQTT-SN packet type, 0 =
+                                  * every write */
     int         write_chunk;   /* maximum bytes accepted per write */
     int         write_zero_count; /* zero-progress writes before accepting */
     int         read_zero_count;  /* zero-progress reads before delivering */
@@ -145,6 +147,19 @@ typedef struct SnPingRaceCtx {
 } SnPingRaceCtx;
 
 static SnMtOnlyRaceCtx* g_mt_only_race;
+
+/* Stands in for a reader thread that claimed an early CONNACK and is still
+ * decoding into the SN_Connect when the Will exchange fails. */
+typedef struct SnConnackClaimCtx {
+    SN_Connect* connect;
+    pthread_t thread;
+    int started;
+    int released;
+    int sync_error;
+} SnConnackClaimCtx;
+
+static SnConnackClaimCtx* g_connack_claim;
+static void sn_connack_claim_start(void);
 static SnPingRaceCtx* g_ping_race;
 static int g_mt_only_reentrant_send_rc;
 static int g_mt_only_reentrant_wait_rc;
@@ -233,7 +248,13 @@ static int mock_write(void *ctx, const byte* buf, int buf_len, int timeout_ms)
 #endif
 
     net->write_calls++;
-    if (net->write_fail_rc != 0) {
+    if (net->write_fail_rc != 0 && (net->write_fail_type == 0 ||
+            (buf_len > 1 && buf[1] == net->write_fail_type))) {
+#ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
+        if (g_connack_claim != NULL) {
+            sn_connack_claim_start();
+        }
+#endif
         /* Simulate a short/failed write so the caller's rc != xfer error path is
          * exercised. The buffer is left as the caller encoded it (not captured),
          * matching a real transport that errored mid-send. */
@@ -480,6 +501,52 @@ static const byte SN_PUBACK_FRAME[] = {
  * ============================================================================ */
 
 static MqttClient g_client;
+
+#ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
+static void* sn_connack_claim_thread(void* arg)
+{
+    SnConnackClaimCtx* claim = (SnConnackClaimCtx*)arg;
+    struct timespec delay;
+
+    /* Long enough that a reset not waiting for the claim returns first. */
+    delay.tv_sec = 0;
+    delay.tv_nsec = 100 * 1000 * 1000;
+    (void)nanosleep(&delay, NULL);
+    if (wm_SemLock(&g_client.lockClient) != 0) {
+        claim->sync_error = 1;
+        return NULL;
+    }
+    claim->released = 1;
+    MqttClient_RespList_EndProcessing(&g_client, &claim->connect->pendResp);
+    if (wm_SemUnlock(&g_client.lockClient) != 0) {
+        claim->sync_error = 1;
+    }
+    return NULL;
+}
+
+/* Called once from the failing Will write, on the connecting thread. */
+static void sn_connack_claim_start(void)
+{
+    SnConnackClaimCtx* claim = g_connack_claim;
+
+    g_connack_claim = NULL;
+    if (wm_SemLock(&g_client.lockClient) != 0) {
+        claim->sync_error = 1;
+        return;
+    }
+    claim->connect->pendResp.packetProcessing = 1;
+    if (wm_SemUnlock(&g_client.lockClient) != 0) {
+        claim->sync_error = 1;
+    }
+    if (pthread_create(&claim->thread, NULL, sn_connack_claim_thread,
+            claim) != 0) {
+        claim->sync_error = 1;
+        return;
+    }
+    claim->started = 1;
+}
+#endif
+
 static MqttNet    g_net;
 static MockNet    g_mock;
 static byte       g_tx[512];
@@ -861,6 +928,87 @@ TEST(sn_connect_lwt_no_continue)
  * sn_subscribe_rejected. Without the guard this connect would report
  * MQTT_CODE_SUCCESS over a link the gateway actually refused. Runs in every SN
  * build. */
+/* SN_Client_Connect is resumable and keyed off mc_connect->stat.write. When
+ * the Will exchange after CONNECT fails, the call must leave the object ready
+ * to start over: write state back at BEGIN and, in multithread builds, the
+ * CONNACK pending response unlinked. A retry with the same SN_Connect then
+ * sends a new CONNECT; the gateway only issues WILLTOPICREQ in reply to one
+ * (MQTT-SN 1.2 section 6.3). The first attempt fails because the WILLTOPIC
+ * write fails at the transport. */
+TEST(sn_connect_will_error_allows_retry)
+{
+    SN_Connect mc;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
+    g_mock.write_fail_type = SN_MSG_TYPE_WILLTOPIC;
+
+    sn_will_setup_connect(&mc);
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_TRUE(rc < 0);
+    ASSERT_TRUE(rc != MQTT_CODE_CONTINUE);
+    ASSERT_EQ(MQTT_MSG_BEGIN, mc.stat.write);
+    ASSERT_NO_PENDRESP();
+
+    /* Retry with the same object: CONNECT goes out again first. */
+    g_mock.write_fail_rc = 0;
+    g_mock.write_fail_type = 0;
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    mock_net_push(&g_mock, CONNACK_FRAME,      (int)sizeof(CONNACK_FRAME));
+    g_mock.out_len = 0;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, mc.ack.return_code);
+    ASSERT_TRUE(g_mock.out_len >= 2);
+    ASSERT_EQ(SN_MSG_TYPE_CONNECT, g_mock.out[1]);
+    ASSERT_NO_PENDRESP();
+}
+
+#ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
+/* A reader can claim an early CONNACK and be decoding into the SN_Connect
+ * when the Will exchange fails. The reset must wait for that claim to end
+ * before unlinking the entry and returning, since the caller may then free or
+ * reuse the object. */
+TEST(sn_connect_will_error_waits_for_connack_reader)
+{
+    SN_Connect mc;
+    SnConnackClaimCtx claim;
+    int released_at_return;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
+    g_mock.write_fail_type = SN_MSG_TYPE_WILLTOPIC;
+    XMEMSET(&claim, 0, sizeof(claim));
+    claim.connect = &mc;
+    g_connack_claim = &claim;
+
+    sn_will_setup_connect(&mc);
+    rc = sn_connect_pump(&mc, NULL);
+    ASSERT_EQ(0, wm_SemLock(&g_client.lockClient));
+    released_at_return = claim.released;
+    ASSERT_EQ(0, wm_SemUnlock(&g_client.lockClient));
+    g_connack_claim = NULL;
+    if (claim.started) {
+        ASSERT_EQ(0, pthread_join(claim.thread, NULL));
+    }
+
+    ASSERT_EQ(0, claim.sync_error);
+    ASSERT_EQ(1, claim.started);
+    ASSERT_EQ(1, released_at_return);
+    ASSERT_TRUE(rc < 0);
+    ASSERT_EQ(MQTT_MSG_BEGIN, mc.stat.write);
+    ASSERT_NO_PENDRESP();
+}
+#endif
+
 TEST(sn_connect_refused)
 {
     SN_Connect mc;
@@ -907,6 +1055,57 @@ TEST(sn_will_payload_scrubbed_after_send)
     sn_will_scrub_check(0 /* no CONTINUE */);
 }
 
+/* When the WILLMSG cannot be encoded (here the Will Message is larger than
+ * tx_buf), SN_WillMessage releases the writer after wiping tx_buf, like the
+ * other encode-failure paths. The wipe must cover the whole buffer: tx_buf is
+ * pre-filled to stand in for earlier traffic, and none of it may remain. */
+TEST(sn_willmsg_encode_failure_scrubs_tx_buf)
+{
+    SN_Connect mc;
+    int rc, i;
+    static byte big_msg[600]; /* larger than the 512-byte test tx_buf */
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    XMEMSET(g_client.tx_buf, 0x5A, (size_t)g_client.tx_buf_len);
+    XMEMSET(big_msg, 'w', sizeof(big_msg));
+
+    sn_will_setup_connect(&mc);
+    mc.will.willMsg = big_msg;
+    mc.will.willMsgLen = (word16)sizeof(big_msg);
+    ASSERT_TRUE((int)sizeof(big_msg) > g_client.tx_buf_len);
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_TRUE(rc < 0);
+    ASSERT_TRUE(rc != MQTT_CODE_CONTINUE);
+    for (i = 0; i < g_client.tx_buf_len; i++) {
+        if (g_client.tx_buf[i] != 0) {
+            FAIL("tx_buf not wiped after WILLMSG encode failure");
+        }
+    }
+    ASSERT_NO_PENDRESP();
+
+    /* The connect state is rewound, so a retry with the same SN_Connect and
+     * a Will Message that fits sends a new CONNECT and completes. */
+    ASSERT_EQ(MQTT_MSG_BEGIN, mc.stat.write);
+    ASSERT_EQ(0, mc.will_done); /* SN_WILL_DONE_NONE, private to the client */
+    mc.will.willMsg = (byte*)"offline";
+    mc.will.willMsgLen = 7;
+    mock_net_push(&g_mock, WILLTOPICREQ_FRAME, (int)sizeof(WILLTOPICREQ_FRAME));
+    mock_net_push(&g_mock, WILLMSGREQ_FRAME,   (int)sizeof(WILLMSGREQ_FRAME));
+    mock_net_push(&g_mock, CONNACK_FRAME,      (int)sizeof(CONNACK_FRAME));
+    g_mock.out_len = 0;
+
+    rc = sn_connect_pump(&mc, NULL);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(g_mock.out_len >= 2);
+    ASSERT_EQ(SN_MSG_TYPE_CONNECT, g_mock.out[1]);
+    ASSERT_NO_PENDRESP();
+}
+
 /* ============================================================================
  * SN will-message-update scrub test (#3138)
  *
@@ -922,6 +1121,38 @@ TEST(sn_will_payload_scrubbed_after_send)
 TEST(sn_willmsgupd_payload_scrubbed_after_send)
 {
     sn_will_msg_update_scrub_check(0 /* no CONTINUE */);
+}
+
+/* MQTT-SN 1.2 section 5.4.19: an empty WILLTOPICUPD (no Flags, no WillTopic)
+ * asks the gateway to delete the stored Will topic and Will message.
+ * SN_Client_WillTopicUpdate must send that form when the SN_Will carries no
+ * topic, then complete on the WILLTOPICRESP (section 5.4.20). */
+TEST(sn_willtopicupd_null_topic_sends_delete)
+{
+    SN_Will will;
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+    /* WILLTOPICUPD: Length=2, MsgType=0x1A, nothing else. */
+    static const byte expect[] = { 0x02, SN_MSG_TYPE_WILLTOPICUPD };
+    /* WILLTOPICRESP: Length=3, MsgType=0x1B, ReturnCode=accepted. */
+    static const byte resp[] = { 0x03, SN_MSG_TYPE_WILLTOPICRESP,
+                                 SN_RC_ACCEPTED };
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    mock_net_push(&g_mock, resp, (int)sizeof(resp));
+
+    XMEMSET(&will, 0, sizeof(will));
+    will.willTopic = NULL;
+
+    for (i = 0; i < 50 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WillTopicUpdate(&g_client, &will);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(SN_RC_ACCEPTED, will.resp.topicResp.return_code);
+    ASSERT_EQ((int)sizeof(expect), g_mock.out_len);
+    ASSERT_EQ(0, XMEMCMP(expect, g_mock.out, sizeof(expect)));
+    ASSERT_NO_PENDRESP();
 }
 
 /* #3138 error-path coverage. The success-path tests above never reach the
@@ -1042,6 +1273,38 @@ TEST(sn_will_response_reset_clears_return_code)
             ASSERT_EQ(0, g_client.msgSN.willMsgResp.return_code);
         }
     }
+}
+
+/* A reader that completes another thread's SN response must release its claim
+ * on the entry. MqttClient_CancelMessage waits while an entry is claimed, so a
+ * claim left set after the response completed would read as a reader still
+ * decoding into the caller's object. */
+TEST(sn_reader_releases_completed_pendresp)
+{
+    SN_Subscribe sub;
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    XMEMSET(&sub, 0, sizeof(sub));
+
+    ASSERT_EQ(0, wm_SemLock(&g_client.lockClient));
+    rc = MqttClient_RespList_Add(&g_client,
+        (MqttPacketType)SN_MSG_TYPE_SUBACK, SN_TEST_SUB_PACKET_ID,
+        &sub.pendResp, &sub.subAck);
+    ASSERT_EQ(0, wm_SemUnlock(&g_client.lockClient));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* A generic reader routes the SUBACK into the subscriber's object. */
+    mock_net_push(&g_mock, SUBACK_FRAME, (int)sizeof(SUBACK_FRAME));
+    (void)SN_Client_WaitMessage(&g_client, 1000);
+
+    ASSERT_EQ(1, sub.pendResp.packetDone);
+    ASSERT_EQ(0, sub.pendResp.packetProcessing);
+    ASSERT_EQ(SN_TEST_SUB_TOPIC_ID, sub.subAck.topicId);
+
+    rc = MqttClient_CancelMessage(&g_client, (MqttObject*)&sub);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_NO_PENDRESP();
 }
 #endif /* WOLFMQTT_MULTITHREAD */
 
@@ -1275,6 +1538,209 @@ TEST(sn_publish_incoming_null_msg_cb_errors_no_ack)
      * PUBACK was written here, falsely confirming a dropped message. */
     ASSERT_EQ(0, g_mock.write_calls);
 }
+
+static int g_sn_wait_deliveries;
+static byte g_sn_wait_last_byte;
+
+static int sn_record_delivery(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client;
+    (void)msg_new;
+    (void)msg_done;
+    g_sn_wait_deliveries++;
+    if (msg->buffer != NULL && msg->buffer_len > 0) {
+        g_sn_wait_last_byte = msg->buffer[0];
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
+/* SN_Client_WaitMessage waits on the client's shared msgSN object. Once a
+ * packet has been handled the next call must read a new one, not handle the
+ * previous packet again from its leftover payload state. Two QoS 0 PUBLISH
+ * frames (MQTT-SN 1.2 section 5.4.12: Length, MsgType, Flags, TopicId,
+ * MsgId, Data) with different data, waited for back to back. */
+TEST(sn_wait_message_reads_each_packet_once)
+{
+    static const byte pub1[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x00, 0x00, 0x0A,
+                                 0x00, 0x00, 0x11 };
+    static const byte pub2[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x00, 0x00, 0x0A,
+                                 0x00, 0x00, 0x22 };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_record_delivery;
+    g_sn_wait_deliveries = 0;
+    g_sn_wait_last_byte = 0;
+    mock_net_push(&g_mock, pub1, (int)sizeof(pub1));
+    mock_net_push(&g_mock, pub2, (int)sizeof(pub2));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_sn_wait_deliveries);
+    ASSERT_EQ(0x11, g_sn_wait_last_byte);
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_mock.in_idx);
+    ASSERT_EQ(2, g_sn_wait_deliveries);
+    ASSERT_EQ(0x22, g_sn_wait_last_byte);
+}
+
+#if WOLFMQTT_MAX_QOS >= 2
+static int g_sn_qos2_deliveries;
+
+static int sn_count_qos2_delivery(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client;
+    (void)msg;
+    (void)msg_new;
+    (void)msg_done;
+    g_sn_qos2_deliveries++;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* Count short-form (1-byte length) MQTT-SN frames of a type in the capture. */
+static int sn_out_count(const MockNet* net, byte packet_type)
+{
+    int count = 0;
+    int pos = 0;
+
+    while (pos + 1 < net->out_len && net->out[pos] >= 2) {
+        if (net->out[pos + 1] == packet_type) {
+            count++;
+        }
+        pos += net->out[pos];
+    }
+    return count;
+}
+
+/* MQTT-SN 1.2 section 6.7: a QoS 2 PUBLISH is answered with PUBREC and its
+ * delivery completes with PUBREL/PUBCOMP. A retransmitted PUBLISH (DUP set)
+ * for an id still awaiting PUBREL must be acknowledged again but not handed
+ * to the application a second time. Once PUBREL has released the id, a new
+ * PUBLISH may reuse it and is delivered. Frames: PUBLISH QoS 2 id 7 (flags
+ * 0x40), its DUP retransmit (0xC0), PUBREL id 7, a new PUBLISH id 7. */
+TEST(sn_qos2_retransmit_not_delivered_twice)
+{
+    static const byte pub[]  = { 0x09, SN_MSG_TYPE_PUBLISH, 0x40, 0x00, 0x0A,
+                                 0x00, 0x07, 0x01, 0x02 };
+    static const byte dup[]  = { 0x09, SN_MSG_TYPE_PUBLISH, 0xC0, 0x00, 0x0A,
+                                 0x00, 0x07, 0x01, 0x02 };
+    static const byte rel[]  = { 0x04, SN_MSG_TYPE_PUBREL, 0x00, 0x07 };
+    static const byte pub2[] = { 0x09, SN_MSG_TYPE_PUBLISH, 0x40, 0x00, 0x0A,
+                                 0x00, 0x07, 0x03, 0x04 };
+    int rc = MQTT_CODE_SUCCESS;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_count_qos2_delivery;
+    g_sn_qos2_deliveries = 0;
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+    mock_net_push(&g_mock, dup, (int)sizeof(dup));
+    mock_net_push(&g_mock, rel, (int)sizeof(rel));
+    mock_net_push(&g_mock, pub2, (int)sizeof(pub2));
+
+    for (i = 0; i < 40 && g_mock.in_idx < g_mock.in_count; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+        if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
+            FAIL("SN_Client_WaitMessage failed");
+        }
+    }
+    /* Let a pending response from the last frame finish. */
+    for (i = 0; i < 4 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+
+    ASSERT_EQ(g_mock.in_count, g_mock.in_idx);
+    ASSERT_EQ(2, g_sn_qos2_deliveries);
+    ASSERT_EQ(3, sn_out_count(&g_mock, SN_MSG_TYPE_PUBREC));
+    ASSERT_EQ(1, sn_out_count(&g_mock, SN_MSG_TYPE_PUBCOMP));
+}
+
+/* A new QoS 2 id that does not fit the de-duplication table cannot be
+ * tracked, so it is refused with MQTT_CODE_ERROR_PACKET_ID rather than
+ * delivered: delivered untracked, its retransmit would reach the application
+ * again (MQTT-SN 1.2 section 6.7). No PUBREC is sent. */
+TEST(sn_qos2_full_table_refuses_new_id)
+{
+    static const byte pub[] = { 0x09, SN_MSG_TYPE_PUBLISH, 0x40, 0x00, 0x0A,
+                                0x01, 0x00, 0x01, 0x02 };   /* id 0x0100 */
+    int rc = MQTT_CODE_CONTINUE;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_count_qos2_delivery;
+    g_sn_qos2_deliveries = 0;
+    for (i = 0; i < MQTT_MAX_RECV_QOS2; i++) {
+        g_client.recv_qos2_pending[i] = (word16)(i + 1);
+    }
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+
+    for (i = 0; i < 10 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, rc);
+    ASSERT_EQ(0, g_sn_qos2_deliveries);
+    ASSERT_EQ(0, sn_out_count(&g_mock, SN_MSG_TYPE_PUBREC));
+}
+
+/* A clean-session CONNECT starts with no inbound QoS 2 flows, so the
+ * de-duplication table is cleared once the gateway accepts it; a
+ * non-clean-session CONNECT resumes and keeps it, but only for the ClientId
+ * whose Session established it. The first CONNECT always uses the default
+ * ClientId; the reconnect uses client_id. */
+static int sn_connect_keeps_qos2_id(int clean_session, const char* client_id)
+{
+    SN_Connect mc;
+    int rc;
+
+    if (sn_client_init(0) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    mock_net_push(&g_mock, CONNACK_FRAME, (int)sizeof(CONNACK_FRAME));
+    sn_will_setup_connect(&mc);
+    mc.enable_lwt = 0;
+    rc = sn_connect_pump(&mc, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    g_client.recv_qos2_pending[0] = 0x0042;
+    mock_net_push(&g_mock, CONNACK_FRAME, (int)sizeof(CONNACK_FRAME));
+    sn_will_setup_connect(&mc);
+    mc.enable_lwt = 0;
+    mc.clean_session = (byte)clean_session;
+    mc.client_id = client_id;
+    rc = sn_connect_pump(&mc, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    return g_client.recv_qos2_pending[0] == 0x0042;
+}
+
+TEST(sn_qos2_table_cleared_by_clean_session_connect)
+{
+    ASSERT_EQ(0, sn_connect_keeps_qos2_id(1, "wolfMQTT-sn-test"));
+    ASSERT_EQ(1, sn_connect_keeps_qos2_id(0, "wolfMQTT-sn-test"));
+}
+
+/* A non-clean CONNECT under a different ClientId is a different Session, so
+ * a pending id from the previous one must not suppress a new QoS 2 PUBLISH
+ * that reuses it. */
+TEST(sn_qos2_table_cleared_by_client_id_change)
+{
+    ASSERT_EQ(0, sn_connect_keeps_qos2_id(0, "wolfMQTT-sn-other"));
+}
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 #ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
 static int sn_mt_only_packet_count(const MockNet* net, byte packet_type)
@@ -2707,6 +3173,42 @@ TEST(sn_publish_qos1_zero_write_returns_network_error)
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
     ASSERT_NO_PENDRESP();
 }
+
+static int g_zero_puback_publish_calls;
+
+static int sn_count_incoming_publish(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done)
+{
+    (void)client;
+    (void)msg;
+    (void)msg_new;
+    (void)msg_done;
+    g_zero_puback_publish_calls++;
+    return MQTT_CODE_SUCCESS;
+}
+
+/* MQTT-SN 1.2 section 5.4.4: a QoS 1 PUBLISH is acknowledged with PUBACK. A
+ * blocking PUBACK write that sends zero bytes did not acknowledge it, so it
+ * must be reported as a network error instead of success. */
+TEST(sn_publish_auto_reply_zero_write_returns_network_error)
+{
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    g_client.msg_cb = sn_count_incoming_publish;
+    g_zero_puback_publish_calls = 0;
+    g_mock.write_zero_count = 1;
+    g_mock.write_zero_type = SN_MSG_TYPE_PUBACK;
+    mock_net_push(&g_mock, SN_PUBLISH_QOS1_FRAME,
+        (int)sizeof(SN_PUBLISH_QOS1_FRAME));
+
+    rc = SN_Client_WaitMessage(&g_client, 1000);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(1, g_zero_puback_publish_calls);
+    ASSERT_EQ(0, g_mock.write_zero_count); /* the PUBACK write was tried */
+    ASSERT_EQ(0, g_mock.out_len);
+}
 #endif /* !WOLFMQTT_NONBLOCK */
 
 /* ============================================================================
@@ -3259,12 +3761,19 @@ int main(int argc, char** argv)
     /* Happy path runs in every SN build (blocking and non-blocking). */
     RUN_TEST(sn_connect_lwt_no_continue);
     RUN_TEST(sn_connect_refused);
+    RUN_TEST(sn_connect_will_error_allows_retry);
+#ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
+    RUN_TEST(sn_connect_will_error_waits_for_connack_reader);
+#endif
     RUN_TEST(sn_will_payload_scrubbed_after_send);
+    RUN_TEST(sn_willmsg_encode_failure_scrubs_tx_buf);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_after_send);
+    RUN_TEST(sn_willtopicupd_null_topic_sends_delete);
     RUN_TEST(sn_willmsgupd_payload_scrubbed_on_write_error);
 #ifdef WOLFMQTT_MULTITHREAD
     RUN_TEST(sn_willmsgupd_scrubbed_on_response_registration_error);
     RUN_TEST(sn_will_response_reset_clears_return_code);
+    RUN_TEST(sn_reader_releases_completed_pendresp);
 #endif
     RUN_TEST(sn_subscribe_no_continue);
     RUN_TEST(sn_subscribe_rejected);
@@ -3278,9 +3787,17 @@ int main(int argc, char** argv)
     RUN_TEST(sn_connect_willmsg_zero_write_returns_network_error);
     RUN_TEST(sn_willmsgupd_zero_write_returns_network_error);
     RUN_TEST(sn_publish_qos1_zero_write_returns_network_error);
+    RUN_TEST(sn_publish_auto_reply_zero_write_returns_network_error);
 #endif
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
+    RUN_TEST(sn_wait_message_reads_each_packet_once);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
+    RUN_TEST(sn_qos2_full_table_refuses_new_id);
+    RUN_TEST(sn_qos2_table_cleared_by_clean_session_connect);
+    RUN_TEST(sn_qos2_table_cleared_by_client_id_change);
+#endif
     RUN_TEST(sn_ping_no_continue);
     RUN_TEST(sn_ping_null_no_continue);
     RUN_TEST(sn_ping_null_consecutive_success);

@@ -211,8 +211,23 @@ static INLINE int wmqb_read_header(const byte* buf, word32 buf_len,
     return 0;
 }
 
+#if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) || \
+    !defined(WOLFMQTT_STATIC_MEMORY)
+/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
+static void wmqb_force_zero(void* mem, word32 len)
+{
+    volatile byte* p = (volatile byte*)mem;
+    if (p == NULL) {
+        return;
+    }
+    while (len > 0) {
+        *p++ = 0;
+        len--;
+    }
+}
+#endif
+
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
-static void wmqb_force_zero(void* mem, word32 len);
 
 /* Lazy-init key cache. Single-threaded broker - no lock needed. The
  * application-provided derive_key hook fills 32 bytes on first request.
@@ -255,19 +270,6 @@ static int wmqb_get_key(MqttBroker* broker)
  * rekeying only when persist_key_cache changes would amortize the AES
  * key schedule. Requires deciding the threading model first - today
  * the broker is single-threaded so a single shared context is safe. */
-/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
-static void wmqb_force_zero(void* mem, word32 len)
-{
-    volatile byte* p = (volatile byte*)mem;
-    if (p == NULL) {
-        return;
-    }
-    while (len > 0) {
-        *p++ = 0;
-        len--;
-    }
-}
-
 /* AES-GCM additional data: the record header followed by where the record
  * is stored, encoded unambiguously as namespace(1) || key_len(2, big
  * endian) || key. A ciphertext moved to another namespace or storage key
@@ -347,6 +349,7 @@ static int wmqb_encrypt_blob(MqttBroker* broker, byte ns,
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
@@ -359,11 +362,15 @@ static int wmqb_encrypt_blob(MqttBroker* broker, byte ns,
             WMQB_GCM_TAG_LEN,
             aad, aad_len) != 0) {          /* aad = header + location */
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_SYSTEM;
     }
+    /* The Aes holds the expanded persistence key. wc_AesFree only clears
+     * it in newer wolfSSL releases, so wipe it here on every path. */
     wc_AesFree(&aes);
+    wmqb_force_zero(&aes, (word32)sizeof(aes));
     WOLFMQTT_FREE(aad);
     *ct_out = out;
     return 0;
@@ -416,6 +423,7 @@ static int wmqb_decrypt_blob(MqttBroker* broker, byte ns,
     if (wc_AesGcmSetKey(&aes, broker->persist_key_cache,
             (word32)sizeof(broker->persist_key_cache)) != 0) {
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
@@ -429,12 +437,14 @@ static int wmqb_decrypt_blob(MqttBroker* broker, byte ns,
             WMQB_GCM_TAG_LEN,
             aad, aad_len) != 0) {
         wc_AesFree(&aes);
+        wmqb_force_zero(&aes, (word32)sizeof(aes));
         WOLFMQTT_FREE(aad);
         wmqb_force_zero(out, *plain_out_len);
         WOLFMQTT_FREE(out);
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     wc_AesFree(&aes);
+    wmqb_force_zero(&aes, (word32)sizeof(aes));
     WOLFMQTT_FREE(aad);
     *plain_out = out;
     return 0;
@@ -809,9 +819,10 @@ int BrokerPersist_PutSubs(MqttBroker* broker, const char* client_id)
     {
         size_t raw = XSTRLEN(client_id);
         /* word16 downcast - reject lengths that wouldn't fit instead
-         * of silently truncating. MQTT v3.1.1 caps client_id at 23
-         * bytes; v5 caps at 65535 (i.e., fits in word16). Anything
-         * longer is malformed input from a caller. */
+         * of silently truncating. MQTT strings are at most 65535 bytes
+         * (MQTT 3.1.1 section 1.5.3); the 23-byte Client ID limit in
+         * [MQTT-3.1.3-5] is a minimum a server must accept, not a cap.
+         * Anything longer is malformed input from a caller. */
         if (raw == 0 || raw > 0xFFFFu) {
             return MQTT_CODE_ERROR_OUT_OF_BUFFER;
         }
@@ -1021,7 +1032,7 @@ static int wmqb_outq_build_key(const char* client_id, word16 packet_id,
  *     2    1    retain
  *     3    1    protocol_level
  *     4    1    retransmit_dup
- *     5    1    _reserved
+ *     5    1    flags          (bit 0: Message Expiry Interval present)
  *     6    2    packet_id      (redundant with key, simplifies decode)
  *     8    8    enq_time
  *    16    8    enqueue_seq
@@ -1029,7 +1040,9 @@ static int wmqb_outq_build_key(const char* client_id, word16 packet_id,
  *    28    2    topic_len
  *    30    N    topic
  *  30+N    4    payload_len
- *  34+N    M    payload                                                       */
+ *  34+N    M    payload
+ *  34+N+M  4    props_len
+ *  38+N+M  P    props          (v5 PUBLISH Properties, no length prefix)    */
 int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     const struct BrokerOutPub* e)
 {
@@ -1051,6 +1064,7 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     byte   key[256 + 3];
     word16 key_len;
     int    rc;
+    int    props_len = 0;
 
     if (broker == NULL || broker->persist == NULL ||
             client_id == NULL || p_e == NULL) {
@@ -1075,8 +1089,14 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     if (rc != 0) {
         return rc;
     }
+#ifdef WOLFMQTT_V5
+    props_len = BrokerOutPub_EncodeProps(p_e, NULL);
+    if (props_len < 0) {
+        return props_len;
+    }
+#endif
     body_len = 1 + 1 + 1 + 1 + 2 + 2 + 8 + 8 + 4 + 2 + topic_len + 4
-                + payload_len;
+                + payload_len + 4 + (word32)props_len;
     total_len = WMQB_HDR_LEN + body_len;
     buf = (byte*)WOLFMQTT_MALLOC(total_len);
     if (buf == NULL) {
@@ -1089,7 +1109,7 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     *bp++ = p_e->retain;
     *bp++ = p_e->protocol_level;
     *bp++ = p_e->retransmit_dup;
-    *bp++ = 0;  /* _reserved */
+    *bp++ = p_e->has_expiry ? 1 : 0;
     wmqb_w_u16(bp, p_e->packet_id); bp += 2;
     wmqb_w_u64(bp, (word64)p_e->enq_time); bp += 8;
     wmqb_w_u64(bp, p_e->enqueue_seq); bp += 8;
@@ -1100,9 +1120,18 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     if (payload_len > 0 && p_e->payload != NULL) {
         XMEMCPY(bp, p_e->payload, payload_len);
     }
+    bp += payload_len;
+    wmqb_w_u32(bp, (word32)props_len); bp += 4;
+#ifdef WOLFMQTT_V5
+    if (props_len > 0 && BrokerOutPub_EncodeProps(p_e, bp) != props_len) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+    }
+#endif
 
-    rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_OUTQ,
-        key, key_len, buf, total_len);
+    if (rc == 0) {
+        rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_OUTQ,
+            key, key_len, buf, total_len);
+    }
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     wmqb_force_zero(buf, total_len);
 #endif
@@ -1766,6 +1795,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
 
         payload_len = wmqb_r_u32(p); p += 4;
         if ((word32)(end - p) < payload_len) {
+            wmqb_force_zero(m->topic, (word32)topic_len + 1);
             WOLFMQTT_FREE(m->topic);
             WOLFMQTT_FREE(m);
             return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -1773,6 +1803,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         if (payload_len > 0) {
             m->payload = (byte*)WOLFMQTT_MALLOC(payload_len);
             if (m->payload == NULL) {
+                wmqb_force_zero(m->topic, (word32)topic_len + 1);
                 WOLFMQTT_FREE(m->topic);
                 WOLFMQTT_FREE(m);
                 return MQTT_CODE_ERROR_MEMORY;
@@ -1859,7 +1890,9 @@ static int wmqb_purge_expired_retained_cb(const byte* key, word16 key_len,
  * every live copy and nothing at runtime can reach them again. Stages a
  * bounded batch, leaves the iterator, then deletes: a backend is not required
  * to tolerate mutation under an active iterator. Repeats until a scan finds
- * nothing, so one restore drains a whole backlog at fixed memory cost. */
+ * nothing or WMQB_RETAINED_PURGE_PASSES scans have run, so a large backlog
+ * can take more than one restore to drain. A key too long to stage is left
+ * in place. */
 static void wmqb_restore_purge_expired_retained(MqttBroker* broker)
 {
     const MqttBrokerPersistHooks* h = broker->persist;
@@ -2407,7 +2440,7 @@ static void wmqb_restore_drop_ended(MqttBroker* broker,
                 if (rc != 0) {
                     WMQB_LOG_ERR(broker,
                         "broker: persist drop ended session failed "
-                        "client_id=%s rc=%d", cid, rc);
+                        "client_id=%s rc=%d", BrokerLog_Sanitize(cid), rc);
                 }
                 WOLFMQTT_FREE(cid);
             }
@@ -2443,10 +2476,12 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     byte   retain;
     byte   protocol_level;
     byte   retransmit_dup;
+    byte   flags;
     word16 packet_id;
     word64 enq_time;
     word64 enqueue_seq;
     word32 expiry_sec;
+    word32 props_len;
     BrokerOutPub** prev_link;
     BrokerOutPub*  iter;
 
@@ -2472,11 +2507,16 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     retain = *p++;
     protocol_level = *p++;
     retransmit_dup = *p++;
-    p++; /* _reserved */
-    if (retransmit_dup > 1) {
+    flags = *p++;
+    if (retransmit_dup > 1 || (flags & ~0x01) != 0) {
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     packet_id = wmqb_r_u16(p); p += 2;
+    /* The key repeats the Packet Identifier; both copies must agree, and a
+     * queued QoS > 0 message never has identifier 0 [MQTT-2.2.1-3]. */
+    if (packet_id == 0 || packet_id != wmqb_r_u16(&key[cid_len + 1])) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
     enq_time = wmqb_r_u64(p); p += 8;
     enqueue_seq = wmqb_r_u64(p); p += 8;
     if (enqueue_seq == 0) {
@@ -2511,7 +2551,16 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     p += topic_len;
 
     payload_len = wmqb_r_u32(p); p += 4;
-    if ((word32)(end - p) < payload_len) {
+    if ((word32)(end - p) < payload_len ||
+            (word32)(end - p) - payload_len < 4) {
+        wmqb_force_zero(e->topic, (word32)topic_len + 1);
+        WOLFMQTT_FREE(e->topic);
+        WOLFMQTT_FREE(e);
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    props_len = wmqb_r_u32(p + payload_len);
+    if ((word32)(end - p) - payload_len - 4 != props_len) {
+        wmqb_force_zero(e->topic, (word32)topic_len + 1);
         WOLFMQTT_FREE(e->topic);
         WOLFMQTT_FREE(e);
         return MQTT_CODE_ERROR_MALFORMED_DATA;
@@ -2519,6 +2568,7 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
     if (payload_len > 0) {
         e->payload = (byte*)WOLFMQTT_MALLOC(payload_len);
         if (e->payload == NULL) {
+            wmqb_force_zero(e->topic, (word32)topic_len + 1);
             WOLFMQTT_FREE(e->topic);
             WOLFMQTT_FREE(e);
             return MQTT_CODE_ERROR_MEMORY;
@@ -2526,6 +2576,22 @@ static int wmqb_decode_and_insert_outq(MqttBroker* broker,
         XMEMCPY(e->payload, p, payload_len);
     }
     e->payload_len = payload_len;
+    e->has_expiry = (byte)(flags & 0x01);
+    p += payload_len + 4;
+#ifdef WOLFMQTT_V5
+    rc = BrokerOutPub_DecodeProps(e, p, props_len);
+    if (rc != 0) {
+        if (e->payload != NULL) {
+            wmqb_force_zero(e->payload, payload_len);
+            WOLFMQTT_FREE(e->payload);
+        }
+        wmqb_force_zero(e->topic, (word32)topic_len + 1);
+        WOLFMQTT_FREE(e->topic);
+        WOLFMQTT_FREE(e);
+        return (rc == MQTT_CODE_ERROR_MEMORY) ? rc :
+            MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+#endif
     e->qos = (MqttQoS)qos;
     e->packet_id = packet_id;
     e->retain = retain;
@@ -2594,7 +2660,7 @@ static void wmqb_restore_expiry_sweep(MqttBroker* broker)
             WMQB_LOG_INFO(broker,
                 "broker: persist expired session client_id=%s "
                 "(expiry=%us)",
-                cur->client_id == NULL ? "(null)" : cur->client_id,
+                BrokerLog_Sanitize(cur->client_id),
                 (unsigned)cur->session_expiry_sec);
             /* Shared teardown lives in mqtt_broker.c so the eviction
              * path and this expiry-sweep path can't drift. Drops
@@ -2773,11 +2839,12 @@ int BrokerPersist_Restore(MqttBroker* broker)
     if (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
             rc == MQTT_CODE_ERROR_BAD_ARG) {
         /* Schema or magic mismatch. Wipe-and-restart per the chosen
-         * policy: iterate every namespace, delete every record,
-         * restamp META. New records get written fresh as activity
-         * resumes. (BAD_ARG = header magic / schema version mismatch
-         * from wmqb_read_header; MALFORMED_DATA = decrypt or size
-         * failure from wmqb_kv_get_decrypt_meta.) */
+         * policy: iterate every namespace, delete every record
+         * (dynamic memory builds only; static builds skip the wipe
+         * in wmqb_wipe_all), restamp META. New records get written
+         * fresh as activity resumes. (BAD_ARG = header magic / schema
+         * version mismatch from wmqb_read_header; MALFORMED_DATA =
+         * decrypt or size failure from wmqb_kv_get_decrypt_meta.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
         rc = wmqb_wipe_all(broker);

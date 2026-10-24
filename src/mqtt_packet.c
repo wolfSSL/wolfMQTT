@@ -33,22 +33,29 @@ struct MqttPropMatrix {
     MqttDataType data;
     word16 packet_type_mask; /* allowed packets */
 };
+/* Will Properties have their own allow-list [MQTT-3.1.3.2]. Packet type 0 is
+ * reserved and never sent, so its bit marks the Will scope. */
+#define MQTT_PROP_SCOPE_WILL MQTT_PACKET_TYPE_RESERVED
 static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_PAYLOAD_FORMAT_IND,         MQTT_DATA_TYPE_BYTE,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_MSG_EXPIRY_INTERVAL,        MQTT_DATA_TYPE_INT,
-        (1 << MQTT_PACKET_TYPE_CONNECT) |
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CONTENT_TYPE,               MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_RESP_TOPIC,                 MQTT_DATA_TYPE_STRING,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_CORRELATION_DATA,           MQTT_DATA_TYPE_BINARY,
+        (1 << MQTT_PROP_SCOPE_WILL) |
         (1 << MQTT_PACKET_TYPE_PUBLISH) },
     { MQTT_PROP_NONE, MQTT_DATA_TYPE_NONE, 0 },
     { MQTT_PROP_SUBSCRIPTION_ID,            MQTT_DATA_TYPE_VAR_INT,
@@ -79,7 +86,7 @@ static const struct MqttPropMatrix gPropMatrix[] = {
     { MQTT_PROP_REQ_PROB_INFO,              MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_WILL_DELAY_INTERVAL,        MQTT_DATA_TYPE_INT,
-        (1 << MQTT_PACKET_TYPE_CONNECT) },
+        (1 << MQTT_PROP_SCOPE_WILL) },
     { MQTT_PROP_REQ_RESP_INFO,              MQTT_DATA_TYPE_BYTE,
         (1 << MQTT_PACKET_TYPE_CONNECT) },
     { MQTT_PROP_RESP_INFO,                  MQTT_DATA_TYPE_STRING,
@@ -926,8 +933,11 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
             }
             case MQTT_DATA_TYPE_SHORT:
             {
-                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error. */
-                if (cur_prop->type == MQTT_PROP_TOPIC_ALIAS &&
+                /* [MQTT-3.3.2-7] A Topic Alias of 0 is a Protocol Error.
+                 * MQTT 5.0 sections 3.1.2.11.3 and 3.2.2.3.3: so is a
+                 * Receive Maximum of 0. */
+                if ((cur_prop->type == MQTT_PROP_TOPIC_ALIAS ||
+                        cur_prop->type == MQTT_PROP_RECEIVE_MAX) &&
                         cur_prop->data_short == 0) {
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
                 }
@@ -1087,7 +1097,7 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
             break;
         }
-        /* Allocate a structure and add to head. */
+        /* Allocate a structure and append it, keeping wire order. */
         cur_prop = MqttProps_Add(props);
         if (cur_prop == NULL) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MEMORY);
@@ -1108,6 +1118,11 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         }
         cur_prop->type = (MqttPropertyType)prop_type;
         tmp = rc;
+        /* The Identifier must fit in the remaining Property Length */
+        if ((word32)tmp > prop_len) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            break;
+        }
         buf += tmp;
         total += tmp;
         prop_len -= tmp;
@@ -1563,7 +1578,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         }
 
         /* Determine length of properties */
-        lwt_props_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+        lwt_props_len = MqttEncode_Props(
+                (MqttPacketType)MQTT_PROP_SCOPE_WILL,
                 mc_connect->lwt_msg->props, NULL);
         if (lwt_props_len >= 0) {
             int tmp_len = MqttEncode_Vbi(NULL, lwt_props_len);
@@ -1682,7 +1698,7 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         /* Encode the lwt property length */
         tx_payload += tmp_len;
 
-        tmp_len = MqttEncode_Props(MQTT_PACKET_TYPE_CONNECT,
+        tmp_len = MqttEncode_Props((MqttPacketType)MQTT_PROP_SCOPE_WILL,
             mc_connect->lwt_msg->props, tx_payload);
         if (tmp_len < 0) {
             return tmp_len;
@@ -1843,11 +1859,9 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
      * Corner case: a peer claiming level 6 but sending a v5-shape wire
      * (extra properties-length VBI present) will misparse on the v3.1.1
      * path and the strict tail-consumption check below returns
-     * MALFORMED_DATA, which the broker translates to a silent socket
-     * close - CONNACK 0x01 is emitted only when the v3.1.1-shape decode
-     * succeeds. This is a best-effort spec compliance trade-off; clients
-     * that misrepresent their protocol level should not expect the broker
-     * to reverse-engineer the wire shape. */
+     * MALFORMED_DATA. protocol_level is already recorded at that point, so
+     * the broker still answers any unsupported level with CONNACK 0x01
+     * [MQTT-3.1.2-2], whether or not the body decodes. */
     if (mc_connect->protocol_level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
         /* Decode Length of Properties */
         if (rx_buf_len < (rx_payload - rx_buf)) {
@@ -1919,10 +1933,15 @@ int MqttDecode_Connect(byte *rx_buf, int rx_buf_len, MqttConnect *mc_connect)
             rx_payload += lwt_tmp;
             if (lwt_props_len > 0) {
                 /* Decode, then enforce the tighter Will allow-list below. */
-                lwt_tmp = MqttDecode_Props(MQTT_PACKET_TYPE_CONNECT,
+                lwt_tmp = MqttDecode_Props(
+                        (MqttPacketType)MQTT_PROP_SCOPE_WILL,
                         &mc_connect->lwt_msg->props, rx_payload,
                         (word32)(rx_buf_len - (rx_payload - rx_buf)),
                         lwt_props_len);
+                /* Report a non-Will property as the encoder does */
+                if (lwt_tmp == MQTT_CODE_ERROR_PROPERTY_MISMATCH) {
+                    lwt_tmp = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+                }
                 if (lwt_tmp < 0) {
                     rc = lwt_tmp;
                     goto cleanup;
@@ -2066,6 +2085,49 @@ cleanup:
 }
 #endif /* WOLFMQTT_BROKER */
 
+/* Validate against MQTT v3.1.1 section 3.2.2.3 or the MQTT 5.0 CONNACK
+ * Reason Code table in section 3.2.2.2. Used by the decoder and, in broker
+ * builds, the encoder. */
+static int MqttPacket_ConnectAckReturnCodeValid(byte code,
+    byte protocol_level)
+{
+#ifdef WOLFMQTT_V5
+    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        switch (code) {
+            case MQTT_REASON_SUCCESS:
+            case MQTT_REASON_UNSPECIFIED_ERR:
+            case MQTT_REASON_MALFORMED_PACKET:
+            case MQTT_REASON_PROTOCOL_ERR:
+            case MQTT_REASON_IMPL_SPECIFIC_ERR:
+            case MQTT_REASON_UNSUP_PROTO_VER:
+            case MQTT_REASON_CLIENT_ID_NOT_VALID:
+            case MQTT_REASON_BAD_USER_OR_PASS:
+            case MQTT_REASON_NOT_AUTHORIZED:
+            case MQTT_REASON_SERVER_UNAVAILABLE:
+            case MQTT_REASON_SERVER_BUSY:
+            case MQTT_REASON_BANNED:
+            case MQTT_REASON_BAD_AUTH_METHOD:
+            case MQTT_REASON_TOPIC_NAME_INVALID:
+            case MQTT_REASON_PACKET_TOO_LARGE:
+            case MQTT_REASON_QUOTA_EXCEEDED:
+            case MQTT_REASON_PAYLOAD_FORMAT_INVALID:
+            case MQTT_REASON_RETAIN_NOT_SUPPORTED:
+            case MQTT_REASON_QOS_NOT_SUPPORTED:
+            case MQTT_REASON_USE_ANOTHER_SERVER:
+            case MQTT_REASON_SERVER_MOVED:
+            case MQTT_REASON_CON_RATE_EXCEED:
+                return 1;
+            default:
+                return 0;
+        }
+    }
+#else
+    (void)protocol_level;
+#endif
+
+    return code <= MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH;
+}
+
 int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     MqttConnectAck *connect_ack)
 {
@@ -2116,6 +2178,18 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
     if (connect_ack) {
         connect_ack->flags = *rx_payload++;
         connect_ack->return_code = *rx_payload++;
+
+        /* A code outside the table for this protocol version is a protocol
+         * violation, not an ordinary refusal. */
+    #ifdef WOLFMQTT_V5
+        if (!MqttPacket_ConnectAckReturnCodeValid(connect_ack->return_code,
+                connect_ack->protocol_level)) {
+    #else
+        if (!MqttPacket_ConnectAckReturnCodeValid(connect_ack->return_code,
+                MQTT_CONNECT_PROTOCOL_LEVEL_4)) {
+    #endif
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         /* [MQTT-3.2.2-1] Bits 7-1 of the Connect Acknowledge Flags byte are
          * reserved and MUST be 0. Any other value is a protocol violation;
@@ -2180,48 +2254,6 @@ int MqttDecode_ConnectAck(byte *rx_buf, int rx_buf_len,
 }
 
 #ifdef WOLFMQTT_BROKER
-/* Validate against MQTT v3.1.1 section 3.2.2.3 or the MQTT 5.0 CONNACK
- * Reason Code table in section 3.2.2.2. */
-static int MqttPacket_ConnectAckReturnCodeValid(byte code,
-    byte protocol_level)
-{
-#ifdef WOLFMQTT_V5
-    if (protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-        switch (code) {
-            case MQTT_REASON_SUCCESS:
-            case MQTT_REASON_UNSPECIFIED_ERR:
-            case MQTT_REASON_MALFORMED_PACKET:
-            case MQTT_REASON_PROTOCOL_ERR:
-            case MQTT_REASON_IMPL_SPECIFIC_ERR:
-            case MQTT_REASON_UNSUP_PROTO_VER:
-            case MQTT_REASON_CLIENT_ID_NOT_VALID:
-            case MQTT_REASON_BAD_USER_OR_PASS:
-            case MQTT_REASON_NOT_AUTHORIZED:
-            case MQTT_REASON_SERVER_UNAVAILABLE:
-            case MQTT_REASON_SERVER_BUSY:
-            case MQTT_REASON_BANNED:
-            case MQTT_REASON_BAD_AUTH_METHOD:
-            case MQTT_REASON_TOPIC_NAME_INVALID:
-            case MQTT_REASON_PACKET_TOO_LARGE:
-            case MQTT_REASON_QUOTA_EXCEEDED:
-            case MQTT_REASON_PAYLOAD_FORMAT_INVALID:
-            case MQTT_REASON_RETAIN_NOT_SUPPORTED:
-            case MQTT_REASON_QOS_NOT_SUPPORTED:
-            case MQTT_REASON_USE_ANOTHER_SERVER:
-            case MQTT_REASON_SERVER_MOVED:
-            case MQTT_REASON_CON_RATE_EXCEED:
-                return 1;
-            default:
-                return 0;
-        }
-    }
-#else
-    (void)protocol_level;
-#endif
-
-    return code <= MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH;
-}
-
 int MqttEncode_ConnectAck(byte *tx_buf, int tx_buf_len,
     MqttConnectAck *connect_ack)
 {
@@ -3208,8 +3240,9 @@ int MqttDecode_Subscribe(byte *rx_buf, int rx_buf_len, MqttSubscribe *subscribe)
             /* Preserve v5 No Local / Retain As Published / Retain Handling
              * (bits 2-5) so the full options byte round-trips. Reserved and
              * QoS bits were validated above; for a valid v3.1.1 packet these
-             * bits are 0. The broker stores these but does not yet enforce
-             * them on delivery. */
+             * bits are 0. The broker applies Retain Handling when it sends
+             * retained messages for a new subscription; it does not store
+             * No Local or Retain As Published. */
             topic->sub_options = (byte)(options & MQTT_SUBSCRIBE_OPTIONS_MASK);
         #endif
             subscribe->topic_count++;
@@ -3262,6 +3295,14 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
     if (remain_len < MQTT_DATA_LEN_SIZE) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
     }
+#ifdef WOLFMQTT_V5
+    /* MQTT 5.0 section 3.9.2: a v5 SUBACK always carries a Property Length
+     * after the Packet Identifier, even when it is zero. */
+    if (subscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            remain_len <= MQTT_DATA_LEN_SIZE) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
+#endif
 
     rx_payload = &rx_buf[header_len];
 
@@ -3650,10 +3691,12 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
 
     /* MQTT 3.1.1 section 3.11.1: the variable header is exactly the two-byte
      * Packet Identifier and there is no payload, so Remaining Length is fixed
-     * at 2. v5 section 3.11 appends Properties and Reason Codes. */
+     * at 2. v5 section 3.11.2 appends a Property Length, which is present
+     * even when zero, so a v5 packet holding only the Packet Identifier is
+     * malformed. */
 #ifdef WOLFMQTT_V5
     if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
-        if (remain_len < MQTT_DATA_LEN_SIZE) {
+        if (remain_len <= MQTT_DATA_LEN_SIZE) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
         }
     }
@@ -4118,9 +4161,13 @@ int MqttEncode_Auth(byte *tx_buf, int tx_buf_len, MqttAuth *auth)
     }
 
     /* [MQTT-4.12] AUTH (REAUTH/CONT_AUTH) must carry an Authentication Method
-     * property; reject if the list is empty or lacks it. */
+     * property; reject if the list is empty or lacks it. A Success AUTH may
+     * omit Properties entirely (MQTT 5.0 section 3.15.2.1), but once it has
+     * any, the Authentication Method is required too (section 3.15.2.2.2). */
     if ((auth->reason_code == MQTT_REASON_CONT_AUTH) ||
-        (auth->reason_code == MQTT_REASON_REAUTH)) {
+        (auth->reason_code == MQTT_REASON_REAUTH) ||
+        ((auth->reason_code == MQTT_REASON_SUCCESS) &&
+         (auth->props != NULL))) {
         auth_prop = auth->props;
         while (auth_prop != NULL && auth_prop->type != MQTT_PROP_AUTH_METHOD) {
             auth_prop = auth_prop->next;
@@ -4212,6 +4259,7 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     int header_len, remain_len, tmp;
     byte *rx_payload;
     word32 props_len = 0;
+    MqttProp* auth_prop;
 
 
     /* Validate required arguments */
@@ -4276,6 +4324,18 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
                        Remaining Length of 0 and never reaches this branch. */
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
+                /* MQTT 5.0 section 3.15.2.2.2: omitting the Authentication
+                 * Method is a Protocol Error. */
+                auth_prop = auth->props;
+                while (auth_prop != NULL &&
+                        auth_prop->type != MQTT_PROP_AUTH_METHOD) {
+                    auth_prop = auth_prop->next;
+                }
+                if (auth_prop == NULL) {
+                    (void)MqttProps_Free(auth->props);
+                    auth->props = NULL;
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
             }
             else {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
@@ -4297,8 +4357,8 @@ int MqttDecode_Auth(byte *rx_buf, int rx_buf_len, MqttAuth *auth)
     return header_len + remain_len;
 }
 
-/* Must be called once from a single thread before any concurrent access
- * to MQTTv5 property functions. Not thread-safe if called concurrently. */
+/* Reference counted: each call must be paired with one MqttProps_ShutDown
+ * call. Calls must not run concurrently with each other. */
 int MqttProps_Init(void)
 {
     int ret = MQTT_CODE_SUCCESS;
@@ -4313,9 +4373,9 @@ int MqttProps_Init(void)
     return  ret;
 }
 
-/* Must be called once from a single thread after all concurrent access
- * to MQTTv5 property functions has ceased. Not thread-safe if called
- * concurrently. */
+/* Releases one MqttProps_Init reference and frees the shared property lock
+ * when the last one is released. Calls must not run concurrently with each
+ * other. */
 int MqttProps_ShutDown(void)
 {
     int ret = MQTT_CODE_SUCCESS;
@@ -4428,6 +4488,19 @@ int MqttProps_Free(MqttProp *head)
     return ret;
 }
 
+/* Find the first property of a specific type. Returns NULL if none */
+MqttProp* MqttProps_FindType(MqttProp *head, MqttPropertyType type)
+{
+    while (head != NULL) {
+        if (head->type == type) {
+            break;
+        }
+        head = head->next;
+    }
+
+    return head;
+}
+
 #endif /* WOLFMQTT_V5 */
 
 int MqttPacket_HandleNetError(MqttClient *client, int rc)
@@ -4467,9 +4540,10 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 
     rc = MqttPacket_HandleNetError(client, rc);
 #ifndef WOLFMQTT_NO_TIME
-    /* Record when a full control packet leaves the wire so the keep-alive
-     * scheduler can measure how long the outbound link has been idle. Only
-     * needed while auto-ping is armed; skip the clock read otherwise. */
+    /* Record each fully written buffer (a whole packet, or one segment of a
+     * streamed PUBLISH payload) so the keep-alive scheduler can measure how
+     * long the outbound link has been idle. Only needed while auto-ping is
+     * armed; skip the clock read otherwise. */
     if (rc == tx_buf_len && client->keep_alive_sec != 0) {
         client->last_tx_time = WOLFMQTT_GET_TIME_S();
     }
@@ -4481,7 +4555,8 @@ int MqttPacket_Write(MqttClient *client, byte* tx_buf, int tx_buf_len)
 int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     int timeout_ms)
 {
-    int rc, len, remain_read = 0;
+    int rc, len, remain_read = 0, header_len = 0;
+    word32 read_len;
     MqttPacket* header;
 
     if (client == NULL || rx_buf == NULL) {
@@ -4583,21 +4658,27 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
 
         case MQTT_PK_READ:
         {
-            /* read remainder of packet */
+            /* read remainder of packet; use locals the socket read cannot
+             * modify */
             remain_read = client->packet.remain_len;
+            header_len = client->packet.header_len;
             client->packet.stat = MQTT_PK_READ;
 
             /* Make sure it does not overflow rx_buf */
-            if (rx_buf_len < client->packet.header_len) {
+            if (header_len < 0 || header_len > rx_buf_len) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
-            if (remain_read > rx_buf_len - client->packet.header_len) {
-                remain_read = rx_buf_len - client->packet.header_len;
+            if (remain_read < 0) {
+                return MqttPacket_HandleNetError(client,
+                    MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA));
+            }
+            if (remain_read > rx_buf_len - header_len) {
+                remain_read = rx_buf_len - header_len;
             }
 
             /* Read remaining */
             if (client->packet.remain_len > 0) {
-                rc = MqttSocket_Read(client, &rx_buf[client->packet.header_len],
+                rc = MqttSocket_Read(client, &rx_buf[header_len],
                     remain_read, timeout_ms);
                 if (rc <= 0) {
                     return MqttPacket_HandleNetError(client, rc);
@@ -4616,14 +4697,13 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
     /* reset state */
     client->packet.stat = MQTT_PK_BEGIN;
 
-    /* Return read length. header_len and remain_read are each bounded by
-     * rx_buf_len above, so their sum cannot exceed it; clamp to keep the
-     * returned length provably in range for static analysis. */
-    rc = client->packet.header_len + remain_read;
-    if (rc > rx_buf_len) {
-        rc = rx_buf_len;
+    /* Return read length. Both terms are non-negative ints, so the unsigned
+     * sum cannot wrap; the clamp is defensive. */
+    read_len = (word32)header_len + (word32)remain_read;
+    if (read_len > (word32)rx_buf_len) {
+        read_len = (word32)rx_buf_len;
     }
-    return rc;
+    return (int)read_len;
 }
 
 #ifndef WOLFMQTT_NO_ERROR_STRINGS
