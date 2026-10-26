@@ -3087,6 +3087,78 @@ TEST(handoff_marks_sent_qos1_for_redelivery)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* The same hand-off, but the write only placed part of the PUBLISH. Those
+ * bytes still reached the subscriber, so the resume copy is a re-delivery and
+ * [MQTT-3.3.1-1] requires DUP, exactly as for a completed write. The drain
+ * would have set the flag below, but the entry is already gone. */
+TEST(handoff_marks_partly_sent_qos1_for_redelivery)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    BrokerOrphanSession* o;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x02, 0x00, 0x3C,
+        0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T', 0x04, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x01
+    };
+    static const byte publish_x[] = {
+        0x32, 0x08, 0x00, 0x01, 'x', 0x00, 0x07, 'A', 'B', 'C'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_x, sizeof(subscribe_x));
+    for (i = 0; i < 16; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    sub_bc = find_broker_client(&broker, "S");
+    ASSERT_NOT_NULL(sub_bc);
+    ASSERT_NULL(sub_bc->out_q_head);
+
+    broker_test_watch_free(NULL);
+    g_handoff_broker = &broker;
+    g_handoff_client = sub_bc;
+    g_write_publish_hook = handoff_out_queue_mid_write;
+    /* One byte of the PUBLISH goes out, then the hand-off takes the queue. */
+    g_clients[1].write_limit_on_publish = 1;
+
+    mock_client_input_append(0, publish_x, sizeof(publish_x));
+    (void)MqttBroker_Step(&broker);
+
+    ASSERT_NULL(g_write_publish_hook);
+
+    o = broker.orphan_sessions;
+    ASSERT_NOT_NULL(o);
+    ASSERT_EQ(1, o->out_q_count);
+    ASSERT_NOT_NULL(o->out_q_head);
+    ASSERT_EQ(0, broker_test_watched_frees());
+    ASSERT_EQ(MQTT_QOS_1, (int)o->out_q_head->qos);
+    ASSERT_EQ(1, (int)o->out_q_head->retransmit_dup);
+
+    ASSERT_EQ(0, sub_bc->out_q_count);
+    ASSERT_NULL(sub_bc->out_q_head);
+
+    g_handoff_broker = NULL;
+    g_handoff_client = NULL;
+    broker_test_watch_free(NULL);
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 #ifdef WOLFMQTT_BROKER_WILL
@@ -17120,6 +17192,7 @@ int main(int argc, char** argv)
     RUN_TEST(drain_stops_when_session_handoff_takes_queue);
 #if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(handoff_marks_sent_qos1_for_redelivery);
+    RUN_TEST(handoff_marks_partly_sent_qos1_for_redelivery);
 #endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(outbound_queue_short_write_resumes_on_next_step);
