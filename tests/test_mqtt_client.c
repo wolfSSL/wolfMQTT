@@ -4072,9 +4072,14 @@ static int mock_net_write_seed_publish(void *context, const byte* buf,
             (buf[0] >> 4) == MQTT_PACKET_TYPE_CONNECT) {
         seed_replay_slot(g_seed_slot, g_seed_packet_id, g_seed_on_this_conn);
         if (g_seed_reserve_ack_type != 0) {
-            test_client.send_inflight[0].packet_id = g_seed_packet_id;
-            test_client.send_inflight[0].ack_type = g_seed_reserve_ack_type;
-            test_client.send_inflight[0].owner = &test_client.msg;
+            int n = 0;
+            while (n < MQTT_MAX_SEND_INFLIGHT - 1 &&
+                    test_client.send_inflight[n].packet_id != 0) {
+                n++;
+            }
+            test_client.send_inflight[n].packet_id = g_seed_packet_id;
+            test_client.send_inflight[n].ack_type = g_seed_reserve_ack_type;
+            test_client.send_inflight[n].owner = &test_client.msg;
         }
         g_seed_slot = -1;
     }
@@ -4119,11 +4124,12 @@ TEST(fresh_session_reset_keeps_publish_from_this_connection)
     ASSERT_STR_EQ("new/1", test_client.replay[1].topic);
 }
 
-/* The same reset for a CONNECT that asked for no persistent Session: it ends
- * with this Network Connection, so nothing is owed a re-send [MQTT-4.4.0-1]
- * and this connection's own entries go with the old Session's. Keeping them
- * would replay them into a later Session that never held them. */
-TEST(fresh_session_reset_drops_publish_when_not_persistent)
+/* A CONNECT that asked for no persistent Session: a publish sent on it is still
+ * in flight on this connection, so the fresh-Session reset keeps it and its
+ * identifier [MQTT-2.3.1-2]. That Session ends with the connection, though, so
+ * the next CONNECT drops it rather than holding or re-sending it
+ * [MQTT-4.4.0-1], even if the server wrongly claims a resume. */
+TEST(nonpersistent_publish_kept_until_next_connect)
 {
     int rc;
     int i;
@@ -4156,8 +4162,25 @@ TEST(fresh_session_reset_drops_publish_when_not_persistent)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(-1, g_seed_slot);
 
-    /* Both are gone, and neither still occupies its identifier. */
+    /* The old Session's entry is gone; this connection's is still live. */
     ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+    ASSERT_EQ(0x5678, (int)test_client.replay[1].packet_id);
+    held = 0;
+    for (i = 0; i < MQTT_MAX_SEND_INFLIGHT; i++) {
+        if (test_client.send_inflight[i].packet_id == 0x5678) {
+            held++;
+        }
+    }
+    ASSERT_EQ(1, held);
+
+    /* The connection drops before its PUBACK. */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    g_hold_probe_id = -1;
+    rc = run_reconnect_with(&connect, 1, mock_net_write_accept);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Nothing held during the handshake, and nothing left to replay. */
+    ASSERT_EQ(0, g_hold_probe_id);
     ASSERT_EQ(0, (int)test_client.replay[1].packet_id);
     held = 0;
     for (i = 0; i < MQTT_MAX_SEND_INFLIGHT; i++) {
@@ -4166,7 +4189,6 @@ TEST(fresh_session_reset_drops_publish_when_not_persistent)
         }
     }
     ASSERT_EQ(0, held);
-    ASSERT_EQ(MQTT_MAX_REPLAY_MSGS, test_client.replayIdx);
 }
 
 /* A retained entry's Packet Identifier stays reserved across the handshake:
@@ -10290,7 +10312,7 @@ void run_mqtt_client_tests(void)
 #endif
     RUN_TEST(reconnect_without_session_present_replays_nothing);
     RUN_TEST(fresh_session_reset_keeps_publish_from_this_connection);
-    RUN_TEST(fresh_session_reset_drops_publish_when_not_persistent);
+    RUN_TEST(nonpersistent_publish_kept_until_next_connect);
     RUN_TEST(handshake_holds_retained_packet_id);
     RUN_TEST(resume_does_not_replay_publish_from_this_connection);
     RUN_TEST(resume_keeps_retained_packet_id_reserved);

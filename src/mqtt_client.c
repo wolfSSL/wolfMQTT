@@ -909,23 +909,30 @@ static MqttPacketType MqttClient_Replay_AckType(const MqttReplayMsg* slot)
 }
 
 /* Everything retained so far belongs to the Session that is ending; a send
- * admitted once CONNECT is on the wire tags itself. Reports a lock failure:
- * stale tags would have the handshake skip or keep the wrong entries. */
+ * admitted once CONNECT is on the wire tags itself. The persistence flag still
+ * describes that Session, and one that ended with its connection owes nothing
+ * [MQTT-4.4.0-1], so its entries go. Reports a lock failure: stale tags would
+ * have the handshake skip or keep the wrong entries. */
 static int MqttClient_Replay_NewConnSafe(MqttClient* client)
 {
     int i;
+    byte persisted;
 #ifdef WOLFMQTT_MULTITHREAD
     int rc = wm_SemLock(&client->lockClient);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
 #endif
+    persisted = (client->flags & MQTT_CLIENT_FLAG_PERSISTENT_SESSION) ? 1 : 0;
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
         client->replay[i].onThisConn = 0;
+        if (!persisted) {
+            MqttClient_Replay_FreeSlot(&client->replay[i]);
+        }
         /* Hold for the handshake: [MQTT-2.3.1-2] allows one use at a time
          * and [MQTT-4.4.0-1] still owes these a re-send. Released below on a
          * fresh Session. */
-        if (client->replay[i].packet_id != 0) {
+        else if (client->replay[i].packet_id != 0) {
             (void)MqttClient_SendIdReserve_Locked(client,
                 client->replay[i].packet_id, &client->replay[i], 1,
                 MqttClient_Replay_AckType(&client->replay[i]));
@@ -937,26 +944,22 @@ static int MqttClient_Replay_NewConnSafe(MqttClient* client)
     return MQTT_CODE_SUCCESS;
 }
 
-/* Discard the retained copies of a Session the server did not resume. Anything
- * published on this connection is kept only for a persistent Session, which is
- * the one a later resume still owes a re-send [MQTT-4.4.0-1]; a Clean Start or
- * a zero Session Expiry ends with this connection, so its entries go too.
- * Reports a lock failure, unlike the wrappers above: a skipped discard would
- * replay the old Session's messages into this one. */
+/* Discard the retained copies of a Session the server did not resume, keeping
+ * anything published on this connection: its exchange is still live here, so
+ * its identifier stays in use [MQTT-2.3.1-2]. Reports a lock failure, unlike
+ * the wrappers above: a skipped discard would replay the old Session's
+ * messages into this one. */
 static int MqttClient_Replay_ResetSafe(MqttClient* client)
 {
     int i;
-    byte keepThisConn;
 #ifdef WOLFMQTT_MULTITHREAD
     int rc = wm_SemLock(&client->lockClient);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
 #endif
-    keepThisConn = (client->flags & MQTT_CLIENT_FLAG_PERSISTENT_SESSION) ?
-        1 : 0;
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
-        if (keepThisConn && client->replay[i].onThisConn) {
+        if (client->replay[i].onThisConn) {
             continue;
         }
         /* Release the handshake hold. */
