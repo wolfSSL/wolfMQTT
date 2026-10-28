@@ -49,7 +49,10 @@ static byte test_tx_buf[TEST_TX_BUF_SIZE];
 static byte test_rx_buf[TEST_RX_BUF_SIZE];
 
 /* The library allocator is routed through here (tests/test_broker_alloc.h) so
- * a test can watch one allocation and record the state it was released in. */
+ * a test can watch one allocation and record the state it was released in.
+ * Only builds that force-include that header, and compile the client into the
+ * test, have the hook. */
+#ifdef WOLFMQTT_TEST_BROKER_ALLOC_H
 static void* g_free_watch_ptr;
 static int g_free_watch_count;
 static int g_free_watch_lock_count;
@@ -85,6 +88,7 @@ UT_MAYBE_UNUSED static void test_client_watch_free(void* ptr)
     g_free_watch_count = 0;
     g_free_watch_lock_count = -1;
 }
+#endif /* WOLFMQTT_TEST_BROKER_ALLOC_H */
 
 /* Mock network callbacks - just return errors since we're not actually
  * connecting to anything */
@@ -4282,6 +4286,107 @@ TEST(resume_keeps_retained_packet_id_reserved)
     ASSERT_EQ(1, held);
 }
 
+/* A send is admitted once CONNECT is on the wire, so a DUP re-send of a
+ * retained PUBLISH can take over the handshake's hold before it re-tags the
+ * entry. This does what MqttClient_SendIdReserve does for that re-send. */
+static MqttPublish g_takeover_publish;
+static word16 g_takeover_id;
+
+static int mock_net_write_take_over_hold(void *context, const byte* buf,
+    int buf_len, int timeout_ms)
+{
+    int rc = mock_net_write_accept(context, buf, buf_len, timeout_ms);
+    int n;
+
+    if (g_takeover_id != 0 && buf_len > 0 &&
+            (buf[0] >> 4) == MQTT_PACKET_TYPE_CONNECT) {
+        for (n = 0; n < MQTT_MAX_SEND_INFLIGHT; n++) {
+            if (test_client.send_inflight[n].packet_id == g_takeover_id) {
+                test_client.send_inflight[n].owner = &g_takeover_publish;
+            }
+        }
+        g_takeover_id = 0;
+    }
+    return rc;
+}
+
+static int count_held_by(word16 packet_id, const void* owner)
+{
+    int n;
+    int held = 0;
+
+    for (n = 0; n < MQTT_MAX_SEND_INFLIGHT; n++) {
+        if (test_client.send_inflight[n].packet_id == packet_id &&
+                test_client.send_inflight[n].owner == owner) {
+            held++;
+        }
+    }
+    return held;
+}
+
+/* The fresh-Session reset gives back only the handshake's own hold. Once a
+ * re-send owns the identifier its exchange is live [MQTT-2.3.1-2]. */
+TEST(fresh_session_reset_keeps_hold_taken_by_resend)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_takeover_id = 0x1234;
+    rc = run_reconnect_with(&connect, 0, mock_net_write_take_over_hold);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, g_takeover_id);
+
+    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+    ASSERT_EQ(1, count_held_by(0x1234, &g_takeover_publish));
+}
+
+/* The same for the resumed walk, which drops an entry it has no copy of. */
+TEST(resume_drop_keeps_hold_taken_by_resend)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "hello";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x1234, "sensor/temp",
+        payload, (word32)(sizeof(payload) - 1));
+    rc = run_publish_unacked(&publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    ASSERT_EQ(0x1234, (int)test_client.replay[0].packet_id);
+    test_client.replay[0].haveCopy = 0;
+
+    g_takeover_id = 0x1234;
+    rc = run_reconnect_with(&connect, 1, mock_net_write_take_over_hold);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, g_takeover_id);
+
+    ASSERT_EQ(0, (int)test_client.replay[0].packet_id);
+    ASSERT_EQ(1, count_held_by(0x1234, &g_takeover_publish));
+}
+
 /* The resumed walk re-sends only what the previous connection left
  * unacknowledged; an entry published after CONNECT is already in flight. */
 TEST(resume_does_not_replay_publish_from_this_connection)
@@ -4314,7 +4419,8 @@ TEST(resume_does_not_replay_publish_from_this_connection)
 
 
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
-    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
+    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY) && \
+    defined(WOLFMQTT_TEST_BROKER_ALLOC_H)
 /* A send thread reaches the same replay slots under the client lock, and both
  * sides release what they find there, so the discard has to hold it too. The
  * POSIX lock keeps its own depth; the allocator hook samples it as the slot's
@@ -10316,8 +10422,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(handshake_holds_retained_packet_id);
     RUN_TEST(resume_does_not_replay_publish_from_this_connection);
     RUN_TEST(resume_keeps_retained_packet_id_reserved);
+    RUN_TEST(fresh_session_reset_keeps_hold_taken_by_resend);
+    RUN_TEST(resume_drop_keeps_hold_taken_by_resend);
 #if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_POSIX_SEMAPHORES) && \
-    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY)
+    !defined(WOLFMQTT_NO_COND_SIGNAL) && !defined(WOLFMQTT_STATIC_MEMORY) && \
+    defined(WOLFMQTT_TEST_BROKER_ALLOC_H)
     RUN_TEST(fresh_session_reset_frees_replay_under_client_lock);
 #endif
     RUN_TEST(reconnect_does_not_replay_acked_publish);

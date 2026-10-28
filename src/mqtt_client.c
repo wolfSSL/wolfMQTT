@@ -92,7 +92,7 @@ static int MqttClient_CancelMessage(MqttClient *client, MqttObject* msg);
 #endif
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
 static void MqttClient_SendIds_Drop_Locked(MqttClient* client,
-    word16 packet_id);
+    word16 packet_id, const void* owner);
 static int MqttClient_SendIdReserve_Locked(MqttClient* client, word16 packet_id,
     void* owner, int isRetransmit, MqttPacketType ack_type);
 #endif
@@ -963,7 +963,8 @@ static int MqttClient_Replay_ResetSafe(MqttClient* client)
             continue;
         }
         /* Release the handshake hold. */
-        MqttClient_SendIds_Drop_Locked(client, client->replay[i].packet_id);
+        MqttClient_SendIds_Drop_Locked(client, client->replay[i].packet_id,
+            &client->replay[i]);
         MqttClient_Replay_FreeSlot(&client->replay[i]);
     }
     client->replayIdx = MQTT_MAX_REPLAY_MSGS;
@@ -1115,8 +1116,10 @@ static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
  * exchange's replay state. */
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
 /* Caller holds client->lockClient. Unlike MqttClient_SendIdRelease, drops only
- * the reservation; the caller is already disposing of the replay entry. */
-static void MqttClient_SendIds_Drop_Locked(MqttClient* client, word16 packet_id)
+ * the reservation, and only while owner still holds it: a re-send may have
+ * taken it over. The caller is already disposing of the replay entry. */
+static void MqttClient_SendIds_Drop_Locked(MqttClient* client, word16 packet_id,
+    const void* owner)
 {
     int i;
 
@@ -1124,7 +1127,7 @@ static void MqttClient_SendIds_Drop_Locked(MqttClient* client, word16 packet_id)
         return;
     }
     i = MqttClient_SendIds_Find(client, packet_id);
-    if (i >= 0) {
+    if (i >= 0 && client->send_inflight[i].owner == owner) {
         client->send_inflight[i].packet_id = 0;
         client->send_inflight[i].owner = NULL;
         client->send_inflight[i].ack_type = (byte)MQTT_PACKET_TYPE_RESERVED;
@@ -4140,7 +4143,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
                      * honoured: drop it and release the identifier, which no
                      * acknowledgement would free [MQTT-2.3.1-3]. */
                     MqttClient_SendIds_Drop_Locked(client,
-                        client->replay[i].packet_id);
+                        client->replay[i].packet_id, &client->replay[i]);
                     MqttClient_Replay_FreeSlot(&client->replay[i]);
                 }
             }
