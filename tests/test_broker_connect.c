@@ -5490,6 +5490,52 @@ TEST(retained_short_write_preserves_following_delivery)
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
 
 #if defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_STATIC_MEMORY)
+/* Exact-topic filters keep these tests valid with
+ * --disable-broker-wildcards. */
+static const byte static_short_write_connect_pub[] = {
+    0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+    0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+};
+/* Hand-built retained QoS 0 PUBLISH packets for r/a and r/b. */
+static const byte static_short_write_publish_a[] = {
+    0x31, 0x08, 0x00, 0x03, 'r', '/', 'a', 'O', 'N', 'E'
+};
+static const byte static_short_write_publish_b[] = {
+    0x31, 0x08, 0x00, 0x03, 'r', '/', 'b', 'T', 'W', 'O'
+};
+
+/* Connect "P", store the retained messages, then connect the subscriber. */
+static int static_short_write_setup(MqttBroker* broker, MqttBrokerNet* net,
+    const byte* connect_sub, size_t connect_sub_len)
+{
+    int i;
+    int rc;
+
+    install_mock_net(net);
+    XMEMSET(broker, 0, sizeof(*broker));
+    rc = MqttBroker_Init(broker, net);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    rc = MqttBroker_Start(broker);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, static_short_write_connect_pub,
+        sizeof(static_short_write_connect_pub));
+    mock_client_input_append(0, static_short_write_publish_a,
+        sizeof(static_short_write_publish_a));
+    mock_client_input_append(0, static_short_write_publish_b,
+        sizeof(static_short_write_publish_b));
+    mock_client_input_append(1, connect_sub, connect_sub_len);
+    for (i = 0; i < 12; i++) {
+        (void)MqttBroker_Step(broker);
+    }
+    return MQTT_CODE_SUCCESS;
+}
+
 /* Static builds cannot resume a cut direct write. When a retained PUBLISH
  * stops part way, nothing else may follow it on the wire: the next retained
  * PUBLISH used to be written from the cut offset, so the subscriber read the
@@ -5500,56 +5546,85 @@ TEST(static_retained_short_write_closes_without_splicing)
     MqttBrokerNet net;
     size_t sub_before;
     int i;
-    static const byte connect_pub[] = {
-        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
-        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
-    };
     static const byte connect_sub[] = {
         0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
         0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'S'
     };
-    /* Hand-built retained QoS 0 PUBLISH packets for r/a and r/b. */
-    static const byte publish_one[] = {
-        0x31, 0x08, 0x00, 0x03, 'r', '/', 'a', 'O', 'N', 'E'
-    };
-    static const byte publish_two[] = {
-        0x31, 0x08, 0x00, 0x03, 'r', '/', 'b', 'T', 'W', 'O'
-    };
-    static const byte subscribe_all[] = {
-        0x82, 0x08, 0x00, 0x01, 0x00, 0x03, 'r', '/', '#', 0x00
+    /* SUBSCRIBE r/a and r/b at QoS 0. */
+    static const byte subscribe_ab[] = {
+        0x82, 0x0E, 0x00, 0x01,
+        0x00, 0x03, 'r', '/', 'a', 0x00,
+        0x00, 0x03, 'r', '/', 'b', 0x00
     };
 
-    install_mock_net(&net);
-    XMEMSET(&broker, 0, sizeof(broker));
-    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
-    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
-
-    reset_mock_clients(2);
-    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
-    mock_client_input_append(0, publish_one, sizeof(publish_one));
-    mock_client_input_append(0, publish_two, sizeof(publish_two));
-    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
-    for (i = 0; i < 12; i++) {
-        (void)MqttBroker_Step(&broker);
-    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, static_short_write_setup(&broker, &net,
+        connect_sub, sizeof(connect_sub)));
     ASSERT_FALSE(g_clients[1].closed);
 
     /* The first retained PUBLISH gets 3 bytes out, then the write times out
      * with the socket still open. */
     sub_before = g_clients[1].out_len;
     g_clients[1].write_limit_then_timeout = 3;
-    mock_client_input_append(1, subscribe_all, sizeof(subscribe_all));
+    mock_client_input_append(1, subscribe_ab, sizeof(subscribe_ab));
     for (i = 0; i < 4; i++) {
         (void)MqttBroker_Step(&broker);
     }
 
     ASSERT_EQ(3, (int)(g_clients[1].out_len - sub_before));
-    ASSERT_MEM_EQ(publish_one, g_clients[1].out_buf + sub_before, 3);
+    ASSERT_MEM_EQ(static_short_write_publish_a,
+        g_clients[1].out_buf + sub_before, 3);
     ASSERT_TRUE(g_clients[1].closed);
 
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+#ifdef WOLFMQTT_BROKER_WILL
+/* Closing that connection publishes the subscriber's Will. When the
+ * subscriber is subscribed to its own Will topic, the Will must not be
+ * written after the cut retained PUBLISH either. */
+TEST(static_retained_short_write_own_will_not_spliced)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    size_t sub_before;
+    int i;
+    /* v3.1.1 CONNECT "S", flags 0x06 (will | clean), Will topic "r/w",
+     * Will payload "BYE". */
+    static const byte connect_sub[] = {
+        0x10, 0x17, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C, 0x00, 0x01, 'S',
+        0x00, 0x03, 'r', '/', 'w',
+        0x00, 0x03, 'B', 'Y', 'E'
+    };
+    /* SUBSCRIBE r/w (its own Will topic) then r/a (retained) at QoS 0.
+     * Filters are added in order, so r/w is in place when r/a is cut. */
+    static const byte subscribe_wa[] = {
+        0x82, 0x0E, 0x00, 0x01,
+        0x00, 0x03, 'r', '/', 'w', 0x00,
+        0x00, 0x03, 'r', '/', 'a', 0x00
+    };
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, static_short_write_setup(&broker, &net,
+        connect_sub, sizeof(connect_sub)));
+    ASSERT_FALSE(g_clients[1].closed);
+
+    sub_before = g_clients[1].out_len;
+    g_clients[1].write_limit_then_timeout = 3;
+    mock_client_input_append(1, subscribe_wa, sizeof(subscribe_wa));
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(3, (int)(g_clients[1].out_len - sub_before));
+    ASSERT_MEM_EQ(static_short_write_publish_a,
+        g_clients[1].out_buf + sub_before, 3);
+    ASSERT_TRUE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_WILL */
 #endif /* WOLFMQTT_BROKER_RETAINED && WOLFMQTT_STATIC_MEMORY */
 
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
@@ -17408,6 +17483,9 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(static_retained_short_write_closes_without_splicing);
+#ifdef WOLFMQTT_BROKER_WILL
+    RUN_TEST(static_retained_short_write_own_will_not_spliced);
+#endif
 #endif
 /* Both allocation profiles: the retained store and its expiry paths have
  * separate implementations, so each has to be swept correctly. */

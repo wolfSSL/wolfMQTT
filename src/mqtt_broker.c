@@ -6372,13 +6372,16 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                      * then returned CONTINUE, timed out or failed). Static
                      * memory keeps nothing to resume it from, and the next
                      * write would continue at client.write.pos inside a
-                     * different packet, splicing the two frames. Stop and
-                     * fail the SUBSCRIBE so the connection is closed, as
-                     * BrokerHandle_Publish does for a short fan-out write. */
+                     * different packet, splicing the two frames. Close the
+                     * transport now, as BrokerHandle_Publish does for a short
+                     * fan-out write, so nothing else (such as this client's
+                     * own Will, published when the failed SUBSCRIBE closes
+                     * the connection) is written after the cut frame. */
                     if (wr_rc == MQTT_CODE_CONTINUE && eff_qos >= MQTT_QOS_1) {
                         BrokerStaticOutId_Release(bc, out_pub.packet_id,
                             eff_qos);
                     }
+                    BrokerStaticClient_Close(broker, bc);
                     deliver_rc = MQTT_CODE_ERROR_NETWORK;
                     break;
                 }
