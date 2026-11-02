@@ -6367,6 +6367,21 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                      * slot would leak it [MQTT-2.3.1-3]. */
                     BrokerStaticOutId_Release(bc, out_pub.packet_id, eff_qos);
                 }
+                if (wr_rc != enc_rc && bc->client.write.pos != 0) {
+                    /* Part of the PUBLISH is on the wire (a short write that
+                     * then returned CONTINUE, timed out or failed). Static
+                     * memory keeps nothing to resume it from, and the next
+                     * write would continue at client.write.pos inside a
+                     * different packet, splicing the two frames. Stop and
+                     * fail the SUBSCRIBE so the connection is closed, as
+                     * BrokerHandle_Publish does for a short fan-out write. */
+                    if (wr_rc == MQTT_CODE_CONTINUE && eff_qos >= MQTT_QOS_1) {
+                        BrokerStaticOutId_Release(bc, out_pub.packet_id,
+                            eff_qos);
+                    }
+                    deliver_rc = MQTT_CODE_ERROR_NETWORK;
+                    break;
+                }
             }
             else {
                 /* The PUBLISH never reached the wire, so no PUBACK or

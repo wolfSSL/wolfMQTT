@@ -219,6 +219,10 @@ typedef struct MockClient {
      * a sequence the one-shot knobs above cannot express on their own. */
     int    write_limit_then_err;
     int    write_err_pending; /* next mock_write call returns a network error */
+    /* positive: short-write the next callback to this many bytes and arm
+     * write_timeout_pending: part of a packet goes out, then select() times
+     * out while the socket stays alive (BrokerPosix_Write's timeout path). */
+    int    write_limit_then_timeout;
     /* When set, the next PUBLISH frame (and only that) fails. Lets a test aim
      * at a delivery without also failing the SUBACK that precedes it. */
     int    write_err_on_publish;
@@ -364,6 +368,13 @@ static int mock_write(void* ctx, BROKER_SOCKET_T sock,
         }
         mc->write_limit_then_err = 0;
         mc->write_err_pending = 1;
+    }
+    if (mc->write_limit_then_timeout > 0) {
+        if (write_len > mc->write_limit_then_timeout) {
+            write_len = mc->write_limit_then_timeout;
+        }
+        mc->write_limit_then_timeout = 0;
+        mc->write_timeout_pending = 1;
     }
     if (mc->write_limit_once > 0) {
         if (write_len > mc->write_limit_once) {
@@ -5477,6 +5488,69 @@ TEST(retained_short_write_preserves_following_delivery)
 }
 #endif /* WOLFMQTT_NONBLOCK */
 #endif /* WOLFMQTT_BROKER_RETAINED && !WOLFMQTT_STATIC_MEMORY */
+
+#if defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_STATIC_MEMORY)
+/* Static builds cannot resume a cut direct write. When a retained PUBLISH
+ * stops part way, nothing else may follow it on the wire: the next retained
+ * PUBLISH used to be written from the cut offset, so the subscriber read the
+ * head of r/a joined to the tail of r/b. The connection must close instead. */
+TEST(static_retained_short_write_closes_without_splicing)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    size_t sub_before;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'S'
+    };
+    /* Hand-built retained QoS 0 PUBLISH packets for r/a and r/b. */
+    static const byte publish_one[] = {
+        0x31, 0x08, 0x00, 0x03, 'r', '/', 'a', 'O', 'N', 'E'
+    };
+    static const byte publish_two[] = {
+        0x31, 0x08, 0x00, 0x03, 'r', '/', 'b', 'T', 'W', 'O'
+    };
+    static const byte subscribe_all[] = {
+        0x82, 0x08, 0x00, 0x01, 0x00, 0x03, 'r', '/', '#', 0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_one, sizeof(publish_one));
+    mock_client_input_append(0, publish_two, sizeof(publish_two));
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    for (i = 0; i < 12; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_clients[1].closed);
+
+    /* The first retained PUBLISH gets 3 bytes out, then the write times out
+     * with the socket still open. */
+    sub_before = g_clients[1].out_len;
+    g_clients[1].write_limit_then_timeout = 3;
+    mock_client_input_append(1, subscribe_all, sizeof(subscribe_all));
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    ASSERT_EQ(3, (int)(g_clients[1].out_len - sub_before));
+    ASSERT_MEM_EQ(publish_one, g_clients[1].out_buf + sub_before, 3);
+    ASSERT_TRUE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_BROKER_RETAINED && WOLFMQTT_STATIC_MEMORY */
 
 #if defined(WOLFMQTT_BROKER_WILL) && !defined(WOLFMQTT_STATIC_MEMORY)
 /* The immediate-will fan-out must scrub the subscriber tx_buf even when the
@@ -17331,6 +17405,9 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(retained_short_write_preserves_following_delivery);
 #endif
+#endif
+#if defined(WOLFMQTT_BROKER_RETAINED) && defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(static_retained_short_write_closes_without_splicing);
 #endif
 /* Both allocation profiles: the retained store and its expiry paths have
  * separate implementations, so each has to be swept correctly. */
