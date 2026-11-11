@@ -17290,6 +17290,49 @@ TEST(persist_restore_missing_hook_does_not_wipe)
     ASSERT_EQ(recs_before, recs_after);
 }
 
+/* Same as above for a backend without kv_put: restore cannot restamp META,
+ * so it must refuse before the schema-mismatch wipe deletes valid records. */
+TEST(persist_restore_missing_kv_put_does_not_wipe)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    MqttBrokerPersistHooks broken;
+    int recs_before = 0;
+    int recs_after = 0;
+    int rc;
+    int k;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_PutOrphanSession(&broker, "C",
+        MQTT_CONNECT_PROTOCOL_LEVEL_4, 3600, 0));
+    MqttBroker_Free(&broker);
+    for (k = 0; k < KV_MAX_RECS; k++) {
+        recs_before += g_kv[k].in_use ? 1 : 0;
+    }
+    ASSERT_TRUE(recs_before >= 2);
+
+    broken = hooks;
+    broken.kv_put = NULL;
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2,
+        &broken));
+    rc = BrokerPersist_Restore(&broker2);
+    MqttBroker_Free(&broker2);
+    for (k = 0; k < KV_MAX_RECS; k++) {
+        recs_after += g_kv[k].in_use ? 1 : 0;
+    }
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(recs_before, recs_after);
+}
+
 /* More persisted Sessions than BROKER_MAX_PERSIST_SESSIONS is a normal state
  * (records are written per CONNECT; the cap is enforced on orphaning), so
  * restore skips the excess rather than failing startup. Only a genuine
@@ -18294,6 +18337,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_restore_alloc_failure_is_fatal);
     RUN_TEST(persist_restore_drop_ended_scrubs_key);
     RUN_TEST(persist_restore_missing_hook_does_not_wipe);
+    RUN_TEST(persist_restore_missing_kv_put_does_not_wipe);
     #ifdef WOLFMQTT_V5
     RUN_TEST(persist_free_stamps_connected_session_disconnect_time);
     #endif
