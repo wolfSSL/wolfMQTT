@@ -4599,7 +4599,7 @@ static void BrokerSubs_RemoveClient(MqttBroker* broker, BrokerClient* bc)
     bc->sub_count = 0;
 
 #ifdef WOLFMQTT_BROKER_PERSIST
-    if (bc != NULL && bc->session_established &&
+    if (bc->session_established &&
             bc->session_expiry_sec == 0 &&
             BROKER_STR_VALID(bc->client_id)) {
         (void)BrokerPersist_DelSubs(broker, bc->client_id);
