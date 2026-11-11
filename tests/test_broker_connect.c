@@ -2254,6 +2254,192 @@ TEST(broker_v5_retransmitted_pubrec_pubrel_success)
 }
 #endif
 
+#ifndef BROKER_ALLOW_CLIENT_DOLLAR_TOPICS
+#if !(!defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL))
+static int count_packets_of_type(const byte* buf, size_t len, byte type);
+#endif
+
+/* MQTT 3.1.1 and 5.0 section 4.7.2: Topic Names beginning with '$' are for
+ * the Server; it SHOULD prevent Clients using them to exchange messages. A
+ * client PUBLISH to one is not forwarded: v5 QoS 1 is answered with PUBACK
+ * 0x90 (Topic Name invalid), v3.1.1 has no failure ack so the connection is
+ * closed (section 3.3.5). */
+static void dollar_topic_publish(byte level, int* sub_publishes,
+    int* pub_closed, byte* ack, size_t ack_sz)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    size_t pos;
+    /* v5 CONNECT, Clean Start 1, Properties length 0, ClientId "S" */
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'S'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, "$SYS/#", QoS 1 */
+    static const byte subscribe_sys[] = {
+        0x82, 0x0C, 0x00, 0x01, 0x00, 0x00, 0x06,
+        '$', 'S', 'Y', 'S', '/', '#', 0x01
+    };
+    /* CONNECT, Clean Start 1, ClientId "P" (v5: Properties length 0) */
+    static const byte connect_pub5[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    static const byte connect_pub4[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+    /* PUBLISH QoS 1 "$SYS/x" packet id 3 payload "z" (v5 adds Properties
+     * length 0): 2 + 6 + 2 (+ 1) + 1 */
+    static const byte publish5[] = {
+        0x32, 0x0C, 0x00, 0x06, '$', 'S', 'Y', 'S', '/', 'x',
+        0x00, 0x03, 0x00, 'z'
+    };
+    static const byte publish4[] = {
+        0x32, 0x0B, 0x00, 0x06, '$', 'S', 'Y', 'S', '/', 'x',
+        0x00, 0x03, 'z'
+    };
+
+    *sub_publishes = -1;
+    *pub_closed = -1;
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return;
+    }
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_sys, sizeof(subscribe_sys));
+    if (level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        mock_client_input_append(1, connect_pub5, sizeof(connect_pub5));
+    }
+    else {
+        mock_client_input_append(1, connect_pub4, sizeof(connect_pub4));
+    }
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    g_clients[1].out_len = 0;
+    if (level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        mock_client_input_append(1, publish5, sizeof(publish5));
+    }
+    else {
+        mock_client_input_append(1, publish4, sizeof(publish4));
+    }
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    *sub_publishes = count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH);
+    *pub_closed = g_clients[1].closed;
+    XMEMSET(ack, 0, ack_sz);
+    for (pos = 0; pos < g_clients[1].out_len && pos < ack_sz; pos++) {
+        ack[pos] = g_clients[1].out_buf[pos];
+    }
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifdef WOLFMQTT_V5
+TEST(broker_v5_client_dollar_topic_publish_rejected)
+{
+    int sub_publishes;
+    int pub_closed;
+    byte ack[8];
+    /* PUBACK, Remaining Length 3, packet id 3, Reason Code 0x90 */
+    static const byte expected[] = { 0x40, 0x03, 0x00, 0x03, 0x90 };
+
+    dollar_topic_publish(MQTT_CONNECT_PROTOCOL_LEVEL_5, &sub_publishes,
+        &pub_closed, ack, sizeof(ack));
+    ASSERT_EQ(0, sub_publishes);
+    ASSERT_EQ(0, pub_closed);
+    ASSERT_MEM_EQ(expected, ack, sizeof(expected));
+}
+#endif
+
+TEST(broker_v311_client_dollar_topic_publish_closes)
+{
+    int sub_publishes;
+    int pub_closed;
+    byte ack[8];
+
+    dollar_topic_publish(MQTT_CONNECT_PROTOCOL_LEVEL_4, &sub_publishes,
+        &pub_closed, ack, sizeof(ack));
+    ASSERT_EQ(0, sub_publishes);
+    ASSERT_EQ(1, pub_closed);
+    ASSERT_EQ(0, ack[0]); /* no PUBACK */
+}
+#endif
+
+#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_BROKER_WILDCARDS)
+/* [MQTT-4.7.2-1] A Topic Filter starting with a wildcard must not match a
+ * Topic Name starting with '$'; an exact filter still does. Exercised with a
+ * broker-originated message (a Will on "$SYS/t" published when its client
+ * closes abnormally), since clients cannot PUBLISH to $ topics. */
+TEST(broker_dollar_topic_not_matched_by_leading_wildcard)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v3.1.1 CONNECT, CleanSession 1, ClientId "A" / "B" */
+    static const byte connect_a[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'A'
+    };
+    static const byte connect_b[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
+    };
+    /* SUBSCRIBE packet id 1 "#" QoS 0 / "$SYS/t" QoS 0 */
+    static const byte subscribe_all[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, '#', 0x00
+    };
+    static const byte subscribe_sys[] = {
+        0x82, 0x0B, 0x00, 0x01, 0x00, 0x06,
+        '$', 'S', 'Y', 'S', '/', 't', 0x00
+    };
+    /* v3.1.1 CONNECT, flags Will + CleanSession (0x06), Keep Alive 60,
+     * ClientId "W", Will Topic "$SYS/t", Will Message "m".
+     * Remaining Length 10 + 3 + 8 + 3 = 24. */
+    static const byte connect_w[] = {
+        0x10, 0x18, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x06, 0x00, 0x3C, 0x00, 0x01, 'W',
+        0x00, 0x06, '$', 'S', 'Y', 'S', '/', 't',
+        0x00, 0x01, 'm'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(3);
+    mock_client_input_append(0, connect_a, sizeof(connect_a));
+    mock_client_input_append(0, subscribe_all, sizeof(subscribe_all));
+    mock_client_input_append(1, connect_b, sizeof(connect_b));
+    mock_client_input_append(1, subscribe_sys, sizeof(subscribe_sys));
+    mock_client_input_append(2, connect_w, sizeof(connect_w));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_clients[2].closed);
+
+    g_clients[2].read_err = 1; /* W drops: its Will is published */
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[2].closed);
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17952,6 +18138,15 @@ int main(int argc, char** argv)
     RUN_TEST(broker_dyn_client_admission_cap);
 #endif
     RUN_TEST(connect_takeover_of_empty_persistent_session_reports_present);
+#ifndef BROKER_ALLOW_CLIENT_DOLLAR_TOPICS
+#ifdef WOLFMQTT_V5
+    RUN_TEST(broker_v5_client_dollar_topic_publish_rejected);
+#endif
+    RUN_TEST(broker_v311_client_dollar_topic_publish_closes);
+#endif
+#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_BROKER_WILDCARDS)
+    RUN_TEST(broker_dollar_topic_not_matched_by_leading_wildcard);
+#endif
 #if defined(WOLFMQTT_BROKER_PERSIST) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_publish_scrubs_topic_copy);
 #endif

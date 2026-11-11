@@ -8803,6 +8803,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
     int wr;
 #endif
 
+#if defined(WOLFMQTT_V5) && !defined(BROKER_ALLOW_CLIENT_DOLLAR_TOPICS)
+    MqttPublishResp dollar_resp;
+#endif
+
     XMEMSET(&pub, 0, sizeof(pub));
 #ifdef WOLFMQTT_V5
     pub.protocol_level = bc->protocol_level;
@@ -8881,6 +8885,42 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
         goto publish_cleanup;
     }
 #endif /* WOLFMQTT_MAX_QOS < 2 */
+
+#ifndef BROKER_ALLOW_CLIENT_DOLLAR_TOPICS
+    /* MQTT 3.1.1 and 5.0 section 4.7.2: Topic Names beginning with '$' are
+     * reserved for the Server, which SHOULD stop Clients exchanging messages
+     * on them. Checked before any QoS 2 state is recorded. Build with
+     * BROKER_ALLOW_CLIENT_DOLLAR_TOPICS to forward them as before. */
+    if (pub.topic_name != NULL && pub.topic_name_len > 0 &&
+            pub.topic_name[0] == '$') {
+        WBLOG_ERR(broker, "broker: client PUBLISH to reserved $ topic "
+            "sock=%d", (int)bc->sock);
+    #ifdef WOLFMQTT_V5
+        if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            rc = MQTT_CODE_SUCCESS; /* QoS 0: dropped, nothing to answer */
+            if (pub.qos > MQTT_QOS_0) {
+                /* A failure ack: PUBREC >= 0x80 also ends a QoS 2 exchange
+                 * (MQTT 5.0 section 4.3.3). */
+                XMEMSET(&dollar_resp, 0, sizeof(dollar_resp));
+                dollar_resp.packet_id = pub.packet_id;
+                dollar_resp.protocol_level = bc->protocol_level;
+                dollar_resp.reason_code = MQTT_REASON_TOPIC_NAME_INVALID;
+                rc = MqttEncode_PublishResp(bc->tx_buf,
+                    BROKER_CLIENT_TX_SZ(bc), (pub.qos == MQTT_QOS_1) ?
+                    MQTT_PACKET_TYPE_PUBLISH_ACK :
+                    MQTT_PACKET_TYPE_PUBLISH_REC, &dollar_resp);
+                if (rc > 0) {
+                    rc = BrokerClient_WriteResp(bc, rc);
+                }
+            }
+            goto publish_cleanup;
+        }
+    #endif
+        /* v3.1.1 has no failure acknowledgement: close (section 3.3.5) */
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        goto publish_cleanup;
+    }
+#endif
 
 #if WOLFMQTT_MAX_QOS >= 2
     /* [MQTT-4.3.3] QoS 2 duplicate detection. If we already PUBREC'd this

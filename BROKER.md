@@ -85,6 +85,10 @@ All broker features are enabled by default and can be disabled at build time to 
 
 The maximum QoS the broker negotiates is capped by `--enable-max-qos=<0,1,2>` (default 2). Setting it to 1 or 0 compiles out the QoS 2 state machine and shrinks the broker.
 
+Clients may not publish to Topic Names that begin with `$`, which MQTT reserves for the server (section 4.7.2): an MQTT v5 QoS 1/2 PUBLISH is answered with Reason Code 0x90 (Topic Name invalid), a v5 QoS 0 PUBLISH is dropped, and an MQTT v3.1.1 client is disconnected. Define `BROKER_ALLOW_CLIENT_DOLLAR_TOPICS` to forward them like any other topic.
+
+In dynamic-memory builds the number of allocated clients, including connections that have not sent CONNECT yet, is capped by `BROKER_MAX_DYN_CLIENTS` (default 1024); further connections are closed on accept.
+
 `WOLFMQTT_NO_STDIO` turns `PRINTF` into a no-op, so it implies `WOLFMQTT_BROKER_NO_LOG` and the broker log calls are stripped. A port that supplies its own `PRINTF` through `WOLFMQTT_CUSTOM_PRINTF` keeps its logging.
 
 ## Static memory tuning
