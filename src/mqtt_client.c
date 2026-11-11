@@ -565,6 +565,10 @@ WOLFMQTT_LOCAL void MqttClient_SessionIdRecord(MqttClient* client,
 {
     size_t len;
 
+    /* Wipe the previous identifier so a rejected or shorter replacement
+     * leaves no stale bytes behind. */
+    CLIENT_FORCE_ZERO(client->session_client_id,
+        sizeof(client->session_client_id));
     client->session_client_id_len = 0;
     if (client_id == NULL) {
         return;
