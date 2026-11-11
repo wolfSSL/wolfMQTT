@@ -211,9 +211,8 @@ static INLINE int wmqb_read_header(const byte* buf, word32 buf_len,
     return 0;
 }
 
-#if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) || \
-    !defined(WOLFMQTT_STATIC_MEMORY)
-/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
+/* Volatile wipe the compiler cannot elide, for plaintext about to be freed
+ * and for stack copies of client identifiers. */
 static void wmqb_force_zero(void* mem, word32 len)
 {
     volatile byte* p = (volatile byte*)mem;
@@ -225,7 +224,6 @@ static void wmqb_force_zero(void* mem, word32 len)
         len--;
     }
 }
-#endif
 
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
 
@@ -1268,18 +1266,25 @@ int BrokerPersist_DelOutQueue(MqttBroker* broker, const char* client_id)
             rc = h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
                 wmqb_static_delq_iter_cb, &ctx);
             if (ctx.error != 0) {
-                return ctx.error;
+                rc = ctx.error;
+                break;
             }
             if (!ctx.found) {
-                return (rc != 0) ? rc : deleted;
+                if (rc == 0) {
+                    rc = deleted;
+                }
+                break;
             }
             rc = wmqb_kv_del_commit(broker, BROKER_PERSIST_NS_OUTQ,
                 ctx.key, ctx.key_len);
             if (rc != 0) {
-                return rc;
+                break;
             }
             deleted++;
         }
+        /* ctx.key starts with the client identifier */
+        wmqb_force_zero(&ctx, (word32)sizeof(ctx));
+        return rc;
     }
 #else
     {
