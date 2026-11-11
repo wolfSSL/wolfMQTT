@@ -2021,6 +2021,54 @@ TEST(broker_v5_second_connect_scrubbed_while_disconnect_pending)
 }
 #endif
 
+/* MQTT 3.1.1 section 3.1.2.4 and [MQTT-3.2.2-2]: a CleanSession 0 CONNECT
+ * that resumes stored Session state gets Session Present 1. A Session with
+ * no subscriptions or queued messages is still Session state, including
+ * when it is taken over from a connection that is still registered (the
+ * usual half-open reconnect). */
+TEST(connect_takeover_of_empty_persistent_session_reports_present)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v3.1.1 CONNECT, CleanSession 0, Keep Alive 60, ClientId "P" */
+    static const byte connect_p[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x00, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_p, sizeof(connect_p));
+    for (i = 0; i < 4; i++) {
+        MqttBroker_Step(&broker);
+    }
+    /* First CONNACK: new Session, Session Present 0 */
+    ASSERT_TRUE(g_clients[0].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[0].out_buf[0]);
+    ASSERT_EQ(0x00, g_clients[0].out_buf[2]);
+    ASSERT_EQ(0x00, g_clients[0].out_buf[3]);
+    ASSERT_FALSE(g_clients[0].closed);
+
+    /* The same ClientId reconnects while the first connection is live */
+    mock_client_input_append(1, connect_p, sizeof(connect_p));
+    for (i = 0; i < 6; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[0].closed);
+    ASSERT_TRUE(g_clients[1].out_len >= 4);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);
+    ASSERT_EQ(0x00, g_clients[1].out_buf[3]);
+    ASSERT_EQ(0x01, g_clients[1].out_buf[2]);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17626,6 +17674,7 @@ int main(int argc, char** argv)
     BROKER_MAX_DYN_CLIENTS < MOCK_MAX_CLIENTS
     RUN_TEST(broker_dyn_client_admission_cap);
 #endif
+    RUN_TEST(connect_takeover_of_empty_persistent_session_reports_present);
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(broker_v5_unmatched_pubrec_pubrel_not_found);
 #endif

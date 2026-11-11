@@ -8196,6 +8196,13 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
              * and QoS2 state must not carry into the new client. Matches the
              * old_persists check the QoS2 takeover helper already applies. */
             if (!mc.clean_session && old->session_expiry_sec != 0) {
+                /* The old connection's persistent Session is being resumed,
+                 * even when it holds no subscriptions or queued messages:
+                 * that is still Session state (MQTT 3.1.1 section 3.1.2.4,
+                 * [MQTT-3.2.2-2]; MQTT 5.0 section 4.1, [MQTT-3.2.2-3]). */
+                if (old->session_established) {
+                    session_present = 1;
+                }
                 /* Reassociate old client's subs to new client */
                 if (BrokerSubs_ReassociateClient(broker, bc->client_id, bc)
                     > 0) {
