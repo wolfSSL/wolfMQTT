@@ -135,6 +135,7 @@ typedef char wolfmqtt_broker_time_t_must_be_unsigned[
  * fit. NULL src yields "(null)". */
 static char broker_log_san_pool[BROKER_LOG_SAN_POOL][BROKER_LOG_SAN_SZ];
 
+#ifdef WOLFMQTT_BROKER_AUTH
 /* Wipe every sanitizer slot, for a log line whose argument (e.g. a failed
  * login's User Name) should not stay in static memory until the slot is
  * reused. */
@@ -142,6 +143,7 @@ static void BrokerLog_SanitizeClear(void)
 {
     BROKER_FORCE_ZERO(broker_log_san_pool, sizeof(broker_log_san_pool));
 }
+#endif
 
 WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src)
 {
