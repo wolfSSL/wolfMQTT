@@ -4471,16 +4471,18 @@ int MqttProps_Free(MqttProp *head)
     }
 #endif
     while (head != NULL) {
-#ifndef WOLFMQTT_DYN_PROP
-        head->type = MQTT_PROP_NONE; /* available */
-        head = head->next;
-#else
         MqttProp *tmp;
 
         tmp = head->next;
+        /* Wipe the whole record so no pointer, length or value of the
+         * released property (e.g. v5 Authentication Data) is left behind.
+         * In the static pool this also marks the slot available, since
+         * MQTT_PROP_NONE is zero. */
+        CLIENT_FORCE_ZERO(head, sizeof(MqttProp));
+#ifdef WOLFMQTT_DYN_PROP
         WOLFMQTT_FREE(head);
-        head = tmp;
 #endif
+        head = tmp;
     }
 #if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     (void)wm_SemUnlock(&clientPropStack_lock);

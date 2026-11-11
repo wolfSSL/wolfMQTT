@@ -1810,6 +1810,37 @@ TEST(props_find_type)
     MqttProps_Free(head);
 }
 
+#ifndef WOLFMQTT_DYN_PROP
+/* A released property returns to the process-lifetime static pool. Clearing
+ * only the type leaves the previous owner's pointers, lengths and values (for
+ * example v5 Authentication Data) in the slot until it is reused, so the
+ * whole record must be wiped on release. */
+TEST(props_free_wipes_static_pool_record)
+{
+    static byte auth_data[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    static const byte zero[sizeof(MqttProp)] = { 0 };
+    MqttProp* head = NULL;
+    MqttProp* first;
+    MqttProp* second;
+
+    first = MqttProps_Add(&head);
+    ASSERT_NOT_NULL(first);
+    first->type = MQTT_PROP_AUTH_DATA;
+    first->data_bin.data = auth_data;
+    first->data_bin.len = (word16)sizeof(auth_data);
+    second = MqttProps_Add(&head);
+    ASSERT_NOT_NULL(second);
+    second->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    second->data_int = 0x12345678;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttProps_Free(head));
+
+    /* Pool slots stay addressable after release */
+    ASSERT_MEM_EQ(zero, first, sizeof(MqttProp));
+    ASSERT_MEM_EQ(zero, second, sizeof(MqttProp));
+}
+#endif
+
 /* A single message may not carry more than the internal
  * MQTT_MAX_PROPS (default 30) properties; otherwise a peer can saturate the
  * shared property pool. 40 User Property entries exceeds that cap. The cap
@@ -7696,6 +7727,9 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(props_find_type);
+#ifndef WOLFMQTT_DYN_PROP
+    RUN_TEST(props_free_wipes_static_pool_record);
+#endif
     RUN_TEST(decode_publish_v5_property_count_capped);
     RUN_TEST(decode_publish_v5_duplicate_singleton_prop_rejected);
     RUN_TEST(decode_publish_v5_duplicate_subscription_id_accepted);
