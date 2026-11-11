@@ -2899,6 +2899,12 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             if (remain_len > MQTT_DATA_LEN_SIZE) {
                 /* Decode the Reason Code */
                 publish_resp->reason_code = *rx_payload++;
+                /* MQTT 5.0 sections 3.4.2.1 to 3.7.2.1: only the codes
+                 * listed for this packet type are defined. */
+                if (!MqttPacket_PublishRespReasonCodeValid(type,
+                        publish_resp->reason_code)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
             }
             else {
                 publish_resp->reason_code = MQTT_REASON_SUCCESS;
@@ -4124,6 +4130,10 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
         /* Decode variable header */
         disc->reason_code = *rx_payload++;
+        /* [MQTT-3.14.2-1] The Reason Code must be one of Table 3-10 */
+        if (!MqttPacket_DisconnectReasonCodeValid(disc->reason_code)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         if (remain_len > 1) {
             int props_tmp;

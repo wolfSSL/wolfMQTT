@@ -6062,6 +6062,34 @@ TEST(decode_puback_v5_with_reason_code_accepted)
     MqttProps_Free(resp.props);
 }
 
+/* MQTT 5.0 sections 3.4.2.1 and 3.7.2.1 list the Reason Codes each publish
+ * response may carry; any other value is a Malformed Packet. 0x01 is not
+ * defined for PUBACK, and 0x10 (No matching subscribers) is a PUBACK/PUBREC
+ * code that PUBCOMP may not carry. */
+TEST(decode_publish_resp_v5_undefined_reason_code_rejected)
+{
+    /* PUBACK, Remaining Length 3, Packet Identifier 7, Reason Code 0x01 */
+    byte puback[] = { 0x40, 0x03, 0x00, 0x07, 0x01 };
+    /* PUBCOMP, Remaining Length 3, Packet Identifier 7, Reason Code 0x10 */
+    byte pubcomp[] = { 0x70, 0x03, 0x00, 0x07, 0x10 };
+    MqttPublishResp resp;
+    int rc;
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_PublishResp(puback, (int)sizeof(puback),
+        MQTT_PACKET_TYPE_PUBLISH_ACK, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(resp.props);
+
+    XMEMSET(&resp, 0, sizeof(resp));
+    resp.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_PublishResp(pubcomp, (int)sizeof(pubcomp),
+        MQTT_PACKET_TYPE_PUBLISH_COMP, &resp);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(resp.props);
+}
+
 /* Remaining Length advertises a Reason Code but the supplied buffer stops
  * right after the Packet Identifier. The decoder must reject the short frame
  * instead of reading the reason-code byte out of bounds. */
@@ -6542,6 +6570,24 @@ TEST(decode_disconnect_v5_with_reason_code_accepted)
     ASSERT_TRUE(rc > 0);
     ASSERT_EQ(0, disc.reason_code);
     MqttProps_Free(disc.props);
+}
+
+/* [MQTT-3.14.2-1] A DISCONNECT Reason Code must be one of Table 3-10; 0x05
+ * is not defined there. */
+TEST(decode_disconnect_v5_undefined_reason_code_rejected)
+{
+    byte buf[] = {
+        0xE0, 0x02,
+        0x05,                           /* undefined reason code */
+        0x00                            /* properties length = 0 */
+    };
+    MqttDisconnect disc;
+    int rc;
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    rc = MqttDecode_Disconnect(buf, (int)sizeof(buf), &disc);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(disc.props);
 }
 
 /* Remaining Length advertises a Reason Code but the supplied buffer is only
@@ -8037,6 +8083,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_puback_packet_id_one_accepted);
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_puback_v5_with_reason_code_accepted);
+    RUN_TEST(decode_publish_resp_v5_undefined_reason_code_rejected);
     RUN_TEST(decode_puback_v5_reason_code_past_buf_rejected);
 #endif
 
@@ -8080,6 +8127,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_disconnect_v5_invalid_fixed_header_flags_rejected);
     RUN_TEST(decode_disconnect_v5_with_reason_code_accepted);
+    RUN_TEST(decode_disconnect_v5_undefined_reason_code_rejected);
     RUN_TEST(decode_disconnect_v5_reason_code_past_buf_rejected);
     RUN_TEST(encode_disconnect_v5_reason_code_allowed_set);
     RUN_TEST(encode_disconnect_v5_reason_code_out_of_table_rejected);
