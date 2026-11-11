@@ -3013,6 +3013,12 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         #endif
+            /* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 2.1.4: keep the
+             * sum within the Remaining Length limit so it cannot overflow */
+            if ((word32)remain_len > MQTT_PACKET_MAX_REMAIN_LEN -
+                    ((word32)str_len + MQTT_DATA_LEN_SIZE + 1)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
             remain_len++; /* For QoS */
         }
@@ -3489,6 +3495,12 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         #endif
+            /* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 2.1.4: keep the
+             * sum within the Remaining Length limit so it cannot overflow */
+            if ((word32)remain_len > MQTT_PACKET_MAX_REMAIN_LEN -
+                    ((word32)str_len + MQTT_DATA_LEN_SIZE)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
         }
         else {
