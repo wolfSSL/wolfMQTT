@@ -1848,6 +1848,56 @@ TEST(wait_message_v5_publish_prop_cb_error_frees_props)
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.14.2.2.2: if the Session Expiry Interval in CONNECT was
+ * zero (or absent), a non-zero Session Expiry Interval in the Client's
+ * DISCONNECT is a Protocol Error, so the client must not send one. */
+TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected)
+{
+    MqttConnect connect;
+    MqttDisconnect disc;
+    MqttProp* prop;
+    int rc;
+    int i;
+    /* v5 CONNACK, Session Present 0, Reason Code Success, no properties */
+    static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_net.connect = mock_net_connect_ok;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    /* CONNECT without a Session Expiry Interval: zero */
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "expiry_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    prop = MqttClient_PropsAdd(&disc.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    prop->data_int = 10;
+    g_frames_written = 0;
+    rc = MqttClient_Disconnect_ex(&test_client, &disc);
+    (void)MqttClient_PropsFree(disc.props);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+}
+#endif
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -10565,6 +10615,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_oversize_publish_header_disconnects);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected);
+#endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB) && \
     !defined(WOLFMQTT_DYN_PROP)
     RUN_TEST(wait_message_v5_publish_prop_cb_error_frees_props);

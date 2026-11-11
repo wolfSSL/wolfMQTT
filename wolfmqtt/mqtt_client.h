@@ -203,7 +203,12 @@ enum MqttClientFlags {
      * in that window, so the other send APIs refuse. Managed by the library -
      * set by MqttClient_Connect, cleared when the CONNACK is processed and by
      * MqttSocket_Connect and MqttSocket_Disconnect. */
-    MQTT_CLIENT_FLAG_AUTH_PENDING = 0x01 << 11
+    MQTT_CLIENT_FLAG_AUTH_PENDING = 0x01 << 11,
+    /* The last v5 CONNECT written had a zero (or absent) Session Expiry
+     * Interval, so a non-zero one in the Client's DISCONNECT would be a
+     * Protocol Error (MQTT 5.0 section 3.14.2.2.2). Managed by the library -
+     * set or cleared by MqttClient_Connect. */
+    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO = 0x01 << 12
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.

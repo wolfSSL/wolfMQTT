@@ -3674,6 +3674,22 @@ static void MqttClient_ConnectKeepAlive(MqttClient* client,
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* Return the Session Expiry Interval in props, or 0 when it is absent (MQTT
+ * 5.0 sections 3.1.2.11.2 and 3.14.2.2.2). */
+static word32 MqttClient_PropsSessionExpiry(const MqttProp* props)
+{
+    const MqttProp* prop;
+
+    for (prop = props; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_SESSION_EXPIRY_INTERVAL) {
+            return prop->data_int;
+        }
+    }
+    return 0;
+}
+#endif
+
 int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 {
     int rc;
@@ -3967,6 +3983,17 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
              * out. Resuming this same write re-enters past MQTT_MSG_BEGIN, so
              * the once-per-connection guard does not see it. */
             (void)MqttClient_Flags(client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT);
+        #ifdef WOLFMQTT_V5
+            if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                    MqttClient_PropsSessionExpiry(mc_connect->props) == 0) {
+                (void)MqttClient_Flags(client, 0,
+                    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO);
+            }
+            else {
+                (void)MqttClient_Flags(client,
+                    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO, 0);
+            }
+        #endif
         #ifndef WOLFMQTT_NO_SESSION_REPLAY
             if (MqttClient_ConnectIsPersistent(mc_connect)) {
                 (void)MqttClient_Flags(client, 0,
@@ -5549,6 +5576,17 @@ int MqttClient_Disconnect_ex(MqttClient *client, MqttDisconnect *p_disconnect)
     }
 
     if (disconnect->stat.write == MQTT_MSG_BEGIN) {
+    #ifdef WOLFMQTT_V5
+        /* MQTT 5.0 section 3.14.2.2.2: after a zero Session Expiry Interval
+         * in CONNECT, a non-zero one in DISCONNECT is a Protocol Error.
+         * Checked before anything is torn down. */
+        if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                (MqttClient_Flags(client, 0, 0) &
+                    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO) != 0 &&
+                MqttClient_PropsSessionExpiry(disconnect->props) != 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
+    #endif
     #ifndef WOLFMQTT_NO_TIME
         /* Stop auto keep-alive for a client being torn down, and fully cancel
          * any ping left mid-exchange so its held locks and pending response are
