@@ -500,7 +500,10 @@ typedef struct _MqttConnect {
     byte        clean_session;
     const char *client_id;
 
-    /* Protocol version: 4=v3.1.1 (default), 5=v5.0 */
+    /* Protocol version: 4=v3.1.1, 5=v5.0. 0 selects the build default
+     * (MQTT_CONNECT_PROTOCOL_LEVEL: 5 with WOLFMQTT_V5, otherwise 4). In
+     * WOLFMQTT_V5 builds MqttClient_Connect overwrites this field with
+     * client->protocol_level; set client->protocol_level instead. */
     byte protocol_level;
 
     /* Optional Last will and testament */
