@@ -9383,10 +9383,15 @@ publish_cleanup:
         (void)MqttProps_Free(pub.props);
     }
 #endif
+    /* Wipe the temporary topic copy, as other temporary topic storage is */
 #ifndef WOLFMQTT_STATIC_MEMORY
     if (topic) {
+        /* By length: a topic with an embedded NUL ends early for XSTRLEN */
+        BROKER_FORCE_ZERO(topic, (word32)pub.topic_name_len + 1);
         WOLFMQTT_FREE(topic);
     }
+#else
+    BROKER_FORCE_ZERO(topic_buf, sizeof(topic_buf));
 #endif
 
     return rc;

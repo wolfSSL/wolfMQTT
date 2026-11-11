@@ -2069,6 +2069,56 @@ TEST(connect_takeover_of_empty_persistent_session_reports_present)
     MqttBroker_Free(&broker);
 }
 
+#if defined(WOLFMQTT_BROKER_PERSIST) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* BrokerHandle_Publish makes a NUL-terminated heap copy of the Topic Name
+ * for matching and logging. It must be wiped before it is freed, like the
+ * broker's other temporary topic storage. */
+TEST(broker_publish_scrubs_topic_copy)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    byte connect[64];
+    size_t connect_len;
+    size_t i;
+    int seen;
+    int zeroed = 1;
+    /* v3.1.1 PUBLISH QoS 0, Topic Name "scrub/topic/x" (13 bytes), payload
+     * "p". Remaining Length 2 + 13 + 1 = 16. */
+    static const byte publish[] = {
+        0x30, 0x10, 0x00, 0x0D,
+        's', 'c', 'r', 'u', 'b', '/', 't', 'o', 'p', 'i', 'c', '/', 'x',
+        'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    connect_len = build_v311_connect_emptyid(connect, 0x02);
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+    ASSERT_FALSE(g_client_closed);
+
+    broker_test_capture_free(13 + 1); /* the topic copy and its NUL */
+    mock_client_input_append(0, publish, sizeof(publish));
+    for (i = 0; i < 4 && g_in_pos < g_in_len; i++) {
+        MqttBroker_Step(&broker);
+    }
+    seen = g_capture_free_seen;
+    for (i = 0; i < g_capture_freed_len; i++) {
+        if (g_capture_freed[i] != 0) {
+            zeroed = 0;
+        }
+    }
+    broker_test_disable_free_capture();
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+
+    ASSERT_TRUE(seen);
+    ASSERT_TRUE(zeroed);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17675,6 +17725,9 @@ int main(int argc, char** argv)
     RUN_TEST(broker_dyn_client_admission_cap);
 #endif
     RUN_TEST(connect_takeover_of_empty_persistent_session_reports_present);
+#if defined(WOLFMQTT_BROKER_PERSIST) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(broker_publish_scrubs_topic_copy);
+#endif
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(broker_v5_unmatched_pubrec_pubrel_not_found);
 #endif
