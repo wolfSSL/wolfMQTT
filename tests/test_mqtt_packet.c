@@ -6323,6 +6323,34 @@ TEST(decode_unsuback_v5_reason_codes)
     ASSERT_EQ(0x87, ack.reason_codes[1]);
 }
 
+/* The decoded UNSUBACK reason codes belong to the ack object, as the SUBACK
+ * return codes do. In multithread builds another thread may read the next
+ * packet into the shared rx_buf before the unsubscribing thread inspects
+ * them, so they must not point into the receive buffer. */
+TEST(decode_unsuback_v5_reason_codes_survive_rx_buf_reuse)
+{
+    byte buf[] = {
+        0xB0, 0x05,                        /* UNSUBACK, remain_len = 5 */
+        0x00, 0x01,                        /* packet_id */
+        0x00,                              /* props_len = 0 */
+        0x00, 0x87                         /* success, NOT_AUTHORIZED */
+    };
+    MqttUnsubscribeAck ack;
+    int rc;
+
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_UnsubscribeAck(buf, (int)sizeof(buf), &ack);
+    ASSERT_TRUE(rc > 0);
+    ASSERT_EQ(2, ack.reason_code_count);
+
+    /* The next inbound packet lands in the same buffer */
+    XMEMSET(buf, 0xA5, sizeof(buf));
+    ASSERT_TRUE(ack.reason_codes != NULL);
+    ASSERT_EQ(0x00, ack.reason_codes[0]);
+    ASSERT_EQ(0x87, ack.reason_codes[1]);
+}
+
 /* A v5 UNSUBACK whose property length runs past its own Remaining Length must
  * be rejected even when the caller buffer holds trailing bytes from the next
  * packet: consuming them would push past the packet and underflow
@@ -8028,6 +8056,7 @@ void run_mqtt_packet_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(decode_unsuback_v5_longer_body_still_accepted);
     RUN_TEST(decode_unsuback_v5_reason_codes);
+    RUN_TEST(decode_unsuback_v5_reason_codes_survive_rx_buf_reuse);
     RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
     RUN_TEST(decode_unsuback_v5_missing_props_len_rejected);
 #endif

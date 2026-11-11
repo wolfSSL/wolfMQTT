@@ -656,6 +656,9 @@ typedef struct _MqttUnsubscribeAck {
     byte*     reason_codes;
     word16    reason_code_count;
     byte protocol_level;
+    /* Decoded reason codes (the first MAX_MQTT_TOPICS); reason_codes points
+     * here after a decode so they do not depend on the receive buffer. */
+    byte      reason_codes_buf[MAX_MQTT_TOPICS];
 #endif
 } MqttUnsubscribeAck;
 

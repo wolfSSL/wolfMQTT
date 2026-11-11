@@ -5328,7 +5328,9 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
                 MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
         }
         else {
-            for (i = 0; i < unsubscribe->ack.reason_code_count; i++) {
+            /* The ack stores at most MAX_MQTT_TOPICS reason codes */
+            for (i = 0; i < unsubscribe->ack.reason_code_count &&
+                    i < MAX_MQTT_TOPICS; i++) {
                 if (unsubscribe->ack.reason_codes[i] & 0x80) {
                     rc = MQTT_TRACE_ERROR(
                         MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED);

@@ -3774,7 +3774,6 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             if (rx_payload > packet_end) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
-            unsubscribe_ack->reason_codes = rx_payload;
             unsubscribe_ack->reason_code_count =
                 (word16)(packet_end - rx_payload);
 
@@ -3782,8 +3781,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
              * the SUBACK path; free any decoded v5 props before returning. */
             for (rc_idx = 0; rc_idx < unsubscribe_ack->reason_code_count;
                     rc_idx++) {
-                if (!MqttPacket_UnsubAckReasonCodeValid(
-                        unsubscribe_ack->reason_codes[rc_idx])) {
+                if (!MqttPacket_UnsubAckReasonCodeValid(rx_payload[rc_idx])) {
                     if (unsubscribe_ack->props != NULL) {
                         (void)MqttProps_Free(unsubscribe_ack->props);
                         unsubscribe_ack->props = NULL;
@@ -3791,6 +3789,15 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
             }
+            /* Copy into the ack, as the SUBACK return codes are: in
+             * multithread builds the receive buffer is reused by another
+             * reader before the waiting thread looks at the codes. */
+            XMEMSET(unsubscribe_ack->reason_codes_buf, 0,
+                sizeof(unsubscribe_ack->reason_codes_buf));
+            XMEMCPY(unsubscribe_ack->reason_codes_buf, rx_payload,
+                (unsubscribe_ack->reason_code_count > MAX_MQTT_TOPICS) ?
+                    MAX_MQTT_TOPICS : unsubscribe_ack->reason_code_count);
+            unsubscribe_ack->reason_codes = unsubscribe_ack->reason_codes_buf;
         }
 #endif
     }
