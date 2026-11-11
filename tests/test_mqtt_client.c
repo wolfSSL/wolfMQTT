@@ -2036,8 +2036,10 @@ TEST(publish_short_buffer_without_callback_rejected)
     ASSERT_EQ(0, g_frames_written);
 }
 
-#if WOLFMQTT_MAX_QOS < 2
+/* Counts deliveries through test_accept_message_cb (defined further down) */
 static int g_msg_cb_calls;
+
+#if WOLFMQTT_MAX_QOS < 2
 static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
     byte msg_new, byte msg_done);
 
@@ -9523,6 +9525,8 @@ static int run_wait_message_with_frame(const byte* frame, int frame_len)
     return rc;
 }
 
+#if WOLFMQTT_MAX_QOS >= 1
+/* An inbound QoS 1 PUBLISH is a protocol error when WOLFMQTT_MAX_QOS is 0 */
 /* #6217: a client initialized with a NULL msg_cb that receives a QoS 1 PUBLISH
  * used to silently drain and discard the payload, return MQTT_CODE_SUCCESS, and
  * then send a PUBACK telling the broker the message was delivered. The
@@ -9546,6 +9550,7 @@ TEST(wait_message_qos1_null_msg_cb_errors_no_ack)
      * was emitted here, falsely confirming delivery of a dropped message. */
     ASSERT_FALSE(g_pubresp_written);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 /* #6217 (QoS 0 half): a QoS 0 PUBLISH carries no acknowledgement, so the false
  * ACK does not apply, but with a NULL msg_cb the message was still silently
@@ -9747,6 +9752,8 @@ TEST(wait_message_ex_qos2_quota_reason_not_retained)
 #endif /* WOLFMQTT_MAX_QOS >= 2 && MQTT_MAX_RECV_QOS2 < 65535 */
 
 #ifdef WOLFMQTT_V5
+#if WOLFMQTT_MAX_QOS >= 1
+/* An inbound QoS 1 PUBLISH is a protocol error when WOLFMQTT_MAX_QOS is 0 */
 /* #6217 property-leak regression: a v5 incoming PUBLISH carrying properties must
  * not leak its retained property list when there is no msg_cb. The decoder keeps
  * the property list to be freed after the callback; on the no-callback error
@@ -9788,6 +9795,7 @@ TEST(wait_message_v5_props_null_msg_cb_frees_props)
      * pre-fix it leaked, leaving publish->props non-NULL. */
     ASSERT_NULL(test_client.msg.publish.props);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 #endif /* WOLFMQTT_V5 */
 
 /* Message callback that fails on call number g_msg_cb_fail_on (1-based). */
@@ -9876,8 +9884,8 @@ TEST(wait_message_cb_error_later_chunk_clears_connected)
         MQTT_CLIENT_FLAG_IS_CONNECTED));
 }
 
-/* Counts deliveries for the positive-control test below. */
-static int g_msg_cb_calls;
+/* Delivers for the positive-control test below, counted in
+ * g_msg_cb_calls. */
 static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
     byte msg_new, byte msg_done)
 {
@@ -10166,6 +10174,8 @@ TEST(wait_message_v5_topic_alias_with_topic_rejected)
  * NULL callback and only asserts the FALSE direction of g_pubresp_written, so a
  * regression that suppressed ACKs outright would go unnoticed. */
 #ifdef WOLFMQTT_V5
+#if WOLFMQTT_MAX_QOS >= 1
+/* An inbound QoS 1 PUBLISH is a protocol error when WOLFMQTT_MAX_QOS is 0 */
 /* Rejects the QoS 1 message (packet_id 7) with a Reason Code that is not valid
  * for PUBACK, and counts every delivery. */
 static int g_bad_ack_cb_calls;
@@ -10227,6 +10237,7 @@ TEST(wait_message_ack_encode_failure_resets_wait_state)
     ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
     ASSERT_EQ(2, g_bad_ack_cb_calls);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 #endif /* WOLFMQTT_V5 */
 
 /* Serves g_canned_buf, then fails the connection. */
@@ -10281,6 +10292,8 @@ TEST(wait_message_network_error_after_partial_read_scrubs_rx_buf)
     }
 }
 
+#if WOLFMQTT_MAX_QOS >= 1
+/* An inbound QoS 1 PUBLISH is a protocol error when WOLFMQTT_MAX_QOS is 0 */
 TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
 {
     int rc;
@@ -10316,6 +10329,7 @@ TEST(wait_message_qos1_with_msg_cb_delivers_and_acks)
     ASSERT_TRUE(g_msg_cb_calls > 0);
     ASSERT_TRUE(g_pubresp_written);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 /* Stage `frame` as a server-pushed PUBLISH and drive MqttClient_WaitMessage
  * with a real msg_cb registered, so the message is delivered and the QoS
@@ -10390,6 +10404,8 @@ TEST(wait_message_qos0_publish_no_ack)
     ASSERT_EQ(0, g_frames_written);
 }
 
+#if WOLFMQTT_MAX_QOS >= 1
+/* An inbound QoS 1 PUBLISH is a protocol error when WOLFMQTT_MAX_QOS is 0 */
 TEST(wait_message_qos1_publish_acks_puback)
 {
     int rc;
@@ -10406,6 +10422,7 @@ TEST(wait_message_qos1_publish_acks_puback)
     ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_ACK, g_last_ack_written);
     ASSERT_EQ(7, g_last_ack_id);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 1 */
 
 #if WOLFMQTT_MAX_QOS >= 2
 TEST(wait_message_qos2_publish_acks_pubrec)
@@ -11784,7 +11801,9 @@ void run_mqtt_client_tests(void)
 
     /* MqttClient_WaitMessage tests */
     RUN_TEST(wait_message_null_client);
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(wait_message_qos1_null_msg_cb_errors_no_ack);
+#endif
     RUN_TEST(wait_message_qos0_null_msg_cb_errors);
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
@@ -11799,14 +11818,20 @@ void run_mqtt_client_tests(void)
 #endif
 #endif
 #ifdef WOLFMQTT_V5
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(wait_message_v5_props_null_msg_cb_frees_props);
+#endif
     RUN_TEST(wait_message_v5_empty_topic_with_alias_rejected);
     RUN_TEST(wait_message_v5_topic_alias_with_topic_rejected);
 #endif
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(wait_message_qos1_with_msg_cb_delivers_and_acks);
+#endif
     RUN_TEST(wait_message_network_error_after_partial_read_scrubs_rx_buf);
 #ifdef WOLFMQTT_V5
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(wait_message_ack_encode_failure_resets_wait_state);
+#endif
 #endif
 #ifdef WOLFMQTT_NONBLOCK
     RUN_TEST(wait_message_timeout_preserves_partial_vbi);
@@ -11818,7 +11843,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_reads_each_packet_once);
     RUN_TEST(publish_header_fills_tx_buf_sends_payload);
     RUN_TEST(wait_message_qos0_publish_no_ack);
+#if WOLFMQTT_MAX_QOS >= 1
     RUN_TEST(wait_message_qos1_publish_acks_puback);
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(wait_message_qos2_publish_acks_pubrec);
 #endif
