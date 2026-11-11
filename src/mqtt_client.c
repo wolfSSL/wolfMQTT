@@ -701,20 +701,27 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
 {
     MqttReplayMsg* slot;
     size_t topic_len;
+    word32 seq;
 
     if (publish->packet_id == 0 || publish->topic_name == NULL) {
         return;
     }
-    /* A re-send reuses the entry the original PUBLISH created. */
+    /* A re-send reuses the entry the original PUBLISH created, and keeps
+     * its place in the send order. */
     slot = MqttClient_Replay_Find(client, publish->packet_id);
-    if (slot == NULL) {
-        slot = MqttClient_Replay_Find(client, 0);
+    if (slot != NULL) {
+        seq = slot->seq;
     }
-    if (slot == NULL) {
-        return; /* pool full: not retained */
+    else {
+        slot = MqttClient_Replay_Find(client, 0);
+        if (slot == NULL) {
+            return; /* pool full: not retained */
+        }
+        seq = ++client->replay_seq;
     }
     MqttClient_Replay_FreeSlot(slot);
 
+    slot->seq = seq;
     slot->packet_id = publish->packet_id;
     slot->qos = (byte)publish->qos;
     slot->retain = publish->retain;
@@ -810,6 +817,11 @@ static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id)
     }
     else if (slot->qos != MQTT_QOS_2) {
         return;
+    }
+    if (!slot->pubrelSent) {
+        /* PUBRELs replay in the order their PUBRECs arrived (MQTT 3.1.1 and
+         * 5.0 section 4.6). */
+        slot->seq = ++client->replay_seq;
     }
     slot->pubrelSent = 1;
 }
@@ -3359,9 +3371,11 @@ static int MqttConnect_HasRecvMax(const MqttConnect* mc_connect)
 #endif
 
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
-/* Encode the replay packet for client->replay[client->replayIdx] into
- * client->tx_buf. Returns the encoded length, 0 when the slot has nothing to
- * send, or a negative error when the client lock could not be taken.
+/* Select the pending replay entry sent earliest, record it in
+ * client->replayIdx and encode its packet into client->tx_buf. Returns the
+ * encoded length, 0 when the slot has nothing to send (replayIdx is
+ * MQTT_MAX_REPLAY_MSGS once no entry is pending), or a negative error when
+ * the client lock could not be taken.
  *
  * When the entry cannot be rebuilt it is dropped here and its Packet
  * Identifier is reported through dropped_id so the caller can release the
@@ -3379,6 +3393,7 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
     MqttReplayMsg* slot;
     int rc = 0;
     int keep = 0;
+    int i;
 
     *dropped_id = 0;
 #ifdef WOLFMQTT_MULTITHREAD
@@ -3387,7 +3402,27 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
         return rc;
     }
 #endif
+    /* [MQTT-4.6.0-1] Re-send in the original send order: take the pending
+     * entry recorded earliest, not the lowest slot, which a later message
+     * may have reused. Sequence numbers are compared modulo 2^32. */
+    client->replayIdx = MQTT_MAX_REPLAY_MSGS;
+    for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+        if (client->replay[i].replayPending &&
+                (client->replayIdx == MQTT_MAX_REPLAY_MSGS ||
+                 (word32)(client->replay[client->replayIdx].seq -
+                    client->replay[i].seq) - 1u < 0x7FFFFFFFu)) {
+            client->replayIdx = i;
+        }
+    }
+    if (client->replayIdx == MQTT_MAX_REPLAY_MSGS) {
+        /* Nothing left to re-send */
+    #ifdef WOLFMQTT_MULTITHREAD
+        wm_SemUnlock(&client->lockClient);
+    #endif
+        return 0;
+    }
     slot = &client->replay[client->replayIdx];
+    slot->replayPending = 0;
 
     /* Empty slots, and PUBLISHes whose payload could not be retained, have
      * nothing to send. The entry is kept rather than dropped: the server may
@@ -3458,14 +3493,15 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
  * server answered with Session Present = 1. [MQTT-4.4.0-1] requires every
  * unacknowledged QoS > 0 PUBLISH and PUBREL to go out again with its original
  * Packet Identifier, and [MQTT-3.3.1-1] requires DUP on the re-delivered
- * PUBLISH. Resumable: client->replayIdx records how far it got, so a
- * nonblocking caller re-enters and continues rather than restarting. */
+ * PUBLISH, in the original send order [MQTT-4.6.0-1]. Resumable: each
+ * entry's replayPending flag records what is left, so a nonblocking caller
+ * re-enters and continues rather than restarting. */
 static int MqttClient_ReplaySession(MqttClient* client,
     MqttConnect* mc_connect)
 {
     int rc = MQTT_CODE_SUCCESS;
 
-    while (client->replayIdx < MQTT_MAX_REPLAY_MSGS) {
+    for (;;) {
         int xfer;
         word16 dropped_id;
 
@@ -3486,8 +3522,10 @@ static int MqttClient_ReplaySession(MqttClient* client,
                     MqttClient_SendIdRelease(client, dropped_id,
                         MQTT_PACKET_TYPE_RESERVED);
                 }
-                client->replayIdx++; /* nothing to send from this slot */
-                continue;
+                if (client->replayIdx >= MQTT_MAX_REPLAY_MSGS) {
+                    break; /* every pending entry has been handled */
+                }
+                continue; /* nothing to send from this slot */
             }
             client->write.len = rc;
         }
@@ -3503,8 +3541,8 @@ static int MqttClient_ReplaySession(MqttClient* client,
         if (rc != xfer) {
             return rc; /* transport failed; the entry stays retained */
         }
-        client->replayIdx++;
     }
+    client->replayIdx = MQTT_MAX_REPLAY_MSGS;
 
     return MQTT_CODE_SUCCESS;
 }
@@ -4174,11 +4212,14 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
                         client->replay[i].packet_id, &client->replay[i]);
                     MqttClient_Replay_FreeSlot(&client->replay[i]);
                 }
+                else {
+                    client->replay[i].replayPending = 1;
+                }
             }
 #ifdef WOLFMQTT_MULTITHREAD
             wm_SemUnlock(&client->lockClient);
 #endif
-            client->replayIdx = 0;
+            client->replayIdx = MQTT_MAX_REPLAY_MSGS;
             mc_connect->stat.write = MQTT_MSG_PAYLOAD;
             rc = MqttClient_ReplaySession(client, mc_connect);
             if (rc == MQTT_CODE_CONTINUE) {

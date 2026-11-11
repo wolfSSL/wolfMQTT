@@ -4805,6 +4805,82 @@ TEST(reconnect_replays_at_most_pool_size)
     }
 }
 
+/* Packet Identifiers of the PUBLISH frames written, in wire order. */
+static int g_order_pub_ids[8];
+static int g_order_pub_count;
+
+static int order_mock_write(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)timeout_ms;
+    if (buf == NULL || buf_len <= 0) {
+        return 0;
+    }
+    /* PUBLISH, Remaining Length < 128, Topic Name "t": the Packet
+     * Identifier follows at 2 (fixed header) + 2 (length) + 1. */
+    if (((buf[0] & 0xF0) >> 4) == MQTT_PACKET_TYPE_PUBLISH && buf_len >= 7 &&
+            g_order_pub_count <
+                (int)(sizeof(g_order_pub_ids) / sizeof(g_order_pub_ids[0]))) {
+        g_order_pub_ids[g_order_pub_count++] = (buf[5] << 8) | buf[6];
+    }
+    return buf_len;
+}
+
+/* [MQTT-4.6.0-1] Re-sent PUBLISH packets go out in the order the original
+ * PUBLISH packets were sent. The replay pool reuses the first free slot, so
+ * once an earlier message is acknowledged a later one can take a lower slot
+ * than an older message that is still unacknowledged. */
+TEST(reconnect_replays_in_original_send_order)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish pub_a;
+    MqttPublish pub_b;
+    MqttPublish pub_c;
+    static byte payload[] = "x";
+    /* v3.1.1 PUBACK for Packet Identifier 1 (A) */
+    static const byte puback_a[] = { 0x40, 0x02, 0x00, 0x01 };
+
+    ASSERT_TRUE(MQTT_MAX_REPLAY_MSGS >= 2);
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    /* A (id 1) then B (id 2), both unacknowledged */
+    init_qos_publish(&pub_a, MQTT_QOS_1, 1, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
+    init_qos_publish(&pub_b, MQTT_QOS_1, 2, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_b));
+
+    /* The server acknowledges A, freeing the lower slot */
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, puback_a, sizeof(puback_a));
+    g_canned_len = (int)sizeof(puback_a);
+    g_canned_pos = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && g_canned_pos < g_canned_len; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+
+    /* C (id 3) is sent after B, unacknowledged */
+    init_qos_publish(&pub_c, MQTT_QOS_1, 3, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_c));
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_order_pub_count = 0;
+    rc = run_reconnect_with(&connect, 1, order_mock_write);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_order_pub_count);
+    ASSERT_EQ(2, g_order_pub_ids[0]);
+    ASSERT_EQ(3, g_order_pub_ids[1]);
+}
+
 /* A streamed publish delivers its payload through the application callback, so
  * the client holds no copy to rebuild from. The slot still tracks the Packet
  * Identifier for a QoS 2 PUBREL, but the PUBLISH itself must not be replayed
@@ -10508,6 +10584,7 @@ void run_mqtt_client_tests(void)
 #endif
     RUN_TEST(reconnect_drops_replay_larger_than_tx_buf);
     RUN_TEST(reconnect_replays_at_most_pool_size);
+    RUN_TEST(reconnect_replays_in_original_send_order);
     RUN_TEST(reconnect_does_not_replay_streamed_publish);
     RUN_TEST(replay_uncopied_slot_still_tagged_to_this_connection);
     RUN_TEST(reconnect_dropped_replay_frees_packet_id);

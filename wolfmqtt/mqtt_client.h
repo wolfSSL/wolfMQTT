@@ -357,6 +357,12 @@ typedef struct _MqttReplayMsg {
      * only the latter are the old Session's to discard or re-send. Cleared on
      * every entry when a handshake starts. */
     byte    onThisConn;
+    /* Send order [MQTT-4.6.0-1]: taken from MqttClient.replay_seq when the
+     * PUBLISH is first recorded, and again when its PUBREC arrives so a
+     * PUBREL replays in PUBREC order. */
+    word32  seq;
+    /* Still to be re-sent by the Session replay in progress. */
+    byte    replayPending;
 } MqttReplayMsg;
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 
@@ -538,9 +544,8 @@ typedef struct _MqttClient {
     /* Unacknowledged outbound QoS > 0 messages retained for [MQTT-4.4.0-1]
      * replay after a CleanSession 0 reconnect. */
     MqttReplayMsg replay[MQTT_MAX_REPLAY_MSGS];
-    /* Next replay slot to send; MQTT_MAX_REPLAY_MSGS when none is pending.
-     * Kept on the client so a nonblocking replay can resume where it left
-     * off. */
+    /* Replay slot being sent; MQTT_MAX_REPLAY_MSGS when none is. Kept on the
+     * client so a nonblocking replay can resume a partly written slot. */
     int replayIdx;
 #endif
 
@@ -557,6 +562,9 @@ typedef struct _MqttClient {
      * dedicated reader retakes for its next blocking read. */
     wm_Sem decodeDone;
     word16 decodeWaiters; /* threads waiting on decodeDone, under lockClient */
+#endif
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+    word32 replay_seq; /* last send order given to a replay entry */
 #endif
 } MqttClient;
 
