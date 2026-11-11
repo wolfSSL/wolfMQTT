@@ -112,6 +112,7 @@ When built with `WOLFMQTT_STATIC_MEMORY`, the broker uses fixed-size arrays inst
 | `BROKER_MAX_STATIC_ORPHAN_SESSIONS` | `BROKER_MAX_CLIENTS` | Persistent sessions with a bounded offline queue |
 | `BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB` | 8 | Queued QoS 1/2 messages per static persistent session |
 | `BROKER_MAX_STATIC_OFFLINE_DATA_LEN` | 256 | Maximum property and payload bytes per queued message |
+| `BROKER_MAX_STATIC_LIVE_MSGS` | 4 | QoS 1/2 deliveries a connected static non-persistent session can hold while its inflight window is full |
 | `BROKER_RX_BUF_SZ` | 4096 | Per-client receive buffer size |
 | `BROKER_TX_BUF_SZ` | 4096 | Per-client transmit buffer size |
 | `BROKER_TIMEOUT_MS` | 1000 | `select()` timeout |
@@ -145,6 +146,16 @@ Sessions must retain messages whose property and payload bytes exceed 256.
 The per-subscriber inflight window is bounded by `BROKER_MAX_INFLIGHT_PER_SUB`
 and, for MQTT v5, the client's Receive Maximum. Define
 `BROKER_MAX_INFLIGHT_PER_SUB=1` to force strict serial delivery.
+
+In static-memory builds a connected Session without a persistent carrier
+holds deliveries that do not fit its inflight window in a fixed live queue of
+`BROKER_MAX_STATIC_LIVE_MSGS` entries per client, each limited to
+`BROKER_MAX_STATIC_OFFLINE_DATA_LEN` bytes of properties and payload. The queue
+drains in order as PUBACK and PUBCOMP free the window. A delivery that finds
+the queue full, or is too large for an entry, disconnects that subscriber
+(MQTT v5: DISCONNECT with Quota Exceeded 0x97) instead of being dropped. The
+queue adds approximately `BROKER_MAX_CLIENTS * BROKER_MAX_STATIC_LIVE_MSGS *
+(topic length + data length)` bytes, about 14 KB with the default limits.
 
 ## Persistence
 

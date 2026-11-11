@@ -198,7 +198,8 @@
  *   -DBROKER_DEFAULT_AVG_MSG_SZ=N     to retune the derivation.
  *
  * Dynamic mode applies this to each client queue. Static mode applies it
- * while draining a persistent Session carrier. */
+ * while draining a persistent Session carrier and to the live queue of a
+ * connected Session without one (BROKER_MAX_STATIC_LIVE_MSGS). */
 #ifndef BROKER_DEFAULT_AVG_MSG_SZ
     #define BROKER_DEFAULT_AVG_MSG_SZ 256
 #endif
@@ -231,6 +232,18 @@
 #endif
 #if BROKER_MAX_STATIC_ORPHAN_SESSIONS < 1
     #error BROKER_MAX_STATIC_ORPHAN_SESSIONS must be at least 1
+#endif
+/* QoS 1/2 deliveries a connected Session without a persistent carrier can
+ * hold while its in-flight window (BROKER_MAX_INFLIGHT_PER_SUB, or the v5
+ * Receive Maximum when smaller) is full. Each entry is limited to
+ * BROKER_MAX_STATIC_OFFLINE_DATA_LEN bytes of Properties and payload. A
+ * delivery that does not fit disconnects the subscriber (v5: Quota Exceeded
+ * 0x97) instead of being dropped. */
+#ifndef BROKER_MAX_STATIC_LIVE_MSGS
+    #define BROKER_MAX_STATIC_LIVE_MSGS 4
+#endif
+#if BROKER_MAX_STATIC_LIVE_MSGS < 1
+    #error BROKER_MAX_STATIC_LIVE_MSGS must be at least 1
 #endif
 #if BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB < 1
     #error BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB must be at least 1
@@ -767,6 +780,13 @@ typedef struct BrokerClient {
     /* A DISCONNECT has been written (or started) on this connection, so an
      * error close must not send another. */
     byte          disconnect_sent;
+#endif
+#ifdef WOLFMQTT_STATIC_MEMORY
+    /* QoS 1/2 deliveries waiting, in order, for the in-flight window of a
+     * Session without a persistent carrier (BROKER_MAX_STATIC_LIVE_MSGS).
+     * Entries are QUEUED only; once sent they are tracked in out_inflight. */
+    int                live_q_count;
+    BrokerStaticOutPub live_q[BROKER_MAX_STATIC_LIVE_MSGS];
 #endif
 } BrokerClient;
 
