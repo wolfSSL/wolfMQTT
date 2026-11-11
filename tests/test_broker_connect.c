@@ -2166,6 +2166,94 @@ TEST(broker_v5_error_close_scrubs_rx_buf_while_disconnect_pending)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+/* MQTT 5.0 section 3.6.2.1: 0x92 is only for an identifier the broker does
+ * not know. A PUBREC retransmitted for a delivery already at PUBREL_SENT is
+ * still known, so each PUBREL answering it carries Success. */
+TEST(broker_v5_retransmitted_pubrec_pubrel_success)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    size_t pos;
+    word16 id = 0;
+    int rels = 0;
+    int i;
+    byte pubrec[4];
+    /* v5 CONNECT, Clean Start 1, Properties length 0, ClientId "S" / "P" */
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'S'
+    };
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, filter "x", QoS 2 */
+    static const byte subscribe_x[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'x', 0x02
+    };
+    /* v5 PUBLISH QoS 2, topic "x", packet id 5, Properties length 0, "hi" */
+    static const byte publish_x[] = {
+        0x34, 0x08, 0x00, 0x01, 'x', 0x00, 0x05, 0x00, 'h', 'i'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    /* Packet Identifier of the QoS 2 PUBLISH delivered to S */
+    for (pos = 0; pos + 7 <= g_clients[0].out_len; pos++) {
+        if (g_clients[0].out_buf[pos] == 0x34 &&
+                g_clients[0].out_buf[pos + 2] == 0x00 &&
+                g_clients[0].out_buf[pos + 3] == 0x01 &&
+                g_clients[0].out_buf[pos + 4] == 'x') {
+            id = (word16)((g_clients[0].out_buf[pos + 5] << 8) |
+                g_clients[0].out_buf[pos + 6]);
+            break;
+        }
+    }
+    ASSERT_TRUE(id != 0);
+
+    /* PUBREC (Reason Code omitted: Success) sent twice */
+    pubrec[0] = 0x50;
+    pubrec[1] = 0x02;
+    pubrec[2] = (byte)(id >> 8);
+    pubrec[3] = (byte)id;
+    g_clients[0].out_len = 0;
+    mock_client_input_append(0, pubrec, sizeof(pubrec));
+    mock_client_input_append(0, pubrec, sizeof(pubrec));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    for (pos = 0; pos + 4 <= g_clients[0].out_len; pos++) {
+        if (g_clients[0].out_buf[pos] == 0x62 &&
+                g_clients[0].out_buf[pos + 2] == (byte)(id >> 8) &&
+                g_clients[0].out_buf[pos + 3] == (byte)id) {
+            rels++;
+            /* Success: Remaining Length 2, or 3 with Reason Code 0x00 */
+            ASSERT_TRUE(g_clients[0].out_buf[pos + 1] == 0x02 ||
+                (g_clients[0].out_buf[pos + 1] == 0x03 &&
+                 g_clients[0].out_buf[pos + 4] == 0x00));
+        }
+    }
+    ASSERT_EQ(2, rels);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17826,6 +17914,7 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(broker_v5_unmatched_pubrec_pubrel_not_found);
+    RUN_TEST(broker_v5_retransmitted_pubrec_pubrel_success);
 #endif
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_v5_second_connect_scrubbed_while_disconnect_pending);
