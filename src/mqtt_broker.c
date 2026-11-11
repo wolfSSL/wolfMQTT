@@ -9415,8 +9415,8 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
 #ifdef WOLFMQTT_V5
     byte reason_code;
 #endif
-#ifdef WOLFMQTT_STATIC_MEMORY
     int tracked;
+#ifdef WOLFMQTT_STATIC_MEMORY
     int enc_len;
 #endif
 
@@ -9460,12 +9460,32 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
      * entry) still gets a PUBREL response for idempotency, just no
      * queue state change. A negative return means a QoS 1 target, a Protocol
      * Error [MQTT-4.13.1-1]: no PUBREL, and the fatal code closes the peer. */
-    if (BrokerClient_OnPubRec(bc, resp.packet_id) < 0) {
+    tracked = BrokerClient_OnPubRec(bc, resp.packet_id);
+    if (tracked < 0) {
         return MQTT_CODE_ERROR_PACKET_TYPE;
+    }
+    if (tracked == 0) {
+        BrokerOutPub* prev = NULL;
+        /* A retransmitted PUBREC for an exchange already at PUBREL_SENT is
+         * still a known identifier. */
+        tracked = (BrokerClient_FindOutPub(bc, resp.packet_id,
+            BROKER_OUTQ_PUBREL_SENT, &prev) != NULL);
     }
 #endif
 #ifdef WOLFMQTT_STATIC_MEMORY
     tracked = BrokerStaticOrphan_OnPubRec(bc->broker, bc, resp.packet_id);
+#endif
+#ifdef WOLFMQTT_V5
+    /* MQTT 5.0 section 3.6.2.1: answer a PUBREC whose Packet Identifier is
+     * not in this Session State with 0x92, as BrokerHandle_PublishRel does
+     * for an unknown PUBREL. */
+    if (!tracked
+    #ifdef WOLFMQTT_STATIC_MEMORY
+            && !BrokerStaticOutId_InUse(bc, resp.packet_id)
+    #endif
+        ) {
+        resp.reason_code = MQTT_REASON_PACKET_ID_NOT_FOUND;
+    }
 #endif
     rc = MqttEncode_PublishResp(bc->tx_buf, BROKER_CLIENT_TX_SZ(bc),
             MQTT_PACKET_TYPE_PUBLISH_REL, &resp);

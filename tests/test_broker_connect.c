@@ -1868,6 +1868,54 @@ TEST(broker_dyn_client_admission_cap)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+/* MQTT 5.0 section 3.6.2.1: a PUBREL answering a PUBREC whose Packet
+ * Identifier the broker does not know carries Reason Code 0x92 (Packet
+ * Identifier not found), as the broker's own PUBREL handler does, rather
+ * than reporting the unknown exchange as completed. */
+TEST(broker_v5_unmatched_pubrec_pubrel_not_found)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    byte connect[64];
+    size_t connect_len;
+    size_t i;
+    int found = 0;
+    /* PUBREC, Remaining Length 2, Packet Identifier 7 (Reason Code omitted:
+     * Success, MQTT 5.0 section 3.5.2.1) */
+    static const byte pubrec[] = { 0x50, 0x02, 0x00, 0x07 };
+    /* PUBREL (flags 0x2), Remaining Length 3, Packet Identifier 7,
+     * Reason Code 0x92 */
+    static const byte pubrel[] = { 0x62, 0x03, 0x00, 0x07, 0x92 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    connect_len = build_v5_connect_emptyid(connect, 0x02); /* Clean Start */
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_FALSE(g_client_closed);
+
+    mock_client_input_append(0, pubrec, sizeof(pubrec));
+    for (i = 0; i < 4 && g_in_pos < g_in_len; i++) {
+        MqttBroker_Step(&broker);
+    }
+    for (i = 0; i + sizeof(pubrel) <= g_out_len; i++) {
+        if (XMEMCMP(&g_out_buf[i], pubrel, sizeof(pubrel)) == 0) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17293,6 +17341,9 @@ int main(int argc, char** argv)
 #if !defined(WOLFMQTT_STATIC_MEMORY) && defined(BROKER_MAX_DYN_CLIENTS) && \
     BROKER_MAX_DYN_CLIENTS < MOCK_MAX_CLIENTS
     RUN_TEST(broker_dyn_client_admission_cap);
+#endif
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(broker_v5_unmatched_pubrec_pubrel_not_found);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
