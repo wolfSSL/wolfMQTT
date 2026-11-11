@@ -1790,6 +1790,64 @@ TEST(wait_message_oversize_publish_header_disconnects)
     ASSERT_EQ(0, test_client.msg.stat.isReadActive);
 }
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB) && \
+    !defined(WOLFMQTT_DYN_PROP)
+static int failing_publish_prop_cb(MqttClient* client, MqttProp* head,
+    void* ctx)
+{
+    (void)client; (void)head; (void)ctx;
+    return MQTT_CODE_ERROR_SYSTEM;
+}
+
+/* The decoded property list of an inbound v5 PUBLISH is kept for the message
+ * callback. When the property callback fails that read is terminal, so the
+ * list must still go back to the shared static pool; otherwise each such
+ * PUBLISH leaks pool slots until every v5 decode fails for lack of them. */
+TEST(wait_message_v5_publish_prop_cb_error_frees_props)
+{
+    int rc;
+    int i;
+    int j;
+    MqttProp* head = NULL;
+    MqttProp* prop;
+    /* v5 PUBLISH QoS 0: topic "t" (3 bytes), Properties length 7 holding
+     * User Property (0x26) "k"="v" (1 + 3 + 3 bytes), payload "p".
+     * Remaining Length 3 + 1 + 7 + 1 = 12. */
+    static const byte publish[] = {
+        0x30, 0x0C,
+        0x00, 0x01, 't',
+        0x07, 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v',
+        'p'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_SetPropertyCallback(&test_client,
+        failing_publish_prop_cb, NULL));
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+
+    /* More PUBLISHes than the pool has slots */
+    for (i = 0; i < MQTT_MAX_PROPS + 1; i++) {
+        XMEMCPY(g_canned_buf, publish, sizeof(publish));
+        g_canned_len = (int)sizeof(publish);
+        g_canned_pos = 0;
+        rc = MQTT_CODE_CONTINUE;
+        for (j = 0; j < 20 && rc == MQTT_CODE_CONTINUE; j++) {
+            rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+        }
+        ASSERT_EQ(MQTT_CODE_ERROR_SYSTEM, rc);
+    }
+    ASSERT_NULL(test_client.msg.publish.props);
+
+    prop = MqttProps_Add(&head);
+    ASSERT_NOT_NULL(prop);
+    (void)MqttProps_Free(head);
+}
+#endif
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -10507,6 +10565,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_oversize_publish_header_disconnects);
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB) && \
+    !defined(WOLFMQTT_DYN_PROP)
+    RUN_TEST(wait_message_v5_publish_prop_cb_error_frees_props);
+#endif
     RUN_TEST(wait_message_v5_accepts_disconnect_packet_type);
     RUN_TEST(auth_v311_session_rejected_before_write);
     RUN_TEST(auth_mismatched_method_rejected);

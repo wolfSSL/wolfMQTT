@@ -2096,6 +2096,15 @@ static int MqttClient_HandlePacket(MqttClient* client,
                     client->packet.buf_len, packet_obj, &packet_type,
                     &packet_qos, &packet_id, 1);
                 if (rc <= 0) {
+                    /* Terminal too, so apply the cleanup below: reset the
+                     * read state, and free the property list the decode
+                     * keeps for the message callback (e.g. when the
+                     * property callback returned an error). */
+                    publish->stat.read = MQTT_MSG_BEGIN;
+                #ifdef WOLFMQTT_V5
+                    MqttProps_Free(publish->props);
+                    publish->props = NULL;
+                #endif
                     return rc;
                 }
             }
