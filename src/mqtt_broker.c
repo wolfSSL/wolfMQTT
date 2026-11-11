@@ -5596,6 +5596,9 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
 #endif
 }
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_STATIC_MEMORY)
+static void BrokerRetained_Delete(MqttBroker* broker, const char* topic);
+#endif
 #ifdef WOLFMQTT_V5
 static int BrokerProps_EncodeForward(const MqttProp* props, byte* buf,
     int skip_expiry);
@@ -5645,9 +5648,12 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     if (props_len > BROKER_MAX_WILL_PROPS_LEN ||
             BrokerWill_CountProps(props) > BROKER_WILL_PROPS_STACK_ENTRIES) {
         /* Retaining is best-effort; keeping the message without its
-         * Properties would forward a different one later. */
+         * Properties would forward a different one later. This message
+         * still replaces the one before it [MQTT-3.3.1-5], so that one must
+         * not be served in its place. */
         WBLOG_ERR(broker, "broker: retained properties too large (max %d) "
             "topic=%s", BROKER_MAX_WILL_PROPS_LEN, BrokerLog_Sanitize(topic));
+        BrokerRetained_Delete(broker, topic);
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
   #endif

@@ -2566,6 +2566,85 @@ TEST(broker_v5_retained_delivery_keeps_properties)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+/* [MQTT-3.3.1-5] a new RETAIN=1 PUBLISH replaces the retained message for its
+ * topic. When the broker cannot keep the new one (static builds bound the
+ * stored Properties), the old one must not be served in its place. P retains
+ * "a" on "r", then retains "b" with a 128-byte User Property value; S then
+ * subscribes and must not receive the old frame, sent with RETAIN set
+ * [MQTT-3.3.1-9]: 0x31 0x05 0x00 0x01 'r' 0x00 'a'. */
+TEST(broker_v5_retained_replacement_never_serves_stale)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    size_t pos;
+    size_t n;
+    int found = 0;
+    byte publish_big[160];
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'S'
+    };
+    /* v5 PUBLISH QoS 0 RETAIN "r", Properties length 0, payload "a" */
+    static const byte publish_a[] = {
+        0x31, 0x05, 0x00, 0x01, 'r', 0x00, 'a'
+    };
+    static const byte subscribe_r[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'r', 0x00
+    };
+    static const byte stale_frame[] = {
+        0x31, 0x05, 0x00, 0x01, 'r', 0x00, 'a'
+    };
+
+    /* v5 PUBLISH QoS 0 RETAIN "r". Properties: User Property 0x26, key "k",
+     * value 128 x 'v' = 1 + 3 + 130 = 134 bytes, VBI 0x86 0x01. Remaining
+     * Length 3 + 2 + 134 + 1 = 140, VBI 0x8C 0x01. Payload "b". */
+    n = 0;
+    publish_big[n++] = 0x31;
+    publish_big[n++] = 0x8C; publish_big[n++] = 0x01;
+    publish_big[n++] = 0x00; publish_big[n++] = 0x01; publish_big[n++] = 'r';
+    publish_big[n++] = 0x86; publish_big[n++] = 0x01;
+    publish_big[n++] = 0x26;
+    publish_big[n++] = 0x00; publish_big[n++] = 0x01; publish_big[n++] = 'k';
+    publish_big[n++] = 0x00; publish_big[n++] = 0x80;
+    XMEMSET(&publish_big[n], 'v', 128);
+    n += 128;
+    publish_big[n++] = 'b';
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_a, sizeof(publish_a));
+    mock_client_input_append(0, publish_big, n);
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_r, sizeof(subscribe_r));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    for (pos = 0; pos + sizeof(stale_frame) <= g_clients[1].out_len; pos++) {
+        if (XMEMCMP(&g_clients[1].out_buf[pos], stale_frame,
+                sizeof(stale_frame)) == 0) {
+            found = 1;
+        }
+    }
+    ASSERT_FALSE(found);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -18549,6 +18628,7 @@ int main(int argc, char** argv)
     RUN_TEST(connect_takeover_of_empty_persistent_session_reports_present);
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
     RUN_TEST(broker_v5_retained_delivery_keeps_properties);
+    RUN_TEST(broker_v5_retained_replacement_never_serves_stale);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(broker_v5_subscription_identifier_not_supported);
