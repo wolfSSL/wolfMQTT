@@ -2669,6 +2669,15 @@ wait_again:
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, NULL, &packet_type, &packet_qos,
                 &packet_id, 1);
+        #if WOLFMQTT_MAX_QOS < 2
+            /* This build cannot give an inbound PUBLISH above its cap the
+             * guarantees its QoS asks for (no QoS 2 duplicate suppression),
+             * and never subscribes above it, so it is a protocol error. */
+            if (rc >= 0 && packet_type == MQTT_PACKET_TYPE_PUBLISH &&
+                    packet_qos > (MqttQoS)WOLFMQTT_MAX_QOS) {
+                rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+        #endif
 
             /* MqttPacket_Read stops at the end of rx_buf and leaves the rest
              * of a larger packet on the transport. Only a PUBLISH payload is
@@ -5137,6 +5146,17 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
 #endif
 
     if (subscribe->stat.write == MQTT_MSG_BEGIN) {
+    #if WOLFMQTT_MAX_QOS < 2
+        /* This build has no QoS 2 duplicate suppression, so never request
+         * more than its cap; lowered as the broker caps its grants. */
+        for (i = 0; subscribe->topics != NULL &&
+                i < subscribe->topic_count; i++) {
+            if (subscribe->topics[i].qos > (MqttQoS)WOLFMQTT_MAX_QOS &&
+                    subscribe->topics[i].qos <= MQTT_QOS_2) {
+                subscribe->topics[i].qos = (MqttQoS)WOLFMQTT_MAX_QOS;
+            }
+        }
+    #endif
         /* Flag write active / lock mutex */
         if ((rc = MqttWriteStart(client, &subscribe->stat)) != 0) {
             return rc;

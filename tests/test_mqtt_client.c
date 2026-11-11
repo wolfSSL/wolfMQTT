@@ -1983,6 +1983,96 @@ TEST(publish_short_buffer_without_callback_rejected)
     ASSERT_EQ(0, g_frames_written);
 }
 
+#if WOLFMQTT_MAX_QOS < 2
+static int g_msg_cb_calls;
+static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
+    byte msg_new, byte msg_done);
+
+/* A client built with WOLFMQTT_MAX_QOS < 2 has no QoS 2 duplicate
+ * suppression, so it must not ask for more than its cap. The requested QoS
+ * is lowered to the cap, as the broker does for its grants. v3.1.1 SUBSCRIBE
+ * (MQTT 3.1.1 section 3.8): 0x82, Remaining Length 6, packet id 1, filter
+ * "a", Requested QoS byte last. */
+TEST(subscribe_qos_clamped_to_build_max)
+{
+    int rc;
+    int i;
+    MqttSubscribe subscribe;
+    MqttTopic topic;
+    /* SUBACK packet id 1 granting the cap */
+    static const byte suback[] = { 0x90, 0x03, 0x00, 0x01, WOLFMQTT_MAX_QOS };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client_connect_sent();
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, suback, sizeof(suback));
+    g_canned_len = (int)sizeof(suback);
+    g_canned_pos = 0;
+    connect_mock_xfer = 0;
+
+    XMEMSET(&subscribe, 0, sizeof(subscribe));
+    XMEMSET(&topic, 0, sizeof(topic));
+    topic.topic_filter = "a";
+    topic.qos = MQTT_QOS_2;
+    subscribe.packet_id = 1;
+    subscribe.topic_count = 1;
+    subscribe.topics = &topic;
+    g_frames_written = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Subscribe(&test_client, &subscribe);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_frames_written);
+    ASSERT_EQ(8, connect_mock_xfer);
+    ASSERT_EQ(0x82, connect_mock_sent[0]);
+    ASSERT_EQ(WOLFMQTT_MAX_QOS, connect_mock_sent[7]);
+}
+
+/* An inbound PUBLISH above the build's cap cannot be handled with the
+ * guarantees its QoS asks for, so it is a protocol error: not delivered and
+ * not acknowledged. v3.1.1 PUBLISH QoS 2 topic "a" id 7 payload "x". */
+TEST(wait_message_publish_above_build_max_qos_rejected)
+{
+    int rc;
+    int i;
+    static const byte publish[] = {
+        0x34, 0x06, 0x00, 0x01, 'a', 0x00, 0x07, 'x'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, publish, sizeof(publish));
+    g_canned_len = (int)sizeof(publish);
+    g_canned_pos = 0;
+    g_frames_written = 0;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_msg_cb_calls);
+    ASSERT_EQ(0, g_frames_written);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+}
+#endif
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -8915,6 +9005,7 @@ TEST(wait_message_qos0_null_msg_cb_errors)
     ASSERT_FALSE(g_pubresp_written);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* #6217 (QoS 2): a QoS 2 incoming PUBLISH with no msg_cb must error without
  * sending the PUBREC. QoS 2 is where the suppressed acknowledgement matters
  * most: a false PUBREC starts a delivery handshake the broker then completes
@@ -8935,6 +9026,7 @@ TEST(wait_message_qos2_null_msg_cb_errors_no_ack)
      * handshake for a dropped message. */
     ASSERT_FALSE(g_pubresp_written);
 }
+#endif
 
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
 /* [MQTT-4.3.3-10] A new QoS 2 packet id cannot be delivered when the full
@@ -9754,6 +9846,7 @@ TEST(wait_message_qos1_publish_acks_puback)
     ASSERT_EQ(7, g_last_ack_id);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 TEST(wait_message_qos2_publish_acks_pubrec)
 {
     int rc;
@@ -9770,6 +9863,7 @@ TEST(wait_message_qos2_publish_acks_pubrec)
     ASSERT_EQ(MQTT_PACKET_TYPE_PUBLISH_REC, g_last_ack_written);
     ASSERT_EQ(9, g_last_ack_id);
 }
+#endif
 
 #if WOLFMQTT_MAX_QOS >= 2
 /* [MQTT-4.3.3-10] Until the matching PUBREL is received, a retransmitted QoS 2
@@ -10857,6 +10951,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_oversize_publish_header_disconnects);
+#if WOLFMQTT_MAX_QOS < 2
+    RUN_TEST(subscribe_qos_clamped_to_build_max);
+    RUN_TEST(wait_message_publish_above_build_max_qos_rejected);
+#endif
     RUN_TEST(publish_short_buffer_without_callback_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected);
@@ -11103,7 +11201,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_null_client);
     RUN_TEST(wait_message_qos1_null_msg_cb_errors_no_ack);
     RUN_TEST(wait_message_qos0_null_msg_cb_errors);
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(wait_message_qos2_null_msg_cb_errors_no_ack);
+#endif
     RUN_TEST(wait_message_cb_error_first_chunk_clears_connected);
     RUN_TEST(wait_message_cb_error_later_chunk_clears_connected);
 #if (WOLFMQTT_MAX_QOS >= 2) && (MQTT_MAX_RECV_QOS2 < 65535)
@@ -11134,7 +11234,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_header_fills_tx_buf_sends_payload);
     RUN_TEST(wait_message_qos0_publish_no_ack);
     RUN_TEST(wait_message_qos1_publish_acks_puback);
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(wait_message_qos2_publish_acks_pubrec);
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(wait_message_qos2_duplicate_publish_delivered_once);
 #ifdef WOLFMQTT_V5

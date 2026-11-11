@@ -264,6 +264,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             if (p_pub->qos == MQTT_QOS_3) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
+        #if WOLFMQTT_MAX_QOS < 2
+            /* Above this build's cap there is no duplicate suppression, and
+             * the client never subscribes above it: a protocol error. */
+            if (p_pub->qos > WOLFMQTT_MAX_QOS) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+        #endif
 
             /* Notify the application before acquiring the response writer so
              * the callback may safely call a client send API. MQTT_MSG_WAIT
@@ -1821,6 +1828,14 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
     }
 
     if (subscribe->stat.write == MQTT_MSG_BEGIN) {
+    #if WOLFMQTT_MAX_QOS < 2
+        /* This build has no QoS 2 duplicate suppression, so never request
+         * more than its cap (MQTT-SN 1.2 section 6.7). */
+        if (subscribe->qos > WOLFMQTT_MAX_QOS &&
+                subscribe->qos <= MQTT_QOS_2) {
+            subscribe->qos = WOLFMQTT_MAX_QOS;
+        }
+    #endif
         /* Take write ownership; a write already in progress on this thread is
          * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
         rc = MqttWriteStart(client, &subscribe->stat);

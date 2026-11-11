@@ -1620,6 +1620,33 @@ TEST(sn_inbound_qos_m1_publish_rejected)
     ASSERT_EQ(0, g_sn_wait_deliveries);
     ASSERT_EQ(0, g_mock.out_len);
 }
+
+#if WOLFMQTT_MAX_QOS < 2
+/* A build capped below QoS 2 has no QoS 2 duplicate suppression, so an
+ * inbound QoS 2 PUBLISH is a protocol error: neither delivered nor answered.
+ * Frame: Length 8, PUBLISH, Flags QoS 0b10 + predefined Topic Id (0x41),
+ * TopicId 1, MsgId 5, Data 'x'. */
+TEST(sn_inbound_publish_above_build_max_qos_rejected)
+{
+    static const byte pub[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x41, 0x00, 0x01,
+                                0x00, 0x05, 'x' };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_record_delivery;
+    g_sn_wait_deliveries = 0;
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_sn_wait_deliveries);
+    ASSERT_EQ(0, g_mock.out_len);
+}
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
 static int g_sn_qos2_deliveries;
 
@@ -3863,6 +3890,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_wait_message_reads_each_packet_once);
     RUN_TEST(sn_inbound_qos_m1_publish_rejected);
+#if WOLFMQTT_MAX_QOS < 2
+    RUN_TEST(sn_inbound_publish_above_build_max_qos_rejected);
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
     RUN_TEST(sn_qos2_full_table_refuses_new_id);
