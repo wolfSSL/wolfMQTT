@@ -2479,7 +2479,14 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
 
     if (((publish->buffer != NULL) || (use_cb == 1)) &&
         (publish->total_len > 0)) {
-        payload_len = publish->total_len;
+        /* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 1.5.5: check the
+         * Remaining Length in word32 before narrowing to int, so a huge
+         * total_len cannot wrap negative and slip past the limit. */
+        if (variable_len < 0 || publish->total_len >
+                MQTT_PACKET_MAX_REMAIN_LEN - (word32)variable_len) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
+        payload_len = (int)publish->total_len;
     }
 
     /* Encode fixed header */

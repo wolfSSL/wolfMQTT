@@ -1061,6 +1061,36 @@ TEST(decode_connect_invalid_utf8_username_overlong)
  * MqttEncode_Publish
  * ============================================================================ */
 
+/* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 1.5.5: Remaining Length is at
+ * most 268435455. A total_len beyond that, including one above INT_MAX that
+ * would turn negative in an int, must be rejected rather than produce a
+ * fixed header that disagrees with the payload. */
+TEST(encode_publish_total_len_over_max_remain_len_rejected)
+{
+    byte tx_buf[64];
+    byte payload[4] = { 1, 2, 3, 4 };
+    MqttPublish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "t";
+    pub.qos = MQTT_QOS_0;
+    pub.buffer = payload;
+    pub.buffer_len = (word32)sizeof(payload);
+    pub.total_len = 0xFFFFFFFFUL;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc < 0);
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.topic_name = "t";
+    pub.qos = MQTT_QOS_0;
+    pub.buffer = payload;
+    pub.buffer_len = (word32)sizeof(payload);
+    pub.total_len = MQTT_PACKET_MAX_REMAIN_LEN;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    ASSERT_TRUE(rc < 0);
+}
+
 TEST(encode_publish_qos1_packet_id_zero)
 {
     byte tx_buf[256];
@@ -7801,6 +7831,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_publish_invalid_utf8_topic_rejected);
     RUN_TEST(encode_publish_valid_utf8_topic_accepted);
     RUN_TEST(encode_publish_qos1_packet_id_zero);
+    RUN_TEST(encode_publish_total_len_over_max_remain_len_rejected);
     RUN_TEST(encode_publish_qos2_packet_id_zero);
     RUN_TEST(encode_publish_qos0_packet_id_zero_ok);
     RUN_TEST(encode_publish_qos1_valid);
