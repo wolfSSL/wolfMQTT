@@ -236,6 +236,8 @@ static int g_accept_fail_rc;   /* non-zero: accept() returns this */
 static int g_listen_count;
 static int g_listen_close_count;
 static int g_listen_fail_on_call;
+static int g_read_timeout_max;  /* largest timeout_ms passed to mock_read */
+static int g_write_timeout_max; /* largest timeout_ms passed to mock_write */
 
 /* Legacy single-client tests use g_in_buf / g_out_buf / g_client_closed
  * directly. Map them to client 0 so existing code keeps working. */
@@ -293,7 +295,10 @@ static int mock_read(void* ctx, BROKER_SOCKET_T sock,
     int avail;
     int idx = sock_to_idx(sock);
     MockClient* mc;
-    (void)ctx; (void)timeout_ms;
+    (void)ctx;
+    if (timeout_ms > g_read_timeout_max) {
+        g_read_timeout_max = timeout_ms;
+    }
     if (idx < 0) {
         return MQTT_CODE_ERROR_TIMEOUT;
     }
@@ -326,7 +331,10 @@ static int mock_write(void* ctx, BROKER_SOCKET_T sock,
     int idx = sock_to_idx(sock);
     int write_len = buf_len;
     MockClient* mc;
-    (void)ctx; (void)timeout_ms;
+    (void)ctx;
+    if (timeout_ms > g_write_timeout_max) {
+        g_write_timeout_max = timeout_ms;
+    }
     if (idx < 0) {
         return MQTT_CODE_ERROR_NETWORK;
     }
@@ -420,6 +428,8 @@ static void reset_mock_clients(int n_clients)
     g_clients_active = n_clients;
     g_accept_count = 0;
     g_accept_fail_rc = 0;
+    g_read_timeout_max = 0;
+    g_write_timeout_max = 0;
 #ifndef WOLFMQTT_STATIC_MEMORY
     g_write_publish_hook = NULL;
 #endif
@@ -1767,6 +1777,56 @@ TEST(broker_add_failure_closes_socket_once)
     broker.listen_sock = MOCK_LISTEN_SOCK;
     broker.listen_sock_tls = BROKER_SOCKET_INVALID;
     MqttBroker_Free(&broker);
+}
+
+/* The broker drives every client from one loop, so a TLS handshake that is
+ * waiting on the peer must poll the socket rather than block in the net read
+ * callback. A peer that connects to the TLS listener and sends nothing must
+ * see the handshake read issued with a zero timeout; a non-zero timeout lets
+ * each idle handshake stall all other clients for that long on every pass. */
+TEST(broker_tls_handshake_read_does_not_block)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    WOLFSSL_CTX* tls_ctx;
+    int i;
+
+    ASSERT_EQ(WOLFSSL_SUCCESS, wolfSSL_Init());
+    tls_ctx = wolfSSL_CTX_new(wolfSSLv23_server_method());
+    ASSERT_NOT_NULL(tls_ctx);
+    /* Any identity works here: the peer never sends a ClientHello. */
+    ASSERT_EQ(WOLFSSL_SUCCESS, wolfSSL_CTX_use_certificate_file(tls_ctx,
+        "certs/client-cert.pem", WOLFSSL_FILETYPE_PEM));
+    ASSERT_EQ(WOLFSSL_SUCCESS, wolfSSL_CTX_use_PrivateKey_file(tls_ctx,
+        "certs/client-key.pem", WOLFSSL_FILETYPE_PEM));
+    /* A custom-net broker expects the application ctx to route TLS I/O
+     * through the MqttNet callbacks, as BrokerTls_Init does. */
+    wolfSSL_CTX_SetIORecv(tls_ctx, MqttSocket_TlsSocketReceive);
+    wolfSSL_CTX_SetIOSend(tls_ctx, MqttSocket_TlsSocketSend);
+
+    install_mock_net(&net);
+    reset_mock_clients(1); /* client sends no ClientHello */
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    /* Route the next accept through the TLS listener only */
+    broker.listen_sock = BROKER_SOCKET_INVALID;
+    broker.listen_sock_tls = MOCK_LISTEN_SOCK;
+    broker.tls_ctx = tls_ctx;
+
+    for (i = 0; i < 3; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, g_accept_count);
+    ASSERT_FALSE(g_clients[0].closed);
+    ASSERT_EQ(0, g_read_timeout_max);
+    ASSERT_EQ(0, g_write_timeout_max);
+
+    broker.listen_sock = MOCK_LISTEN_SOCK;
+    broker.listen_sock_tls = BROKER_SOCKET_INVALID;
+    MqttBroker_Free(&broker); /* frees the application-provided tls_ctx */
+    wolfSSL_Cleanup();
 }
 #endif
 
@@ -17145,6 +17205,7 @@ int main(int argc, char** argv)
 #ifdef ENABLE_MQTT_TLS
     RUN_TEST(broker_start_partial_listener_failure_cleans_up);
     RUN_TEST(broker_add_failure_closes_socket_once);
+    RUN_TEST(broker_tls_handshake_read_does_not_block);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);

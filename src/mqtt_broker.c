@@ -9657,8 +9657,12 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
     /* Complete TLS handshake before processing MQTT packets */
     if (!bc->tls_handshake_done) {
         int ret;
-        bc->client.tls.timeout_ms_read = BROKER_TIMEOUT_MS;
-        bc->client.tls.timeout_ms_write = BROKER_TIMEOUT_MS;
+        /* Poll the socket: every client shares this loop, so a peer that
+         * stalls its handshake must not block the others. The handshake is
+         * still bounded by the pre-CONNECT idle timeout below, measured
+         * from accept since last_rx is not refreshed until a packet. */
+        bc->client.tls.timeout_ms_read = 0;
+        bc->client.tls.timeout_ms_write = 0;
         ret = wolfSSL_accept(bc->client.tls.ssl);
         if (ret == WOLFSSL_SUCCESS) {
             bc->tls_handshake_done = 1;
