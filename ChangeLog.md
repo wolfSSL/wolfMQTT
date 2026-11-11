@@ -1,5 +1,18 @@
 ## Release Notes
 
+### Unreleased
+
+* Behavior Changes
+    - MQTT-SN: `SN_Publish.topic_name` now holds the 2-byte TopicId most
+      significant byte first, as on the wire (MQTT-SN 1.2 section 5.4.12), for
+      normal topic IDs as well as short names and predefined IDs. Code that set
+      it with `publish.topic_name = (char*)&topicID;` from a host-order
+      `word16` sends a byte-swapped TopicId on little-endian hosts and the
+      gateway rejects it. Store the id big-endian instead:
+      `buf[0] = (byte)(topicID >> 8); buf[1] = (byte)topicID;
+      publish.topic_name = (char*)buf;`. Received PUBLISH topic IDs use the
+      same byte order. See `examples/sn-client/sn-client.c`.
+
 ### v2.2.0 (10/08/2026)
 Release 2.2.0 has been developed according to wolfSSL's development and QA
 process (see link below) and successfully passed the quality criteria.
