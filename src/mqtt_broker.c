@@ -8056,6 +8056,16 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
         else {
             adv_failed = 1;
         }
+        /* Subscription Identifiers are not implemented, and their absence
+         * would mean supported (MQTT 5.0 section 3.2.2.3.12). */
+        prop = MqttProps_Add(&ack.props);
+        if (prop != NULL) {
+            prop->type = MQTT_PROP_SUBSCRIPTION_ID_AVAIL;
+            prop->data_byte = 0;
+        }
+        else {
+            adv_failed = 1;
+        }
         /* [MQTT-3.2.2.3.4] Maximum QoS property MUST be 0 or 1. Absence
          * of the property signals server supports Maximum QoS 2. Emitting
          * Maximum QoS = 2 is a Protocol Error and strict v5 clients (e.g.
@@ -8521,6 +8531,21 @@ static int BrokerHandle_Subscribe(BrokerClient* bc, int rx_len,
         WBLOG_ERR(broker, "broker: SUBSCRIBE decode failed rc=%d", rc);
         return rc;
     }
+
+#ifdef WOLFMQTT_V5
+    /* Advertised as unavailable in CONNACK, so a Subscription Identifier
+     * is a Protocol Error: DISCONNECT 0xA1 and close (MQTT 5.0 section
+     * 3.2.2.3.12, [MQTT-4.13.1-1]). */
+    if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            BrokerProps_Find(sub.props, MQTT_PROP_SUBSCRIPTION_ID) != NULL) {
+        WBLOG_ERR(broker, "broker: SUBSCRIBE with Subscription Identifier "
+            "sock=%d", (int)bc->sock);
+        (void)MqttProps_Free(sub.props);
+        sub.props = NULL;
+        (void)BrokerSend_Disconnect(bc, MQTT_REASON_SUB_ID_NOT_SUP);
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
+    }
+#endif
 
     /* Register subscriptions and build return codes */
     for (i = 0; i < sub.topic_count && i < MAX_MQTT_TOPICS; i++) {

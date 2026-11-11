@@ -2440,6 +2440,67 @@ TEST(broker_dollar_topic_not_matched_by_leading_wildcard)
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.2.2.3.12: the broker does not implement Subscription
+ * Identifiers, so its CONNACK says so (absence would mean supported), and a
+ * SUBSCRIBE carrying one is a Protocol Error answered with DISCONNECT 0xA1
+ * (Subscription Identifiers not supported) [MQTT-4.13.1-1]. */
+TEST(broker_v5_subscription_identifier_not_supported)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    byte connect[64];
+    size_t connect_len;
+    size_t connack_len;
+    size_t i;
+    int found = 0;
+    /* v5 SUBSCRIBE packet id 1, Properties length 2 holding Subscription
+     * Identifier (0x0B) = 1, filter "x", options QoS 0.
+     * Remaining Length 2 + 1 + 2 + 3 + 1 = 9. */
+    static const byte subscribe_subid[] = {
+        0x82, 0x09, 0x00, 0x01, 0x02, 0x0B, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* DISCONNECT, Remaining Length 1, Reason Code 0xA1 */
+    static const byte disconnect_a1[] = { 0xE0, 0x01, 0xA1 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    connect_len = build_v5_connect_emptyid(connect, 0x02); /* Clean Start */
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_FALSE(g_client_closed);
+    connack_len = g_out_len;
+    /* Subscription Identifier Available (0x29) = 0 in the CONNACK
+     * properties, which follow the fixed header, flags, reason and the
+     * Property Length */
+    for (i = 5; i + 1 < connack_len; i++) {
+        if (g_out_buf[i] == MQTT_PROP_SUBSCRIPTION_ID_AVAIL &&
+                g_out_buf[i + 1] == 0x00) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    mock_client_input_append(0, subscribe_subid, sizeof(subscribe_subid));
+    for (i = 0; i < 4 && !g_client_closed; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_client_closed);
+    ASSERT_EQ(0, count_packets_of_type(g_out_buf, g_out_len,
+        MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    ASSERT_EQ(connack_len + sizeof(disconnect_a1), g_out_len);
+    ASSERT_MEM_EQ(disconnect_a1, &g_out_buf[connack_len],
+        sizeof(disconnect_a1));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -18138,6 +18199,9 @@ int main(int argc, char** argv)
     RUN_TEST(broker_dyn_client_admission_cap);
 #endif
     RUN_TEST(connect_takeover_of_empty_persistent_session_reports_present);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(broker_v5_subscription_identifier_not_supported);
+#endif
 #ifndef BROKER_ALLOW_CLIENT_DOLLAR_TOPICS
 #ifdef WOLFMQTT_V5
     RUN_TEST(broker_v5_client_dollar_topic_publish_rejected);
