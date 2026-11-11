@@ -9733,6 +9733,10 @@ static void BrokerClient_ErrorClose(MqttBroker* broker, BrokerClient* bc,
         return;
     }
   #ifndef WOLFMQTT_STATIC_MEMORY
+    /* The rejected packet is no longer needed, but the client (and its
+     * rx_buf) stays allocated while a deferred DISCONNECT is written, so
+     * wipe it now rather than at BrokerClient_Free. */
+    BROKER_FORCE_ZERO(bc->rx_buf, BROKER_CLIENT_RX_SZ(bc));
     if (BrokerSend_Disconnect(bc, reason) == MQTT_CODE_CONTINUE) {
         /* Finish writing the DISCONNECT on a later step before closing. */
         bc->close_after_direct = 1;
