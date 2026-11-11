@@ -208,7 +208,15 @@ enum MqttClientFlags {
      * Interval, so a non-zero one in the Client's DISCONNECT would be a
      * Protocol Error (MQTT 5.0 section 3.14.2.2.2). Managed by the library -
      * set or cleared by MqttClient_Connect. */
-    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO = 0x01 << 12
+    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO = 0x01 << 12,
+    /* Application-settable, before MqttClient_Connect. A v5 CONNACK that
+     * reports Session Present = 1 when this client holds no Session State
+     * for the ClientId (e.g. after a process restart) is refused with
+     * MQTT_CODE_ERROR_SERVER_PROP, so the application can reconnect with
+     * Clean Start = 1 ([MQTT-3.2.2-4]). Off by default: Session State lives
+     * only in memory, so a restarted client always lacks it. Needs a build
+     * that tracks the Session ClientId (session replay or QoS 2). */
+    MQTT_CLIENT_FLAG_STRICT_SESSION = 0x01 << 13
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.

@@ -2073,6 +2073,61 @@ TEST(wait_message_publish_above_build_max_qos_rejected)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && \
+    ((WOLFMQTT_MAX_QOS >= 2) || !defined(WOLFMQTT_NO_SESSION_REPLAY))
+/* [MQTT-3.2.2-4] (MQTT 5.0 section 3.2.2.1.1): a Client without Session State
+ * that receives Session Present = 1 MUST close the Network Connection. Opt-in
+ * with MQTT_CLIENT_FLAG_STRICT_SESSION, since the library keeps Session State
+ * only in memory: a restarted process has none. Returns the Connect result. */
+static int connect_v5_fresh_session_present(int strict)
+{
+    MqttConnect connect;
+    int rc;
+    int i;
+    /* v5 CONNACK, Session Present 1, Reason Code Success, no properties */
+    static const byte connack[] = { 0x20, 0x03, 0x01, 0x00, 0x00 };
+
+    rc = test_init_client();
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    if (strict) {
+        (void)MqttClient_Flags(&test_client, 0,
+            MQTT_CLIENT_FLAG_STRICT_SESSION);
+    }
+    test_net.connect = mock_net_connect_ok;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "fresh_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    return rc;
+}
+
+TEST(connect_v5_strict_session_present_without_state_refused)
+{
+    ASSERT_EQ(MQTT_CODE_ERROR_SERVER_PROP,
+        connect_v5_fresh_session_present(1));
+}
+
+/* Default (flag clear): accepted as before. */
+TEST(connect_v5_default_session_present_without_state_accepted)
+{
+    ASSERT_EQ(MQTT_CODE_SUCCESS, connect_v5_fresh_session_present(0));
+}
+#endif
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -10951,6 +11006,11 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_oversize_publish_header_disconnects);
+#if defined(WOLFMQTT_V5) && \
+    ((WOLFMQTT_MAX_QOS >= 2) || !defined(WOLFMQTT_NO_SESSION_REPLAY))
+    RUN_TEST(connect_v5_strict_session_present_without_state_refused);
+    RUN_TEST(connect_v5_default_session_present_without_state_accepted);
+#endif
 #if WOLFMQTT_MAX_QOS < 2
     RUN_TEST(subscribe_qos_clamped_to_build_max);
     RUN_TEST(wait_message_publish_above_build_max_qos_rejected);

@@ -4241,7 +4241,22 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
     if (rc == MQTT_CODE_SUCCESS) {
         session_id_matched =
             MqttClient_SessionIdMatches(client, mc_connect->client_id);
-        MqttClient_SessionIdRecord(client, mc_connect->client_id);
+    #ifdef WOLFMQTT_V5
+        /* [MQTT-3.2.2-4] A v5 Client without Session State that gets Session
+         * Present = 1 must close the connection. Opt-in, since a restarted
+         * client never has Session State (it is kept only in memory). */
+        if (mc_connect->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+                (MqttClient_Flags(client, 0, 0) &
+                    MQTT_CLIENT_FLAG_STRICT_SESSION) != 0 &&
+                (mc_connect->ack.flags &
+                    MQTT_CONNECT_ACK_FLAG_SESSION_PRESENT) &&
+                !session_id_matched) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SERVER_PROP);
+        }
+    #endif
+        if (rc == MQTT_CODE_SUCCESS) {
+            MqttClient_SessionIdRecord(client, mc_connect->client_id);
+        }
     }
 #endif
 
