@@ -6484,6 +6484,8 @@ const char* MqttClient_ReturnCodeToString(int return_code)
             return "Error (Broker rejected unsubscribe)";
         case MQTT_CODE_ERROR_PUBLISH_REJECTED:
             return "Error (Broker rejected publish)";
+        case MQTT_CODE_ERROR_SN_REJECTED:
+            return "Error (MQTT-SN gateway rejected request)";
 #if defined(ENABLE_MQTT_CURL)
         case MQTT_CODE_ERROR_CURL:
             return "Error (libcurl)";

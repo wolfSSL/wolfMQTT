@@ -89,7 +89,9 @@ WOLFMQTT_API int SN_Client_Connect(
  *  \param      will        Pointer to SN_Will structure initialized
                             with topic and message parameters. Must not be
                             NULL; it also holds the request state.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_ERROR_SN_REJECTED if the
+                gateway answered with a ReturnCode other than Accepted
+                (see will->resp.topicResp.return_code), or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will);
@@ -100,7 +102,9 @@ WOLFMQTT_API int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will);
  *  \param      will        Pointer to SN_Will structure initialized
                             with topic and message parameters. Must not be
                             NULL.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_ERROR_SN_REJECTED if the
+                gateway answered with a ReturnCode other than Accepted
+                (see will->resp.msgResp.return_code), or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will);
@@ -113,7 +117,9 @@ WOLFMQTT_API int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will);
  *  \note This is a blocking function that will wait for MqttNet.read
  *  \param      client      Pointer to MqttClient structure
  *  \param      regist      Pointer to SN_Register structure
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_ERROR_SN_REJECTED if the
+                gateway answered with a ReturnCode other than Accepted
+                (see regist->regack.return_code), or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int SN_Client_Register(
@@ -145,7 +151,9 @@ WOLFMQTT_API int SN_Client_SetRegisterCallback(
                             with message data
  *                          Note: SN_Publish and MqttMessage are same
                             structure.
- *  \return     MQTT_CODE_SUCCESS or MQTT_CODE_ERROR_*
+ *  \return     MQTT_CODE_SUCCESS, MQTT_CODE_ERROR_SN_REJECTED if the
+                gateway answered with a ReturnCode other than Accepted
+                (see publish->return_code (QoS 1)), or MQTT_CODE_ERROR_*
                 (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int SN_Client_Publish(

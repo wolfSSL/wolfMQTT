@@ -1420,6 +1420,52 @@ TEST(sn_publish_qos1_no_continue)
     ASSERT_NO_PENDRESP();
 }
 
+/* MQTT-SN 1.2 sections 5.4.11 and 5.4.13: a REGACK or PUBACK carrying a
+ * ReturnCode other than Accepted (here 0x02, Rejected: invalid topic ID) is a
+ * rejection, and the API must say so instead of returning success. Frames:
+ * PUBACK / REGACK, Length 7, TopicId, MsgId, ReturnCode 0x02. */
+TEST(sn_publish_qos1_rejected_returns_error)
+{
+    static const byte puback_reject[] = { 0x07, SN_MSG_TYPE_PUBACK,
+                                          0x00, SN_TEST_PUB_TOPIC_ID,
+                                          0x00, SN_TEST_PUB_PACKET_ID,
+                                          SN_RC_INVTOPICNAME };
+    SN_Publish pub;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, puback_reject, (int)sizeof(puback_reject));
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
+    rc = sn_publish_pump(&pub, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_SN_REJECTED, rc);
+    ASSERT_EQ(SN_RC_INVTOPICNAME, pub.return_code);
+    ASSERT_NO_PENDRESP();
+}
+
+TEST(sn_register_rejected_returns_error)
+{
+    static const byte regack_reject[] = { 0x07, SN_MSG_TYPE_REGACK,
+                                          0x00, 0x00, 0x00, 0x07,
+                                          SN_RC_NOTSUPPORTED };
+    SN_Register regist;
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, regack_reject, (int)sizeof(regack_reject));
+    XMEMSET(&regist, 0, sizeof(regist));
+    regist.topicName = "wolf/reg";
+    regist.packet_id = 7;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Register(&g_client, &regist);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_SN_REJECTED, rc);
+    ASSERT_EQ(SN_RC_NOTSUPPORTED, regist.regack.return_code);
+    ASSERT_NO_PENDRESP();
+}
+
 /* Happy path, QoS 2: the gateway answers PUBREC then PUBCOMP. The client must
  * send PUBREL in between (so >= 2 writes) and converge to SUCCESS with no
  * dangling pending response. Runs in every SN build. */
@@ -3876,6 +3922,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_subscribe_no_continue);
     RUN_TEST(sn_subscribe_rejected);
     RUN_TEST(sn_publish_qos1_no_continue);
+    RUN_TEST(sn_publish_qos1_rejected_returns_error);
+    RUN_TEST(sn_register_rejected_returns_error);
     RUN_TEST(sn_publish_qos2_no_continue);
     RUN_TEST(sn_publish_qos0_no_pendresp);
 #if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)

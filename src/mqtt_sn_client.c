@@ -1690,6 +1690,12 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
 #ifdef WOLFMQTT_MULTITHREAD
     rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
 #endif
+    /* MQTT-SN 1.2 sections 5.4.23 and 5.4.25: a ReturnCode other than
+     * Accepted rejects the update. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            will->resp.topicResp.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+    }
 
     /* reset state */
     will->stat.write = MQTT_MSG_BEGIN;
@@ -1810,6 +1816,12 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
 #ifdef WOLFMQTT_MULTITHREAD
     rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
 #endif
+    /* MQTT-SN 1.2 sections 5.4.23 and 5.4.25: a ReturnCode other than
+     * Accepted rejects the update. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            will->resp.msgResp.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+    }
 
     /* reset state */
     will->stat.write = MQTT_MSG_BEGIN;
@@ -2059,6 +2071,13 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
             #endif
 
                 publish->return_code = publish->resp.return_code;
+                /* MQTT-SN 1.2 section 5.4.13: a PUBACK ReturnCode other than
+                 * Accepted rejects the PUBLISH (e.g. an unknown TopicId after
+                 * a gateway restart, which needs a new REGISTER). */
+                if (rc == MQTT_CODE_SUCCESS && publish->qos == MQTT_QOS_1 &&
+                        publish->return_code != SN_RC_ACCEPTED) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+                }
             }
 
             break;
@@ -2240,6 +2259,12 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
 #ifdef WOLFMQTT_MULTITHREAD
     rc = MqttClient_RespList_RemoveOwned(client, &regist->pendResp, rc);
 #endif
+    /* MQTT-SN 1.2 section 5.4.11: a REGACK ReturnCode other than Accepted
+     * rejects the registration; regack.topicId is not usable then. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            regist->regack.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+    }
 
     /* reset state */
     regist->stat.write = MQTT_MSG_BEGIN;
