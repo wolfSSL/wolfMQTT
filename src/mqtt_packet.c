@@ -1546,6 +1546,12 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+        /* [MQTT-4.7.3-1] The Will Topic is at least one character long at
+         * every protocol level; the empty-topic Topic Alias exception in
+         * MqttPacket_TopicNameValid is for PUBLISH only. */
+        if (str_len == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         /* [MQTT-3.1.3.3] Will Topic is a Topic Name: no wildcards */
         if (!MqttPacket_TopicNameValid(mc_connect->lwt_msg->topic_name,
                 (word16)str_len, mc_connect->protocol_level)) {

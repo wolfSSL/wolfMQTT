@@ -3176,6 +3176,28 @@ TEST(encode_connect_v5_empty_client_id_without_clean_session_accepted)
     rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
     ASSERT_TRUE(rc > 0);
 }
+
+/* [MQTT-4.7.3-1] The Will Topic is a Topic Name, which must be at least one
+ * character long. The empty-topic exception for PUBLISH with a Topic Alias
+ * does not apply to the Will, and MqttDecode_Connect rejects it, so the
+ * encoder must too. */
+TEST(encode_connect_v5_empty_will_topic_rejected)
+{
+    byte tx_buf[256];
+    MqttConnect conn;
+    MqttMessage lwt;
+    int rc;
+
+    XMEMSET(&conn, 0, sizeof(conn));
+    XMEMSET(&lwt, 0, sizeof(lwt));
+    lwt.topic_name = "";
+    conn.client_id = "test_client";
+    conn.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    conn.enable_lwt = 1;
+    conn.lwt_msg = &lwt;
+    rc = MqttEncode_Connect(tx_buf, (int)sizeof(tx_buf), &conn);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+}
 #endif /* WOLFMQTT_V5 */
 
 TEST(encode_connect_unsupported_protocol_level)
@@ -7820,6 +7842,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(encode_connect_v311_client_id_without_clean_session_accepted);
 #ifdef WOLFMQTT_V5
     RUN_TEST(encode_connect_v5_empty_client_id_without_clean_session_accepted);
+    RUN_TEST(encode_connect_v5_empty_will_topic_rejected);
 #endif
     RUN_TEST(encode_connect_unsupported_protocol_level);
 #ifdef WOLFMQTT_V5
