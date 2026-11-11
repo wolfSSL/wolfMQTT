@@ -1116,7 +1116,6 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         if (rc < 0) {
             break;
         }
-        cur_prop->type = (MqttPropertyType)prop_type;
         tmp = rc;
         /* The Identifier must fit in the remaining Property Length */
         if ((word32)tmp > prop_len) {
@@ -1127,10 +1126,18 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         total += tmp;
         prop_len -= tmp;
 
-        if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
+        /* Validate before storing: the node is already linked into *props
+         * and, in the static pool, type MQTT_PROP_NONE marks a free slot that
+         * another thread's MqttProps_Add could claim. */
+        if (prop_type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
             break;
         }
+        if (prop_type == (word32)MQTT_PROP_NONE) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY_MISMATCH);
+            break;
+        }
+        cur_prop->type = (MqttPropertyType)prop_type;
 
         /* Validate property type is allowed for packet type */
         if (!(gPropMatrix[cur_prop->type].packet_type_mask & (1 << packet))) {
