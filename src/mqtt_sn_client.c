@@ -731,6 +731,18 @@ wait_again:
                 return rc;
             }
 
+        #ifdef WOLFMQTT_MULTITHREAD
+            /* Another reader can complete this response after the check above
+             * but before this waiter acquires lockRecv. Recheck while holding
+             * lockRecv; no reader can change the result after this point. */
+            rc = MqttClient_CheckPendResp(client, wait_type, wait_packet_id);
+            if (rc != MQTT_CODE_ERROR_NOT_FOUND &&
+                    rc != MQTT_CODE_CONTINUE) {
+                MqttReadStop(client, mms_stat);
+                return rc;
+            }
+        #endif
+
             mms_stat->read = MQTT_MSG_WAIT;
         }
         FALL_THROUGH;
