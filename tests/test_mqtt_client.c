@@ -5453,7 +5453,8 @@ TEST(reconnect_v5_replay_waits_for_property_pool)
 
     /* Once entries are free again the message goes out */
     (void)MqttClient_PropsFree(hog);
-    test_net.read = mock_net_read_wouldblock;
+    g_canned_len = 0;
+    g_canned_pos = 0;
     for (i = 0; i < 5 && g_order_pub_count == 0; i++) {
         (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
     }
