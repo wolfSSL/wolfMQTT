@@ -7785,6 +7785,22 @@ TEST(decode_props_auth_data_without_method_rejected)
  * Length is a Malformed Packet, and must be rejected before the remaining
  * length is charged for it. Wire: Property Length 1, Identifier 0x80 0x01
  * (two bytes, value 128). */
+/* MQTT 5.0 section 2.2.2.2: 0 is not a Property Identifier. It is also the
+ * static pool's free-slot marker, so it must be rejected without being stored
+ * in a node linked into the caller's list. Wire: Identifier 0x00 followed by
+ * one byte, Property Length 2. */
+TEST(decode_props_identifier_zero_rejected)
+{
+    byte buf[] = { 0x00, 0x01 };
+    MqttProp* props = NULL;
+    int rc;
+
+    rc = MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH, &props, buf,
+            (word32)sizeof(buf), (word32)sizeof(buf));
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY_MISMATCH, rc);
+    ASSERT_NULL(props);
+}
+
 TEST(decode_props_identifier_past_prop_len_rejected)
 {
     byte buf[] = { 0x80, 0x01 };
@@ -8263,6 +8279,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_props_connack_max_packet_size_zero_rejected);
     RUN_TEST(decode_props_auth_data_without_method_rejected);
     RUN_TEST(decode_props_identifier_past_prop_len_rejected);
+    RUN_TEST(decode_props_identifier_zero_rejected);
 
     /* MqttEncode/Decode_Auth */
     RUN_TEST(encode_props_string_invalid_utf8_rejected);
