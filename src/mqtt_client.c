@@ -968,6 +968,47 @@ static MqttPacketType MqttClient_Replay_AckType(const MqttReplayMsg* slot)
     return MQTT_PACKET_TYPE_PUBLISH_ACK;
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Release a deferred re-send left mid-write when its connection ends. It has
+ * no application owner to cancel it with MqttClient_CancelMessage, so without
+ * this the writer stays busy and the next CONNECT can never be sent. Only a
+ * nonblocking write is left paused between calls; a blocking one is always
+ * stopped before its caller returns. */
+static void MqttClient_Replay_ReleaseWrite(MqttClient* client)
+{
+    int active = 0;
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
+        return;
+    }
+#endif
+    if (client->replay_stat.isWriteActive) {
+        active = 1;
+    }
+    else {
+        client->replay_busy = 0;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    if (active) {
+        /* The abandoned packet is never sent; scrub it before releasing the
+         * writer, as MqttClient_CancelMessage does. */
+        CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
+        MqttWriteStop(client, &client->replay_stat);
+    #ifdef WOLFMQTT_MULTITHREAD
+        if (wm_SemLock(&client->lockClient) == MQTT_CODE_SUCCESS) {
+            client->replay_busy = 0;
+            wm_SemUnlock(&client->lockClient);
+        }
+    #else
+        client->replay_busy = 0;
+    #endif
+    }
+}
+#endif
+
 /* Everything retained so far belongs to the Session that is ending; a send
  * admitted once CONNECT is on the wire tags itself. The persistence flag still
  * describes that Session, and one that ended with its connection owes nothing
@@ -978,7 +1019,14 @@ static int MqttClient_Replay_NewConnSafe(MqttClient* client)
     int i;
     byte persisted;
 #ifdef WOLFMQTT_MULTITHREAD
-    int rc = wm_SemLock(&client->lockClient);
+    int rc;
+#endif
+
+#ifdef WOLFMQTT_NONBLOCK
+    MqttClient_Replay_ReleaseWrite(client);
+#endif
+#ifdef WOLFMQTT_MULTITHREAD
+    rc = wm_SemLock(&client->lockClient);
     if (rc != MQTT_CODE_SUCCESS) {
         return rc;
     }
@@ -3793,6 +3841,25 @@ static int MqttClient_Replay_CanResume(const MqttClient* client)
 #endif
 }
 
+#ifdef WOLFMQTT_NONBLOCK
+/* Is a deferred re-send paused mid-write that this caller may resume? */
+static int MqttClient_Replay_ResumableSafe(MqttClient* client)
+{
+    int resume;
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
+        return 0;
+    }
+#endif
+    resume = MqttClient_Replay_CanResume(client);
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    return resume;
+}
+#endif
+
 static int MqttClient_Replay_Flush(MqttClient* client)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -6351,6 +6418,18 @@ int MqttClient_WaitMessage_ex(MqttClient *client, MqttObject* msg,
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_NO_SESSION_REPLAY) && \
+    defined(WOLFMQTT_NONBLOCK)
+    /* A re-send paused mid-write owns the writer, so a keep-alive PINGREQ
+     * could only wait behind it; finish it first. A PINGREQ that is itself
+     * mid-write is left to complete below. */
+    if (MqttClient_Replay_ResumableSafe(client)) {
+        rc2 = MqttClient_Replay_Flush(client);
+        if (rc2 != MQTT_CODE_SUCCESS) {
+            return rc2;
+        }
+    }
+#endif
 #ifndef WOLFMQTT_NO_TIME
     /* Send an automatic keep-alive PINGREQ if the outbound link has been idle
      * long enough. A deferred ping (another thread holds the write lock) comes
@@ -6646,6 +6725,11 @@ int MqttClient_NetDisconnect(MqttClient *client)
     MqttClient_SendIdsReset(client);
 
     rc = MqttSocket_Disconnect(client);
+
+#if !defined(WOLFMQTT_NO_SESSION_REPLAY) && defined(WOLFMQTT_NONBLOCK)
+    /* A deferred re-send paused mid-write ends with the connection */
+    MqttClient_Replay_ReleaseWrite(client);
+#endif
 
     /* An operation abandoned with the connection, such as a partly written
      * nonblocking CONNECT, can leave credentials in tx_buf or peer data in

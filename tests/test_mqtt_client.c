@@ -5528,6 +5528,132 @@ TEST(reconnect_v5_replay_honors_receive_maximum)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)
+/* v5 CONNACK, Session Present 1, Success, Properties length 3 holding
+ * Receive Maximum (0x21) = 1. Remaining Length 6. */
+static const byte replay_rm1_connack[] = {
+    0x20, 0x06, 0x01, 0x00, 0x03, 0x21, 0x00, 0x01
+};
+
+static int replay_reconnect_rm1(void)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+
+    test_net.write = order_mock_write;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, replay_rm1_connack, sizeof(replay_rm1_connack));
+    g_canned_len = (int)sizeof(replay_rm1_connack);
+    g_canned_pos = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    g_connect_clean_session = 0;
+    return rc;
+}
+
+/* Resume a Session holding QoS 1 messages 1 and 2 under Receive Maximum 1,
+ * acknowledge 1, and leave the deferred re-send of 2 paused mid-write by a
+ * would-block transport. Returns 0 when that state was reached. */
+static int replay_pause_deferred_write(void)
+{
+    MqttConnect connect;
+    MqttPublish pub_a;
+    MqttPublish pub_b;
+    int i;
+    static byte payload[] = "x";
+    /* v5 PUBACK for id 1, Reason Code omitted (Success) */
+    static const byte puback_a[] = { 0x40, 0x02, 0x00, 0x01 };
+
+    if (test_init_client() != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    if (run_initial_connect(&connect) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+    init_qos_publish(&pub_a, MQTT_QOS_1, 1, "t", payload, 1);
+    if (run_publish_unacked(&pub_a) != MQTT_CODE_ERROR_NETWORK) {
+        return -1;
+    }
+    init_qos_publish(&pub_b, MQTT_QOS_1, 2, "t", payload, 1);
+    if (run_publish_unacked(&pub_b) != MQTT_CODE_ERROR_NETWORK) {
+        return -1;
+    }
+    if (MqttClient_NetDisconnect(&test_client) != MQTT_CODE_SUCCESS) {
+        return -1;
+    }
+    g_order_pub_count = 0;
+    if (replay_reconnect_rm1() != MQTT_CODE_SUCCESS ||
+            g_order_pub_count != 1) {
+        return -1;
+    }
+    /* PUBACK 1 frees the unit */
+    XMEMCPY(g_canned_buf, puback_a, sizeof(puback_a));
+    g_canned_len = (int)sizeof(puback_a);
+    g_canned_pos = 0;
+    for (i = 0; i < 20 && g_canned_pos < g_canned_len; i++) {
+        (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    /* The next wait starts re-sending 2, and the transport blocks */
+    g_canned_len = 0;
+    g_canned_pos = 0;
+    test_net.write = mock_net_write_wouldblock;
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    test_net.write = order_mock_write;
+    return (test_client.replay_stat.isWriteActive &&
+        g_order_pub_count == 1) ? 0 : -1;
+}
+
+/* The paused re-send has no application owner to cancel it, so tearing the
+ * connection down must release its write; otherwise the next CONNECT finds
+ * the writer still busy and can never go out. */
+TEST(replay_paused_write_released_by_net_disconnect)
+{
+    ASSERT_EQ(0, replay_pause_deferred_write());
+    /* Keep the Session across this disconnect too, as the setup does */
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    ASSERT_EQ(0, test_client.replay_stat.isWriteActive);
+    ASSERT_EQ(0, test_client.write.isActive);
+
+    g_order_pub_count = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, replay_reconnect_rm1());
+    /* Message 2 is still owed and is re-sent on the new connection */
+    ASSERT_EQ(1, g_order_pub_count);
+    ASSERT_EQ(2, g_order_pub_ids[0]);
+}
+
+#ifndef WOLFMQTT_NO_TIME
+/* A keep-alive falling due while the re-send is paused must not keep the
+ * writer stalled: the re-send owns it and is resumed first, then the
+ * PINGREQ can go out. */
+TEST(replay_paused_write_resumes_before_keep_alive)
+{
+    int i;
+
+    ASSERT_EQ(0, replay_pause_deferred_write());
+    test_client.last_tx_time = 0; /* keep-alive due now */
+    for (i = 0; i < 5 && g_order_pub_count < 2; i++) {
+        (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(2, g_order_pub_count);
+    ASSERT_EQ(2, g_order_pub_ids[1]);
+    ASSERT_EQ(0, test_client.replay_stat.isWriteActive);
+}
+#endif
+#endif
+
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
     (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
 static void* replay_noop_thread(void* arg)
@@ -11425,6 +11551,12 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_v5_replays_publish_with_properties);
     RUN_TEST(reconnect_v5_replay_drops_topic_alias);
     RUN_TEST(reconnect_v5_replay_honors_receive_maximum);
+#endif
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)
+    RUN_TEST(replay_paused_write_released_by_net_disconnect);
+#ifndef WOLFMQTT_NO_TIME
+    RUN_TEST(replay_paused_write_resumes_before_keep_alive);
+#endif
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
     (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
