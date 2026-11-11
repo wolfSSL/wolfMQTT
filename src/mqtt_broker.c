@@ -133,12 +133,21 @@ typedef char wolfmqtt_broker_time_t_must_be_unsigned[
  * arguments can appear in one log statement; the broker log path is single
  * threaded (as is PRINTF itself). Output is NUL-terminated and truncated to
  * fit. NULL src yields "(null)". */
+static char broker_log_san_pool[BROKER_LOG_SAN_POOL][BROKER_LOG_SAN_SZ];
+
+/* Wipe every sanitizer slot, for a log line whose argument (e.g. a failed
+ * login's User Name) should not stay in static memory until the slot is
+ * reused. */
+static void BrokerLog_SanitizeClear(void)
+{
+    BROKER_FORCE_ZERO(broker_log_san_pool, sizeof(broker_log_san_pool));
+}
+
 WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src)
 {
     static const char hex_digits[] = "0123456789abcdef";
-    static char pool[BROKER_LOG_SAN_POOL][BROKER_LOG_SAN_SZ];
     static int pool_idx = 0;
-    char* dst = pool[pool_idx];
+    char* dst = broker_log_san_pool[pool_idx];
     word32 di = 0;
 
     /* Clear the slot before reuse so no residue from a previous longer
@@ -7731,6 +7740,9 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 BrokerLog_Sanitize((bc->username && bc->username[0])
                     ? bc->username : "(null)"));
             #endif
+        #ifndef WOLFMQTT_BROKER_NO_LOG
+            BrokerLog_SanitizeClear();
+        #endif
         #ifdef WOLFMQTT_V5
             if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
                 ack.return_code = MQTT_REASON_BAD_USER_OR_PASS;
