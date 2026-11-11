@@ -1955,6 +1955,34 @@ TEST(disconnect_v5_nonzero_session_expiry_after_nonzero_allowed)
 }
 #endif
 
+/* Without a publish callback nothing can supply payload bytes beyond the
+ * caller's buffer, so a buffer_len shorter than total_len would make the
+ * continuation copies read past it. Such a publish is refused before anything
+ * is written. (buffer_len 0 keeps meaning "the buffer holds total_len".) */
+TEST(publish_short_buffer_without_callback_rejected)
+{
+    MqttPublish publish;
+    static byte payload[8] = { 0 };
+    int rc;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client_connect_sent();
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+    test_net.write = mock_net_write_accept;
+    g_frames_written = 0;
+
+    XMEMSET(&publish, 0, sizeof(publish));
+    publish.qos = MQTT_QOS_0;
+    publish.topic_name = "t";
+    publish.buffer = payload;
+    publish.buffer_len = 4;
+    publish.total_len = (word32)sizeof(payload);
+    rc = MqttClient_Publish(&test_client, &publish);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
+    ASSERT_EQ(0, g_frames_written);
+}
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -10829,6 +10857,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
     RUN_TEST(wait_message_oversize_publish_header_disconnects);
+    RUN_TEST(publish_short_buffer_without_callback_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected);
     RUN_TEST(disconnect_v5_nonzero_session_expiry_after_nonzero_allowed);

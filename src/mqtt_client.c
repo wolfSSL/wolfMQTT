@@ -4674,6 +4674,15 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
         return rc;
     }
 
+    /* Without a publish callback the payload comes only from buffer, so it
+     * must hold all total_len bytes; continuation copies would otherwise read
+     * past it. buffer_len 0 means the buffer holds total_len. */
+    if (pubCb == NULL && publish->stat.write == MQTT_MSG_BEGIN &&
+            publish->buffer != NULL && publish->buffer_len > 0 &&
+            publish->buffer_len < publish->total_len) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
 #ifdef WOLFMQTT_V5
     /* Use specified protocol version if set */
     publish->protocol_level = client->protocol_level;
