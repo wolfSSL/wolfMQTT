@@ -3350,8 +3350,6 @@ int MqttClient_SetPropertyCallback(MqttClient *client, MqttPropertyCb propCb,
 #endif
 
 #ifdef WOLFMQTT_V5
-/* Return 1 if the CONNECT carries an Authentication Method property, i.e. the
- * connection is negotiating enhanced authentication [MQTT-4.12]. */
 /* Record the CONNECT Authentication Method (presence and value) so a later AUTH
  * must reuse it [MQTT-4.12.0-1]. A value longer than MQTT_AUTH_METHOD_MAX sets
  * auth_method_len but is not stored, so MqttClient_Auth refuses re-auth. */
