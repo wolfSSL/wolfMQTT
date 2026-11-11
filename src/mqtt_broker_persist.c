@@ -1507,25 +1507,29 @@ static int wmqb_static_prune_expired_sessions(MqttBroker* broker)
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SESSION,
             wmqb_static_find_expired_session_cb, &ctx);
         if (ctx.error != 0) {
-            return ctx.error;
+            rc = ctx.error;
+            break;
         }
         if (!ctx.found) {
-            return rc;
+            break;
         }
         rc = BrokerPersist_DelOutQueue(broker, ctx.client_id);
         if (rc < 0) {
-            return rc;
+            break;
         }
         rc = BrokerPersist_DelSubs(broker, ctx.client_id);
         if (rc != 0) {
-            return rc;
+            break;
         }
         rc = wmqb_kv_del_commit(broker, BROKER_PERSIST_NS_SESSION,
             (const byte*)ctx.client_id, ctx.key_len);
         if (rc != 0) {
-            return rc;
+            break;
         }
     }
+    /* ctx.client_id holds the selected session's identifier */
+    wmqb_force_zero(&ctx, (word32)sizeof(ctx));
+    return rc;
 }
 
 static BrokerStaticOrphanSession* wmqb_restore_create_orphan(
