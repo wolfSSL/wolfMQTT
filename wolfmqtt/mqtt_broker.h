@@ -910,7 +910,8 @@ typedef struct MqttBroker {
     const char *ws_tls_ca;
     /* Optional exact Origin allowlist for browser WebSocket connections. When
      * non-NULL, a request whose HTTP Origin header is present and does not
-     * match is rejected (CSWSH defense). NULL = no Origin enforcement. */
+     * match is rejected (CSWSH defense). NULL = no Origin enforcement. A
+     * request with no Origin is allowed unless ws_require_origin is set. */
     const char *ws_allowed_origin;
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
@@ -956,6 +957,13 @@ typedef struct MqttBroker {
      * MqttBroker_Free, so restored v5 queue properties can be decoded when
      * no client is connected. */
     byte props_ref;
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+    /* With ws_allowed_origin set, also reject a WebSocket request that has no
+     * Origin header. 0 (default) lets such requests through, since native
+     * non-browser clients usually omit Origin; set it when only browsers
+     * connect, so the allowlist cannot be bypassed by leaving Origin out. */
+    byte ws_require_origin;
 #endif
 } MqttBroker;
 

@@ -1188,7 +1188,7 @@ static int callback_broker_mqtt(struct lws *wsi,
         /* CSWSH defense: when an Origin allowlist is configured, reject a
          * browser-supplied Origin that does not match exactly. Requests with
          * no Origin header (native clients) are not browser-originated and are
-         * allowed through. */
+         * allowed through unless ws_require_origin is set. */
         if (broker != NULL && broker->ws_allowed_origin != NULL) {
             /* Distinguish an absent Origin (native, non-browser client that is
              * allowed through) from one that is present but does not fit the
@@ -1209,6 +1209,10 @@ static int callback_broker_mqtt(struct lws *wsi,
                         "broker: ws origin rejected (len=%d)", tot);
                     return -1;
                 }
+            }
+            else if (broker->ws_require_origin) {
+                WBLOG_ERR(broker, "broker: ws origin missing, rejected");
+                return -1;
             }
         }
     }
