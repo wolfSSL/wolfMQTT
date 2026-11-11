@@ -1965,6 +1965,62 @@ TEST(broker_v5_malformed_subscribe_sends_disconnect)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+/* [MQTT-3.1.0-2] A second CONNECT is closed with a Protocol Error
+ * DISCONNECT. When that write is deferred the client stays allocated, so the
+ * second CONNECT's User Name and Password must not be left in bc->rx_buf
+ * meanwhile, as the first CONNECT's are scrubbed once handled. */
+TEST(broker_v5_second_connect_scrubbed_while_disconnect_pending)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    byte connect[64];
+    size_t connect_len;
+    BrokerClient* bc;
+    int i;
+    /* v5 CONNECT, flags 0xC2 (User Name, Password, Clean Start), Keep Alive
+     * 60, Properties length 0, ClientId "", User Name "u", Password
+     * "secretpw". Remaining Length 10 + 1 + 2 + 3 + 10 = 26. */
+    static const byte connect2[] = {
+        0x10, 26,
+        0x00, 0x04, 'M', 'Q', 'T', 'T', 0x05, 0xC2, 0x00, 0x3C,
+        0x00,
+        0x00, 0x00,
+        0x00, 0x01, 'u',
+        0x00, 0x08, 's', 'e', 'c', 'r', 'e', 't', 'p', 'w'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    connect_len = build_v5_connect_emptyid(connect, 0x02); /* Clean Start */
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_FALSE(g_client_closed);
+
+    g_clients[0].write_continue = 1; /* hold the DISCONNECT write */
+    mock_client_input_append(0, connect2, sizeof(connect2));
+    for (i = 0; i < 4 && g_in_pos < g_in_len; i++) {
+        MqttBroker_Step(&broker);
+    }
+    bc = broker.clients;
+    ASSERT_NOT_NULL(bc);
+    ASSERT_FALSE(g_client_closed);
+    ASSERT_TRUE(bc->close_after_direct);
+    for (i = 0; i + 8 <= bc->rx_buf_len; i++) {
+        ASSERT_FALSE(XMEMCMP(&bc->rx_buf[i], "secretpw", 8) == 0);
+    }
+
+    g_clients[0].write_continue = 0;
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17572,6 +17628,9 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(broker_v5_unmatched_pubrec_pubrel_not_found);
+#endif
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+    RUN_TEST(broker_v5_second_connect_scrubbed_while_disconnect_pending);
 #endif
 #if defined(WOLFMQTT_V5) && \
     !(defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_NONBLOCK))

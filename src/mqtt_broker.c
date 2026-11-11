@@ -9914,6 +9914,9 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             WBLOG_ERR(broker,
                 "broker: second CONNECT on sock=%d [MQTT-3.1.0-2]",
                 (int)bc->sock);
+            /* Its User Name and Password are in rx_buf, which stays
+             * allocated while a deferred DISCONNECT is written. */
+            BROKER_FORCE_ZERO(bc->rx_buf, (word32)rc);
             BrokerClient_ErrorClose(broker, bc, 0);
             return 0;
         }
