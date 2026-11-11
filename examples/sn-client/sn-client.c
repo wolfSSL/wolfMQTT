@@ -329,7 +329,7 @@ int sn_test(MQTTCtx *mqttCtx)
         rc = SN_Client_Publish(&mqttCtx->client, &mqttCtx->publishSN);
 
         PRINTF("MQTT-SN Publish: topic id = %hu, rc = %d\r\nPayload = %s",
-                *(word16*)mqttCtx->publishSN.topic_name,
+                topicID,
                 mqttCtx->publishSN.return_code,
                 mqttCtx->publishSN.buffer);
         if (rc != MQTT_CODE_SUCCESS) {
