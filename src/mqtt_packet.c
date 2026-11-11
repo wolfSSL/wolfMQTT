@@ -969,9 +969,12 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
                  * property block its own decoder (or a peer) treats as
                  * malformed. */
                 if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
-                        !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                        (cur_prop->data_str.len == 0 ||
+                         !MqttPacket_TopicNameValid(cur_prop->data_str.str,
                             cur_prop->data_str.len,
-                            MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                            MQTT_CONNECT_PROTOCOL_LEVEL_5))) {
+                    /* [MQTT-4.7.3-1] nor be empty: the empty-name Topic
+                     * Alias allowance is for PUBLISH Topic Names only. */
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
             #ifndef WOLFMQTT_NO_UTF8_VALIDATION
@@ -1273,9 +1276,13 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     /* [MQTT-3.3.2-14] A Response Topic is a Topic Name and
                      * MUST NOT contain wildcard characters. */
                     if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
-                            !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                            (cur_prop->data_str.len == 0 ||
+                             !MqttPacket_TopicNameValid(
+                                cur_prop->data_str.str,
                                 cur_prop->data_str.len,
-                                MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                                MQTT_CONNECT_PROTOCOL_LEVEL_5))) {
+                        /* [MQTT-4.7.3-1] nor be empty (the Topic Alias
+                         * allowance is for PUBLISH Topic Names only). */
                         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                     }
                 }

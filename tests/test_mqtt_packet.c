@@ -1811,6 +1811,38 @@ TEST(encode_publish_v5_response_topic_wildcard_rejected)
     MqttProps_Free(pub.props);
 }
 
+/* [MQTT-4.7.3-1] A Response Topic is a Topic Name, so it is at least one
+ * character long; the empty-name Topic Alias exception applies only to the
+ * PUBLISH Topic Name. Decode wire: PUBLISH QoS 0, Remaining Length 7, topic
+ * "t", Properties length 3 holding Response Topic (0x08) of length 0. */
+TEST(publish_v5_empty_response_topic_rejected)
+{
+    byte buf[] = { 0x30, 0x07, 0x00, 0x01, 't', 0x03, 0x08, 0x00, 0x00 };
+    byte tx_buf[64];
+    MqttPublish pub;
+    MqttProp* prop;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    rc = MqttDecode_Publish(buf, (int)sizeof(buf), &pub);
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_NULL(pub.props);
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    pub.topic_name = "t";
+    pub.qos = MQTT_QOS_0;
+    prop = MqttProps_Add(&pub.props);
+    ASSERT_TRUE(prop != NULL);
+    prop->type = MQTT_PROP_RESP_TOPIC;
+    prop->data_str.str = (char*)"";
+    prop->data_str.len = 0;
+    rc = MqttEncode_Publish(tx_buf, (int)sizeof(tx_buf), &pub, 0);
+    MqttProps_Free(pub.props);
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+}
+
 /* MqttProps_FindType is public API: it must return the first property of the
  * requested type, NULL when the list has none, and NULL for an empty list. */
 TEST(props_find_type)
@@ -7871,6 +7903,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_publish_v5_byte_property_out_of_range_rejected);
     RUN_TEST(decode_publish_v5_response_topic_wildcard_rejected);
     RUN_TEST(encode_publish_v5_response_topic_wildcard_rejected);
+    RUN_TEST(publish_v5_empty_response_topic_rejected);
     RUN_TEST(props_find_type);
 #ifndef WOLFMQTT_DYN_PROP
     RUN_TEST(props_free_wipes_static_pool_record);
