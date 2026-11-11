@@ -10257,6 +10257,116 @@ TEST(static_fanout_full_live_queue_disconnects_quota)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+#ifdef WOLFMQTT_BROKER_RETAINED
+/* A retained copy the live queue cannot hold is skipped, not fatal: it is
+ * not a delivery a publisher was acknowledged for, and the SUBSCRIBE must
+ * still be answered [MQTT-3.8.4-1]. S (Receive Maximum 1) subscribes to "r/#"
+ * matching two retained QoS 1 messages of 300 bytes; the first goes out, the
+ * second is larger than a queue entry. */
+TEST(static_retained_overflow_skips_copy_and_sends_suback)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    int i;
+    int t;
+    byte pub[310];
+    /* v5 SUBSCRIBE: packet id 2, props len 0, filter "r/#", QoS 1 */
+    static const byte subscribe_r[] = {
+        0x82, 0x09,
+        0x00, 0x02,
+        0x00,
+        0x00, 0x03, 'r', '/', '#',
+        0x01
+    };
+
+    sub_bc = static_setup_recv_max_1(&broker, &net);
+    ASSERT_NOT_NULL(sub_bc);
+
+    /* v3.1.1 PUBLISH QoS 1 RETAIN: 0x33, Remaining Length 2 + 3 topic
+     * + 2 id + 300 payload = 307 (VBI 0xB3 0x02), topic "r/1" or "r/2". */
+    for (t = 0; t < 2; t++) {
+        pub[0] = 0x33;
+        pub[1] = 0xB3; pub[2] = 0x02;
+        pub[3] = 0x00; pub[4] = 0x03;
+        pub[5] = 'r'; pub[6] = '/'; pub[7] = (byte)('1' + t);
+        pub[8] = 0x00; pub[9] = (byte)(t + 1);
+        XMEMSET(&pub[10], 'p', 300);
+        mock_client_input_append(1, pub, 310);
+        for (i = 0; i < 8; i++) {
+            (void)MqttBroker_Step(&broker);
+        }
+    }
+
+    g_clients[0].out_len = 0;
+    mock_client_input_append(0, subscribe_r, sizeof(subscribe_r));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_SUBSCRIBE_ACK));
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(sub_bc->connected);
+    ASSERT_FALSE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
+#ifdef WOLFMQTT_BROKER_WILL
+/* A Will delivery that finds the live queue full disconnects the subscriber
+ * with Quota Exceeded 0x97 (MQTT 5.0 section 3.14.2.1), as a PUBLISH does. */
+TEST(static_will_into_full_live_queue_disconnects_quota)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    int i;
+    int n;
+    /* v3.1.1 CONNECT "W" with Will QoS 1 on "x", message "m": flags 0x0E
+     * (Clean Session, Will Flag, Will QoS 1). Remaining Length 10 + 3 + 3
+     * + 3 = 19. */
+    static const byte connect_will[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x0E, 0x00, 0x3C,
+        0x00, 0x01, 'W',
+        0x00, 0x01, 'x',
+        0x00, 0x01, 'm'
+    };
+
+    sub_bc = static_setup_recv_max_1(&broker, &net);
+    ASSERT_NOT_NULL(sub_bc);
+    g_clients_active = 3;
+    mock_client_input_append(2, connect_will, sizeof(connect_will));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+
+    /* One in flight and a full queue */
+    for (n = 0; n < 1 + BROKER_MAX_STATIC_LIVE_MSGS; n++) {
+        static_publish_x_qos1(&broker, (word16)(n + 1));
+    }
+    ASSERT_TRUE(sub_bc->connected);
+    g_clients[0].out_len = 0;
+
+    /* W drops without DISCONNECT, so its Will is published */
+    g_clients[2].read_err = 1;
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(MQTT_REASON_QUOTA_EXCEEDED,
+        first_disconnect_reason(g_clients[0].out_buf, g_clients[0].out_len));
+    ASSERT_FALSE(sub_bc->connected);
+    ASSERT_FALSE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
 #endif /* WOLFMQTT_V5 */
 
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
@@ -18578,6 +18688,12 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(static_fanout_honors_v5_receive_maximum);
     RUN_TEST(static_fanout_full_live_queue_disconnects_quota);
+#ifdef WOLFMQTT_BROKER_RETAINED
+    RUN_TEST(static_retained_overflow_skips_copy_and_sends_suback);
+#endif
+#ifdef WOLFMQTT_BROKER_WILL
+    RUN_TEST(static_will_into_full_live_queue_disconnects_quota);
+#endif
 #endif
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(static_fanout_releases_packet_id_on_v5_pubrec_reject);

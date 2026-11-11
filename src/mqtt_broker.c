@@ -6769,10 +6769,13 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                 continue;
             }
             if (enc_rc != BROKER_STATIC_LIVE_SEND) {
+                /* No publisher was acknowledged for this copy, so skipping
+                 * it loses nothing the Session owns; failing would leave the
+                 * SUBSCRIBE without its SUBACK [MQTT-3.8.4-1]. */
                 WBLOG_ERR(broker, "broker: static retained delivery "
-                    "queue full sock=%d rc=%d", (int)bc->sock, enc_rc);
-                deliver_rc = enc_rc;
-                break;
+                    "skipped sock=%d rc=%d (live queue cannot hold it)",
+                    (int)bc->sock, enc_rc);
+                continue;
             }
             enc_rc = MqttEncode_Publish(bc->tx_buf,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
