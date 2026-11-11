@@ -4678,13 +4678,12 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
              * whose last allowed byte still sets the continuation bit, so i can
              * never reach MQTT_PACKET_MAX_LEN_BYTES at this point. */
 
-            /* Try and decode remaining length */
-            if (rx_buf_len < (client->packet.header_len - (i + 1))) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-            }
+            /* Try and decode remaining length. header->len starts after the
+             * one type/flags byte, and the entry check guarantees rx_buf_len
+             * covers a full fixed header, so the bound is rx_buf_len - 1 (as
+             * in MqttDecode_FixedHeader). */
             rc = MqttDecode_Vbi(header->len,
-                    &remain_len_u32,
-                    rx_buf_len - (client->packet.header_len - (i + 1)));
+                    &remain_len_u32, (word32)(rx_buf_len - 1));
             if (rc < 0) { /* Indicates error */
                 return MqttPacket_HandleNetError(client, rc);
             }
