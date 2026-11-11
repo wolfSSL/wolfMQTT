@@ -763,6 +763,11 @@ typedef struct BrokerClient {
 #endif
     word16        will_props_len;
 #endif
+#ifdef WOLFMQTT_V5
+    /* A DISCONNECT has been written (or started) on this connection, so an
+     * error close must not send another. */
+    byte          disconnect_sent;
+#endif
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */

@@ -7261,6 +7261,9 @@ static int BrokerSend_Disconnect(BrokerClient* bc, byte reason_code)
         WBLOG_DBG(bc->broker, "broker: DISCONNECT send sock=%d reason=0x%02x",
             (int)bc->sock, reason_code);
         rc = BrokerClient_WriteDirect(bc, rc);
+        if (rc > 0 || rc == MQTT_CODE_CONTINUE) {
+            bc->disconnect_sent = 1;
+        }
     }
     return rc;
 }
@@ -9678,6 +9681,11 @@ static void BrokerClient_ErrorClose(MqttBroker* broker, BrokerClient* bc,
     byte reason = (byte)(malformed ? MQTT_REASON_MALFORMED_PACKET :
         MQTT_REASON_PROTOCOL_ERR);
 
+    if (bc->disconnect_sent) {
+        /* The handler already told the peer why; one DISCONNECT only. */
+        BrokerClient_AbnormalClose(broker, bc);
+        return;
+    }
   #ifndef WOLFMQTT_STATIC_MEMORY
     if (BrokerSend_Disconnect(bc, reason) == MQTT_CODE_CONTINUE) {
         /* Finish writing the DISCONNECT on a later step before closing. */
@@ -9696,6 +9704,26 @@ static void BrokerClient_ErrorClose(MqttBroker* broker, BrokerClient* bc,
     (void)malformed;
 #endif
     BrokerClient_AbnormalClose(broker, bc);
+}
+
+/* Close after a fatal result from a packet handler. A decode or protocol
+ * failure in a packet other than CONNECT gets a reason-coded DISCONNECT first
+ * (MQTT 5.0 section 4.13.1); network and resource failures just close. */
+static void BrokerClient_FatalClose(MqttBroker* broker, BrokerClient* bc,
+    int rc)
+{
+    if (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
+            rc == MQTT_CODE_ERROR_PACKET_ID) {
+        BrokerClient_ErrorClose(broker, bc, 1);
+    }
+    else if (rc == MQTT_CODE_ERROR_PACKET_TYPE ||
+            rc == MQTT_CODE_ERROR_PROPERTY ||
+            rc == MQTT_CODE_ERROR_PROPERTY_MISMATCH) {
+        BrokerClient_ErrorClose(broker, bc, 0);
+    }
+    else {
+        BrokerClient_AbnormalClose(broker, bc);
+    }
 }
 
 static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
@@ -9902,7 +9930,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             {
                 int p_rc = BrokerHandle_Publish(bc, rc, broker);
                 if (BrokerRcIsFatal(p_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, p_rc);
                     return 0;
                 }
                 break;
@@ -9938,7 +9966,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 }
             #endif
                 if (BrokerRcIsFatal(ack_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, ack_rc);
                     return 0;
                 }
             }
@@ -9950,7 +9978,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                  * responds with PUBREL */
                 int p_rc = BrokerHandle_PublishRec(bc, rc);
                 if (BrokerRcIsFatal(p_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, p_rc);
                     return 0;
                 }
                 break;
@@ -9961,7 +9989,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                  * responds with PUBCOMP */
                 int p_rc = BrokerHandle_PublishRel(bc, rc);
                 if (BrokerRcIsFatal(p_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, p_rc);
                     return 0;
                 }
                 break;
@@ -9996,7 +10024,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
                 }
             #endif
                 if (BrokerRcIsFatal(comp_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, comp_rc);
                     return 0;
                 }
             }
@@ -10006,7 +10034,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             {
                 int s_rc = BrokerHandle_Subscribe(bc, rc, broker);
                 if (BrokerRcIsFatal(s_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, s_rc);
                     return 0;
                 }
                 break;
@@ -10015,7 +10043,7 @@ static int BrokerClient_Process(MqttBroker* broker, BrokerClient* bc)
             {
                 int u_rc = BrokerHandle_Unsubscribe(bc, rc, broker);
                 if (BrokerRcIsFatal(u_rc)) {
-                    BrokerClient_AbnormalClose(broker, bc);
+                    BrokerClient_FatalClose(broker, bc, u_rc);
                     return 0;
                 }
                 break;

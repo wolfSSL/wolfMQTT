@@ -1916,6 +1916,55 @@ TEST(broker_v5_unmatched_pubrec_pubrel_not_found)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && \
+    !(defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_NONBLOCK))
+/* MQTT 5.0 section 4.13.1: after a Malformed Packet other than CONNECT a v5
+ * Server SHOULD send DISCONNECT with Reason Code 0x81 before closing. A
+ * SUBSCRIBE with Packet Identifier 0 fails to decode in its handler; the
+ * close must still carry the reason code, and only one DISCONNECT. */
+TEST(broker_v5_malformed_subscribe_sends_disconnect)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    byte connect[64];
+    size_t connect_len;
+    size_t connack_len;
+    int i;
+    /* v5 SUBSCRIBE: Packet Identifier 0 [MQTT-2.2.1-3], Properties length
+     * 0, filter "x", options QoS 0 */
+    static const byte subscribe_id0[] = {
+        0x82, 0x07, 0x00, 0x00, 0x00, 0x00, 0x01, 'x', 0x00
+    };
+    /* DISCONNECT, Remaining Length 1, Reason Code 0x81 (Malformed Packet) */
+    static const byte disconnect_81[] = { 0xE0, 0x01, 0x81 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    connect_len = build_v5_connect_emptyid(connect, 0x02); /* Clean Start */
+    reset_mock_state(connect, connect_len);
+    run_broker_one_connect(&broker);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_FALSE(g_client_closed);
+    connack_len = g_out_len;
+
+    mock_client_input_append(0, subscribe_id0, sizeof(subscribe_id0));
+    for (i = 0; i < 4 && !g_client_closed; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_client_closed);
+    ASSERT_EQ(connack_len + sizeof(disconnect_81), g_out_len);
+    ASSERT_MEM_EQ(disconnect_81, &g_out_buf[connack_len],
+        sizeof(disconnect_81));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17469,6 +17518,10 @@ int main(int argc, char** argv)
 #endif
 #if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(broker_v5_unmatched_pubrec_pubrel_not_found);
+#endif
+#if defined(WOLFMQTT_V5) && \
+    !(defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_NONBLOCK))
+    RUN_TEST(broker_v5_malformed_subscribe_sends_disconnect);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
