@@ -1718,6 +1718,78 @@ TEST(wait_message_v311_rejects_disconnect_packet_type)
     ASSERT_EQ(0, test_client.msg.stat.isReadActive);
 }
 
+/* Inbound PUBLISH whose variable header does not fit in rx_buf. */
+#define OVERSIZE_TOPIC_LEN 300
+static byte g_oversize_buf[3 + 2 + OVERSIZE_TOPIC_LEN];
+static int g_oversize_len;
+static int g_oversize_pos;
+
+static int mock_net_read_oversize(void *context, byte* buf, int buf_len,
+    int timeout_ms)
+{
+    int n;
+    (void)context; (void)timeout_ms;
+    n = g_oversize_len - g_oversize_pos;
+    if (n <= 0) {
+        return 0; /* exhausted -> MQTT_CODE_CONTINUE under nonblock */
+    }
+    if (n > buf_len) {
+        n = buf_len;
+    }
+    XMEMCPY(buf, g_oversize_buf + g_oversize_pos, n);
+    g_oversize_pos += n;
+    return n;
+}
+
+/* MQTT 3.1.1 section 2.2.3: Remaining Length counts the bytes left in the
+ * packet. A PUBLISH whose Topic Name is longer than rx_buf is read only up to
+ * the buffer size and its decode fails, leaving the rest of the packet on the
+ * transport. The receiver has lost framing, so it must close the Network
+ * Connection [MQTT-4.8.0-1] rather than parse the leftover bytes (attacker
+ * chosen topic bytes) as the next packet. */
+TEST(wait_message_oversize_publish_header_disconnects)
+{
+    int rc;
+    int i;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    /* PUBLISH QoS 0:
+     *   0x30           type=PUBLISH, flags=0
+     *   0xAE 0x02      Remaining Length = 302 (VBI: 0x2E | 0x80, 0x02)
+     *   0x01 0x2C      Topic Name length = 300
+     *   'a' x 300      Topic Name, no payload */
+    g_oversize_buf[0] = 0x30;
+    g_oversize_buf[1] = 0xAE;
+    g_oversize_buf[2] = 0x02;
+    g_oversize_buf[3] = 0x01;
+    g_oversize_buf[4] = 0x2C;
+    XMEMSET(&g_oversize_buf[5], 'a', OVERSIZE_TOPIC_LEN);
+    g_oversize_len = (int)sizeof(g_oversize_buf);
+    g_oversize_pos = 0;
+    ASSERT_TRUE(g_oversize_len > TEST_RX_BUF_SIZE);
+
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_oversize;
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_TRUE(rc < 0);
+    ASSERT_NE(MQTT_CODE_CONTINUE, rc);
+    /* Bytes of the packet were left unread, so the link must be dead. */
+    ASSERT_TRUE(g_oversize_pos < g_oversize_len);
+    ASSERT_EQ(0, (int)(MqttClient_Flags(&test_client, 0, 0) &
+                       MQTT_CLIENT_FLAG_IS_CONNECTED));
+    ASSERT_EQ(MQTT_MSG_BEGIN, test_client.msg.stat.read);
+    ASSERT_EQ(0, test_client.msg.stat.isReadActive);
+}
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -10358,6 +10430,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_v311_rejects_auth_packet_type);
     RUN_TEST(wait_message_v5_accepts_auth_packet_type);
     RUN_TEST(wait_message_v311_rejects_disconnect_packet_type);
+    RUN_TEST(wait_message_oversize_publish_header_disconnects);
     RUN_TEST(wait_message_v5_accepts_disconnect_packet_type);
     RUN_TEST(auth_v311_session_rejected_before_write);
     RUN_TEST(auth_mismatched_method_rejected);

@@ -2486,6 +2486,7 @@ static int MqttClient_WaitType(MqttClient *client, void *packet_obj,
     MqttMsgStat* mms_stat;
     int waitMatchFound;
     int recvFatal = 0;
+    int frameLost = 0;
     void* use_packet_obj = NULL;
 
     if (client == NULL || packet_obj == NULL) {
@@ -2592,6 +2593,22 @@ wait_again:
             rc = MqttClient_DecodePacket(client, client->rx_buf,
                 client->packet.buf_len, NULL, &packet_type, &packet_qos,
                 &packet_id, 1);
+
+            /* MqttPacket_Read stops at the end of rx_buf and leaves the rest
+             * of a larger packet on the transport. Only a PUBLISH payload is
+             * streamed from there; any other truncated packet, or a PUBLISH
+             * whose header did not decode, has lost framing (MQTT 3.1.1
+             * section 2.2.3, MQTT 5.0 section 2.1.4). The connection must be
+             * closed so the unread bytes are never parsed as new packets
+             * [MQTT-4.8.0-1]. */
+            if (client->packet.header_len + client->packet.remain_len >
+                    client->packet.buf_len &&
+                    (rc < 0 || packet_type != MQTT_PACKET_TYPE_PUBLISH)) {
+                frameLost = 1;
+                if (rc >= 0) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+                }
+            }
             if (rc < 0) {
                 break;
             }
@@ -2895,7 +2912,7 @@ wait_again:
     /* Record whether the failure came from decoding/handling received data;
      * a local ack-encode failure below must not tear down a healthy link. */
     recvFatal = (rc < 0);
-    if (recvFatal && MqttClient_IsFatalProtoError(rc)) {
+    if (recvFatal && (frameLost || MqttClient_IsFatalProtoError(rc))) {
         if (mms_stat->isWriteActive) {
             CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
             MqttWriteStop(client, mms_stat);
@@ -3068,7 +3085,7 @@ read_cleanup:
          * race a concurrent publisher inside wolfSSL_write in MT builds. Gated
          * on recvFatal so a local ack-encode failure (e.g. an out-of-table
          * Reason Code) does not disconnect an otherwise healthy peer. */
-        if (recvFatal && MqttClient_IsFatalProtoError(rc)) {
+        if (recvFatal && (frameLost || MqttClient_IsFatalProtoError(rc))) {
             (void)MqttClient_Flags(client, MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
         }
         return rc;
