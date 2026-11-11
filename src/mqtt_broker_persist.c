@@ -2713,8 +2713,9 @@ static void wmqb_restore_expiry_sweep(MqttBroker* broker)
 /* Walks each namespace, collects every key into a heap-grown list, then      */
 /* deletes them one by one. Two-pass to avoid mutating the backend during     */
 /* iteration. Only attempts the wipe when the backend implements both         */
-/* kv_iter and kv_del; otherwise logs a warning and returns - new records    */
-/* will overwrite by key as they arrive.                                      */
+/* kv_iter and kv_del; otherwise it deletes nothing and logs no warning (the  */
+/* caller still re-stamps META), so old records stay in place and new records */
+/* overwrite by key as they arrive.                                           */
 /* -------------------------------------------------------------------------- */
 #ifndef WOLFMQTT_STATIC_MEMORY
 /* wmqb_wipe_key struct defined above (shared with DelOutQueue). */
