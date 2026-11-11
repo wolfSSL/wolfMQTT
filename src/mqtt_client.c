@@ -1820,8 +1820,14 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
                  * intermediate steps of the QoS 2 flow and do not release it.
                  * An inbound PUBREL belongs to a PUBLISH this client received,
                  * whose identifier is tracked separately. */
-                if (packet_type == MQTT_PACKET_TYPE_PUBLISH_ACK ||
-                    packet_type == MQTT_PACKET_TYPE_PUBLISH_COMP) {
+                /* Release once per acknowledgement: only on the decode into
+                 * the handling object, not the preliminary header decode
+                 * (packet_obj NULL) that MqttClient_WaitType runs first.
+                 * Releasing on both would free an identifier another thread
+                 * reserved between the two decodes. */
+                if (packet_obj != NULL &&
+                    (packet_type == MQTT_PACKET_TYPE_PUBLISH_ACK ||
+                     packet_type == MQTT_PACKET_TYPE_PUBLISH_COMP)) {
                     MqttClient_SendIdRelease(client, packet_id, packet_type);
                 }
             #ifdef WOLFMQTT_V5
@@ -1852,9 +1858,12 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             rc = MqttDecode_SubscribeAck(rx_buf, rx_len, p_subscribe_ack);
             if (rc >= 0) {
                 packet_id = p_subscribe_ack->packet_id;
-                /* [MQTT-2.3.1-3] SUBACK releases the SUBSCRIBE identifier. */
-                MqttClient_SendIdRelease(client, packet_id,
-                    MQTT_PACKET_TYPE_SUBSCRIBE_ACK);
+                /* [MQTT-2.3.1-3] SUBACK releases the SUBSCRIBE identifier,
+                 * once: see the PUBACK case above. */
+                if (packet_obj != NULL) {
+                    MqttClient_SendIdRelease(client, packet_id,
+                        MQTT_PACKET_TYPE_SUBSCRIBE_ACK);
+                }
             #ifdef WOLFMQTT_V5
                 if (doProps) {
                     int tmp = Handle_Props(client, p_subscribe_ack->props,
@@ -1885,9 +1894,11 @@ static int MqttClient_DecodePacket(MqttClient* client, byte* rx_buf,
             if (rc >= 0) {
                 packet_id = p_unsubscribe_ack->packet_id;
                 /* [MQTT-2.3.1-3] UNSUBACK releases the UNSUBSCRIBE
-                 * identifier. */
-                MqttClient_SendIdRelease(client, packet_id,
-                    MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK);
+                 * identifier, once: see the PUBACK case above. */
+                if (packet_obj != NULL) {
+                    MqttClient_SendIdRelease(client, packet_id,
+                        MQTT_PACKET_TYPE_UNSUBSCRIBE_ACK);
+                }
             #ifdef WOLFMQTT_V5
                 if (doProps) {
                     int tmp = Handle_Props(client, p_unsubscribe_ack->props,
