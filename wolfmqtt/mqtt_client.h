@@ -911,6 +911,9 @@ WOLFMQTT_API int MqttClient_Disconnect(
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
                 Network Connection [MQTT-3.1.0-1],
+                MQTT_CODE_ERROR_BAD_ARG (nothing sent) if a v5 disconnect
+                carries a non-zero Session Expiry Interval after the CONNECT
+                carried a zero or absent one (MQTT 5.0 section 3.14.2.2.2),
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Disconnect_ex(

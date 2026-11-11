@@ -1898,6 +1898,63 @@ TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected)
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* Positive control for the rule above: after a non-zero Session Expiry
+ * Interval in CONNECT, the Client may change it in DISCONNECT. */
+TEST(disconnect_v5_nonzero_session_expiry_after_nonzero_allowed)
+{
+    MqttConnect connect;
+    MqttDisconnect disc;
+    MqttProp* prop;
+    int rc;
+    int i;
+    /* v5 CONNACK, Session Present 0, Reason Code Success, no properties */
+    static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_net.connect = mock_net_connect_ok;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "expiry_client";
+    prop = MqttClient_PropsAdd(&connect.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    prop->data_int = 60;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    (void)MqttClient_PropsFree(connect.props);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    XMEMSET(&disc, 0, sizeof(disc));
+    prop = MqttClient_PropsAdd(&disc.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_SESSION_EXPIRY_INTERVAL;
+    prop->data_int = 10;
+    g_frames_written = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Disconnect_ex(&test_client, &disc);
+    }
+    (void)MqttClient_PropsFree(disc.props);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_frames_written);
+    ASSERT_EQ(0xE0, (int)connect_mock_sent[0]);
+}
+#endif
+
 /* Positive control: the same bytes are a valid v5 server DISCONNECT (Reason
  * Code Success implied by a zero Remaining Length) and must still be accepted
  * at protocol level 5. */
@@ -10701,6 +10758,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_oversize_publish_header_disconnects);
 #ifdef WOLFMQTT_V5
     RUN_TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected);
+    RUN_TEST(disconnect_v5_nonzero_session_expiry_after_nonzero_allowed);
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB) && \
     !defined(WOLFMQTT_DYN_PROP)
