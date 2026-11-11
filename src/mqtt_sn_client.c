@@ -257,6 +257,13 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             if (rc <= 0) {
                 return rc;
             }
+            /* MQTT-SN 1.2 section 6.8: QoS -1 is client-to-gateway only, so
+             * a gateway PUBLISH carrying it is malformed. Reject it before
+             * delivery; the acknowledgement below would answer it with a
+             * PUBREC as if it were QoS 2. */
+            if (p_pub->qos == MQTT_QOS_3) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
 
             /* Notify the application before acquiring the response writer so
              * the callback may safely call a client send API. MQTT_MSG_WAIT

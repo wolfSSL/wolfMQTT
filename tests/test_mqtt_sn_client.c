@@ -1594,6 +1594,32 @@ TEST(sn_wait_message_reads_each_packet_once)
     ASSERT_EQ(0x22, g_sn_wait_last_byte);
 }
 
+
+/* MQTT-SN 1.2 section 6.8: QoS -1 is a client-to-gateway send-and-forget
+ * flow, so a PUBLISH with QoS bits 0b11 from the gateway is malformed. It
+ * must be neither delivered nor answered (the QoS 2 PUBREC branch would
+ * otherwise catch it). Frame: Length 8, PUBLISH, Flags QoS 0b11 + predefined
+ * Topic Id (0x61), TopicId 1, MsgId 0, Data 'x'. */
+TEST(sn_inbound_qos_m1_publish_rejected)
+{
+    static const byte pub[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x61, 0x00, 0x01,
+                                0x00, 0x00, 'x' };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_record_delivery;
+    g_sn_wait_deliveries = 0;
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_sn_wait_deliveries);
+    ASSERT_EQ(0, g_mock.out_len);
+}
 #if WOLFMQTT_MAX_QOS >= 2
 static int g_sn_qos2_deliveries;
 
@@ -3836,6 +3862,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_wait_message_reads_each_packet_once);
+    RUN_TEST(sn_inbound_qos_m1_publish_rejected);
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
     RUN_TEST(sn_qos2_full_table_refuses_new_id);
