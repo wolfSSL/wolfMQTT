@@ -5046,6 +5046,79 @@ TEST(reconnect_replays_in_original_send_order)
     ASSERT_EQ(3, g_order_pub_ids[1]);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
+/* Packet Identifiers of the PUBREL frames written, in wire order. */
+static int g_order_rel_ids[8];
+static int g_order_rel_count;
+
+static int order_rel_mock_write(void *context, const byte* buf, int buf_len,
+    int timeout_ms)
+{
+    (void)context; (void)timeout_ms;
+    if (buf == NULL || buf_len <= 0) {
+        return 0;
+    }
+    if (((buf[0] & 0xF0) >> 4) == MQTT_PACKET_TYPE_PUBLISH_REL &&
+            buf_len >= 4 && g_order_rel_count <
+                (int)(sizeof(g_order_rel_ids) / sizeof(g_order_rel_ids[0]))) {
+        g_order_rel_ids[g_order_rel_count++] = (buf[2] << 8) | buf[3];
+    }
+    return buf_len;
+}
+
+/* MQTT 3.1.1 and 5.0 section 4.6: re-sent PUBREL packets go out in the order
+ * the corresponding PUBRECs were received, not the order of the original
+ * PUBLISHes or of the replay slots. QoS 2 PUBLISH A (id 1) then B (id 2) are
+ * sent, PUBREC arrives for B before A, and the resumed Session must re-send
+ * PUBREL 2 before PUBREL 1. */
+TEST(reconnect_replays_pubrel_in_pubrec_order)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish pub_a;
+    MqttPublish pub_b;
+    static byte payload[] = "x";
+    /* v3.1.1 PUBREC for B (id 2) then A (id 1) */
+    static const byte pubrecs[] = {
+        0x50, 0x02, 0x00, 0x02,
+        0x50, 0x02, 0x00, 0x01
+    };
+
+    ASSERT_TRUE(MQTT_MAX_REPLAY_MSGS >= 2);
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+
+    init_qos_publish(&pub_a, MQTT_QOS_2, 1, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
+    init_qos_publish(&pub_b, MQTT_QOS_2, 2, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_b));
+
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, pubrecs, sizeof(pubrecs));
+    g_canned_len = (int)sizeof(pubrecs);
+    g_canned_pos = 0;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 40 && g_canned_pos < g_canned_len; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_order_rel_count = 0;
+    rc = run_reconnect_with(&connect, 1, order_rel_mock_write);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_order_rel_count);
+    ASSERT_EQ(2, g_order_rel_ids[0]);
+    ASSERT_EQ(1, g_order_rel_ids[1]);
+}
+#endif
+
 /* A streamed publish delivers its payload through the application callback, so
  * the client holds no copy to rebuild from. The slot still tracks the Packet
  * Identifier for a QoS 2 PUBREL, but the PUBLISH itself must not be replayed
@@ -10842,6 +10915,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_drops_replay_larger_than_tx_buf);
     RUN_TEST(reconnect_replays_at_most_pool_size);
     RUN_TEST(reconnect_replays_in_original_send_order);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(reconnect_replays_pubrel_in_pubrec_order);
+#endif
     RUN_TEST(reconnect_does_not_replay_streamed_publish);
     RUN_TEST(replay_uncopied_slot_still_tagged_to_this_connection);
     RUN_TEST(reconnect_dropped_replay_frees_packet_id);
