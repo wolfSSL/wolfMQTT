@@ -6943,7 +6943,10 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                                 "broker: retained packet IDs exhausted "
                                 "sock=%d", (int)bc->sock);
                             BrokerOutPub_Free(e);
-                            deliver_rc = MQTT_CODE_ERROR_PACKET_ID;
+                            /* A broker resource limit, not a fault in the
+                             * client's SUBSCRIBE, so it must not be reported
+                             * as a Malformed Packet. */
+                            deliver_rc = MQTT_CODE_ERROR_OUT_OF_BUFFER;
                             break;
                         }
                     }
