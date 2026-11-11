@@ -3360,6 +3360,9 @@ static void MqttClient_StoreAuthMethod(MqttClient* client,
 {
     const MqttProp* prop;
 
+    /* Wipe the previous connection's method so none of it survives a CONNECT
+     * without one, an oversized one, or a shorter one. */
+    CLIENT_FORCE_ZERO(client->auth_method, sizeof(client->auth_method));
     client->auth_method_set = 0;
     client->auth_method_len = 0;
     for (prop = (mc_connect != NULL) ? mc_connect->props : NULL;
