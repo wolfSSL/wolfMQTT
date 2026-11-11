@@ -9534,6 +9534,17 @@ static int BrokerHandle_PublishRec(BrokerClient* bc, int rx_len)
  * path: publish will, honor session persistence, then remove the client. */
 static void BrokerClient_AbnormalClose(MqttBroker* broker, BrokerClient* bc)
 {
+#ifdef ENABLE_MQTT_WEBSOCKET
+    /* A peer close dispatched inside this client's own write (the lws_service
+     * spin in BrokerWsNetWrite) already published the Will and orphaned or
+     * ended the Session, deferring only the free. Doing that again would
+     * orphan the Session a second time, and the second BrokerOrphan_Take
+     * discards the queued QoS 1/2 messages the first one saved. */
+    if (bc->ws_ctx != NULL && ((BrokerWsCtx*)bc->ws_ctx)->pending_remove) {
+        BrokerClient_Remove(broker, bc);
+        return;
+    }
+#endif
     BrokerClient_PublishWill(broker, bc);
     if (bc->session_expiry_sec == 0) {
         BrokerSubs_EndClientSession(broker, bc);
