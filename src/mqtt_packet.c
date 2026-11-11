@@ -3332,6 +3332,11 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             return tmp;
         }
         rx_payload += tmp;
+        /* [MQTT-2.3.1-1] The acknowledged request's identifier is
+         * non-zero; reject 0 before any properties are decoded. */
+        if (subscribe_ack->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
 
 #ifdef WOLFMQTT_V5
         subscribe_ack->props = NULL;
@@ -3736,6 +3741,11 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             return tmp;
         }
         rx_payload += tmp;
+        /* [MQTT-2.3.1-1] The acknowledged request's identifier is
+         * non-zero; reject 0 before any properties are decoded. */
+        if (unsubscribe_ack->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
 #ifdef WOLFMQTT_V5
         unsubscribe_ack->props = NULL;
         if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {

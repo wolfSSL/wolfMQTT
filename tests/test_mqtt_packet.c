@@ -5593,6 +5593,24 @@ TEST(qos2_ack_arithmetic)
  * MqttDecode_SubscribeAck
  * ============================================================================ */
 
+/* [MQTT-2.3.1-1] SUBACK and UNSUBACK echo the non-zero Packet Identifier of
+ * the request they answer, so an identifier of 0 is a protocol violation.
+ * v3.1.1 wire: SUBACK id 0 granting QoS 0; UNSUBACK id 0. */
+TEST(decode_suback_unsuback_packet_id_zero_rejected)
+{
+    byte suback[] = { 0x90, 0x03, 0x00, 0x00, 0x00 };
+    byte unsuback[] = { 0xB0, 0x02, 0x00, 0x00 };
+    MqttSubscribeAck sub_ack;
+    MqttUnsubscribeAck unsub_ack;
+
+    XMEMSET(&sub_ack, 0, sizeof(sub_ack));
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, MqttDecode_SubscribeAck(suback,
+        (int)sizeof(suback), &sub_ack));
+    XMEMSET(&unsub_ack, 0, sizeof(unsub_ack));
+    ASSERT_EQ(MQTT_CODE_ERROR_PACKET_ID, MqttDecode_UnsubscribeAck(unsuback,
+        (int)sizeof(unsuback), &unsub_ack));
+}
+
 TEST(decode_suback_valid)
 {
     byte buf[5];
@@ -8050,6 +8068,7 @@ void run_mqtt_packet_tests(void)
 
     /* MqttDecode_SubscribeAck */
     RUN_TEST(decode_suback_valid);
+    RUN_TEST(decode_suback_unsuback_packet_id_zero_rejected);
     RUN_TEST(decode_suback_multiple_return_codes);
     RUN_TEST(decode_suback_malformed_remain_len_zero);
     RUN_TEST(decode_suback_malformed_remain_len_one);
