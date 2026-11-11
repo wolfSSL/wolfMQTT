@@ -1186,7 +1186,6 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     break;
                 }
                 cur_prop->data_byte = *buf++;
-                tmp++;
                 total++;
                 prop_len--;
                 /* Every MQTT 5 Byte property is Boolean-valued (0 or 1), and
