@@ -6918,6 +6918,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
     BrokerFanout_Init(&targets, stack_targets, BROKER_FANOUT_STACK_TARGETS);
     for (sub = broker->subs; sub != NULL; sub = sub->next) {
         if (sub->client != NULL && sub->client->protocol_level != 0 &&
+            sub->client->connected &&
             BROKER_STR_VALID(sub->filter) &&
             BrokerTopicMatch(sub->filter, topic)) {
             BrokerFanout_Add(&targets, sub->client,
@@ -6963,6 +6964,12 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
          * than deferred. Only rescan when the client list actually changed. */
         if (broker->clients_gen != clients_gen_snapshot &&
                 !BrokerClients_StillLinked(broker, wc)) {
+            continue;
+        }
+        /* A peer closed earlier in this broker step, or disconnected by a
+         * quota close earlier in this fan-out, is not delivered to, as in
+         * the PUBLISH fan-out. */
+        if (!wc->connected) {
             continue;
         }
         /* A write started on a connection being taken over could leave its
