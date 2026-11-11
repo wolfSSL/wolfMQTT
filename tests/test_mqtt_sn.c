@@ -1901,6 +1901,52 @@ TEST(sn_encode_willmsgupd_null_msg_buffer_rejected)
  * 2330.
  * ============================================================================ */
 
+/* MQTT-SN 1.2 section 5.3.10 Table 5 defines ReturnCode values 0x00 to
+ * 0x03; 0x04 to 0xFF are reserved. Each response decoder must reject a
+ * reserved value rather than hand it to the client as a rejection. */
+TEST(sn_decode_reserved_return_code_rejected)
+{
+    /* Length, MsgType, ReturnCode 0x04 */
+    byte connack[] = { 0x03, SN_MSG_TYPE_CONNACK, 0x04 };
+    byte willtopicresp[] = { 0x03, SN_MSG_TYPE_WILLTOPICRESP, 0x04 };
+    byte willmsgresp[] = { 0x03, SN_MSG_TYPE_WILLMSGRESP, 0x04 };
+    /* Length, MsgType, TopicId 1, MsgId 1, ReturnCode 0x04 */
+    byte regack[] = { 0x07, SN_MSG_TYPE_REGACK, 0x00, 0x01, 0x00, 0x01,
+        0x04 };
+    byte puback[] = { 0x07, SN_MSG_TYPE_PUBACK, 0x00, 0x01, 0x00, 0x01,
+        0x04 };
+    /* Length, MsgType, Flags, TopicId 1, MsgId 1, ReturnCode 0x04 */
+    byte suback[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00, 0x00, 0x01, 0x00,
+        0x01, 0x04 };
+    SN_ConnectAck ca;
+    SN_RegAck ra;
+    SN_SubAck sa;
+    SN_PublishResp pr;
+    byte ret_code = 0;
+
+    XMEMSET(&ca, 0, sizeof(ca));
+    XMEMSET(&ra, 0, sizeof(ra));
+    XMEMSET(&sa, 0, sizeof(sa));
+    XMEMSET(&pr, 0, sizeof(pr));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_ConnectAck(connack,
+        (int)sizeof(connack), &ca));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_WillTopicResponse(
+        willtopicresp, (int)sizeof(willtopicresp), &ret_code));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_WillMsgResponse(
+        willmsgresp, (int)sizeof(willmsgresp), &ret_code));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_RegAck(regack,
+        (int)sizeof(regack), &ra));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_SubscribeAck(suback,
+        (int)sizeof(suback), &sa));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_PublishResp(puback,
+        (int)sizeof(puback), SN_MSG_TYPE_PUBACK, &pr));
+
+    /* Control: the highest defined code (Not supported) still decodes */
+    connack[2] = SN_RC_NOTSUPPORTED;
+    ASSERT_EQ(3, SN_Decode_ConnectAck(connack, (int)sizeof(connack), &ca));
+    ASSERT_EQ(SN_RC_NOTSUPPORTED, ca.return_code);
+}
+
 TEST(sn_encode_register_null_topic_string_rejected)
 {
     /* Regression for report 2330: a zero-initialized SN_Register is non-NULL
@@ -2095,6 +2141,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_willmsg_null_msg_buffer_rejected);
     RUN_TEST(sn_encode_willmsgupd_null_msg_buffer_rejected);
 
+    RUN_TEST(sn_decode_reserved_return_code_rejected);
     RUN_TEST(sn_encode_register_null_topic_string_rejected);
     RUN_TEST(sn_encode_register_null_args_rejected);
     RUN_TEST(sn_encode_register_topic_valid);

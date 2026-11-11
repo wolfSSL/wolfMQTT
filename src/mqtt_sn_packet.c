@@ -685,6 +685,14 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
 
 }
 
+/* MQTT-SN 1.2 section 5.3.10 Table 5: ReturnCode values 0x04 to 0xFF are
+ * reserved. Returns 1 for a defined value. */
+static int SN_ReturnCodeValid(byte code)
+{
+    return (code == SN_RC_ACCEPTED || code == SN_RC_CONGESTION ||
+            code == SN_RC_INVTOPICNAME || code == SN_RC_NOTSUPPORTED);
+}
+
 int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
 {
     int total_len;
@@ -711,6 +719,9 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     }
 
     /* Return Code */
+    if (!SN_ReturnCodeValid(*rx_payload)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
     *ret_code = *rx_payload;
 
     /* Return total length of packet */
@@ -796,6 +807,9 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     }
 
     /* Return Code */
+    if (!SN_ReturnCodeValid(*rx_payload)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
     *ret_code = *rx_payload;
 
     /* Return total length of packet */
@@ -830,6 +844,9 @@ int SN_Decode_ConnectAck(byte *rx_buf, int rx_buf_len,
 
     /* Decode variable header */
     if (connect_ack) {
+        if (!SN_ReturnCodeValid(*rx_payload)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         connect_ack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -1060,6 +1077,9 @@ int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len, SN_RegAck *regack)
         rx_payload += rc;
 
         /* Decode return code */
+        if (!SN_ReturnCodeValid(*rx_payload)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         regack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -1192,6 +1212,9 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             return rc;
         }
         rx_payload += rc;
+        if (!SN_ReturnCodeValid(*rx_payload)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         subscribe_ack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -1481,6 +1504,9 @@ int SN_Decode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         rx_payload += rc;
 
         if (type == SN_MSG_TYPE_PUBACK) {
+            if (!SN_ReturnCodeValid(*rx_payload)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
             publish_resp->return_code = *rx_payload++;
         }
     }
