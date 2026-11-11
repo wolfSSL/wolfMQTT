@@ -5401,6 +5401,80 @@ TEST(reconnect_v5_replay_drops_topic_alias)
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* [MQTT-4.9.0-2] / [MQTT-3.3.4-7]: re-sent QoS 1 PUBLISH packets count
+ * against the Receive Maximum of the new connection. The server allows one
+ * (CONNACK Receive Maximum 1), so the resumed Session re-sends only the first
+ * stored message; the second goes out once the first is acknowledged. */
+TEST(reconnect_v5_replay_honors_receive_maximum)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish pub_a;
+    MqttPublish pub_b;
+    static byte payload[] = "x";
+    /* v5 CONNACK, Session Present 1, Success, Properties length 3 holding
+     * Receive Maximum (0x21) = 1. Remaining Length 6. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x01, 0x00, 0x03, 0x21, 0x00, 0x01
+    };
+    /* v5 PUBACK for id 1, Reason Code omitted (Success) */
+    static const byte puback_a[] = { 0x40, 0x02, 0x00, 0x01 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+
+    init_qos_publish(&pub_a, MQTT_QOS_1, 1, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
+    init_qos_publish(&pub_b, MQTT_QOS_1, 2, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_b));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    /* Reconnect: CONNACK advertises Receive Maximum 1 */
+    test_net.write = order_mock_write;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    g_order_pub_count = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_order_pub_count);
+    ASSERT_EQ(1, g_order_pub_ids[0]);
+
+    /* Waiting without the PUBACK sends nothing more */
+    g_canned_len = 0;
+    g_canned_pos = 0;
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(1, g_order_pub_count);
+
+    /* PUBACK for id 1 frees the unit; the next wait re-sends id 2 */
+    XMEMCPY(g_canned_buf, puback_a, sizeof(puback_a));
+    g_canned_len = (int)sizeof(puback_a);
+    g_canned_pos = 0;
+    for (i = 0; i < 20 && g_canned_pos < g_canned_len; i++) {
+        (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(2, g_order_pub_count);
+    ASSERT_EQ(2, g_order_pub_ids[1]);
+}
+#endif
+
 /* A streamed publish delivers its payload through the application callback, so
  * the client holds no copy to rebuild from. The slot still tracks the Packet
  * Identifier for a QoS 2 PUBREL, but the PUBLISH itself must not be replayed
@@ -11214,6 +11288,7 @@ void run_mqtt_client_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(reconnect_v5_replays_publish_with_properties);
     RUN_TEST(reconnect_v5_replay_drops_topic_alias);
+    RUN_TEST(reconnect_v5_replay_honors_receive_maximum);
 #endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(reconnect_replays_pubrel_in_pubrec_order);

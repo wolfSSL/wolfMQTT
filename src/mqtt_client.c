@@ -874,6 +874,14 @@ static void MqttClient_Replay_Remove(MqttClient* client, word16 packet_id)
     }
     slot = MqttClient_Replay_Find(client, packet_id);
     if (slot != NULL) {
+    #ifdef WOLFMQTT_V5
+        /* The re-sent PUBLISH is acknowledged: its Receive Maximum unit is
+         * free again [MQTT-4.9.0-2]. */
+        if (slot->quotaHeld &&
+                client->server_recv_max < client->server_recv_max_negotiated) {
+            client->server_recv_max++;
+        }
+    #endif
         MqttClient_Replay_FreeSlot(slot);
     }
 }
@@ -975,8 +983,15 @@ static int MqttClient_Replay_NewConnSafe(MqttClient* client)
     }
 #endif
     persisted = (client->flags & MQTT_CLIENT_FLAG_PERSISTENT_SESSION) ? 1 : 0;
+    /* A deferred re-send belonged to the previous Network Connection */
+    XMEMSET(&client->replay_stat, 0, sizeof(client->replay_stat));
+    client->replay_busy = 0;
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
         client->replay[i].onThisConn = 0;
+        client->replay[i].replayPending = 0;
+    #ifdef WOLFMQTT_V5
+        client->replay[i].quotaHeld = 0; /* quota restarts per connection */
+    #endif
         if (!persisted) {
             MqttClient_Replay_FreeSlot(&client->replay[i]);
         }
@@ -3511,7 +3526,8 @@ static void MqttClient_Replay_DropAlias(MqttProp** props)
  * buffers the encoder copies out of it, must not be read without it. The
  * caller already holds lockSend, which is the lockSend -> lockClient order
  * used everywhere else. */
-static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
+static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id,
+    int* blocked)
 {
     MqttReplayMsg* slot;
     int rc = 0;
@@ -3522,6 +3538,7 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
 #endif
 
     *dropped_id = 0;
+    *blocked = 0;
 #ifdef WOLFMQTT_MULTITHREAD
     rc = wm_SemLock(&client->lockClient);
     if (rc != MQTT_CODE_SUCCESS) {
@@ -3548,6 +3565,26 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
         return 0;
     }
     slot = &client->replay[client->replayIdx];
+#ifdef WOLFMQTT_V5
+    /* [MQTT-4.9.0-2] A re-sent QoS > 0 PUBLISH counts against the server's
+     * Receive Maximum like a new one. With no unit free, stop here and leave
+     * this and later entries pending, so the original order is kept; they
+     * go out once acknowledgements return units (MqttClient_Replay_Flush). */
+    if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            !slot->pubrelSent && slot->haveCopy && !slot->onThisConn &&
+            !slot->quotaHeld) {
+        if (client->server_recv_max == 0) {
+            client->replayIdx = MQTT_MAX_REPLAY_MSGS;
+            *blocked = 1;
+        #ifdef WOLFMQTT_MULTITHREAD
+            wm_SemUnlock(&client->lockClient);
+        #endif
+            return 0;
+        }
+        client->server_recv_max--;
+        slot->quotaHeld = 1;
+    }
+#endif
     slot->replayPending = 0;
 
     /* Empty slots, and PUBLISHes whose payload could not be retained, have
@@ -3628,6 +3665,12 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
          * acknowledge a message the client has abandoned. */
         CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
         *dropped_id = slot->packet_id;
+    #ifdef WOLFMQTT_V5
+        if (slot->quotaHeld &&
+                client->server_recv_max < client->server_recv_max_negotiated) {
+            client->server_recv_max++; /* nothing was sent */
+        }
+    #endif
         MqttClient_Replay_FreeSlot(slot);
         rc = 0;
     }
@@ -3644,24 +3687,24 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
  * PUBLISH, in the original send order [MQTT-4.6.0-1]. Resumable: each
  * entry's replayPending flag records what is left, so a nonblocking caller
  * re-enters and continues rather than restarting. */
-static int MqttClient_ReplaySession(MqttClient* client,
-    MqttConnect* mc_connect)
+static int MqttClient_ReplaySession(MqttClient* client, MqttMsgStat* stat)
 {
     int rc = MQTT_CODE_SUCCESS;
 
     for (;;) {
         int xfer;
         word16 dropped_id;
+        int blocked;
 
-        if (!mc_connect->stat.isWriteActive) {
-            rc = MqttWriteStart(client, &mc_connect->stat);
+        if (!stat->isWriteActive) {
+            rc = MqttWriteStart(client, stat);
             if (rc != MQTT_CODE_SUCCESS) {
                 return rc; /* MQTT_CODE_CONTINUE while another write runs */
             }
 
-            rc = MqttClient_Replay_EncodeNext(client, &dropped_id);
+            rc = MqttClient_Replay_EncodeNext(client, &dropped_id, &blocked);
             if (rc <= 0) {
-                MqttWriteStop(client, &mc_connect->stat);
+                MqttWriteStop(client, stat);
                 if (rc < 0) {
                     return rc; /* client lock failed */
                 }
@@ -3671,7 +3714,9 @@ static int MqttClient_ReplaySession(MqttClient* client,
                         MQTT_PACKET_TYPE_RESERVED);
                 }
                 if (client->replayIdx >= MQTT_MAX_REPLAY_MSGS) {
-                    break; /* every pending entry has been handled */
+                    /* Every pending entry is handled, or the rest waits for
+                     * Receive Maximum quota (blocked). */
+                    break;
                 }
                 continue; /* nothing to send from this slot */
             }
@@ -3685,7 +3730,7 @@ static int MqttClient_ReplaySession(MqttClient* client,
             return rc; /* keep send locked and resume here */
         }
     #endif
-        MqttWriteStop(client, &mc_connect->stat);
+        MqttWriteStop(client, stat);
         if (rc != xfer) {
             return rc; /* transport failed; the entry stays retained */
         }
@@ -3694,6 +3739,68 @@ static int MqttClient_ReplaySession(MqttClient* client,
 
     return MQTT_CODE_SUCCESS;
 }
+
+#ifdef WOLFMQTT_V5
+static int MqttClient_CheckConnectSent(MqttClient *client);
+
+/* Re-send resumed-Session messages a v5 replay left pending because the
+ * server's Receive Maximum had no unit free [MQTT-4.9.0-2]. Called before a
+ * new PUBLISH, so the original order is kept [MQTT-4.6.0-1], and from
+ * MqttClient_WaitMessage_ex, so they go out as acknowledgements return units
+ * even when the application publishes nothing new. One caller at a time;
+ * returns MQTT_CODE_SUCCESS when nothing is pending or another caller is
+ * already doing it. */
+static int MqttClient_Replay_Flush(MqttClient* client)
+{
+    int rc = MQTT_CODE_SUCCESS;
+    int i;
+    int pending = 0;
+
+    if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
+            MqttClient_CheckConnectSent(client) != MQTT_CODE_SUCCESS) {
+        return MQTT_CODE_SUCCESS;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    rc = wm_SemLock(&client->lockClient);
+    if (rc != MQTT_CODE_SUCCESS) {
+        return rc;
+    }
+#endif
+    /* A nonblocking flush that stopped mid-write resumes with its own state */
+    if (!client->replay_busy || client->replay_stat.isWriteActive) {
+        for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
+            if (client->replay[i].replayPending) {
+                pending = 1;
+                break;
+            }
+        }
+        if (pending || client->replay_stat.isWriteActive) {
+            client->replay_busy = 1;
+            pending = 1;
+        }
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    if (!pending) {
+        return MQTT_CODE_SUCCESS;
+    }
+
+    rc = MqttClient_ReplaySession(client, &client->replay_stat);
+
+    if (rc != MQTT_CODE_CONTINUE || !client->replay_stat.isWriteActive) {
+    #ifdef WOLFMQTT_MULTITHREAD
+        if (wm_SemLock(&client->lockClient) == MQTT_CODE_SUCCESS) {
+            client->replay_busy = 0;
+            wm_SemUnlock(&client->lockClient);
+        }
+    #else
+        client->replay_busy = 0;
+    #endif
+    }
+    return rc;
+}
+#endif
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 
 /* [MQTT-3.1.0-1] After a Network Connection is established by a Client to a
@@ -3863,7 +3970,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
          * replay cannot make the replay the first packet of a new connection
          * [MQTT-3.1.0-1]. */
         if (MqttClient_CheckConnectSent(client) == MQTT_CODE_SUCCESS) {
-            rc = MqttClient_ReplaySession(client, mc_connect);
+            rc = MqttClient_ReplaySession(client, &mc_connect->stat);
             if (rc != MQTT_CODE_CONTINUE) {
                 /* Finished, either way: clear the sentinel so a failed replay
                  * cannot bypass the handshake on the next call, and settle
@@ -4408,7 +4515,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 #endif
             client->replayIdx = MQTT_MAX_REPLAY_MSGS;
             mc_connect->stat.write = MQTT_MSG_PAYLOAD;
-            rc = MqttClient_ReplaySession(client, mc_connect);
+            rc = MqttClient_ReplaySession(client, &mc_connect->stat);
             if (rc == MQTT_CODE_CONTINUE) {
                 /* The application re-enters through the resume block at the
                  * top of this function, which arms keep-alive when the replay
@@ -4825,6 +4932,16 @@ static int MqttPublishMsg(MqttClient *client, MqttPublish *publish,
     {
         case MQTT_MSG_BEGIN:
         {
+        #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_NO_SESSION_REPLAY)
+            /* [MQTT-4.6.0-1] Resumed-Session messages still waiting for
+             * Receive Maximum quota go out before this new one. */
+            if (publish->qos > MQTT_QOS_0) {
+                rc = MqttClient_Replay_Flush(client);
+                if (rc != MQTT_CODE_SUCCESS) {
+                    return rc;
+                }
+            }
+        #endif
             /* Flag write active / lock mutex */
             if ((rc = MqttWriteStart(client, &publish->stat)) != 0) {
                 return rc;
@@ -6176,6 +6293,9 @@ int MqttClient_WaitMessage_ex(MqttClient *client, MqttObject* msg,
 #ifndef WOLFMQTT_NO_TIME
     int rc;
 #endif
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_NO_SESSION_REPLAY)
+    int rc2;
+#endif
 
     if (client == NULL || msg == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
@@ -6193,6 +6313,18 @@ int MqttClient_WaitMessage_ex(MqttClient *client, MqttObject* msg,
     #endif
         ) {
         return rc;
+    }
+#endif
+#if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_NO_SESSION_REPLAY)
+    /* Re-send resumed-Session messages that waited for Receive Maximum
+     * quota; a deferred write is not an error in a blocking build. */
+    rc2 = MqttClient_Replay_Flush(client);
+    if (rc2 != MQTT_CODE_SUCCESS
+    #ifndef WOLFMQTT_NONBLOCK
+            && rc2 != MQTT_CODE_CONTINUE
+    #endif
+        ) {
+        return rc2;
     }
 #endif
     return MqttClient_WaitType(client, msg, MQTT_PACKET_TYPE_ANY, 0,

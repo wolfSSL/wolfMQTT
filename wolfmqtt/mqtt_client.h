@@ -386,6 +386,9 @@ typedef struct _MqttReplayMsg {
     /* Still to be re-sent by the Session replay in progress. */
     byte    replayPending;
 #ifdef WOLFMQTT_V5
+    /* The re-sent PUBLISH holds one unit of the server's Receive Maximum,
+     * returned by its PUBACK / PUBCOMP or a failing PUBREC [MQTT-4.9.0-2]. */
+    byte    quotaHeld;
     /* The PUBLISH Properties as encoded (no Property Length), so a v5
      * replay is the same message [MQTT-4.4.0-1]. props_len 0 = none. */
     word32  props_len;
@@ -597,6 +600,11 @@ typedef struct _MqttClient {
 #endif
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
     word32 replay_seq; /* last send order given to a replay entry */
+    /* Write state for re-sending the rest of a resumed Session's messages
+     * after the CONNECT returned (a v5 replay waits for Receive Maximum
+     * quota), and the flag that lets one caller at a time do it. */
+    MqttMsgStat replay_stat;
+    byte replay_busy;
 #endif
 } MqttClient;
 
