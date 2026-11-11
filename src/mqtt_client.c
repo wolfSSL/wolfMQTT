@@ -1116,16 +1116,6 @@ static int MqttClient_SendIdReserve(MqttClient* client, word16 packet_id,
     return rc;
 }
 
-/* Release packet_id once its acknowledgement has been processed. ack_type is
- * the packet type that arrived; the reservation is only given back when it
- * matches the terminal acknowledgement the exchange was waiting for, so a
- * PUBACK naming a QoS 2 identifier cannot end that exchange early
- * [MQTT-2.3.1-3]. Pass MQTT_PACKET_TYPE_RESERVED to release regardless.
- *
- * Also drops the Session replay record for the same identifier, under the same
- * lock: releasing first and removing afterwards would let a publisher reuse
- * the identifier in between, and this ack would then delete the new
- * exchange's replay state. */
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
 /* Caller holds client->lockClient. Unlike MqttClient_SendIdRelease, drops only
  * the reservation, and only while owner still holds it: a re-send may have
@@ -1147,6 +1137,16 @@ static void MqttClient_SendIds_Drop_Locked(MqttClient* client, word16 packet_id,
 }
 #endif
 
+/* Release packet_id once its acknowledgement has been processed. ack_type is
+ * the packet type that arrived; the reservation is only given back when it
+ * matches the terminal acknowledgement the exchange was waiting for, so a
+ * PUBACK naming a QoS 2 identifier cannot end that exchange early
+ * [MQTT-2.3.1-3]. Pass MQTT_PACKET_TYPE_RESERVED to release regardless.
+ *
+ * Also drops the Session replay record for the same identifier, under the same
+ * lock: releasing first and removing afterwards would let a publisher reuse
+ * the identifier in between, and this ack would then delete the new
+ * exchange's replay state. */
 static void MqttClient_SendIdRelease(MqttClient* client, word16 packet_id,
     MqttPacketType ack_type)
 {
