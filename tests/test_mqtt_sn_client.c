@@ -2475,6 +2475,50 @@ TEST(sn_disconnect_chunked_write_completes_exact_frame)
 }
 #endif
 
+#ifdef WOLFMQTT_DISCONNECT_CB
+static int g_sn_disconnect_cb_calls;
+static int sn_disconnect_cb_count(MqttClient* client, int error_code,
+    void* ctx)
+{
+    (void)client; (void)error_code; (void)ctx;
+    g_sn_disconnect_cb_calls++;
+    return 0;
+}
+
+/* MQTT-SN 1.2 section 6.14: the gateway answers a DISCONNECT carrying a
+ * Duration with a DISCONNECT that acknowledges the sleep request. That reply
+ * is not a gateway-initiated disconnect, so the disconnect callback must not
+ * fire for it. */
+TEST(sn_sleep_disconnect_ack_does_not_fire_disconnect_cb)
+{
+    /* DISCONNECT with Duration 10: Length 4, MsgType, Duration (2 bytes) */
+    static const byte sleep_frame[] = { 0x04, SN_MSG_TYPE_DISCONNECT,
+        0x00, 0x0A };
+    /* Gateway acknowledgment: Length 2, MsgType */
+    static const byte ack_frame[] = { 0x02, SN_MSG_TYPE_DISCONNECT };
+    SN_Disconnect disconnect;
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    g_sn_disconnect_cb_calls = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_SetDisconnectCallback(&g_client,
+        sn_disconnect_cb_count, NULL));
+    mock_net_push(&g_mock, ack_frame, (int)sizeof(ack_frame));
+
+    XMEMSET(&disconnect, 0, sizeof(disconnect));
+    disconnect.sleepTmr = 10;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Disconnect_ex(&g_client, &disconnect);
+    }
+    ASSERT_TRUE(rc >= 0);
+    ASSERT_MEM_EQ(sleep_frame, g_mock.out, sizeof(sleep_frame));
+    ASSERT_EQ(0, g_sn_disconnect_cb_calls);
+    ASSERT_NO_PENDRESP();
+}
+#endif
+
 /* A publish object must be reusable after a terminal write error: the failed
  * send resets its state so the next attempt re-encodes instead of resuming a
  * cleared, zero-length write. */
@@ -3832,6 +3876,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_auto_reply_resumes_partial_write);
     RUN_TEST(sn_register_auto_reply_resumes_partial_write);
     RUN_TEST(sn_disconnect_chunked_write_completes_exact_frame);
+#ifdef WOLFMQTT_DISCONNECT_CB
+    RUN_TEST(sn_sleep_disconnect_ack_does_not_fire_disconnect_cb);
+#endif
 #if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_ALLOW_NODATA_UNLOCK)
     RUN_TEST(sn_register_partial_write_retains_send_state);
     RUN_TEST(sn_register_partial_write_second_send_not_deadlocked);

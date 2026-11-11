@@ -2487,10 +2487,13 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
         if (disconnect->sleepTmr != 0) {
             rc = wm_SemLock(&client->lockClient);
             if (rc == 0) {
-                /* inform other threads of expected response */
+                /* inform other threads of expected response. Register
+                 * the request itself so whichever thread reads the
+                 * acknowledgment sees its non-zero sleepTmr and does not
+                 * report it to disconnect_cb as a gateway disconnect. */
                 rc = MqttClient_RespList_Add(client,
                         (MqttPacketType)SN_MSG_TYPE_DISCONNECT, 0,
-                        &disconnect->pendResp, NULL);
+                        &disconnect->pendResp, disconnect);
                 wm_SemUnlock(&client->lockClient);
             }
             if (rc != 0) {
