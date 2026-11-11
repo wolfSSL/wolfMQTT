@@ -2851,6 +2851,19 @@ int BrokerPersist_Restore(MqttBroker* broker)
     }
     h = broker->persist;
 
+    /* A missing required hook is a configuration error. Reject it here:
+     * wmqb_meta_check reports it as BAD_ARG, which below means a schema
+     * mismatch and would wipe every valid record. */
+    if (h->kv_get == NULL || h->kv_put == NULL
+    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+            || h->derive_key == NULL
+    #endif
+            ) {
+        WMQB_LOG_ERR(broker,
+            "broker: persist hooks incomplete - aborting restore");
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
     rc = wmqb_meta_check(broker, &meta_present);
     if (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
             rc == MQTT_CODE_ERROR_BAD_ARG) {
