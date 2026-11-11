@@ -370,6 +370,10 @@ typedef struct _MqttMsgStat {
     byte   ackReasonCode;
     byte   ackProtocolLevel;
 #endif
+    /* Session replay order of a staged PUBREL, taken while its PUBREC was
+     * read so PUBRELs replay in PUBREC order (MQTT 3.1.1 and 5.0 section
+     * 4.6) even when two threads send them in the other order. 0 = none. */
+    word32 ackSeq;
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD

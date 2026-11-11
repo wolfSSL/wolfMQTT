@@ -830,7 +830,8 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
  * must neither take a slot nor turn a QoS 1 replay into a PUBREL. A QoS 2
  * PUBLISH sent without a slot (e.g. no topic to retain) is recognised by its
  * in-flight reservation awaiting PUBCOMP. */
-static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id)
+static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id,
+    word32 seq)
 {
     MqttReplayMsg* slot;
     int i;
@@ -859,8 +860,8 @@ static void MqttClient_Replay_PubRelSent(MqttClient* client, word16 packet_id)
     }
     if (!slot->pubrelSent) {
         /* PUBRELs replay in the order their PUBRECs arrived (MQTT 3.1.1 and
-         * 5.0 section 4.6). */
-        slot->seq = ++client->replay_seq;
+         * 5.0 section 4.6): use the token taken when the PUBREC was read. */
+        slot->seq = (seq != 0) ? seq : ++client->replay_seq;
     }
     slot->pubrelSent = 1;
 }
@@ -1054,17 +1055,35 @@ static void MqttClient_Replay_RemoveSafe(MqttClient* client, word16 packet_id)
 }
 
 static void MqttClient_Replay_PubRelSentSafe(MqttClient* client,
-    word16 packet_id)
+    word16 packet_id, word32 seq)
 {
 #ifdef WOLFMQTT_MULTITHREAD
     if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
         return;
     }
 #endif
-    MqttClient_Replay_PubRelSent(client, packet_id);
+    MqttClient_Replay_PubRelSent(client, packet_id, seq);
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
+}
+
+/* Take the next replay order token. Called while the PUBREC is read under
+ * lockRecv, so tokens follow PUBREC arrival order. 0 if the lock fails. */
+static word32 MqttClient_Replay_NextSeqSafe(MqttClient* client)
+{
+    word32 seq;
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
+        return 0;
+    }
+#endif
+    seq = ++client->replay_seq;
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    return seq;
 }
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 
@@ -3016,6 +3035,12 @@ wait_again:
                  * the encode reads these per-object fields instead. */
                 mms_stat->ackPacketType = resp.packet_type;
                 mms_stat->ackPacketId = resp.packet_id;
+                mms_stat->ackSeq = 0;
+            #ifndef WOLFMQTT_NO_SESSION_REPLAY
+                if (resp.packet_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
+                    mms_stat->ackSeq = MqttClient_Replay_NextSeqSafe(client);
+                }
+            #endif
             #ifdef WOLFMQTT_V5
                 mms_stat->ackReasonCode = resp.reason_code;
                 mms_stat->ackProps = resp.props;
@@ -3147,7 +3172,7 @@ wait_again:
             if (rc == MQTT_CODE_SUCCESS &&
                     mms_stat->ackPacketType == MQTT_PACKET_TYPE_PUBLISH_REL) {
                 MqttClient_Replay_PubRelSentSafe(client,
-                    mms_stat->ackPacketId);
+                    mms_stat->ackPacketId, mms_stat->ackSeq);
             }
         #endif
 
