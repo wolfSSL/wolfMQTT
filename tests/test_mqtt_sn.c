@@ -1904,6 +1904,34 @@ TEST(sn_encode_willmsgupd_null_msg_buffer_rejected)
 /* MQTT-SN 1.2 section 5.3.10 Table 5 defines ReturnCode values 0x00 to
  * 0x03; 0x04 to 0xFF are reserved. Each response decoder must reject a
  * reserved value rather than hand it to the client as a rejection. */
+/* MQTT-SN 1.2 section 6.8: a QoS -1 PUBLISH uses a predefined or short Topic
+ * Id and MsgId 0x0000. The encoder must not emit any other combination. */
+TEST(sn_encode_publish_qos_m1_invalid_combinations_rejected)
+{
+    byte tx_buf[32];
+    byte payload[1] = { 'x' };
+    char topic[2] = { 0x00, 0x01 };
+    SN_Publish pub;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.qos = MQTT_QOS_3;
+    pub.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    pub.topic_name = topic;
+    pub.buffer = payload;
+    pub.total_len = (word32)sizeof(payload);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, SN_Encode_Publish(tx_buf,
+        (int)sizeof(tx_buf), &pub));
+
+    pub.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
+    pub.packet_id = 1;
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, SN_Encode_Publish(tx_buf,
+        (int)sizeof(tx_buf), &pub));
+
+    /* Control: predefined Topic Id with MsgId 0 is valid */
+    pub.packet_id = 0;
+    ASSERT_TRUE(SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &pub) > 0);
+}
+
 TEST(sn_decode_reserved_return_code_rejected)
 {
     /* Length, MsgType, ReturnCode 0x04 */
@@ -2142,6 +2170,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_willmsgupd_null_msg_buffer_rejected);
 
     RUN_TEST(sn_decode_reserved_return_code_rejected);
+    RUN_TEST(sn_encode_publish_qos_m1_invalid_combinations_rejected);
     RUN_TEST(sn_encode_register_null_topic_string_rejected);
     RUN_TEST(sn_encode_register_null_args_rejected);
     RUN_TEST(sn_encode_register_topic_valid);

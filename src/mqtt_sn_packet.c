@@ -1260,6 +1260,14 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     if (tx_buf_len < 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
     }
+    /* MQTT-SN 1.2 section 6.8: QoS -1 (MQTT_QOS_3) uses a predefined or
+     * short Topic Id and MsgId 0x0000. */
+    if (publish->qos == MQTT_QOS_3 &&
+            ((publish->topic_type != SN_TOPIC_ID_TYPE_PREDEF &&
+              publish->topic_type != SN_TOPIC_ID_TYPE_SHORT) ||
+             publish->packet_id != 0)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
 
     /* publish->total_len is a caller-supplied word32. Reject any payload large
      * enough that adding the MQTT-SN header overhead would overflow or exceed
