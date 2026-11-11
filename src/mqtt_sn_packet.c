@@ -460,6 +460,14 @@ int SN_Decode_WillTopicReq(byte *rx_buf, int rx_buf_len)
 /* An empty WILLTOPIC message is a WILLTOPIC message without Flags and
    WillTopic field (i.e. it is exactly 2 octets long). It is used by a client
    to delete the Will topic and the Will message stored in the server */
+/* An MQTT-SN packet is at most SN_PACKET_MAX_LEN bytes, so a longer string
+ * can never be encoded. Checked on the size_t length, before it is narrowed
+ * to int, so a huge string cannot wrap negative past the packet checks. */
+static int SN_StrLenValid(const char* str)
+{
+    return (XSTRLEN(str) <= (size_t)SN_PACKET_MAX_LEN) ? 1 : 0;
+}
+
 int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
 {
     int total_len;
@@ -481,6 +489,9 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     /* Determine packet length */
     if (willTopic != NULL) {
         /* Will Topic is a string */
+        if (!SN_StrLenValid(willTopic->willTopic)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len += (int)XSTRLEN(willTopic->willTopic);
 
         /* Flags */
@@ -636,6 +647,9 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     /* Determine packet length */
     if (willTopic != NULL) {
         /* Will Topic is a string */
+        if (!SN_StrLenValid(willTopic->willTopic)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len += (int)XSTRLEN(willTopic->willTopic);
 
         /* Flags */
@@ -870,6 +884,9 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
 
     /* Determine packet length */
     /* Topic name is a string */
+    if (!SN_StrLenValid(regist->topicName)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
     total_len = (int)XSTRLEN(regist->topicName);
 
     /* Length, MsgType, TopicID (2), and packet_id (2) */
@@ -1110,6 +1127,9 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     /* Determine packet length */
     if (subscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
+        if (!SN_StrLenValid(subscribe->topicNameId)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len = (int)XSTRLEN(subscribe->topicNameId);
     }
     else {
@@ -1539,6 +1559,9 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     /* Determine packet length */
     if (unsubscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
+        if (!SN_StrLenValid(unsubscribe->topicNameId)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len = (int)XSTRLEN(unsubscribe->topicNameId);
     }
     else {
