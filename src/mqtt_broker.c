@@ -8878,8 +8878,10 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                     "rc=%d", (int)bc->sock, pub.packet_id, add_rc);
             #ifdef WOLFMQTT_V5
                 if (bc->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                    /* The cap is the Receive Maximum the CONNACK advertised,
+                     * so exceeding it is 0x93 (MQTT 5.0 section 3.3.4). */
                     byte reason = (add_rc == MQTT_CODE_ERROR_OUT_OF_BUFFER)
-                        ? MQTT_REASON_QUOTA_EXCEEDED
+                        ? MQTT_REASON_RX_MAX_EXCEEDED
                         : MQTT_REASON_SERVER_BUSY;
                     (void)BrokerSend_Disconnect(bc, reason);
                 }

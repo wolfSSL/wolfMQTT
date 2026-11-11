@@ -3819,7 +3819,7 @@ TEST(qos2_inbound_cap_reached_disconnects)
      * first cap accepted; the (cap+1)th must trigger a fatal close.
      * v3.1.1 has no DISCONNECT-with-reason path so the broker closes the
      * socket directly; v5 clients additionally receive a DISCONNECT
-     * with MQTT_REASON_QUOTA_EXCEEDED before the close. */
+     * with MQTT_REASON_RX_MAX_EXCEEDED before the close. */
     for (i = 1; i <= BROKER_MAX_INBOUND_QOS2 + 1; i++) {
         size_t n = build_qos2_pub(pub_buf, (word16)i);
         mock_client_input_append(0, pub_buf, n);
@@ -3841,6 +3841,60 @@ TEST(qos2_inbound_cap_reached_disconnects)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.3.4: the broker advertises BROKER_MAX_INBOUND_QOS2 as
+ * its Receive Maximum. A client with more unacknowledged QoS 2 PUBLISH
+ * packets than that is disconnected with Reason Code 0x93 (Receive Maximum
+ * exceeded), the more specific code section 4.13.1 asks for. */
+TEST(qos2_inbound_cap_v5_disconnect_receive_max_exceeded)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    size_t pos;
+    int i;
+    int found = 0;
+    /* v5 CONNECT, Clean Start 1, Properties length 0, ClientId "B" */
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'B'
+    };
+    /* v5 PUBLISH QoS 2: topic "x", Packet Identifier (set below),
+     * Properties length 0, no payload. Remaining Length 6. */
+    byte pub_buf[] = { 0x34, 0x06, 0x00, 0x01, 'x', 0x00, 0x00, 0x00 };
+    /* DISCONNECT, Remaining Length 1, Reason Code 0x93 */
+    static const byte disconnect_93[] = { 0xE0, 0x01, 0x93 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    for (i = 1; i <= BROKER_MAX_INBOUND_QOS2 + 1; i++) {
+        pub_buf[5] = (byte)(i >> 8);
+        pub_buf[6] = (byte)i;
+        mock_client_input_append(0, pub_buf, sizeof(pub_buf));
+    }
+    for (i = 0; i < 40 && !g_clients[0].closed; i++) {
+        MqttBroker_Step(&broker);
+    }
+
+    ASSERT_TRUE(g_clients[0].closed);
+    for (pos = 0; pos + sizeof(disconnect_93) <= g_clients[0].out_len;
+            pos++) {
+        if (XMEMCMP(&g_clients[0].out_buf[pos], disconnect_93,
+                sizeof(disconnect_93)) == 0) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
 
 /* Disconnecting a client with non-empty inbound QoS 2 state must free that
  * state. We can't directly inspect freed pointers from the test, but ASan/
@@ -17542,6 +17596,9 @@ int main(int argc, char** argv)
     RUN_TEST(qos2_publish_after_pubrel_is_fresh);
     RUN_TEST(qos2_inbound_cap_reached_disconnects);
     RUN_TEST(qos2_state_freed_on_client_disconnect);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(qos2_inbound_cap_v5_disconnect_receive_max_exceeded);
+#endif
     RUN_TEST(qos2_pubrel_unknown_id_still_pubcomps);
     RUN_TEST(qos2_publish_with_offline_durable_subscriber);
     RUN_TEST(qos2_publish_then_abrupt_close_offline_subscriber);
