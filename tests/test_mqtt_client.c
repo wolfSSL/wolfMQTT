@@ -5475,6 +5475,88 @@ TEST(reconnect_v5_replay_honors_receive_maximum)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
+    (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
+static void* replay_noop_thread(void* arg)
+{
+    (void)arg;
+    return NULL;
+}
+
+/* The deferred replay has one shared write state. While another thread is
+ * inside that write (holding lockSend), a flush from this thread must leave
+ * it alone rather than write the same buffer without the lock and then
+ * release a lockSend it never took. */
+TEST(replay_flush_does_not_join_another_threads_write)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish pub_a;
+    MqttPublish pub_b;
+    pthread_t other;
+    static byte payload[] = "x";
+    /* v5 CONNACK, Session Present 1, Success, Properties length 3 holding
+     * Receive Maximum (0x21) = 1. Remaining Length 6. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x01, 0x00, 0x03, 0x21, 0x00, 0x01
+    };
+
+    ASSERT_EQ(0, pthread_create(&other, NULL, replay_noop_thread, NULL));
+    ASSERT_EQ(0, pthread_join(other, NULL));
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+    init_qos_publish(&pub_a, MQTT_QOS_1, 1, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
+    init_qos_publish(&pub_b, MQTT_QOS_1, 2, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_b));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    test_net.write = order_mock_write;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    g_order_pub_count = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(1, g_order_pub_count); /* id 2 stays pending */
+
+    /* Another thread is now mid-write on the deferred replay */
+    test_client.replay_busy = 1;
+    test_client.replay_stat.isWriteActive = 1;
+    test_client.write.isActive = 1;
+    test_client.write_owner = other;
+    test_client.write_owner_valid = 1;
+
+    g_canned_len = 0;
+    g_canned_pos = 0;
+    (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    ASSERT_EQ(1, test_client.replay_stat.isWriteActive);
+    ASSERT_EQ(1, test_client.write.isActive);
+    ASSERT_EQ(1, g_order_pub_count);
+
+    test_client.replay_busy = 0;
+    test_client.replay_stat.isWriteActive = 0;
+    test_client.write.isActive = 0;
+    test_client.write_owner_valid = 0;
+}
+#endif
+
 /* A streamed publish delivers its payload through the application callback, so
  * the client holds no copy to rebuild from. The slot still tracks the Packet
  * Identifier for a QoS 2 PUBREL, but the PUBLISH itself must not be replayed
@@ -11289,6 +11371,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_v5_replays_publish_with_properties);
     RUN_TEST(reconnect_v5_replay_drops_topic_alias);
     RUN_TEST(reconnect_v5_replay_honors_receive_maximum);
+#endif
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
+    (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
+    RUN_TEST(replay_flush_does_not_join_another_threads_write);
 #endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(reconnect_replays_pubrel_in_pubrec_order);

@@ -3750,11 +3750,30 @@ static int MqttClient_CheckConnectSent(MqttClient *client);
  * even when the application publishes nothing new. One caller at a time;
  * returns MQTT_CODE_SUCCESS when nothing is pending or another caller is
  * already doing it. */
+/* May this caller resume the deferred replay's unfinished write? Only a
+ * nonblocking write is left unfinished (a blocking replay always stops its
+ * write before returning, so an active one belongs to a thread inside it),
+ * and with threads only the one holding lockSend for it may continue.
+ * Called with lockClient held in multithreaded builds. */
+static int MqttClient_Replay_CanResume(const MqttClient* client)
+{
+#ifndef WOLFMQTT_NONBLOCK
+    (void)client;
+    return 0;
+#elif defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_THREAD_ID_T)
+    return client->replay_stat.isWriteActive && client->write_owner_valid &&
+        WOLFMQTT_THREAD_EQUAL(client->write_owner, WOLFMQTT_THREAD_SELF());
+#else
+    return client->replay_stat.isWriteActive;
+#endif
+}
+
 static int MqttClient_Replay_Flush(MqttClient* client)
 {
     int rc = MQTT_CODE_SUCCESS;
     int i;
     int pending = 0;
+    int resume;
 
     if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
             MqttClient_CheckConnectSent(client) != MQTT_CODE_SUCCESS) {
@@ -3767,14 +3786,15 @@ static int MqttClient_Replay_Flush(MqttClient* client)
     }
 #endif
     /* A nonblocking flush that stopped mid-write resumes with its own state */
-    if (!client->replay_busy || client->replay_stat.isWriteActive) {
+    resume = MqttClient_Replay_CanResume(client);
+    if (!client->replay_busy || resume) {
         for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
             if (client->replay[i].replayPending) {
                 pending = 1;
                 break;
             }
         }
-        if (pending || client->replay_stat.isWriteActive) {
+        if (pending || resume) {
             client->replay_busy = 1;
             pending = 1;
         }
