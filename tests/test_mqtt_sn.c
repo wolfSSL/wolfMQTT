@@ -1932,6 +1932,41 @@ TEST(sn_encode_publish_qos_m1_invalid_combinations_rejected)
     ASSERT_TRUE(SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &pub) > 0);
 }
 
+/* MQTT-SN 1.2 section 5.4.12: the PUBLISH TopicId is two bytes, most
+ * significant first. SN_Publish.topic_name carries those two bytes as-is for
+ * every Topic Id type, so a decoded PUBLISH can be re-published unchanged.
+ * Fixture: Length 8, PUBLISH, Flags NORMAL QoS 0 (0x00), TopicId 0x0102,
+ * MsgId 0, Data 'x'. */
+TEST(sn_publish_normal_topic_id_is_big_endian_both_ways)
+{
+    static const byte wire[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x00, 0x01,
+                                 0x02, 0x00, 0x00, 'x' };
+    byte rx[sizeof(wire)];
+    byte tx_buf[32];
+    char topic[2] = { 0x01, 0x02 };
+    byte payload[1] = { 'x' };
+    SN_Publish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.qos = MQTT_QOS_0;
+    pub.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    pub.topic_name = topic;
+    pub.buffer = payload;
+    pub.total_len = (word32)sizeof(payload);
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &pub);
+    ASSERT_EQ((int)sizeof(wire), rc);
+    ASSERT_MEM_EQ(wire, tx_buf, sizeof(wire));
+
+    XMEMCPY(rx, wire, sizeof(wire));
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = SN_Decode_Publish(rx, (int)sizeof(rx), &pub);
+    ASSERT_EQ((int)sizeof(wire), rc);
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_NORMAL, pub.topic_type);
+    ASSERT_EQ(0x01, (byte)pub.topic_name[0]);
+    ASSERT_EQ(0x02, (byte)pub.topic_name[1]);
+}
+
 TEST(sn_decode_reserved_return_code_rejected)
 {
     /* Length, MsgType, ReturnCode 0x04 */
@@ -2170,6 +2205,7 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_willmsgupd_null_msg_buffer_rejected);
 
     RUN_TEST(sn_decode_reserved_return_code_rejected);
+    RUN_TEST(sn_publish_normal_topic_id_is_big_endian_both_ways);
     RUN_TEST(sn_encode_publish_qos_m1_invalid_combinations_rejected);
     RUN_TEST(sn_encode_register_null_topic_string_rejected);
     RUN_TEST(sn_encode_register_null_args_rejected);

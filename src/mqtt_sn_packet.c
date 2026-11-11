@@ -1321,19 +1321,13 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     if (publish->topic_name == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
-    if ((publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) ||
-        (publish->topic_type == SN_TOPIC_ID_TYPE_PREDEF)) {
-        /* A short topic name is 2 chars; a predefined topic ID is a 2-byte
-         * identifier, not a name */
-        XMEMCPY(tx_payload, publish->topic_name, 2);
-        tx_payload += 2;
-    }
-    else {
-        /* Topic ID */
-        word16 topic_id;
-        XMEMCPY(&topic_id, publish->topic_name, sizeof(topic_id));
-        tx_payload += MqttEncode_Num(tx_payload, topic_id);
-    }
+    /* MQTT-SN 1.2 section 5.4.12: topic_name holds the 2-byte TopicId as
+     * sent on the wire (most significant byte first) for every Topic Id
+     * type: a short topic name, a predefined or a normal (registered) topic
+     * ID. SN_Decode_Publish returns it the same way, so a received PUBLISH
+     * can be re-published unchanged. */
+    XMEMCPY(tx_payload, publish->topic_name, 2);
+    tx_payload += 2;
 
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
 

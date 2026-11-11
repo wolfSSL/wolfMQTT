@@ -664,8 +664,9 @@ static int sn_ping_pump(SN_PingReq* ping, int* iters)
 
 /* Build a NORMAL-topic-ID publish. topicId must outlive every SN_Client_Publish
  * call: SN_Encode_Publish reads the 2-byte topic ID through publish->topic_name,
- * so the caller owns the storage and passes its address here. */
-static void sn_publish_setup(SN_Publish* p, const word16* topicId, MqttQoS qos)
+ * so the caller owns the storage. It holds the TopicId as on the wire, most
+ * significant byte first (MQTT-SN 1.2 section 5.4.12). */
+static void sn_publish_setup(SN_Publish* p, const byte* topicId, MqttQoS qos)
 {
     XMEMSET(p, 0, sizeof(*p));
     p->retain = 0;
@@ -1400,14 +1401,14 @@ TEST(sn_subscribe_rejected)
 TEST(sn_publish_qos1_no_continue)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
 
     mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
 
     rc = sn_publish_pump(&pub, NULL);
 
@@ -1425,7 +1426,7 @@ TEST(sn_publish_qos1_no_continue)
 TEST(sn_publish_qos2_no_continue)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
@@ -1433,7 +1434,7 @@ TEST(sn_publish_qos2_no_continue)
     mock_net_push(&g_mock, PUBREC_FRAME,  (int)sizeof(PUBREC_FRAME));
     mock_net_push(&g_mock, PUBCOMP_FRAME, (int)sizeof(PUBCOMP_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_2);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_2);
 
     rc = sn_publish_pump(&pub, NULL);
 
@@ -1452,12 +1453,12 @@ TEST(sn_publish_qos2_no_continue)
 TEST(sn_publish_qos0_no_pendresp)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_0);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_0);
 
     rc = sn_publish_pump(&pub, NULL);
 
@@ -2366,13 +2367,13 @@ static int sn_send_from_incoming_publish(MqttClient* client, MqttMessage* msg,
     byte msg_new, byte msg_done)
 {
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
 
     (void)msg;
     (void)msg_new;
     (void)msg_done;
     g_incoming_publish_calls++;
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_0);
     g_reentrant_send_rc = SN_Client_Publish(client, &publish);
     return g_reentrant_send_rc;
 }
@@ -2382,12 +2383,12 @@ static int sn_send_from_incoming_register(word16 topic_id,
 {
     MqttClient* client = (MqttClient*)ctx;
     SN_Publish publish;
-    word16 publish_topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte publish_topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
 
     (void)topic_id;
     (void)topic_name;
     g_incoming_register_calls++;
-    sn_publish_setup(&publish, &publish_topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, publish_topic_id, MQTT_QOS_0);
     g_reentrant_send_rc = SN_Client_Publish(client, &publish);
     return g_reentrant_send_rc;
 }
@@ -2578,11 +2579,11 @@ TEST(sn_sleep_disconnect_ack_does_not_fire_disconnect_cb)
 TEST(sn_publish_reusable_after_write_error)
 {
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_0);
     g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
     rc = SN_Client_Publish(&g_client, &publish);
     ASSERT_TRUE(rc < 0);
@@ -2805,7 +2806,7 @@ TEST(sn_pingreq_zero_progress_releases_writer)
 {
     MqttMsgStat other_stat;
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
@@ -2814,7 +2815,7 @@ TEST(sn_pingreq_zero_progress_releases_writer)
      * which clears the cumulative write.total. Validate that invariant, then
      * plant a stale nonzero total explicitly so the following zero-progress
      * response must judge its own progress rather than inherit this value. */
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_0);
     ASSERT_EQ(MQTT_CODE_SUCCESS, SN_Client_Publish(&g_client, &publish));
     ASSERT_EQ(0, (int)g_client.write.total);
     ASSERT_TRUE(g_mock.out_len > 0);
@@ -3094,14 +3095,14 @@ TEST(sn_subscribe_rejected_nonblock)
 TEST(sn_publish_qos1_nonblock_pendresp_lifecycle)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc, iters = 0;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
 
     mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
 
     /* First call sends PUBLISH and the armed CONTINUE forces an in-flight
      * return before the PUBACK is delivered. */
@@ -3138,14 +3139,14 @@ TEST(sn_publish_qos1_nonblock_pendresp_lifecycle)
 TEST(sn_publish_qos1_many_continues)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc, iters = 0;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(3 /* three CONTINUE per frame */));
 
     mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
 
     rc = sn_publish_pump(&pub, &iters);
 
@@ -3258,11 +3259,11 @@ TEST(sn_willmsgupd_zero_write_returns_network_error)
 TEST(sn_publish_qos1_zero_write_returns_network_error)
 {
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_1);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_1);
     g_mock.write_zero_count = 1;
 
     rc = SN_Client_Publish(&g_client, &publish);

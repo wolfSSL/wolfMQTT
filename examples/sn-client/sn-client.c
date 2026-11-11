@@ -126,7 +126,10 @@ static int mqtt_disconnect_cb(MqttClient* client, int error_code, void* ctx)
 int sn_test(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
-    word16 topicID;
+    word16 topicID = 0;
+    /* The TopicId as SN_Publish.topic_name carries it: the two wire bytes,
+     * most significant first (MQTT-SN 1.2 section 5.4.12) */
+    byte topicIdBe[2];
 
     PRINTF("MQTT-SN Client: Client ID %s, QoS %d",
             mqttCtx->client_id,
@@ -310,7 +313,9 @@ int sn_test(MQTTCtx *mqttCtx)
         mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
 
         /* Use the topic ID saved from the subscribe */
-        mqttCtx->publishSN.topic_name = (char*)&topicID;
+        topicIdBe[0] = (byte)(topicID >> 8);
+        topicIdBe[1] = (byte)topicID;
+        mqttCtx->publishSN.topic_name = (char*)topicIdBe;
         if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
             mqttCtx->publishSN.packet_id = mqtt_get_packetid();
         }
@@ -541,7 +546,9 @@ int sn_test(MQTTCtx *mqttCtx)
                 mqttCtx->publishSN.qos = mqttCtx->qos;
                 mqttCtx->publishSN.duplicate = 0;
                 mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
-                mqttCtx->publishSN.topic_name = (char*)&topicID;
+                topicIdBe[0] = (byte)(topicID >> 8);
+                topicIdBe[1] = (byte)topicID;
+                mqttCtx->publishSN.topic_name = (char*)topicIdBe;
                 if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
                     mqttCtx->publishSN.packet_id = mqtt_get_packetid();
                 }
