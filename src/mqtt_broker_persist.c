@@ -1045,10 +1045,11 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     const struct BrokerOutPub* e)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
-    /* BrokerOutPub is dynamic-memory only; static-memory builds keep
-     * synchronous fan-out and therefore have no outbound queue to
-     * persist. The function symbol still exists so static and dynamic
-     * builds share the same ABI. */
+    /* BrokerOutPub is dynamic-memory only. Static-memory builds hold
+     * offline QoS>0 messages in BrokerStaticOrphanSession.out_q
+     * (BrokerStaticOutPub), and those entries are not persisted, so this
+     * function is a no-op there. The symbol still exists so static and
+     * dynamic builds share the same ABI. */
     (void)broker; (void)client_id; (void)e;
     return 0;
 #else
