@@ -1141,6 +1141,10 @@ WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
 WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src);
 #endif
 
+/* 1 when Topic Filter filter matches Topic Name topic (MQTT 5.0 section
+ * 4.7). Defined in mqtt_broker.c; exposed for the broker unit tests. */
+WOLFMQTT_LOCAL int BrokerTopicMatch(const char* filter, const char* topic);
+
 /* CLI wrapper interface */
 WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);
 

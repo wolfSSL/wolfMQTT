@@ -2373,71 +2373,94 @@ TEST(broker_v311_client_dollar_topic_publish_closes)
 }
 #endif
 
-#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_BROKER_WILDCARDS)
+#ifdef WOLFMQTT_BROKER_WILDCARDS
 /* [MQTT-4.7.2-1] A Topic Filter starting with a wildcard must not match a
- * Topic Name starting with '$'; an exact filter still does. Exercised with a
- * broker-originated message (a Will on "$SYS/t" published when its client
- * closes abnormally), since clients cannot PUBLISH to $ topics. */
+ * Topic Name starting with '$'; a filter that names the '$' level still does.
+ * Clients cannot produce such a message (the broker refuses $ Topic Names on
+ * PUBLISH and as a Will Topic), so the matcher is checked directly. */
 TEST(broker_dollar_topic_not_matched_by_leading_wildcard)
+{
+    ASSERT_EQ(0, BrokerTopicMatch("#", "$SYS/t"));
+    ASSERT_EQ(0, BrokerTopicMatch("+/t", "$SYS/t"));
+    ASSERT_EQ(0, BrokerTopicMatch("+/#", "$SYS/t"));
+    ASSERT_EQ(1, BrokerTopicMatch("$SYS/t", "$SYS/t"));
+    ASSERT_EQ(1, BrokerTopicMatch("$SYS/#", "$SYS/t"));
+    ASSERT_EQ(1, BrokerTopicMatch("$SYS/+", "$SYS/t"));
+    /* Positive control: the same wildcards match an ordinary topic */
+    ASSERT_EQ(1, BrokerTopicMatch("#", "SYS/t"));
+    ASSERT_EQ(1, BrokerTopicMatch("+/t", "SYS/t"));
+}
+#endif
+
+#if defined(WOLFMQTT_BROKER_WILL) && !defined(BROKER_ALLOW_CLIENT_DOLLAR_TOPICS)
+/* MQTT 3.1.1 and 5.0 section 4.7.2: a Will Topic is a Topic Name the client
+ * supplies, so a '$' one is refused at CONNECT like a PUBLISH to one: v5
+ * CONNACK 0x90 Topic Name invalid (MQTT 5.0 section 3.2.2.2), v3.1.1 CONNACK
+ * 0x03 Server unavailable, as for any other Will the broker cannot accept.
+ * Returns the CONNACK return/reason code byte, or -1 if none was sent. */
+static int dollar_will_connack_code(byte level)
 {
     MqttBroker broker;
     MqttBrokerNet net;
     int i;
-    /* v3.1.1 CONNECT, CleanSession 1, ClientId "A" / "B" */
-    static const byte connect_a[] = {
-        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
-        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'A'
-    };
-    static const byte connect_b[] = {
-        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
-        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'B'
-    };
-    /* SUBSCRIBE packet id 1 "#" QoS 0 / "$SYS/t" QoS 0 */
-    static const byte subscribe_all[] = {
-        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, '#', 0x00
-    };
-    static const byte subscribe_sys[] = {
-        0x82, 0x0B, 0x00, 0x01, 0x00, 0x06,
-        '$', 'S', 'Y', 'S', '/', 't', 0x00
-    };
+    int code = -1;
     /* v3.1.1 CONNECT, flags Will + CleanSession (0x06), Keep Alive 60,
      * ClientId "W", Will Topic "$SYS/t", Will Message "m".
      * Remaining Length 10 + 3 + 8 + 3 = 24. */
-    static const byte connect_w[] = {
+    static const byte connect_w4[] = {
         0x10, 0x18, 0x00, 0x04, 'M', 'Q', 'T', 'T',
         0x04, 0x06, 0x00, 0x3C, 0x00, 0x01, 'W',
+        0x00, 0x06, '$', 'S', 'Y', 'S', '/', 't',
+        0x00, 0x01, 'm'
+    };
+    /* v5: Properties length 0 after Keep Alive and Will Properties length 0
+     * before the Will Topic [MQTT-3.1.3.2]. Remaining Length 26. */
+    static const byte connect_w5[] = {
+        0x10, 0x1A, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x06, 0x00, 0x3C, 0x00, 0x00, 0x01, 'W',
+        0x00,
         0x00, 0x06, '$', 'S', 'Y', 'S', '/', 't',
         0x00, 0x01, 'm'
     };
 
     install_mock_net(&net);
     XMEMSET(&broker, 0, sizeof(broker));
-    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
-    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
-    reset_mock_clients(3);
-    mock_client_input_append(0, connect_a, sizeof(connect_a));
-    mock_client_input_append(0, subscribe_all, sizeof(subscribe_all));
-    mock_client_input_append(1, connect_b, sizeof(connect_b));
-    mock_client_input_append(1, subscribe_sys, sizeof(subscribe_sys));
-    mock_client_input_append(2, connect_w, sizeof(connect_w));
-    for (i = 0; i < 16; i++) {
-        MqttBroker_Step(&broker);
+    if (MqttBroker_Init(&broker, &net) != MQTT_CODE_SUCCESS ||
+            MqttBroker_Start(&broker) != MQTT_CODE_SUCCESS) {
+        return -1;
     }
-    ASSERT_FALSE(g_clients[2].closed);
-
-    g_clients[2].read_err = 1; /* W drops: its Will is published */
+    reset_mock_clients(1);
+    if (level == MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+        mock_client_input_append(0, connect_w5, sizeof(connect_w5));
+    }
+    else {
+        mock_client_input_append(0, connect_w4, sizeof(connect_w4));
+    }
     for (i = 0; i < 8; i++) {
         MqttBroker_Step(&broker);
     }
-    ASSERT_TRUE(g_clients[2].closed);
-    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
-        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
-    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
-        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
-
+    /* CONNACK: 0x20, remain, flags, code */
+    if (g_clients[0].out_len >= 4 && g_clients[0].out_buf[0] == 0x20) {
+        code = g_clients[0].out_buf[3];
+    }
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
+    return code;
 }
+
+TEST(broker_v311_dollar_will_topic_refused)
+{
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL,
+        dollar_will_connack_code(MQTT_CONNECT_PROTOCOL_LEVEL_4));
+}
+
+#ifdef WOLFMQTT_V5
+TEST(broker_v5_dollar_will_topic_refused)
+{
+    ASSERT_EQ(MQTT_REASON_TOPIC_NAME_INVALID,
+        dollar_will_connack_code(MQTT_CONNECT_PROTOCOL_LEVEL_5));
+}
+#endif
 #endif
 
 #ifdef WOLFMQTT_V5
@@ -18755,8 +18778,14 @@ int main(int argc, char** argv)
 #endif
     RUN_TEST(broker_v311_client_dollar_topic_publish_closes);
 #endif
-#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_BROKER_WILDCARDS)
+#ifdef WOLFMQTT_BROKER_WILDCARDS
     RUN_TEST(broker_dollar_topic_not_matched_by_leading_wildcard);
+#endif
+#if defined(WOLFMQTT_BROKER_WILL) && !defined(BROKER_ALLOW_CLIENT_DOLLAR_TOPICS)
+    RUN_TEST(broker_v311_dollar_will_topic_refused);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(broker_v5_dollar_will_topic_refused);
+#endif
 #endif
 #if defined(WOLFMQTT_BROKER_PERSIST) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(broker_publish_scrubs_topic_copy);

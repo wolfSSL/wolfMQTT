@@ -5932,8 +5932,6 @@ static void BrokerRetained_FreeAll(MqttBroker* broker)
 }
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
-/* Forward declaration - used by retained delivery, will publish, and PUBLISH handler */
-static int BrokerTopicMatch(const char* filter, const char* topic);
 
 /* -------------------------------------------------------------------------- */
 /* LWT (Last Will and Testament) helpers                                       */
@@ -7529,7 +7527,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
 /* Topic matching                                                              */
 /* -------------------------------------------------------------------------- */
 #ifdef WOLFMQTT_BROKER_WILDCARDS
-static int BrokerTopicMatch(const char* filter, const char* topic)
+WOLFMQTT_LOCAL int BrokerTopicMatch(const char* filter, const char* topic)
 {
     const char* f = filter;
     const char* t = topic;
@@ -7583,7 +7581,7 @@ static int BrokerTopicMatch(const char* filter, const char* topic)
 }
 #else
 /* Exact match only when wildcards are disabled */
-static int BrokerTopicMatch(const char* filter, const char* topic)
+WOLFMQTT_LOCAL int BrokerTopicMatch(const char* filter, const char* topic)
 {
     if (filter == NULL || topic == NULL) {
         return 0;
@@ -8215,6 +8213,27 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
                 "broker: LWT topic too long (%u >= %d) sock=%d",
                 (unsigned)mc.lwt_msg->topic_name_len,
                 BROKER_MAX_TOPIC_LEN, (int)bc->sock);
+        #ifdef WOLFMQTT_V5
+            if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+                ack.return_code = MQTT_REASON_TOPIC_NAME_INVALID;
+            }
+            else
+        #endif
+            {
+                ack.return_code = MQTT_CONNECT_ACK_CODE_REFUSED_UNAVAIL;
+            }
+            goto send_connack;
+        }
+    #endif
+    #ifndef BROKER_ALLOW_CLIENT_DOLLAR_TOPICS
+        /* MQTT 3.1.1 and 5.0 section 4.7.2: the Will Topic is a Topic Name
+         * from the client, so the rule refusing client PUBLISHes to '$'
+         * Topic Names applies to it too. */
+        if (mc.lwt_msg->topic_name != NULL &&
+                mc.lwt_msg->topic_name_len > 0 &&
+                mc.lwt_msg->topic_name[0] == '$') {
+            WBLOG_ERR(broker, "broker: LWT topic is a reserved $ topic "
+                "sock=%d", (int)bc->sock);
         #ifdef WOLFMQTT_V5
             if (mc.protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
                 ack.return_code = MQTT_REASON_TOPIC_NAME_INVALID;
