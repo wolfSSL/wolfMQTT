@@ -16724,6 +16724,61 @@ TEST(persist_restore_drop_ended_scrubs_key)
     ASSERT_TRUE(zeroed);
 }
 
+#ifdef WOLFMQTT_V5
+/* MQTT 5.0 section 3.1.2.11.2: the Session Expiry Interval starts when the
+ * Network Connection closes. A graceful broker shutdown closes it for every
+ * connected client, so the persisted Session must record that moment;
+ * otherwise restore restarts the timer and a Session that expired during the
+ * downtime is resumed. */
+TEST(persist_free_stamps_connected_session_disconnect_time)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    KvRec* rec;
+    word64 orphan_since = 0;
+    int i;
+    /* v5 CONNECT, Clean Start 0, Keep Alive 60, ClientId "S":
+     *   0x10 RL=19
+     *   0x00 0x04 "MQTT" 0x05 flags=0x00 keepalive=0x003C
+     *   props len 5: SESSION_EXPIRY_INTERVAL(0x11) = 60
+     *   payload: ClientId len 1 "S" */
+    static const byte connect[] = {
+        0x10, 19,
+        0x00, 0x04, 'M', 'Q', 'T', 'T', 0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x00, 0x3C,
+        0x00, 0x01, 'S'
+    };
+    static const byte key[] = { 'S' };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+    ASSERT_TRUE(g_out_len >= 4);
+    ASSERT_EQ(0x20, g_out_buf[0]);
+    ASSERT_EQ(MQTT_REASON_SUCCESS, g_out_buf[3]);
+    ASSERT_FALSE(g_client_closed);
+
+    g_broker_time_s = 50;
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+
+    /* Session body (after the 12-byte record header): protocol level(1)
+     * flags(1) session_expiry(4) orphan_since(8, big-endian) ... */
+    rec = kv_find(BROKER_PERSIST_NS_SESSION, key, (word16)sizeof(key));
+    ASSERT_NOT_NULL(rec);
+    ASSERT_TRUE(rec->blob_len >= 12 + 14);
+    for (i = 0; i < 8; i++) {
+        orphan_since = (orphan_since << 8) | rec->blob[12 + 6 + i];
+    }
+    ASSERT_EQ(50, (int)orphan_since);
+}
+#endif
+
 /* More persisted Sessions than BROKER_MAX_PERSIST_SESSIONS is a normal state
  * (records are written per CONNECT; the cap is enforced on orphaning), so
  * restore skips the excess rather than failing startup. Only a genuine
@@ -17708,6 +17763,9 @@ int main(int argc, char** argv)
     RUN_TEST(persist_schema_wipe_failure_keeps_old_meta);
     RUN_TEST(persist_restore_alloc_failure_is_fatal);
     RUN_TEST(persist_restore_drop_ended_scrubs_key);
+    #ifdef WOLFMQTT_V5
+    RUN_TEST(persist_free_stamps_connected_session_disconnect_time);
+    #endif
     RUN_TEST(persist_restore_skips_sessions_over_cap);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     RUN_TEST(persist_encrypted_record_bound_to_storage_key);

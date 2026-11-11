@@ -10810,6 +10810,10 @@ WOLFMQTT_LOCAL void BrokerPersist_RestoreRollback(MqttBroker* broker)
 
 int MqttBroker_Free(MqttBroker* broker)
 {
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_PERSIST)
+    BrokerClient* bc;
+#endif
+
     if (broker == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
@@ -10849,6 +10853,18 @@ int MqttBroker_Free(MqttBroker* broker)
     }
 #else
     while (broker->clients) {
+#ifdef WOLFMQTT_BROKER_PERSIST
+        bc = broker->clients;
+        if (bc->session_established && bc->session_expiry_sec != 0 &&
+                BROKER_STR_VALID(bc->client_id)) {
+            /* Graceful broker shutdown closes the network connection, so
+             * finite Session Expiry starts now (MQTT 5.0 section
+             * 3.1.2.11.2), as in the static-memory branch above. */
+            (void)BrokerPersist_PutOrphanSession(broker, bc->client_id,
+                bc->protocol_level, bc->session_expiry_sec,
+                WOLFMQTT_BROKER_GET_TIME_S());
+        }
+#endif
         BrokerSubs_RemoveClient(broker, broker->clients);
         BrokerClient_Remove(broker, broker->clients);
     }
