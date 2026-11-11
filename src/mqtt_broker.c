@@ -972,6 +972,25 @@ int MqttBrokerNet_Init(MqttBrokerNet* net)
 
 #endif /* WOLFMQTT_WOLFIP / !WOLFMQTT_BROKER_CUSTOM_NET */
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Admission cap for dynamic-memory builds. Every accepted socket gets a
+ * client and its buffers before CONNECT, so the number of clients must be
+ * bounded the way the static client table bounds it. */
+static int BrokerClient_AtCapacity(const MqttBroker* broker)
+{
+    const BrokerClient* cur;
+    int count = 0;
+
+    for (cur = broker->clients; cur != NULL; cur = cur->next) {
+        count++;
+        if (count >= BROKER_MAX_DYN_CLIENTS) {
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* WebSocket server support (libwebsockets)                                    */
 /* -------------------------------------------------------------------------- */
@@ -1057,9 +1076,14 @@ static BrokerClient* BrokerClient_AddWs(MqttBroker* broker, struct lws *wsi)
         }
     }
 #else
-    bc = (BrokerClient*)WOLFMQTT_MALLOC(sizeof(BrokerClient));
-    if (bc == NULL) {
+    if (BrokerClient_AtCapacity(broker)) {
         rc = MQTT_CODE_ERROR_MEMORY;
+    }
+    if (rc == MQTT_CODE_SUCCESS) {
+        bc = (BrokerClient*)WOLFMQTT_MALLOC(sizeof(BrokerClient));
+        if (bc == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
     }
     if (rc == MQTT_CODE_SUCCESS) {
         XMEMSET(bc, 0, sizeof(*bc));
@@ -2869,9 +2893,14 @@ static BrokerClient* BrokerClient_Add(MqttBroker* broker,
         bc->in_use = 1;
     }
 #else
-    bc = (BrokerClient*)WOLFMQTT_MALLOC(sizeof(BrokerClient));
-    if (bc == NULL) {
+    if (BrokerClient_AtCapacity(broker)) {
         rc = MQTT_CODE_ERROR_MEMORY;
+    }
+    if (rc == MQTT_CODE_SUCCESS) {
+        bc = (BrokerClient*)WOLFMQTT_MALLOC(sizeof(BrokerClient));
+        if (bc == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
     }
     if (rc == MQTT_CODE_SUCCESS) {
         XMEMSET(bc, 0, sizeof(*bc));

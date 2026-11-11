@@ -86,6 +86,13 @@
     #define BROKER_LISTEN_BACKLOG  128
 #endif
 
+/* Dynamic-memory builds: maximum number of allocated clients, counting
+ * accepted connections that have not sent CONNECT yet. Further accepted
+ * sockets are closed without allocating a client. */
+#ifndef BROKER_MAX_DYN_CLIENTS
+    #define BROKER_MAX_DYN_CLIENTS   1024
+#endif
+
 /* Static allocation limits */
 #ifndef BROKER_MAX_CLIENTS
     #define BROKER_MAX_CLIENTS       8

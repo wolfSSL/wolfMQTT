@@ -196,7 +196,7 @@ static void broker_test_disable_free_capture(void)
 #define MOCK_BUF_SZ            1024
 /* Room for a PUBLISH that fills the broker receive buffer */
 #define MOCK_IN_BUF_SZ         (BROKER_RX_BUF_SZ + 64)
-#define MOCK_MAX_CLIENTS       4
+#define MOCK_MAX_CLIENTS       5
 
 /* Per-mock-client state. Multi-client tests (e.g. QoS 2 dedup) need a
  * subscriber and a publisher running through the same broker instance. */
@@ -1827,6 +1827,44 @@ TEST(broker_tls_handshake_read_does_not_block)
     broker.listen_sock_tls = BROKER_SOCKET_INVALID;
     MqttBroker_Free(&broker); /* frees the application-provided tls_ctx */
     wolfSSL_Cleanup();
+}
+#endif
+
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(BROKER_MAX_DYN_CLIENTS) && \
+    BROKER_MAX_DYN_CLIENTS < MOCK_MAX_CLIENTS
+/* A dynamic-memory broker allocates a client and its buffers for every
+ * accepted socket before CONNECT. Without an admission cap, unauthenticated
+ * peers can consume heap just by opening connections. Once
+ * BROKER_MAX_DYN_CLIENTS clients exist, the next accepted socket must be
+ * closed without allocating a client for it. */
+TEST(broker_dyn_client_admission_cap)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* cur;
+    int count = 0;
+    int i;
+
+    install_mock_net(&net);
+    reset_mock_clients(BROKER_MAX_DYN_CLIENTS + 1);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    for (i = 0; i < BROKER_MAX_DYN_CLIENTS + 1; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(BROKER_MAX_DYN_CLIENTS + 1, g_accept_count);
+    for (cur = broker.clients; cur != NULL; cur = cur->next) {
+        count++;
+    }
+    ASSERT_EQ(BROKER_MAX_DYN_CLIENTS, count);
+    for (i = 0; i < BROKER_MAX_DYN_CLIENTS; i++) {
+        ASSERT_FALSE(g_clients[i].closed);
+    }
+    ASSERT_TRUE(g_clients[BROKER_MAX_DYN_CLIENTS].closed);
+
+    MqttBroker_Free(&broker);
 }
 #endif
 
@@ -17251,6 +17289,10 @@ int main(int argc, char** argv)
     RUN_TEST(broker_start_partial_listener_failure_cleans_up);
     RUN_TEST(broker_add_failure_closes_socket_once);
     RUN_TEST(broker_tls_handshake_read_does_not_block);
+#endif
+#if !defined(WOLFMQTT_STATIC_MEMORY) && defined(BROKER_MAX_DYN_CLIENTS) && \
+    BROKER_MAX_DYN_CLIENTS < MOCK_MAX_CLIENTS
+    RUN_TEST(broker_dyn_client_admission_cap);
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(connect_v5_emptyid_assigned_id_emitted);
