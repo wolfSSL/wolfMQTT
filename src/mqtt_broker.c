@@ -3091,6 +3091,24 @@ static void BrokerStaticOrphan_RemoveAt(BrokerStaticOrphanSession* orphan,
         sizeof(orphan->out_q[0]));
 }
 
+/* MQTT 5.0 section 3.3.2.3.3: has an unsent copy's Message Expiry Interval
+ * passed? Same rule as BrokerOutPub_Expired: time is in whole seconds, so an
+ * explicit zero interval has passed only once a second has. */
+static int BrokerStaticOutPub_Expired(const BrokerStaticOutPub* entry,
+    WOLFMQTT_BROKER_TIME_T now)
+{
+    WOLFMQTT_BROKER_TIME_T elapsed;
+
+    if (entry->was_sent || !entry->has_expiry || now < entry->enq_time) {
+        return 0;
+    }
+    elapsed = now - entry->enq_time;
+    if (entry->expiry_sec == 0) {
+        return (elapsed > 0) ? 1 : 0;
+    }
+    return (elapsed >= entry->expiry_sec) ? 1 : 0;
+}
+
 static void BrokerStaticOrphan_RemoveExpiredQueued(
     BrokerStaticOrphanSession* orphan, WOLFMQTT_BROKER_TIME_T now)
 {
@@ -3101,10 +3119,8 @@ static void BrokerStaticOrphan_RemoveExpiredQueued(
     }
     while (i < orphan->out_q_count) {
         BrokerStaticOutPub* entry = &orphan->out_q[i];
-        if (entry->state == BROKER_OUTQ_QUEUED && !entry->was_sent &&
-                entry->has_expiry &&
-                now >= entry->enq_time &&
-                now - entry->enq_time >= entry->expiry_sec) {
+        if (entry->state == BROKER_OUTQ_QUEUED &&
+                BrokerStaticOutPub_Expired(entry, now)) {
             BrokerStaticOrphan_RemoveAt(orphan, i);
         }
         else {
@@ -3548,9 +3564,7 @@ static void BrokerStaticOrphan_Drain(MqttBroker* broker, BrokerClient* bc)
             break;
         }
         now = WOLFMQTT_BROKER_GET_TIME_S();
-        if (!entry->was_sent && entry->has_expiry &&
-                now >= entry->enq_time &&
-                now - entry->enq_time >= entry->expiry_sec) {
+        if (BrokerStaticOutPub_Expired(entry, now)) {
             BrokerStaticOrphan_RemoveAt(orphan, i);
             continue;
         }

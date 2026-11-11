@@ -8179,6 +8179,76 @@ TEST(will_offline_overlapping_subs_queue_max_qos_once)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 1
+/* MQTT 5.0 section 3.3.2.3.3: Message Expiry Interval 0 means the copy
+ * expires once its onward delivery cannot start at once. Time is in whole
+ * seconds, so a copy forwarded within the same second must still go out, to
+ * a connected persistent-session subscriber in either memory mode. */
+TEST(publish_zero_message_expiry_delivered_to_connected_subscriber)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v5 CONNECT, Clean Start 0, Properties length 5 holding Session Expiry
+     * Interval 300 (0x11), ClientId "S". Remaining Length 19. */
+    static const byte connect_sub[] = {
+        0x10, 0x13,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x00, 0x00, 0x3C,
+        0x05, 0x11, 0x00, 0x00, 0x01, 0x2C,
+        0x00, 0x01, 'S'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, filter "x", QoS 1 */
+    static const byte subscribe_x[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'x', 0x01
+    };
+    /* v5 CONNECT, Clean Start 1, Properties length 0, ClientId "P" */
+    static const byte connect_pub[] = {
+        0x10, 0x0E,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'P'
+    };
+    /* v5 PUBLISH QoS 1: topic "x", packet id 1, Properties length 5 holding
+     * Message Expiry Interval 0 (0x02), payload "hi". Remaining Length 13. */
+    static const byte publish_x[] = {
+        0x32, 0x0D,
+        0x00, 0x01, 'x',
+        0x00, 0x01,
+        0x05, 0x02, 0x00, 0x00, 0x00, 0x00,
+        'h', 'i'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    g_broker_time_s = 100;
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_pub, sizeof(connect_pub));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    mock_client_input_append(1, publish_x, sizeof(publish_x));
+    for (i = 0; i < 16; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_clients[0].closed);
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+    g_broker_time_s = 0;
+}
+#endif
+
 #if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_V5)
 /* Queue a v5 QoS 1 PUBLISH with Message Expiry Interval `expiry` for an
  * offline persistent subscriber, let wait_sec pass, then resume the Session.
@@ -17549,6 +17619,9 @@ int main(int argc, char** argv)
 #if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_BROKER_WILDCARDS) && \
     WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(will_offline_overlapping_subs_queue_max_qos_once);
+#endif
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 1
+    RUN_TEST(publish_zero_message_expiry_delivered_to_connected_subscriber);
 #endif
 #if !defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_V5)
     RUN_TEST(queued_publish_expired_before_delivery_dropped);
