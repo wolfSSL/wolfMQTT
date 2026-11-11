@@ -1177,7 +1177,7 @@ static int wmqb_static_delq_iter_cb(const byte* key, word16 key_len,
     (void)blob;
     (void)blob_len;
 
-    if (key_len < (word16)(dq->cid_len + 1) ||
+    if ((word32)key_len < (word32)dq->cid_len + 1u ||
             XMEMCMP(key, dq->cid, dq->cid_len) != 0 ||
             key[dq->cid_len] != 0x00) {
         return 0;
