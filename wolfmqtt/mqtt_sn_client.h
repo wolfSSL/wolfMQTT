@@ -185,9 +185,10 @@ WOLFMQTT_API int SN_Client_Unsubscribe(
     MqttClient *client,
     SN_Unsubscribe *unsubscribe);
 
-/*! \brief      Encodes and sends the MQTT-SN Disconnect packet. Client may
-                send the disconnect with a duration to indicate the client is
-                entering the "asleep" state.
+/*! \brief      Encodes and sends an MQTT-SN Disconnect packet with no
+                Duration field (a plain disconnect). To enter the "asleep"
+                state use SN_Client_Disconnect_ex with SN_Disconnect.sleepTmr
+                set to a nonzero duration.
  *  \note This function does not wait for a response. It sends using
                 MqttNet.write and, unless WOLFMQTT_NONBLOCK is defined,
                 blocks until the packet is written or the write fails.
