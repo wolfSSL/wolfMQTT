@@ -1132,10 +1132,7 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &search->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &search->pendResp, rc);
 #endif
 
     /* reset state */
@@ -1193,10 +1190,7 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
         #endif
 
         #ifdef WOLFMQTT_MULTITHREAD
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &will->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
         #endif
 
             if (rc != 0) {
@@ -1324,10 +1318,7 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
         #endif
 
         #ifdef WOLFMQTT_MULTITHREAD
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &will->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
         #endif
 
             if (rc != 0) {
@@ -1570,10 +1561,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &mc_connect->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &mc_connect->pendResp, rc);
 #endif
 
     /* reset state */
@@ -1674,10 +1662,7 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &will->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
 #endif
 
     /* reset state */
@@ -1797,10 +1782,7 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &will->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
 #endif
 
     /* reset state */
@@ -1881,10 +1863,7 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &subscribe->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &subscribe->pendResp, rc);
 #endif
 
     /* reset state */
@@ -2041,10 +2020,8 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
                     break;
             #endif
             #ifdef WOLFMQTT_MULTITHREAD
-                if (wm_SemLock(&client->lockClient) == 0) {
-                    MqttClient_RespList_Remove(client, &publish->pendResp);
-                    wm_SemUnlock(&client->lockClient);
-                }
+                rc = MqttClient_RespList_RemoveOwned(client,
+                    &publish->pendResp, rc);
             #endif
 
                 publish->return_code = publish->resp.return_code;
@@ -2148,10 +2125,8 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
         return rc;
 #endif
     #ifdef WOLFMQTT_MULTITHREAD
-        if (wm_SemLock(&client->lockClient) == 0) {
-            MqttClient_RespList_Remove(client, &unsubscribe->pendResp);
-            wm_SemUnlock(&client->lockClient);
-        }
+        rc = MqttClient_RespList_RemoveOwned(client,
+            &unsubscribe->pendResp, rc);
     #endif
 
     /* reset state */
@@ -2229,10 +2204,7 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &regist->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &regist->pendResp, rc);
 #endif
 
     /* reset state */
@@ -2364,10 +2336,7 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     }
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &ping->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &ping->pendResp, rc);
 #endif
 
     /* reset state */
@@ -2534,10 +2503,7 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     }
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &disconnect->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &disconnect->pendResp, rc);
 #endif
 
     /* reset state */

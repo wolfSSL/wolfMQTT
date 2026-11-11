@@ -1480,6 +1480,20 @@ WOLFMQTT_LOCAL int MqttClient_RespList_RemoveIdle(MqttClient *client,
     return rc;
 }
 
+/* Unlink an owner's pending response after its final wait. A reader that
+ * claimed the entry may still be decoding into the owner's object, so wait it
+ * out (MqttClient_RespList_RemoveIdle) before the owner returns and frees or
+ * reuses that object. A removal failure replaces a non-negative rc. */
+WOLFMQTT_LOCAL int MqttClient_RespList_RemoveOwned(MqttClient *client,
+    MqttPendResp *rmResp, int rc)
+{
+    int rmRc = MqttClient_RespList_RemoveIdle(client, rmResp);
+    if (rmRc != MQTT_CODE_SUCCESS && rc >= 0) {
+        rc = rmRc;
+    }
+    return rc;
+}
+
 /* Find the pending response belonging to msg, by its packet object or its
  * embedded pendResp. Caller must hold lockClient. */
 static MqttPendResp* MqttClient_RespList_FindObj(MqttClient *client,
@@ -4086,10 +4100,7 @@ int MqttClient_Connect(MqttClient *client, MqttConnect *mc_connect)
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &mc_connect->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &mc_connect->pendResp, rc);
 #endif
 
 #ifdef WOLFMQTT_V5
@@ -5147,10 +5158,7 @@ int MqttClient_Subscribe(MqttClient *client, MqttSubscribe *subscribe)
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &subscribe->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &subscribe->pendResp, rc);
 #endif
 
     /* Populate return codes and detect broker rejection. A v3.1.1 SUBACK
@@ -5308,10 +5316,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &unsubscribe->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &unsubscribe->pendResp, rc);
 #endif
 
 #ifdef WOLFMQTT_V5
@@ -5485,10 +5490,7 @@ int MqttClient_Ping_ex(MqttClient *client, MqttPing* ping)
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &ping->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &ping->pendResp, rc);
 #endif
 
     /* reset state */
@@ -5753,10 +5755,7 @@ static int MqttClient_AuthEx(MqttClient *client, MqttAuth* auth,
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, pend_resp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, pend_resp, rc);
 #endif
 
     /* Scrub the decoded AUTH response from rx_buf. Its properties (e.g. the

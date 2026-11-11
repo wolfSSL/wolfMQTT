@@ -1103,6 +1103,8 @@ WOLFMQTT_LOCAL void MqttClient_RespList_EndProcessing(MqttClient *client,
         MqttPendResp *resp);
 WOLFMQTT_LOCAL int MqttClient_RespList_RemoveIdle(MqttClient *client,
         MqttPendResp *rmResp);
+WOLFMQTT_LOCAL int MqttClient_RespList_RemoveOwned(MqttClient *client,
+        MqttPendResp *rmResp, int rc);
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
 #if WOLFMQTT_MAX_QOS >= 2
