@@ -5292,6 +5292,115 @@ TEST(reconnect_replays_pubrel_in_pubrec_order)
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* [MQTT-4.4.0-1] An unacknowledged QoS 1 PUBLISH is re-sent on a resumed
+ * Session, and a v5 PUBLISH is re-sent with its properties: without them it
+ * would be a different message (e.g. no Response Topic or Correlation Data).
+ * The replayed frame must carry the original User Property "k"="v":
+ * 0x26 0x00 0x01 'k' 0x00 0x01 'v'. */
+TEST(reconnect_v5_replays_publish_with_properties)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    MqttProp* prop;
+    static byte payload[] = "x";
+    static const byte user_prop[] = { 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v' };
+    int i;
+    int found = 0;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    /* A v5 Session outlives the connection only with an expiry; mark it as
+     * the CONNACK would have. */
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x21, "t", payload, 1);
+    prop = MqttClient_PropsAdd(&publish.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_USER_PROP;
+    prop->data_str.str = (char*)"k";
+    prop->data_str.len = 1;
+    prop->data_str2.str = (char*)"v";
+    prop->data_str2.len = 1;
+    rc = run_publish_unacked(&publish);
+    (void)MqttClient_PropsFree(publish.props);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_frames_written = 0;
+    rc = run_reconnect(&connect, 1);
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_frames_written); /* CONNECT and the replayed PUBLISH */
+    ASSERT_EQ(0x3A, (int)connect_mock_sent[0]); /* PUBLISH | DUP | QoS 1 */
+    for (i = 0; i + (int)sizeof(user_prop) <= connect_mock_xfer; i++) {
+        if (XMEMCMP(&connect_mock_sent[i], user_prop,
+                sizeof(user_prop)) == 0) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+}
+
+/* MQTT 5.0 section 3.3.2.3.4: a Topic Alias mapping lasts only for its
+ * Network Connection, so a replayed PUBLISH carries the full Topic Name and
+ * none of the original connection's Topic Alias (0x23). */
+TEST(reconnect_v5_replay_drops_topic_alias)
+{
+    int rc;
+    MqttConnect connect;
+    MqttPublish publish;
+    MqttProp* prop;
+    static byte payload[] = "x";
+    int i;
+    int alias_seen = 0;
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+    test_client.topic_alias_max = 4;
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x22, "t", payload, 1);
+    prop = MqttClient_PropsAdd(&publish.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_TOPIC_ALIAS;
+    prop->data_short = 1;
+    rc = run_publish_unacked(&publish);
+    (void)MqttClient_PropsFree(publish.props);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_frames_written = 0;
+    rc = run_reconnect(&connect, 1);
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(2, g_frames_written);
+    ASSERT_EQ(0x3A, (int)connect_mock_sent[0]);
+    /* Topic "t" is present: 0x00 0x01 't' after the fixed header */
+    ASSERT_EQ(0x00, (int)connect_mock_sent[2]);
+    ASSERT_EQ(0x01, (int)connect_mock_sent[3]);
+    ASSERT_EQ('t', (int)connect_mock_sent[4]);
+    for (i = 5; i + 2 < connect_mock_xfer; i++) {
+        if (connect_mock_sent[i] == MQTT_PROP_TOPIC_ALIAS &&
+                connect_mock_sent[i + 1] == 0x00 &&
+                connect_mock_sent[i + 2] == 0x01) {
+            alias_seen = 1;
+        }
+    }
+    ASSERT_FALSE(alias_seen);
+}
+#endif
+
 /* A streamed publish delivers its payload through the application callback, so
  * the client holds no copy to rebuild from. The slot still tracks the Packet
  * Identifier for a QoS 2 PUBREL, but the PUBLISH itself must not be replayed
@@ -11102,6 +11211,10 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_drops_replay_larger_than_tx_buf);
     RUN_TEST(reconnect_replays_at_most_pool_size);
     RUN_TEST(reconnect_replays_in_original_send_order);
+#ifdef WOLFMQTT_V5
+    RUN_TEST(reconnect_v5_replays_publish_with_properties);
+    RUN_TEST(reconnect_v5_replay_drops_topic_alias);
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(reconnect_replays_pubrel_in_pubrec_order);
 #endif

@@ -343,6 +343,15 @@ typedef struct _MqttSk {
     #if (MQTT_MAX_REPLAY_PAYLOAD < 1)
         #error "MQTT_MAX_REPLAY_PAYLOAD must be at least 1"
     #endif
+    /* Encoded v5 PUBLISH properties kept for replay; a PUBLISH whose
+     * properties encode to more is not retained, like an oversized
+     * payload. */
+    #ifndef MQTT_MAX_REPLAY_PROPS
+        #define MQTT_MAX_REPLAY_PROPS 64
+    #endif
+    #if (MQTT_MAX_REPLAY_PROPS < 1)
+        #error "MQTT_MAX_REPLAY_PROPS must be at least 1"
+    #endif
 #endif
 
 typedef struct _MqttReplayMsg {
@@ -376,6 +385,16 @@ typedef struct _MqttReplayMsg {
     word32  seq;
     /* Still to be re-sent by the Session replay in progress. */
     byte    replayPending;
+#ifdef WOLFMQTT_V5
+    /* The PUBLISH Properties as encoded (no Property Length), so a v5
+     * replay is the same message [MQTT-4.4.0-1]. props_len 0 = none. */
+    word32  props_len;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    props[MQTT_MAX_REPLAY_PROPS];
+#else
+    byte*   props;      /* heap-owned, NULL when props_len is 0 */
+#endif
+#endif
 } MqttReplayMsg;
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 

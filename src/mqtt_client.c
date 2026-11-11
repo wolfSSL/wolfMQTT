@@ -693,6 +693,12 @@ static void MqttClient_Replay_FreeSlot(MqttReplayMsg* slot)
         CLIENT_FORCE_ZERO(slot->payload, slot->payload_len);
         WOLFMQTT_FREE(slot->payload);
     }
+#ifdef WOLFMQTT_V5
+    if (slot->props != NULL) {
+        CLIENT_FORCE_ZERO(slot->props, slot->props_len);
+        WOLFMQTT_FREE(slot->props);
+    }
+#endif
 #endif
     XMEMSET(slot, 0, sizeof(*slot));
 }
@@ -706,6 +712,9 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
     MqttReplayMsg* slot;
     size_t topic_len;
     word32 seq;
+#ifdef WOLFMQTT_V5
+    int props_len;
+#endif
 
     if (publish->packet_id == 0 || publish->topic_name == NULL) {
         return;
@@ -744,12 +753,38 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
         return;
     }
 #ifdef WOLFMQTT_V5
-    /* The pool retains no properties, so a v5 PUBLISH that carries any could
-     * only be replayed with Response Topic, Correlation Data and the rest
-     * stripped - a different message from the one the server is waiting on.
-     * Leave it unretained rather than re-send it altered. */
+    /* Keep the encoded Properties too: re-sent without Response Topic,
+     * Correlation Data and the rest it would be a different message. One
+     * that cannot be kept is left unretained rather than re-sent altered. */
     if (publish->props != NULL) {
-        return;
+        props_len = MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, publish->props,
+            NULL);
+        if (props_len < 0) {
+            return;
+        }
+    #ifdef WOLFMQTT_STATIC_MEMORY
+        if (props_len > MQTT_MAX_REPLAY_PROPS) {
+            return; /* too large for the fixed slot */
+        }
+    #else
+        if (props_len > 0) {
+            slot->props = (byte*)WOLFMQTT_MALLOC((size_t)props_len);
+            if (slot->props == NULL) {
+                return;
+            }
+        }
+    #endif
+        if (props_len > 0 &&
+                MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, publish->props,
+                    slot->props) != props_len) {
+        #ifndef WOLFMQTT_STATIC_MEMORY
+            CLIENT_FORCE_ZERO(slot->props, (word32)props_len);
+            WOLFMQTT_FREE(slot->props);
+            slot->props = NULL;
+        #endif
+            return;
+        }
+        slot->props_len = (word32)props_len;
     }
 #endif
     topic_len = XSTRLEN(publish->topic_name);
@@ -3438,6 +3473,27 @@ static int MqttConnect_HasRecvMax(const MqttConnect* mc_connect)
 #endif
 
 #ifndef WOLFMQTT_NO_SESSION_REPLAY
+#ifdef WOLFMQTT_V5
+/* Unlink and release every Topic Alias in *props: an alias is valid only on
+ * the Network Connection that set it up (MQTT 5.0 section 3.3.2.3.4). */
+static void MqttClient_Replay_DropAlias(MqttProp** props)
+{
+    MqttProp** link = props;
+    MqttProp* cur;
+
+    while ((cur = *link) != NULL) {
+        if (cur->type == MQTT_PROP_TOPIC_ALIAS) {
+            *link = cur->next;
+            cur->next = NULL;
+            (void)MqttProps_Free(cur);
+        }
+        else {
+            link = &cur->next;
+        }
+    }
+}
+#endif
+
 /* Select the pending replay entry sent earliest, record it in
  * client->replayIdx and encode its packet into client->tx_buf. Returns the
  * encoded length, 0 when the slot has nothing to send (replayIdx is
@@ -3461,6 +3517,9 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
     int rc = 0;
     int keep = 0;
     int i;
+#ifdef WOLFMQTT_V5
+    MqttProp* replay_props = NULL;
+#endif
 
     *dropped_id = 0;
 #ifdef WOLFMQTT_MULTITHREAD
@@ -3527,8 +3586,30 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id)
         pub.total_len = slot->payload_len;
     #ifdef WOLFMQTT_V5
         pub.protocol_level = client->protocol_level;
-    #endif
+        rc = 0;
+        if (slot->props_len > 0 &&
+                client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
+            /* Rebuild the original Properties [MQTT-4.4.0-1]. A Topic Alias
+             * belongs to the Network Connection that set it up, so it is
+             * dropped; the replay carries the full Topic Name. */
+            rc = MqttDecode_Props(MQTT_PACKET_TYPE_PUBLISH, &replay_props,
+                slot->props, slot->props_len, slot->props_len);
+            if (rc >= 0) {
+                MqttClient_Replay_DropAlias(&replay_props);
+                pub.props = replay_props;
+            }
+        }
+        if (rc >= 0) {
+            rc = MqttEncode_Publish(client->tx_buf, client->tx_buf_len, &pub,
+                0);
+        }
+        if (replay_props != NULL) {
+            (void)MqttProps_Free(replay_props);
+            replay_props = NULL;
+        }
+    #else
         rc = MqttEncode_Publish(client->tx_buf, client->tx_buf_len, &pub, 0);
+    #endif
         /* MqttEncode_Publish declares the full Remaining Length in the fixed
          * header but clamps the payload it copies to what tx_buf holds,
          * leaving the remainder to MqttClient_Publish_WritePayload. The replay
