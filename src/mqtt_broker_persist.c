@@ -2376,6 +2376,7 @@ static void wmqb_free_ended_list(struct wmqb_ended_session* head)
 
     while (cur != NULL) {
         next = cur->next;
+        wmqb_force_zero(cur->key, cur->key_len); /* key is the ClientId */
         WOLFMQTT_FREE(cur->key);
         WOLFMQTT_FREE(cur);
         cur = next;
@@ -2421,6 +2422,8 @@ static void wmqb_restore_drop_ended(MqttBroker* broker,
                     on->key_len) != 0) {
                 on->owner->outq_err = 1;
             }
+            /* OUTQ keys start with the ClientId */
+            wmqb_force_zero(on->key, on->key_len);
             WOLFMQTT_FREE(on->key);
             WOLFMQTT_FREE(on);
             on = on_next;
@@ -2451,9 +2454,11 @@ static void wmqb_restore_drop_ended(MqttBroker* broker,
                         "broker: persist drop ended session failed "
                         "client_id=%s rc=%d", BrokerLog_Sanitize(cid), rc);
                 }
+                wmqb_force_zero(cid, (word32)cur->key_len + 1);
                 WOLFMQTT_FREE(cid);
             }
         }
+        wmqb_force_zero(cur->key, cur->key_len);
         WOLFMQTT_FREE(cur->key);
         WOLFMQTT_FREE(cur);
         cur = next;

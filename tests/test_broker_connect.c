@@ -16593,6 +16593,51 @@ TEST(persist_restore_alloc_failure_is_fatal)
     ASSERT_TRUE(ok_has_orphan);
 }
 
+/* A Session that ended before the restart is collected by restore and its
+ * records dropped. The collected key is the ClientId, so each heap copy of it
+ * must be wiped before it is freed. */
+#define ENDED_SCRUB_CID "ended-sess-cid"
+TEST(persist_restore_drop_ended_scrubs_key)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    size_t i;
+    int rc;
+    int seen;
+    int zeroed = 1;
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_Restore(&broker));
+    /* Session Expiry Interval 0: the Session ended with its connection */
+    ASSERT_EQ(MQTT_CODE_SUCCESS, BrokerPersist_PutOrphanSession(&broker,
+        ENDED_SCRUB_CID, MQTT_CONNECT_PROTOCOL_LEVEL_4, 0, 0));
+    MqttBroker_Free(&broker);
+
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2, &hooks));
+    broker_test_capture_free(sizeof(ENDED_SCRUB_CID) - 1);
+    rc = BrokerPersist_Restore(&broker2);
+    seen = g_capture_free_seen;
+    for (i = 0; i < g_capture_freed_len; i++) {
+        if (g_capture_freed[i] != 0) {
+            zeroed = 0;
+        }
+    }
+    broker_test_disable_free_capture();
+    MqttBroker_Free(&broker2);
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(seen);
+    ASSERT_EQ(sizeof(ENDED_SCRUB_CID) - 1, g_capture_freed_len);
+    ASSERT_TRUE(zeroed);
+}
+
 /* More persisted Sessions than BROKER_MAX_PERSIST_SESSIONS is a normal state
  * (records are written per CONNECT; the cap is enforced on orphaning), so
  * restore skips the excess rather than failing startup. Only a genuine
@@ -17569,6 +17614,7 @@ int main(int argc, char** argv)
     RUN_TEST(persist_del_outqueue_reports_failures);
     RUN_TEST(persist_schema_wipe_failure_keeps_old_meta);
     RUN_TEST(persist_restore_alloc_failure_is_fatal);
+    RUN_TEST(persist_restore_drop_ended_scrubs_key);
     RUN_TEST(persist_restore_skips_sessions_over_cap);
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
     RUN_TEST(persist_encrypted_record_bound_to_storage_key);
