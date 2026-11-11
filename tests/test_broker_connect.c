@@ -2501,6 +2501,71 @@ TEST(broker_v5_subscription_identifier_not_supported)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+/* MQTT 5.0 section 1.2: Properties are part of the Application Message, and
+ * [MQTT-3.3.2-17] (User Properties) / section 3.3.2.3 require the Server to
+ * forward them unaltered, including when it delivers a retained message to a
+ * later subscriber. Publisher P stores a retained QoS 0 message on "r" with
+ * User Property "k"="v"; subscriber S then subscribes and must receive it with
+ * that property: 0x26 0x00 0x01 'k' 0x00 0x01 'v'. */
+TEST(broker_v5_retained_delivery_keeps_properties)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    size_t pos;
+    int found = 0;
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'S'
+    };
+    /* v5 PUBLISH QoS 0 RETAIN, topic "r", Properties length 7 holding the
+     * User Property, payload "z". Remaining Length 3 + 1 + 7 + 1 = 12. */
+    static const byte publish_r[] = {
+        0x31, 0x0C, 0x00, 0x01, 'r',
+        0x07, 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v',
+        'z'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, filter "r", QoS 0 */
+    static const byte subscribe_r[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'r', 0x00
+    };
+    static const byte user_prop[] = { 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v' };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_r, sizeof(publish_r));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_r, sizeof(subscribe_r));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    for (pos = 0; pos + sizeof(user_prop) <= g_clients[1].out_len; pos++) {
+        if (XMEMCMP(&g_clients[1].out_buf[pos], user_prop,
+                sizeof(user_prop)) == 0) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 /* Defense in depth: the MqttBroker struct is public, so a caller can set
  * auth_user after a successful no-auth start (or ignore the start error),
  * bypassing the MqttBroker_Start pairing check. The connect-time gate must
@@ -17580,6 +17645,77 @@ TEST(persist_restore_missing_kv_put_does_not_wipe)
     ASSERT_EQ(recs_before, recs_after);
 }
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+/* A retained message's Properties are part of it, so they survive a restart
+ * with the persisted record: a broker restored from the store delivers the
+ * retained message with its User Property 0x26 "k"="v". */
+TEST(persist_retained_properties_survive_restart)
+{
+    MqttBroker broker;
+    MqttBroker broker2;
+    MqttBrokerNet net;
+    MqttBrokerPersistHooks hooks;
+    int i;
+    size_t pos;
+    int found = 0;
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'S'
+    };
+    /* v5 PUBLISH QoS 0 RETAIN "r", User Property "k"="v", payload "z" */
+    static const byte publish_r[] = {
+        0x31, 0x0C, 0x00, 0x01, 'r',
+        0x07, 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v',
+        'z'
+    };
+    static const byte subscribe_r[] = {
+        0x82, 0x07, 0x00, 0x01, 0x00, 0x00, 0x01, 'r', 0x00
+    };
+    static const byte user_prop[] = { 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v' };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, takeover_setup_persist(&broker, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_r, sizeof(publish_r));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+
+    XMEMSET(&broker2, 0, sizeof(broker2));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker2, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_SetPersistHooks(&broker2, &hooks));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker2));
+    reset_mock_clients(1);
+    mock_client_input_append(0, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(0, subscribe_r, sizeof(subscribe_r));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker2);
+    }
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    for (pos = 0; pos + sizeof(user_prop) <= g_clients[0].out_len; pos++) {
+        if (XMEMCMP(&g_clients[0].out_buf[pos], user_prop,
+                sizeof(user_prop)) == 0) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    MqttBroker_Stop(&broker2);
+    MqttBroker_Free(&broker2);
+}
+#endif
+
 /* More persisted Sessions than BROKER_MAX_PERSIST_SESSIONS is a normal state
  * (records are written per CONNECT; the cap is enforced on orphaning), so
  * restore skips the excess rather than failing startup. Only a genuine
@@ -18199,6 +18335,9 @@ int main(int argc, char** argv)
     RUN_TEST(broker_dyn_client_admission_cap);
 #endif
     RUN_TEST(connect_takeover_of_empty_persistent_session_reports_present);
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+    RUN_TEST(broker_v5_retained_delivery_keeps_properties);
+#endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(broker_v5_subscription_identifier_not_supported);
 #endif
@@ -18597,6 +18736,9 @@ int main(int argc, char** argv)
     RUN_TEST(persist_restore_drop_ended_scrubs_key);
     RUN_TEST(persist_restore_missing_hook_does_not_wipe);
     RUN_TEST(persist_restore_missing_kv_put_does_not_wipe);
+    #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
+    RUN_TEST(persist_retained_properties_survive_restart);
+    #endif
     #ifdef WOLFMQTT_V5
     RUN_TEST(persist_free_stamps_connected_session_disconnect_time);
     #endif

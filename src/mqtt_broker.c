@@ -224,7 +224,11 @@ static void BrokerSubs_EndClientSession(MqttBroker* broker,
 
 /* No-op stubs when features are compiled out */
 #ifndef WOLFMQTT_BROKER_RETAINED
+    #ifdef WOLFMQTT_V5
+    #define BrokerRetained_Store(b, t, p, l, q, e, pr)  (0)
+    #else
     #define BrokerRetained_Store(b, t, p, l, q, e)      (0)
+    #endif
     #define BrokerRetained_Delete(b, t)                 do {} while(0)
     #define BrokerRetained_FreeAll(b)                   do {} while(0)
     #define BrokerRetained_DeliverToClient(b, c, f, q)  MQTT_CODE_SUCCESS
@@ -5284,6 +5288,23 @@ static void BrokerRetained_PersistExpired(MqttBroker* broker,
         do { (void)(b); (void)(t); } while (0)
 #endif
 
+#ifndef WOLFMQTT_STATIC_MEMORY
+/* Release a dynamic retained message's Properties copy (none before v5). */
+static void BrokerRetained_FreeProps(BrokerRetainedMsg* msg)
+{
+#ifdef WOLFMQTT_V5
+    if (msg->props != NULL) {
+        BROKER_FORCE_ZERO(msg->props, msg->props_len);
+        WOLFMQTT_FREE(msg->props);
+        msg->props = NULL;
+    }
+    msg->props_len = 0;
+#else
+    (void)msg;
+#endif
+}
+#endif
+
 /* Free retained messages whose v5 Message Expiry Interval has elapsed so they
  * stop occupying a slot / the retained_count cap. Delivery also reaps expired
  * entries, but a publisher can hit the cap with only-expired entries before any
@@ -5337,6 +5358,7 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
                 BROKER_FORCE_ZERO(cur->payload, cur->payload_len);
                 WOLFMQTT_FREE(cur->payload);
             }
+            BrokerRetained_FreeProps(cur);
             WOLFMQTT_FREE(cur);
             if (broker->retained_count > 0) {
                 broker->retained_count--;
@@ -5350,8 +5372,22 @@ static void BrokerRetained_ReapExpired(MqttBroker* broker,
 #endif
 }
 
+#ifdef WOLFMQTT_V5
+static int BrokerProps_EncodeForward(const MqttProp* props, byte* buf,
+    int skip_expiry);
+static int BrokerWill_DecodeProps(const byte* buf, word16 len,
+    MqttProp* nodes, int max_nodes);
+#ifdef WOLFMQTT_STATIC_MEMORY
+static int BrokerWill_CountProps(const MqttProp* props);
+#endif
+#endif
+
 static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
-    const byte* payload, word32 payload_len, MqttQoS qos, word32 expiry_sec)
+    const byte* payload, word32 payload_len, MqttQoS qos, word32 expiry_sec
+#ifdef WOLFMQTT_V5
+    , const MqttProp* props
+#endif
+    )
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
     int i;
@@ -5362,10 +5398,36 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
 #endif
     BrokerRetainedMsg* msg = NULL;
     int rc = MQTT_CODE_SUCCESS;
+#ifdef WOLFMQTT_V5
+    int props_len = 0;
+#ifndef WOLFMQTT_STATIC_MEMORY
+    byte* new_props = NULL;
+#endif
+#endif
 
     if (broker == NULL || topic == NULL) {
         return MQTT_CODE_ERROR_BAD_ARG;
     }
+
+#ifdef WOLFMQTT_V5
+    /* MQTT 5.0 section 1.2: the Properties are part of the retained
+     * Application Message and go out with it on every later delivery. */
+    props_len = BrokerProps_EncodeForward(props, NULL, 1);
+    if (props_len < 0 || props_len > 0xFFFF) {
+        return (props_len < 0) ? props_len :
+            MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+  #ifdef WOLFMQTT_STATIC_MEMORY
+    if (props_len > BROKER_MAX_WILL_PROPS_LEN ||
+            BrokerWill_CountProps(props) > BROKER_WILL_PROPS_STACK_ENTRIES) {
+        /* Retaining is best-effort; keeping the message without its
+         * Properties would forward a different one later. */
+        WBLOG_ERR(broker, "broker: retained properties too large (max %d) "
+            "topic=%s", BROKER_MAX_WILL_PROPS_LEN, BrokerLog_Sanitize(topic));
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+  #endif
+#endif
 
     /* Drop expired entries first so they do not hold the cap against a new
      * retained message. */
@@ -5412,6 +5474,12 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
                 XMEMCPY(msg->payload, payload, payload_len);
             }
             msg->payload_len = payload_len;
+        #ifdef WOLFMQTT_V5
+            if (props_len > 0) {
+                (void)BrokerProps_EncodeForward(props, msg->props, 1);
+            }
+            msg->props_len = (word16)props_len;
+        #endif
         }
     }
 #else
@@ -5467,12 +5535,36 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
             XMEMCPY(new_payload, payload, payload_len);
         }
     }
+#ifdef WOLFMQTT_V5
+    if (rc == MQTT_CODE_SUCCESS && props_len > 0) {
+        new_props = (byte*)WOLFMQTT_MALLOC((size_t)props_len);
+        if (new_props == NULL) {
+            rc = MQTT_CODE_ERROR_MEMORY;
+        }
+        else {
+            (void)BrokerProps_EncodeForward(props, new_props, 1);
+        }
+    }
+    if (rc != MQTT_CODE_SUCCESS && new_payload != NULL) {
+        BROKER_FORCE_ZERO(new_payload, payload_len);
+        WOLFMQTT_FREE(new_payload);
+        new_payload = NULL;
+    }
+#endif
     if (rc == MQTT_CODE_SUCCESS) {
         if (!is_new && msg->payload != NULL) {
             WOLFMQTT_FREE(msg->payload);
         }
         msg->payload = new_payload;
         msg->payload_len = payload_len;
+    #ifdef WOLFMQTT_V5
+        if (!is_new && msg->props != NULL) {
+            BROKER_FORCE_ZERO(msg->props, msg->props_len);
+            WOLFMQTT_FREE(msg->props);
+        }
+        msg->props = new_props;
+        msg->props_len = (word16)props_len;
+    #endif
         if (is_new) {
             msg->next = broker->retained;
             broker->retained = msg;
@@ -5555,6 +5647,7 @@ static void BrokerRetained_Delete(MqttBroker* broker, const char* topic)
                 BROKER_FORCE_ZERO(cur->payload, cur->payload_len);
                 WOLFMQTT_FREE(cur->payload);
             }
+            BrokerRetained_FreeProps(cur);
             WOLFMQTT_FREE(cur);
             if (broker->retained_count > 0) {
                 broker->retained_count--;
@@ -5599,6 +5692,7 @@ static void BrokerRetained_FreeAll(MqttBroker* broker)
             BROKER_FORCE_ZERO(cur->payload, cur->payload_len);
             WOLFMQTT_FREE(cur->payload);
         }
+        BrokerRetained_FreeProps(cur);
         WOLFMQTT_FREE(cur);
         cur = next;
     }
@@ -5614,8 +5708,8 @@ static int BrokerTopicMatch(const char* filter, const char* topic);
 /* -------------------------------------------------------------------------- */
 /* LWT (Last Will and Testament) helpers                                       */
 /* -------------------------------------------------------------------------- */
-#ifdef WOLFMQTT_BROKER_WILL
-#ifdef WOLFMQTT_V5
+#if defined(WOLFMQTT_V5) && \
+    (defined(WOLFMQTT_BROKER_WILL) || defined(WOLFMQTT_BROKER_RETAINED))
 /* Will Properties carried onto the Will PUBLISH. The Will Delay Interval only
  * schedules it (MQTT 5.0 section 3.1.3.2). */
 static int BrokerWill_IsPublishProp(const MqttProp* prop)
@@ -5628,17 +5722,20 @@ static int BrokerWill_IsPublishProp(const MqttProp* prop)
             prop->type == MQTT_PROP_USER_PROP);
 }
 
-/* Encode the publishable Will Properties, keeping their order
- * [MQTT-3.1.3-10], into buf, or only size them when buf is NULL. Returns the
- * encoded length or a negative error. */
-static int BrokerWill_EncodeProps(const MqttProp* props, byte* buf)
+/* Encode the properties a PUBLISH forwards to subscribers (MQTT 5.0 section
+ * 3.3.2.3), keeping their order [MQTT-3.1.3-10], into buf, or only size them
+ * when buf is NULL; skip_expiry leaves out the Message Expiry Interval.
+ * Returns the encoded length or a negative error. */
+static int BrokerProps_EncodeForward(const MqttProp* props, byte* buf,
+    int skip_expiry)
 {
     MqttProp one;
     int len = 0;
     int rc = 0;
 
     for (; props != NULL && rc >= 0; props = props->next) {
-        if (BrokerWill_IsPublishProp(props)) {
+        if (BrokerWill_IsPublishProp(props) && !(skip_expiry &&
+                props->type == MQTT_PROP_MSG_EXPIRY_INTERVAL)) {
             one = *props;
             one.next = NULL;
             rc = MqttEncode_Props(MQTT_PACKET_TYPE_PUBLISH, &one,
@@ -5653,6 +5750,14 @@ static int BrokerWill_EncodeProps(const MqttProp* props, byte* buf)
     }
     return (rc < 0) ? rc : len;
 }
+
+#ifdef WOLFMQTT_BROKER_WILL
+/* The publishable Will Properties, see BrokerProps_EncodeForward. */
+static int BrokerWill_EncodeProps(const MqttProp* props, byte* buf)
+{
+    return BrokerProps_EncodeForward(props, buf, 0);
+}
+#endif
 
 #ifdef WOLFMQTT_STATIC_MEMORY
 /* Number of publishable Will Properties in props. */
@@ -5782,7 +5887,10 @@ static int BrokerWill_DecodeProps(const byte* buf, word16 len,
     }
     return (rc < 0) ? rc : count;
 }
+#endif /* WOLFMQTT_V5 && (WILL || RETAINED) */
 
+#ifdef WOLFMQTT_BROKER_WILL
+#ifdef WOLFMQTT_V5
 /* Keep the publishable Will Properties until the Will is published. */
 static int BrokerClient_StoreWillProps(BrokerClient* bc,
     const MqttProp* props)
@@ -6269,6 +6377,46 @@ static void BrokerStaticClient_QuotaClose(MqttBroker* broker,
 #endif
 
 #ifdef WOLFMQTT_BROKER_RETAINED
+#ifdef WOLFMQTT_V5
+/* Rebuild a retained message's Properties for a delivery at now: the stored
+ * forwardable ones (MQTT 5.0 section 1.2) and the Message Expiry Interval
+ * reduced by the time it was held [MQTT-3.3.2-6]. nodes has room for
+ * max_nodes entries, one more than the stored properties need. Returns the
+ * list, or NULL when there is none. */
+static MqttProp* BrokerRetained_BuildProps(const BrokerRetainedMsg* rm,
+    WOLFMQTT_BROKER_TIME_T now, MqttProp* nodes, int max_nodes)
+{
+    MqttProp* head = NULL;
+    MqttProp* expiry;
+    int n = 0;
+
+    if (rm->props_len > 0 && max_nodes > 1) {
+        n = BrokerWill_DecodeProps(rm->props, rm->props_len, nodes,
+            max_nodes - 1);
+        if (n < 0) {
+            n = 0; /* encoded by the broker itself; not expected */
+        }
+        if (n > 0) {
+            head = nodes;
+        }
+    }
+    if (rm->expiry_sec > 0 && n < max_nodes) {
+        expiry = &nodes[n];
+        XMEMSET(expiry, 0, sizeof(*expiry));
+        expiry->type = MQTT_PROP_MSG_EXPIRY_INTERVAL;
+        expiry->data_int = rm->expiry_sec - ((now >= rm->store_time) ?
+            (word32)(now - rm->store_time) : 0);
+        if (n > 0) {
+            nodes[n - 1].next = expiry;
+        }
+        else {
+            head = expiry;
+        }
+    }
+    return head;
+}
+#endif
+
 static int BrokerRetained_DeliverToClient(MqttBroker* broker,
     BrokerClient* bc, const char* filter, MqttQoS sub_qos)
 {
@@ -6279,6 +6427,14 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
 #else
     BrokerRetainedMsg* rm;
     BrokerRetainedMsg* rm_prev = NULL;
+#endif
+#ifdef WOLFMQTT_V5
+    MqttProp stack_props[BROKER_WILL_PROPS_STACK_ENTRIES + 1];
+    MqttProp* props;
+#ifndef WOLFMQTT_STATIC_MEMORY
+    MqttProp* heap_props;
+    int node_count;
+#endif
 #endif
 
     if (broker == NULL || bc == NULL || filter == NULL) {
@@ -6320,17 +6476,8 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                 if (orphan != NULL) {
                     int enqueue_rc;
 #ifdef WOLFMQTT_V5
-                    MqttProp expiry_prop;
-                    MqttProp* props = NULL;
-
-                    if (rm->expiry_sec > 0) {
-                        word32 elapsed = (now >= rm->store_time) ?
-                            (word32)(now - rm->store_time) : 0;
-                        XMEMSET(&expiry_prop, 0, sizeof(expiry_prop));
-                        expiry_prop.type = MQTT_PROP_MSG_EXPIRY_INTERVAL;
-                        expiry_prop.data_int = rm->expiry_sec - elapsed;
-                        props = &expiry_prop;
-                    }
+                    props = BrokerRetained_BuildProps(rm, now, stack_props,
+                        BROKER_WILL_PROPS_STACK_ENTRIES + 1);
 #endif
                     BrokerStaticOrphan_RemoveExpiredQueued(orphan, now);
                     if (orphan->out_q_count >=
@@ -6391,6 +6538,8 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
             }
 #ifdef WOLFMQTT_V5
             out_pub.protocol_level = bc->protocol_level;
+            out_pub.props = BrokerRetained_BuildProps(rm, now, stack_props,
+                BROKER_WILL_PROPS_STACK_ENTRIES + 1);
 #endif
             enc_rc = MqttEncode_Publish(bc->tx_buf,
                 BROKER_CLIENT_TX_SZ(bc), &out_pub, 0);
@@ -6474,6 +6623,7 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                 BROKER_FORCE_ZERO(rm->payload, rm->payload_len);
                 WOLFMQTT_FREE(rm->payload);
             }
+            BrokerRetained_FreeProps(rm);
             WOLFMQTT_FREE(rm);
             if (broker->retained_count > 0) {
                 broker->retained_count--;
@@ -6501,13 +6651,47 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                 break;
             }
             else {
-                BrokerOutPub* e = BrokerOutPub_Alloc(rm->topic,
+                BrokerOutPub* e;
+            #ifdef WOLFMQTT_V5
+                /* Stored Properties beyond the stack array get heap nodes */
+                heap_props = NULL;
+                props = NULL;
+                node_count = (rm->props_len > 0) ?
+                    BrokerWill_DecodeProps(rm->props, rm->props_len, NULL, 0)
+                    : 0;
+                if (node_count > BROKER_WILL_PROPS_STACK_ENTRIES) {
+                    heap_props = (MqttProp*)WOLFMQTT_MALLOC(sizeof(MqttProp) *
+                        ((size_t)node_count + 1));
+                    if (heap_props != NULL) {
+                        props = BrokerRetained_BuildProps(rm, now, heap_props,
+                            node_count + 1);
+                    }
+                }
+                else {
+                    props = BrokerRetained_BuildProps(rm, now, stack_props,
+                        BROKER_WILL_PROPS_STACK_ENTRIES + 1);
+                }
+                if (node_count > BROKER_WILL_PROPS_STACK_ENTRIES &&
+                        heap_props == NULL) {
+                    WBLOG_ERR(broker,
+                        "broker: retained props alloc failed sock=%d",
+                        (int)bc->sock);
+                    deliver_rc = MQTT_CODE_ERROR_MEMORY;
+                    break;
+                }
+            #endif
+                e = BrokerOutPub_Alloc(rm->topic,
                     (rm->payload_len > 0) ? rm->payload : NULL,
                     rm->payload_len
                 #ifdef WOLFMQTT_V5
-                    , NULL
+                    , props
                 #endif
                     );
+            #ifdef WOLFMQTT_V5
+                if (heap_props != NULL) {
+                    WOLFMQTT_FREE(heap_props); /* Alloc kept a clone */
+                }
+            #endif
                 if (e == NULL) {
                     WBLOG_ERR(broker,
                         "broker: retained alloc failed sock=%d topic=%s",
@@ -6774,7 +6958,7 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
             int ret_rc = BrokerRetained_Store(broker, topic, payload,
                 payload_len, qos,
             #ifdef WOLFMQTT_V5
-                expiry
+                expiry, props
             #else
                 0
             #endif
@@ -9059,7 +9243,11 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
 #endif
             {
                 int ret_rc = BrokerRetained_Store(broker, topic, payload,
-                    pub.total_len, pub.qos, expiry);
+                    pub.total_len, pub.qos, expiry
+                #ifdef WOLFMQTT_V5
+                    , pub.props
+                #endif
+                    );
                 if (ret_rc != MQTT_CODE_SUCCESS) {
                     /* Retaining is best-effort: a store failure (table full,
                      * oversized payload, transient alloc) does not reject the

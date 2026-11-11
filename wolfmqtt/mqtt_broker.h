@@ -806,6 +806,17 @@ typedef struct BrokerRetainedMsg {
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
     MqttQoS qos;                        /* [MQTT-3.3.1-5] stored QoS */
     byte    pending_delete;             /* deferred free during delivery */
+#ifdef WOLFMQTT_V5
+    /* The message's forwardable PUBLISH Properties (MQTT 5.0 section 3.3.2.3)
+     * other than the Message Expiry Interval, which expiry_sec holds, as
+     * encoded. props_len 0 = none. */
+    word16  props_len;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    props[BROKER_MAX_WILL_PROPS_LEN];
+#else
+    byte*   props;
+#endif
+#endif
 } BrokerRetainedMsg;
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
