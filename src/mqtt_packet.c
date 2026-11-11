@@ -1651,10 +1651,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
-    /* Protocol version */
-    if (mc_connect->protocol_level != 0) {
-        packet.protocol_level = mc_connect->protocol_level;
-    }
+    /* Protocol version (a zero level was normalized to the default above) */
+    packet.protocol_level = mc_connect->protocol_level;
 
     /* Set connection flags */
     if (mc_connect->clean_session) {
