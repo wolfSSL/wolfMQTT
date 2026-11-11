@@ -9841,6 +9841,50 @@ TEST(wait_message_v5_unmatched_pubrec_reports_unknown_id)
     ASSERT_MEM_EQ(expected_pubrel, connect_mock_sent,
         sizeof(expected_pubrel));
 }
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* MQTT 5.0 section 3.6.2.1: 0x92 (Packet Identifier not found) reports a
+ * Session State mismatch. A PUBREC for a QoS 2 PUBLISH this client still has
+ * in flight (e.g. one re-sent by a resumed Session, which registers no
+ * waiter) names an identifier the client owns, so its PUBREL carries
+ * Success. v5 PUBREL Success with no properties may omit the Reason Code
+ * (section 3.6.2.1), giving 0x62 0x02 <id>. */
+TEST(wait_message_v5_owned_pubrec_without_waiter_reports_success)
+{
+    int rc;
+    int i;
+    static const byte pubrec[] = { 0x50, 0x02, 0x12, 0x34 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    /* The client's own QoS 2 PUBLISH 0x1234 is awaiting its PUBCOMP */
+    test_client.send_inflight[0].packet_id = 0x1234;
+    test_client.send_inflight[0].ack_type =
+        (byte)MQTT_PACKET_TYPE_PUBLISH_COMP;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, pubrec, sizeof(pubrec));
+    g_canned_len = (int)sizeof(pubrec);
+    g_canned_pos = 0;
+    connect_mock_xfer = 0;
+    XMEMSET(connect_mock_sent, 0, sizeof(connect_mock_sent));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_TRUE(connect_mock_xfer >= 4);
+    ASSERT_EQ(0x62, connect_mock_sent[0]);
+    ASSERT_EQ(0x12, connect_mock_sent[2]);
+    ASSERT_EQ(0x34, connect_mock_sent[3]);
+    if (connect_mock_xfer > 4) {
+        ASSERT_EQ(MQTT_REASON_SUCCESS, connect_mock_sent[4]);
+    }
+}
+#endif
 #endif /* WOLFMQTT_V5 */
 
 TEST(wait_message_pubrel_emits_pubcomp)
@@ -10938,6 +10982,9 @@ void run_mqtt_client_tests(void)
     RUN_TEST(wait_message_pubrec_emits_pubrel);
 #ifdef WOLFMQTT_V5
     RUN_TEST(wait_message_v5_unmatched_pubrec_reports_unknown_id);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(wait_message_v5_owned_pubrec_without_waiter_reports_success);
+#endif
 #endif
     RUN_TEST(wait_message_pubrel_emits_pubcomp);
     RUN_TEST(wait_message_puback_emits_no_ack);

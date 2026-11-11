@@ -1141,6 +1141,32 @@ static void MqttClient_SendIds_Drop_Locked(MqttClient* client, word16 packet_id,
 }
 #endif
 
+#ifdef WOLFMQTT_V5
+/* Return 1 when packet_id is this client's own QoS 2 PUBLISH still awaiting
+ * its PUBCOMP. Takes lockClient, which guards send_inflight. */
+static int MqttClient_SendIds_AwaitsPubComp(MqttClient* client,
+    word16 packet_id)
+{
+    int i;
+    int owned = 0;
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
+        return 0;
+    }
+#endif
+    i = MqttClient_SendIds_Find(client, packet_id);
+    if (i >= 0 && client->send_inflight[i].ack_type ==
+            (byte)MQTT_PACKET_TYPE_PUBLISH_COMP) {
+        owned = 1;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    return owned;
+}
+#endif
+
 /* Release packet_id once its acknowledgement has been processed. ack_type is
  * the packet type that arrived; the reservation is only given back when it
  * matches the terminal acknowledgement the exchange was waiting for, so a
@@ -2811,12 +2837,16 @@ wait_again:
 
         #ifdef WOLFMQTT_V5
             /* [MQTT-3.6.2.1] An unsolicited PUBREC is answered with PUBREL
-             * reason 0x92 instead of falsely advancing an unknown flow. */
+             * reason 0x92 instead of falsely advancing an unknown flow. A
+             * PUBREC for this client's own QoS 2 PUBLISH still awaiting its
+             * PUBCOMP (e.g. one a resumed Session re-sent with no waiter) is
+             * not unknown, the same test MqttClient_Replay_PubRelSent uses. */
             if (rc >= 0 &&
                     packet_type == MQTT_PACKET_TYPE_PUBLISH_REC &&
                     client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
                     resp.packet_type == MQTT_PACKET_TYPE_PUBLISH_REL &&
-                    !pubrec_tracked) {
+                    !pubrec_tracked &&
+                    !MqttClient_SendIds_AwaitsPubComp(client, packet_id)) {
                 resp.reason_code = MQTT_REASON_PACKET_ID_NOT_FOUND;
             }
         #endif
