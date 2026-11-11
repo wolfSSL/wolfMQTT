@@ -5401,6 +5401,67 @@ TEST(reconnect_v5_replays_publish_with_properties)
     ASSERT_TRUE(found);
 }
 
+#ifndef WOLFMQTT_DYN_PROP
+/* [MQTT-4.4.0-1] An unacknowledged message is still owed after a reconnect.
+ * Rebuilding its Properties needs entries from the shared property pool; if
+ * the application holds them all at that moment the replay must wait, not
+ * discard the message and release its Packet Identifier. */
+TEST(reconnect_v5_replay_waits_for_property_pool)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish publish;
+    MqttProp* prop;
+    MqttProp* hog = NULL;
+    static byte payload[] = "x";
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+
+    init_qos_publish(&publish, MQTT_QOS_1, 0x21, "t", payload, 1);
+    prop = MqttClient_PropsAdd(&publish.props);
+    ASSERT_NOT_NULL(prop);
+    prop->type = MQTT_PROP_USER_PROP;
+    prop->data_str.str = (char*)"k";
+    prop->data_str.len = 1;
+    prop->data_str2.str = (char*)"v";
+    prop->data_str2.len = 1;
+    rc = run_publish_unacked(&publish);
+    (void)MqttClient_PropsFree(publish.props);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, rc);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    /* The application holds every free pool entry */
+    for (i = 0; i <= MQTT_MAX_PROPS; i++) {
+        if (MqttClient_PropsAdd(&hog) == NULL) {
+            break;
+        }
+    }
+    ASSERT_TRUE(i <= MQTT_MAX_PROPS);
+
+    g_order_pub_count = 0;
+    rc = run_reconnect_with(&connect, 1, order_mock_write);
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    ASSERT_EQ(0, g_order_pub_count);
+
+    /* Once entries are free again the message goes out */
+    (void)MqttClient_PropsFree(hog);
+    test_net.read = mock_net_read_wouldblock;
+    for (i = 0; i < 5 && g_order_pub_count == 0; i++) {
+        (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(1, g_order_pub_count);
+    ASSERT_EQ(0x21, g_order_pub_ids[0]);
+}
+#endif
+
 /* MQTT 5.0 section 3.3.2.3.4: a Topic Alias mapping lasts only for its
  * Network Connection, so a replayed PUBLISH carries the full Topic Name and
  * none of the original connection's Topic Alias (0x23). */
@@ -11550,6 +11611,9 @@ void run_mqtt_client_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(reconnect_v5_replays_publish_with_properties);
     RUN_TEST(reconnect_v5_replay_drops_topic_alias);
+#ifndef WOLFMQTT_DYN_PROP
+    RUN_TEST(reconnect_v5_replay_waits_for_property_pool);
+#endif
     RUN_TEST(reconnect_v5_replay_honors_receive_maximum);
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)

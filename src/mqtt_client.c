@@ -3608,6 +3608,8 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id,
     int i;
 #ifdef WOLFMQTT_V5
     MqttProp* replay_props = NULL;
+    int took_quota = 0;
+    int defer = 0;
 #endif
 
     *dropped_id = 0;
@@ -3656,6 +3658,7 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id,
         }
         client->server_recv_max--;
         slot->quotaHeld = 1;
+        took_quota = 1;
     }
 #endif
     slot->replayPending = 0;
@@ -3708,6 +3711,12 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id,
                 MqttClient_Replay_DropAlias(&replay_props);
                 pub.props = replay_props;
             }
+            else if (rc == MQTT_CODE_ERROR_MEMORY) {
+                /* No property entry free right now (the shared pool without
+                 * WOLFMQTT_DYN_PROP, or the heap): the message is still owed
+                 * [MQTT-4.4.0-1], so retry it later instead of dropping it. */
+                defer = 1;
+            }
         }
         if (rc >= 0) {
             rc = MqttEncode_Publish(client->tx_buf, client->tx_buf_len, &pub,
@@ -3731,6 +3740,21 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id,
         }
     }
 
+#ifdef WOLFMQTT_V5
+    if (defer) {
+        /* Leave this and later entries pending, in order, as when Receive
+         * Maximum has no unit free; MqttClient_Replay_Flush retries. */
+        slot->replayPending = 1;
+        if (took_quota) {
+            client->server_recv_max++; /* nothing was sent */
+            slot->quotaHeld = 0;
+        }
+        client->replayIdx = MQTT_MAX_REPLAY_MSGS;
+        *blocked = 1;
+        rc = 0;
+        keep = 1;
+    }
+#endif
     if (rc <= 0 && !keep) {
         /* Cannot rebuild this one (e.g. it no longer fits tx_buf). Drop it
          * rather than stalling the rest of the replay, and report the
