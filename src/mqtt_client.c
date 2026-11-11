@@ -5282,6 +5282,12 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
 #ifdef WOLFMQTT_V5
     /* Use specified protocol version if set */
     unsubscribe->protocol_level = client->protocol_level;
+    /* [MQTT-3.11.3-1] The v5 UNSUBACK returns one reason code per topic
+     * filter, and the ack stores at most MAX_MQTT_TOPICS of them. */
+    if (unsubscribe->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
+            unsubscribe->topic_count > MAX_MQTT_TOPICS) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
 #endif
 
     if (unsubscribe->stat.write == MQTT_MSG_BEGIN) {
@@ -5395,9 +5401,7 @@ int MqttClient_Unsubscribe(MqttClient *client, MqttUnsubscribe *unsubscribe)
                 MQTT_CLIENT_FLAG_IS_CONNECTED, 0);
         }
         else {
-            /* The ack stores at most MAX_MQTT_TOPICS reason codes */
-            for (i = 0; i < unsubscribe->ack.reason_code_count &&
-                    i < MAX_MQTT_TOPICS; i++) {
+            for (i = 0; i < unsubscribe->ack.reason_code_count; i++) {
                 if (unsubscribe->ack.reason_codes[i] & 0x80) {
                     rc = MQTT_TRACE_ERROR(
                         MQTT_CODE_ERROR_UNSUBSCRIBE_REJECTED);

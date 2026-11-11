@@ -6435,6 +6435,26 @@ TEST(decode_unsuback_v5_reason_codes)
  * return codes do. In multithread builds another thread may read the next
  * packet into the shared rx_buf before the unsubscribing thread inspects
  * them, so they must not point into the receive buffer. */
+/* The ack keeps at most MAX_MQTT_TOPICS reason codes, so an UNSUBACK with
+ * more must be rejected rather than report a reason_code_count larger than
+ * the stored codes. Wire: UNSUBACK, packet id 1, props_len 0, then
+ * MAX_MQTT_TOPICS + 1 Success codes. */
+TEST(decode_unsuback_v5_too_many_reason_codes_rejected)
+{
+    byte buf[2 + 3 + MAX_MQTT_TOPICS + 1];
+    MqttUnsubscribeAck ack;
+
+    XMEMSET(buf, 0, sizeof(buf));
+    buf[0] = 0xB0;
+    buf[1] = (byte)(3 + MAX_MQTT_TOPICS + 1);  /* remain_len < 128 */
+    buf[3] = 0x01;                             /* packet_id = 1 */
+    XMEMSET(&ack, 0, sizeof(ack));
+    ack.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    ASSERT_EQ(MQTT_CODE_ERROR_OUT_OF_BUFFER, MqttDecode_UnsubscribeAck(buf,
+        (int)sizeof(buf), &ack));
+    ASSERT_NULL(ack.props);
+}
+
 TEST(decode_unsuback_v5_reason_codes_survive_rx_buf_reuse)
 {
     byte buf[] = {
@@ -8187,6 +8207,7 @@ void run_mqtt_packet_tests(void)
     RUN_TEST(decode_unsuback_v5_longer_body_still_accepted);
     RUN_TEST(decode_unsuback_v5_reason_codes);
     RUN_TEST(decode_unsuback_v5_reason_codes_survive_rx_buf_reuse);
+    RUN_TEST(decode_unsuback_v5_too_many_reason_codes_rejected);
     RUN_TEST(decode_unsuback_v5_props_past_remain_len_rejected);
     RUN_TEST(decode_unsuback_v5_missing_props_len_rejected);
 #endif

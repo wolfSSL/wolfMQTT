@@ -3830,12 +3830,20 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             }
             /* Copy into the ack, as the SUBACK return codes are: in
              * multithread builds the receive buffer is reused by another
-             * reader before the waiting thread looks at the codes. */
+             * reader before the waiting thread looks at the codes. The ack
+             * holds MAX_MQTT_TOPICS codes, so more cannot be represented and
+             * reason_code_count must never exceed what is stored. */
+            if (unsubscribe_ack->reason_code_count > MAX_MQTT_TOPICS) {
+                if (unsubscribe_ack->props != NULL) {
+                    (void)MqttProps_Free(unsubscribe_ack->props);
+                    unsubscribe_ack->props = NULL;
+                }
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             XMEMSET(unsubscribe_ack->reason_codes_buf, 0,
                 sizeof(unsubscribe_ack->reason_codes_buf));
             XMEMCPY(unsubscribe_ack->reason_codes_buf, rx_payload,
-                (unsubscribe_ack->reason_code_count > MAX_MQTT_TOPICS) ?
-                    MAX_MQTT_TOPICS : unsubscribe_ack->reason_code_count);
+                unsubscribe_ack->reason_code_count);
             unsubscribe_ack->reason_codes = unsubscribe_ack->reason_codes_buf;
         }
 #endif
