@@ -1107,6 +1107,10 @@ TEST(connect_refused_connack_returns_connect_refused)
     ASSERT_EQ(MQTT_CONNECT_ACK_CODE_REFUSED_NOT_AUTH, connect.ack.return_code);
 }
 
+/* Counts deliveries through test_accept_message_cb (defined further down);
+ * declared here, outside every feature guard, for all builds. */
+static int g_msg_cb_calls;
+
 #if defined(WOLFMQTT_V5)
 /* MQTT v5: an accepted CONNACK (return code 0) that advertises server
  * properties must latch them into long-lived client state so the publish and
@@ -2035,9 +2039,6 @@ TEST(publish_short_buffer_without_callback_rejected)
     ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, rc);
     ASSERT_EQ(0, g_frames_written);
 }
-
-/* Counts deliveries through test_accept_message_cb (defined further down) */
-static int g_msg_cb_calls;
 
 #if WOLFMQTT_MAX_QOS < 2
 static int test_accept_message_cb(MqttClient* client, MqttMessage* msg,
