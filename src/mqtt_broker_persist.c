@@ -2858,9 +2858,11 @@ int BrokerPersist_Restore(MqttBroker* broker)
          * policy: iterate every namespace, delete every record
          * (dynamic memory builds only; static builds skip the wipe
          * in wmqb_wipe_all), restamp META. New records get written
-         * fresh as activity resumes. (BAD_ARG = header magic / schema
-         * version mismatch from wmqb_read_header; MALFORMED_DATA =
-         * decrypt or size failure from wmqb_kv_get_decrypt_meta.) */
+         * fresh as activity resumes. (MALFORMED_DATA = unreadable
+         * header or META: short read, bad magic, body_len past the
+         * buffer, or decrypt/size failure from wmqb_kv_get_decrypt_meta;
+         * BAD_ARG = schema version, record kind or wrap_mode mismatch
+         * from wmqb_read_header.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
         rc = wmqb_wipe_all(broker);
