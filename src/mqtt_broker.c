@@ -5477,6 +5477,7 @@ static int BrokerRetained_Store(MqttBroker* broker, const char* topic,
     }
     else if (is_new && msg != NULL) {
         if (msg->topic) {
+            BROKER_FORCE_ZERO(msg->topic, XSTRLEN(msg->topic) + 1);
             WOLFMQTT_FREE(msg->topic);
         }
         WOLFMQTT_FREE(msg);
