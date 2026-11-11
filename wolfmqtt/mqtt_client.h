@@ -584,7 +584,15 @@ typedef struct _MqttClient {
                             (uninitialized is okay)
  *  \param      net         Pointer to MqttNet structure that has been
                             initialized with callback pointers and context
- *  \param      msg_cb       Pointer to message callback function
+ *  \param      msg_cb       Pointer to message callback function. NULL is
+                            allowed for a publish-only client, but then an
+                            inbound PUBLISH (e.g. queued traffic on a resumed
+                            persistent Session) is not delivered and the wait
+                            returns MQTT_CODE_ERROR_CALLBACK. A QoS 1/2 PUBLISH
+                            is also not acknowledged, so the server keeps it
+                            and redelivers it later rather than losing it. A
+                            client that may receive QoS > 0 messages should
+                            set a callback.
  *  \param      tx_buf      Pointer to transmit buffer used during encoding
  *  \param      tx_buf_len  Maximum length of the transmit buffer
  *  \param      rx_buf      Pointer to receive buffer used during decoding
