@@ -2698,10 +2698,11 @@ static void BrokerClient_OnPubAck(BrokerClient* bc, word16 packet_id)
 
 #if WOLFMQTT_MAX_QOS >= 2
 /* PUBREC from subscriber - advance the QoS 2 entry to PUBREL_SENT.
- * Returns 1 if a matching entry was found (so the caller knows whether
- * the PUBREL we send is correlated to a real outbound message), 0
- * otherwise. The wire response is still sent in both cases to remain
- * idempotent for buggy peers. */
+ * Returns 1 if a matching QoS 2 entry in PUBLISH_SENT state was advanced;
+ * 0 if no entry matches (spurious PUBREC), in which case the caller still
+ * answers with PUBREL; -1 if the matching entry is a QoS 1 delivery (a
+ * Protocol Error), in which case the caller sends no PUBREL and treats it
+ * as fatal. */
 static int BrokerClient_OnPubRec(BrokerClient* bc, word16 packet_id)
 {
     BrokerOutPub* prev = NULL;
