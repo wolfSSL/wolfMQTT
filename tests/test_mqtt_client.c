@@ -9729,6 +9729,46 @@ TEST(wait_message_qos2_rejected_publish_not_deduped)
     ASSERT_EQ(MQTT_REASON_NOT_AUTHORIZED, connect_mock_sent[4]);
 }
 #endif /* WOLFMQTT_V5 */
+
+/* [MQTT-4.3.3-10] A QoS 2 Packet Identifier is only suppressed as a duplicate
+ * until its PUBREL arrives. After PUBREL the receiver must treat a PUBLISH
+ * with the same identifier as a new Application Message and deliver it.
+ * v3.1.1 frames: PUBLISH QoS 2 topic "a" id 9 payload "hi" (0x34, remain 7),
+ * PUBREL id 9 (0x62, remain 2), then the same PUBLISH again. */
+TEST(wait_message_qos2_pubrel_releases_dedup_entry)
+{
+    int rc = MQTT_CODE_SUCCESS;
+    int i;
+    static const byte frames[] = {
+        0x34, 0x07, 0x00, 0x01, 'a', 0x00, 0x09, 'h', 'i',
+        0x62, 0x02, 0x00, 0x09,
+        0x34, 0x07, 0x00, 0x01, 'a', 0x00, 0x09, 'h', 'i'
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+#ifdef WOLFMQTT_V5
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_4;
+#endif
+    test_client.msg_cb = test_accept_message_cb;
+    g_msg_cb_calls = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, frames, sizeof(frames));
+    g_canned_len = (int)sizeof(frames);
+    g_canned_pos = 0;
+
+    for (i = 0; i < 40 && g_canned_pos < g_canned_len; i++) {
+        rc = MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+        if (rc != MQTT_CODE_SUCCESS && rc != MQTT_CODE_CONTINUE) {
+            break;
+        }
+    }
+    ASSERT_EQ(g_canned_len, g_canned_pos);
+    ASSERT_EQ(2, g_msg_cb_calls);
+    /* The second exchange is awaiting its own PUBREL */
+    ASSERT_EQ(9, test_client.recv_qos2_pending[0]);
+}
 #endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* The four PUBLISH-response packet types (PUBACK 4, PUBREC 5, PUBREL 6,
@@ -10893,6 +10933,7 @@ void run_mqtt_client_tests(void)
 #ifdef WOLFMQTT_V5
     RUN_TEST(wait_message_qos2_rejected_publish_not_deduped);
 #endif
+    RUN_TEST(wait_message_qos2_pubrel_releases_dedup_entry);
 #endif
     RUN_TEST(wait_message_pubrec_emits_pubrel);
 #ifdef WOLFMQTT_V5
