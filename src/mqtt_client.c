@@ -3923,15 +3923,20 @@ static void MqttClient_ConnectKeepAlive(MqttClient* client,
 
 #ifdef WOLFMQTT_V5
 /* Return the Session Expiry Interval in props, or 0 when it is absent (MQTT
- * 5.0 sections 3.1.2.11.2 and 3.14.2.2.2). */
+ * 5.0 sections 3.1.2.11.2 and 3.14.2.2.2). Stops after MQTT_MAX_PROPS
+ * entries, as the encoder does, so a circular or overlong list is left for
+ * the encoder to reject. */
 static word32 MqttClient_PropsSessionExpiry(const MqttProp* props)
 {
     const MqttProp* prop;
+    int count = 0;
 
-    for (prop = props; prop != NULL; prop = prop->next) {
+    for (prop = props; prop != NULL && count < MQTT_MAX_PROPS;
+            prop = prop->next) {
         if (prop->type == MQTT_PROP_SESSION_EXPIRY_INTERVAL) {
             return prop->data_int;
         }
+        count++;
     }
     return 0;
 }

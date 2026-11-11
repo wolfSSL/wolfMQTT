@@ -1899,6 +1899,59 @@ TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected)
 #endif
 
 #ifdef WOLFMQTT_V5
+/* The Session Expiry check above walks the DISCONNECT properties before the
+ * encoder does. A circular list must not hang it; the encoder rejects the
+ * list once it exceeds MQTT_MAX_PROPS entries. */
+TEST(disconnect_v5_circular_props_after_zero_expiry_rejected)
+{
+    MqttConnect connect;
+    MqttDisconnect disc;
+    MqttProp a;
+    MqttProp b;
+    int rc;
+    int i;
+    /* v5 CONNACK, Session Present 0, Reason Code Success, no properties */
+    static const byte connack[] = { 0x20, 0x03, 0x00, 0x00, 0x00 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    test_net.connect = mock_net_connect_ok;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    (void)MqttClient_Flags(&test_client, 0, MQTT_CLIENT_FLAG_IS_CONNECTED);
+
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 1;
+    connect.client_id = "expiry_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+
+    /* Two Reason String nodes pointing at each other */
+    XMEMSET(&a, 0, sizeof(a));
+    XMEMSET(&b, 0, sizeof(b));
+    a.type = MQTT_PROP_REASON_STR;
+    b.type = MQTT_PROP_REASON_STR;
+    a.next = &b;
+    b.next = &a;
+    XMEMSET(&disc, 0, sizeof(disc));
+    disc.props = &a;
+    g_frames_written = 0;
+    rc = MqttClient_Disconnect_ex(&test_client, &disc);
+
+    ASSERT_EQ(MQTT_CODE_ERROR_PROPERTY, rc);
+    ASSERT_EQ(0, g_frames_written);
+}
+#endif
+
+#ifdef WOLFMQTT_V5
 /* Positive control for the rule above: after a non-zero Session Expiry
  * Interval in CONNECT, the Client may change it in DISCONNECT. */
 TEST(disconnect_v5_nonzero_session_expiry_after_nonzero_allowed)
@@ -11283,6 +11336,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(publish_short_buffer_without_callback_rejected);
 #ifdef WOLFMQTT_V5
     RUN_TEST(disconnect_v5_nonzero_session_expiry_after_zero_rejected);
+    RUN_TEST(disconnect_v5_circular_props_after_zero_expiry_rejected);
     RUN_TEST(disconnect_v5_nonzero_session_expiry_after_nonzero_allowed);
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB) && \
