@@ -7768,7 +7768,7 @@ static int BrokerHandle_Connect(BrokerClient* bc, int rx_len,
 #ifdef WOLFMQTT_V5
     int auto_assigned = 0;
 #endif
-#if defined(WOLFMQTT_STATIC_MEMORY) && \
+#if defined(WOLFMQTT_BROKER_WILL) && defined(WOLFMQTT_STATIC_MEMORY) && \
     (defined(WOLFMQTT_V5) || WOLFMQTT_MAX_QOS >= 1)
     int will_props_len = 0;
 #endif

@@ -318,6 +318,10 @@ static int mock_read(void* ctx, BROKER_SOCKET_T sock,
     return buf_len;
 }
 
+/* Defined further down with the QoS 2 tests; declared here, outside every
+ * feature guard, so each test that counts captured packets sees it. */
+static int count_packets_of_type(const byte* buf, size_t len, byte type);
+
 #ifndef WOLFMQTT_STATIC_MEMORY
 /* One-shot hook run from inside the first PUBLISH the broker writes. The mock
  * network has no lws_service, so this is how a test reproduces the mutation a
@@ -904,8 +908,6 @@ TEST(connect_v5_will_alloc_failure_leaves_no_session)
     MqttBroker_Free(&broker);
 }
 #endif /* WOLFMQTT_V5 */
-
-static int count_packets_of_type(const byte* buf, size_t len, byte type);
 
 /* A CONNECT refused because its Will cannot be stored must not take over the
  * connected client that holds the same ClientId: that client stays connected
@@ -2255,10 +2257,6 @@ TEST(broker_v5_retransmitted_pubrec_pubrel_success)
 #endif
 
 #ifndef BROKER_ALLOW_CLIENT_DOLLAR_TOPICS
-#if !(!defined(WOLFMQTT_STATIC_MEMORY) && defined(WOLFMQTT_BROKER_WILL))
-static int count_packets_of_type(const byte* buf, size_t len, byte type);
-#endif
-
 /* MQTT 3.1.1 and 5.0 section 4.7.2: Topic Names beginning with '$' are for
  * the Server; it SHOULD prevent Clients using them to exchange messages. A
  * client PUBLISH to one is not forwarded: v5 QoS 1 is answered with PUBACK

@@ -2575,7 +2575,7 @@ TEST(sn_disconnect_chunked_write_completes_exact_frame)
 }
 #endif
 
-#ifdef WOLFMQTT_DISCONNECT_CB
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DISCONNECT_CB)
 static int g_sn_disconnect_cb_calls;
 static int sn_disconnect_cb_count(MqttClient* client, int error_code,
     void* ctx)

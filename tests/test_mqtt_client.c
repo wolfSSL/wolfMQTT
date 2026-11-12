@@ -5591,6 +5591,64 @@ TEST(reconnect_v5_replay_honors_receive_maximum)
     ASSERT_EQ(2, g_order_pub_count);
     ASSERT_EQ(2, g_order_pub_ids[1]);
 }
+
+/* [MQTT-4.9.0-2] MQTT 5.0 section 4.9: one unacknowledged QoS > 0 PUBLISH
+ * holds one Receive Maximum unit. The Session replay re-sends id 1 and takes
+ * a unit for it; when the application then re-sends id 1 itself (DUP=1,
+ * [MQTT-3.3.1-1]) the message is still one PUBLISH in flight, so the replay's
+ * unit must be given back rather than dropped with the reused entry. */
+TEST(reconnect_v5_republish_replayed_id_keeps_receive_maximum)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish pub_a;
+    static byte payload[] = "x";
+    /* v5 CONNACK, Session Present 1, Success, Properties length 3 holding
+     * Receive Maximum (0x21) = 2. Remaining Length 6. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x01, 0x00, 0x03, 0x21, 0x00, 0x02
+    };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+
+    init_qos_publish(&pub_a, MQTT_QOS_1, 1, "t", payload, 1);
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    test_net.write = order_mock_write;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    g_order_pub_count = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The replay re-sent id 1: one of the two units is in use. */
+    ASSERT_EQ(1, g_order_pub_count);
+    ASSERT_EQ(1, g_order_pub_ids[0]);
+    ASSERT_EQ(1, test_client.server_recv_max);
+
+    /* The application re-sends the same message; still one in flight. */
+    init_qos_publish(&pub_a, MQTT_QOS_1, 1, "t", payload, 1);
+    pub_a.duplicate = 1;
+    ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
+    ASSERT_EQ(1, test_client.server_recv_max);
+}
 #endif
 
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)
@@ -11634,6 +11692,7 @@ void run_mqtt_client_tests(void)
     RUN_TEST(reconnect_v5_replay_waits_for_property_pool);
 #endif
     RUN_TEST(reconnect_v5_replay_honors_receive_maximum);
+    RUN_TEST(reconnect_v5_republish_replayed_id_keeps_receive_maximum);
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(replay_paused_write_released_by_net_disconnect);

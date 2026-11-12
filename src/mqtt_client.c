@@ -724,6 +724,15 @@ static void MqttClient_Replay_Add(MqttClient* client, MqttPublish* publish)
     slot = MqttClient_Replay_Find(client, publish->packet_id);
     if (slot != NULL) {
         seq = slot->seq;
+    #ifdef WOLFMQTT_V5
+        /* The replayed copy's Receive Maximum unit is superseded by the one
+         * this re-send reserved for itself; give it back before the slot is
+         * wiped, or it is lost until reconnect [MQTT-4.9.0-2]. */
+        if (slot->quotaHeld &&
+                client->server_recv_max < client->server_recv_max_negotiated) {
+            client->server_recv_max++;
+        }
+    #endif
     }
     else {
         slot = MqttClient_Replay_Find(client, 0);
