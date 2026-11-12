@@ -130,6 +130,7 @@ typedef struct SnMtOnlyRaceCtx {
     int incoming_delivered;
     int subscribe_done;
     int subscribe_done_while_writer_active;
+    int publish_done; /* the writer thread's publish returned */
     int sync_error;
     int subscribe_rc;
     int publish_rc;
@@ -301,7 +302,10 @@ static int mock_read(void *ctx, byte* buf, int buf_len, int timeout_ms)
         }
         g_mt_only_race->reader_waiting = 1;
         sync_rc = pthread_cond_broadcast(&g_mt_only_race->cond);
-        while (sync_rc == 0 && !g_mt_only_race->writer_active) {
+        /* A publish that returns without writing never sets writer_active;
+         * stop waiting then so the test fails instead of hanging. */
+        while (sync_rc == 0 && !g_mt_only_race->writer_active &&
+                !g_mt_only_race->publish_done) {
             sync_rc = pthread_cond_wait(&g_mt_only_race->cond,
                 &g_mt_only_race->mutex);
         }
@@ -582,6 +586,18 @@ static int sn_client_init(int continues_cfg)
     MqttClient_Flags(&g_client, 0, MQTT_CLIENT_FLAG_IS_DTLS);
     return rc;
 }
+
+#ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
+/* These tests drive MqttClient_Publish on the SN client only to hold
+ * lockSend. [MQTT-3.1.0-1] refuses any PUBLISH before CONNECT has been sent,
+ * so mark it sent as a connected client would be. Returns nonzero on
+ * success. */
+static int mqtt_mt_only_mark_connect_sent(void)
+{
+    return (MqttClient_Flags(&g_client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT) &
+        MQTT_CLIENT_FLAG_CONNECT_SENT) != 0;
+}
+#endif
 
 /* Drive SN_Client_Connect until it returns something other than CONTINUE, or
  * until we exceed a sane iteration cap. Returns the terminal code and the
@@ -2131,6 +2147,17 @@ static void* sn_mt_only_publish_thread(void* arg)
     SnMtOnlyRaceCtx* race = (SnMtOnlyRaceCtx*)arg;
 
     race->publish_rc = MqttClient_Publish(&g_client, &race->publish);
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return NULL;
+    }
+    race->publish_done = 1;
+    if (pthread_cond_broadcast(&race->cond) != 0) {
+        race->sync_error = 1;
+    }
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+    }
     return NULL;
 }
 
@@ -2158,6 +2185,7 @@ TEST(sn_subscribe_waits_for_mt_only_automatic_reply_writer)
     race.publish.buffer = &payload;
     race.publish.total_len = sizeof(payload);
     g_client.msg_cb = sn_mt_only_accept_publish;
+    ASSERT_TRUE(mqtt_mt_only_mark_connect_sent());
     g_mt_only_race = &race;
     mock_net_push(&g_mock, SN_PUBLISH_QOS1_FRAME,
         (int)sizeof(SN_PUBLISH_QOS1_FRAME));
@@ -2174,7 +2202,8 @@ TEST(sn_subscribe_waits_for_mt_only_automatic_reply_writer)
     ASSERT_EQ(0, pthread_create(&publish_thread, NULL,
         sn_mt_only_publish_thread, &race));
     ASSERT_EQ(0, pthread_mutex_lock(&race.mutex));
-    while (!race.incoming_delivered && !race.sync_error) {
+    while (!race.incoming_delivered && !race.sync_error &&
+            !race.publish_done) {
         ASSERT_EQ(0, pthread_cond_wait(&race.cond, &race.mutex));
     }
     ASSERT_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
@@ -2309,6 +2338,9 @@ TEST(mqtt_mt_only_stream_callback_reentrant_send_does_not_deadlock)
 
         (void)alarm(2);
         rc = sn_client_init(0);
+        if (rc == MQTT_CODE_SUCCESS && !mqtt_mt_only_mark_connect_sent()) {
+            rc = MQTT_CODE_ERROR_SYSTEM;
+        }
         if (rc == MQTT_CODE_SUCCESS) {
             XMEMSET(&publish, 0, sizeof(publish));
             publish.topic_name = "reentrant/topic";
@@ -2355,7 +2387,7 @@ TEST(mqtt_mt_only_stream_callback_sn_wait_does_not_spin)
 
         (void)alarm(2);
         rc = sn_client_init(0);
-        if (rc != MQTT_CODE_SUCCESS) {
+        if (rc != MQTT_CODE_SUCCESS || !mqtt_mt_only_mark_connect_sent()) {
             _exit(1);
         }
         g_client.msg_cb = sn_accept_incoming_publish;

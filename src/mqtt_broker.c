@@ -10236,6 +10236,26 @@ static int BrokerClient_ResumeDirect(MqttBroker* broker, BrokerClient* bc)
 /* -------------------------------------------------------------------------- */
 /* Per-client processing (called from Step)                                    */
 /* -------------------------------------------------------------------------- */
+#ifdef WOLFMQTT_V5
+/* A handler already sent a reason-coded DISCONNECT. Returns 1 when part of
+ * it is still staged for BrokerClient_ResumeDirect, after arranging for the
+ * close to follow it; closing now would leave a truncated packet on the wire
+ * (MQTT 5.0 section 2.1.1) and lose the reason (section 4.13.1). Static
+ * clients have no staged write to wait for. */
+static int BrokerClient_DeferCloseForDisconnect(BrokerClient* bc)
+{
+#ifndef WOLFMQTT_STATIC_MEMORY
+    if (bc->disconnect_sent && bc->direct_pending_len != 0) {
+        bc->close_after_direct = 1;
+        return 1;
+    }
+#else
+    (void)bc;
+#endif
+    return 0;
+}
+#endif
+
 /* MQTT 5.0 section 4.13.1: after a Malformed Packet (malformed != 0) or a
  * Protocol Error in a packet other than CONNECT, a v5 Server SHOULD send
  * DISCONNECT with the Reason Code before closing the Network Connection.
@@ -10249,7 +10269,9 @@ static void BrokerClient_ErrorClose(MqttBroker* broker, BrokerClient* bc,
 
     if (bc->disconnect_sent) {
         /* The handler already told the peer why; one DISCONNECT only. */
-        BrokerClient_AbnormalClose(broker, bc);
+        if (!BrokerClient_DeferCloseForDisconnect(bc)) {
+            BrokerClient_AbnormalClose(broker, bc);
+        }
         return;
     }
   #ifndef WOLFMQTT_STATIC_MEMORY
@@ -10291,6 +10313,11 @@ static void BrokerClient_FatalClose(MqttBroker* broker, BrokerClient* bc,
             rc == MQTT_CODE_ERROR_PROPERTY_MISMATCH) {
         BrokerClient_ErrorClose(broker, bc, 0);
     }
+#ifdef WOLFMQTT_V5
+    else if (BrokerClient_DeferCloseForDisconnect(bc)) {
+        /* e.g. DISCONNECT 0x93 for an inbound QoS 2 overflow: let it finish */
+    }
+#endif
     else {
         BrokerClient_AbnormalClose(broker, bc);
     }

@@ -5859,6 +5859,103 @@ TEST(replay_flush_does_not_join_another_threads_write)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
+    defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_THREAD_ID_T) && \
+    (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
+#define REPLAY_OWNER_FRAME_BYTES 8
+static pthread_mutex_t g_replay_owner_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_replay_owner_cond = PTHREAD_COND_INITIALIZER;
+static int g_replay_owner_step;
+static int g_replay_owner_rc;
+static int g_replay_owner_still_active;
+
+static void replay_owner_set_step(int step)
+{
+    (void)pthread_mutex_lock(&g_replay_owner_mutex);
+    g_replay_owner_step = step;
+    (void)pthread_cond_broadcast(&g_replay_owner_cond);
+    (void)pthread_mutex_unlock(&g_replay_owner_mutex);
+}
+
+static void replay_owner_wait_step(int step)
+{
+    (void)pthread_mutex_lock(&g_replay_owner_mutex);
+    while (g_replay_owner_step < step) {
+        (void)pthread_cond_wait(&g_replay_owner_cond, &g_replay_owner_mutex);
+    }
+    (void)pthread_mutex_unlock(&g_replay_owner_mutex);
+}
+
+/* Takes lockSend for the deferred re-send and leaves it paused mid-write,
+ * then, once told to, makes the next client call as that owner. */
+static void* replay_owner_thread(void* arg)
+{
+    int i;
+
+    (void)arg;
+    g_replay_owner_rc = replay_pause_deferred_write();
+    replay_owner_set_step(1);
+    replay_owner_wait_step(2);
+    g_canned_len = 0;
+    g_canned_pos = 0;
+    for (i = 0; i < 3 && test_client.replay_stat.isWriteActive; i++) {
+        (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    g_replay_owner_still_active = test_client.replay_stat.isWriteActive;
+    return NULL;
+}
+
+/* The connection is torn down from a thread other than the one whose
+ * deferred re-send is paused mid-write. The tearing-down thread holds no
+ * lockSend, so it must neither scrub the owner's frame nor release the
+ * owner's lock; the owner gives the writer back on its next call, and the
+ * message is still owed to a resumed Session [MQTT-4.4.0-1]. */
+TEST(replay_paused_write_kept_for_owner_on_foreign_disconnect)
+{
+    pthread_t owner;
+    byte frame[REPLAY_OWNER_FRAME_BYTES];
+    byte zero[REPLAY_OWNER_FRAME_BYTES];
+
+    g_replay_owner_step = 0;
+    g_replay_owner_rc = -1;
+    g_replay_owner_still_active = 1;
+    ASSERT_EQ(0, pthread_create(&owner, NULL, replay_owner_thread, NULL));
+    replay_owner_wait_step(1);
+    if (g_replay_owner_rc != 0) {
+        replay_owner_set_step(2);
+        (void)pthread_join(owner, NULL);
+    }
+    ASSERT_EQ(0, g_replay_owner_rc);
+    /* The paused frame is the re-sent PUBLISH (type 3) */
+    ASSERT_EQ(0x30, test_client.tx_buf[0] & 0xF0);
+    XMEMCPY(frame, test_client.tx_buf, sizeof(frame));
+
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+    /* Still the owner's: frame intact, lockSend still held by it */
+    ASSERT_EQ(1, test_client.replay_stat.isWriteActive);
+    ASSERT_EQ(1, test_client.write.isActive);
+    ASSERT_EQ(1, test_client.replay_cancel);
+    ASSERT_MEM_EQ(frame, test_client.tx_buf, sizeof(frame));
+
+    replay_owner_set_step(2);
+    ASSERT_EQ(0, pthread_join(owner, NULL));
+    /* The owner dropped the frame and released the writer */
+    ASSERT_EQ(0, g_replay_owner_still_active);
+    ASSERT_EQ(0, test_client.write.isActive);
+    ASSERT_EQ(0, test_client.replay_cancel);
+    XMEMSET(zero, 0, sizeof(zero));
+    ASSERT_MEM_EQ(zero, test_client.tx_buf, sizeof(zero));
+
+    g_order_pub_count = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, replay_reconnect_rm1());
+    /* Message 2 is still owed and is re-sent on the new connection */
+    ASSERT_EQ(1, g_order_pub_count);
+    ASSERT_EQ(2, g_order_pub_ids[0]);
+}
+#endif
+
 /* A streamed publish delivers its payload through the application callback, so
  * the client holds no copy to rebuild from. The slot still tracks the Packet
  * Identifier for a QoS 2 PUBREL, but the PUBLISH itself must not be replayed
@@ -11703,6 +11800,11 @@ void run_mqtt_client_tests(void)
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
     (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
     RUN_TEST(replay_flush_does_not_join_another_threads_write);
+#endif
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_MULTITHREAD) && \
+    defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_THREAD_ID_T) && \
+    (defined(__MACH__) || defined(WOLFMQTT_POSIX_SEMAPHORES))
+    RUN_TEST(replay_paused_write_kept_for_owner_on_foreign_disconnect);
 #endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(reconnect_replays_pubrel_in_pubrec_order);

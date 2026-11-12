@@ -605,6 +605,10 @@ typedef struct _MqttClient {
      * quota), and the flag that lets one caller at a time do it. */
     MqttMsgStat replay_stat;
     byte replay_busy;
+    /* The connection ended while another thread owned the paused re-send
+     * write: that owner releases it on its next call (MqttClient_Replay_Flush)
+     * instead of a non-owner scrubbing its frame and unlocking its lockSend. */
+    byte replay_cancel;
 #endif
 } MqttClient;
 

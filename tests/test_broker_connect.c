@@ -8063,6 +8063,64 @@ TEST(v5_error_close_waits_for_deferred_disconnect)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+
+/* The SUBSCRIBE handler itself sends DISCONNECT 0xA1 for a Subscription
+ * Identifier (MQTT 5.0 section 3.2.2.3.12, [MQTT-4.13.1-1]) before returning
+ * a fatal error. When that write is deferred, the close must wait for it as
+ * well: closing at once would cut the packet short (MQTT 5.0 section 2.1.1)
+ * and the client would never see the Reason Code. */
+TEST(v5_handler_disconnect_waits_when_deferred)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    size_t connack_len;
+    int i;
+    static const byte connect[] = {
+        0x10, 14,
+        0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C,
+        0x00,
+        0x00, 0x01, 'A'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 2 holding Subscription
+     * Identifier (0x0B) = 1, filter "x", options QoS 0.
+     * Remaining Length 2 + 1 + 2 + 3 + 1 = 9. */
+    static const byte subscribe_subid[] = {
+        0x82, 0x09, 0x00, 0x01, 0x02, 0x0B, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* DISCONNECT, Remaining Length 1, Reason Code 0xA1 */
+    static const byte disconnect_a1[] = { 0xE0, 0x01, 0xA1 };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+
+    reset_mock_state(connect, sizeof(connect));
+    run_broker_one_connect(&broker);
+    ASSERT_EQ(MQTT_CONNECT_ACK_CODE_ACCEPTED, g_out_buf[3]);
+    connack_len = g_out_len;
+
+    g_clients[0].write_continue = 1;
+    mock_client_input_append(0, subscribe_subid, sizeof(subscribe_subid));
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_client_closed);
+    ASSERT_EQ(connack_len, g_out_len);
+
+    g_clients[0].write_continue = 0;
+    for (i = 0; i < 4; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_client_closed);
+    ASSERT_EQ(connack_len + sizeof(disconnect_a1), g_out_len);
+    ASSERT_MEM_EQ(disconnect_a1, &g_out_buf[connack_len],
+        sizeof(disconnect_a1));
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
 #endif /* WOLFMQTT_NONBLOCK && !WOLFMQTT_STATIC_MEMORY */
 
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_STATIC_MEMORY)
@@ -19073,6 +19131,7 @@ int main(int argc, char** argv)
     RUN_TEST(v5_unexpected_auth_sends_protocol_error_disconnect);
 #if defined(WOLFMQTT_NONBLOCK) && !defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(v5_error_close_waits_for_deferred_disconnect);
+    RUN_TEST(v5_handler_disconnect_waits_when_deferred);
 #endif
 #if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_STATIC_MEMORY)
     RUN_TEST(v5_static_error_close_leaves_no_partial_disconnect);

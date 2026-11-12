@@ -983,6 +983,21 @@ static MqttPacketType MqttClient_Replay_AckType(const MqttReplayMsg* slot)
  * this the writer stays busy and the next CONNECT can never be sent. Only a
  * nonblocking write is left paused between calls; a blocking one is always
  * stopped before its caller returns. */
+/* Does this caller hold lockSend for the paused re-send? With threads only
+ * the thread that took it may scrub its frame or release it (lockSend need
+ * not allow an unlock from another thread). Without thread IDs the owner
+ * cannot be told apart, so any caller is treated as the owner. Called with
+ * lockClient held in multithreaded builds. */
+static int MqttClient_Replay_OwnsWrite(const MqttClient* client)
+{
+#if defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_THREAD_ID_T)
+    return client->replay_stat.isWriteActive && client->write_owner_valid &&
+        WOLFMQTT_THREAD_EQUAL(client->write_owner, WOLFMQTT_THREAD_SELF());
+#else
+    return client->replay_stat.isWriteActive;
+#endif
+}
+
 static void MqttClient_Replay_ReleaseWrite(MqttClient* client)
 {
     int active = 0;
@@ -992,8 +1007,13 @@ static void MqttClient_Replay_ReleaseWrite(MqttClient* client)
         return;
     }
 #endif
-    if (client->replay_stat.isWriteActive) {
+    if (MqttClient_Replay_OwnsWrite(client)) {
         active = 1;
+    }
+    else if (client->replay_stat.isWriteActive) {
+        /* Another thread's write: leave tx_buf and lockSend to it, and have
+         * it drop the frame on its next call rather than resume it. */
+        client->replay_cancel = 1;
     }
     else {
         client->replay_busy = 0;
@@ -1006,13 +1026,19 @@ static void MqttClient_Replay_ReleaseWrite(MqttClient* client)
          * writer, as MqttClient_CancelMessage does. */
         CLIENT_FORCE_ZERO(client->tx_buf, client->tx_buf_len);
         MqttWriteStop(client, &client->replay_stat);
+        /* A non-owner's MqttClient_Replay_NewConnSafe left the rest of this
+         * state for the owner to reset. */
     #ifdef WOLFMQTT_MULTITHREAD
         if (wm_SemLock(&client->lockClient) == MQTT_CODE_SUCCESS) {
+            XMEMSET(&client->replay_stat, 0, sizeof(client->replay_stat));
             client->replay_busy = 0;
+            client->replay_cancel = 0;
             wm_SemUnlock(&client->lockClient);
         }
     #else
+        XMEMSET(&client->replay_stat, 0, sizeof(client->replay_stat));
         client->replay_busy = 0;
+        client->replay_cancel = 0;
     #endif
     }
 }
@@ -1041,9 +1067,13 @@ static int MqttClient_Replay_NewConnSafe(MqttClient* client)
     }
 #endif
     persisted = (client->flags & MQTT_CLIENT_FLAG_PERSISTENT_SESSION) ? 1 : 0;
-    /* A deferred re-send belonged to the previous Network Connection */
-    XMEMSET(&client->replay_stat, 0, sizeof(client->replay_stat));
-    client->replay_busy = 0;
+    /* A deferred re-send belonged to the previous Network Connection. One
+     * still held by another thread is that thread's to release (see
+     * MqttClient_Replay_ReleaseWrite); its state stays until it does. */
+    if (!client->replay_cancel) {
+        XMEMSET(&client->replay_stat, 0, sizeof(client->replay_stat));
+        client->replay_busy = 0;
+    }
     for (i = 0; i < MQTT_MAX_REPLAY_MSGS; i++) {
         client->replay[i].onThisConn = 0;
         client->replay[i].replayPending = 0;
@@ -3866,11 +3896,9 @@ static int MqttClient_Replay_CanResume(const MqttClient* client)
 #ifndef WOLFMQTT_NONBLOCK
     (void)client;
     return 0;
-#elif defined(WOLFMQTT_MULTITHREAD) && defined(WOLFMQTT_THREAD_ID_T)
-    return client->replay_stat.isWriteActive && client->write_owner_valid &&
-        WOLFMQTT_THREAD_EQUAL(client->write_owner, WOLFMQTT_THREAD_SELF());
 #else
-    return client->replay_stat.isWriteActive;
+    /* A cancelled write belongs to a connection that has ended */
+    return !client->replay_cancel && MqttClient_Replay_OwnsWrite(client);
 #endif
 }
 
@@ -3885,11 +3913,37 @@ static int MqttClient_Replay_ResumableSafe(MqttClient* client)
         return 0;
     }
 #endif
-    resume = MqttClient_Replay_CanResume(client);
+    /* A cancelled write is work too: Flush releases it first */
+    resume = MqttClient_Replay_CanResume(client) ||
+        (client->replay_cancel && MqttClient_Replay_OwnsWrite(client));
 #ifdef WOLFMQTT_MULTITHREAD
     wm_SemUnlock(&client->lockClient);
 #endif
     return resume;
+}
+
+/* The owner's side of MqttClient_Replay_ReleaseWrite: a connection ended
+ * while this thread's re-send was paused mid-write, so drop that frame and
+ * release the writer. The re-send itself is not lost; the entry is still
+ * retained and goes out again if the Session resumes [MQTT-4.4.0-1]. */
+static void MqttClient_Replay_ReapCancelled(MqttClient* client)
+{
+    int reap = 0;
+
+#ifdef WOLFMQTT_MULTITHREAD
+    if (wm_SemLock(&client->lockClient) != MQTT_CODE_SUCCESS) {
+        return;
+    }
+#endif
+    if (client->replay_cancel && MqttClient_Replay_OwnsWrite(client)) {
+        reap = 1;
+    }
+#ifdef WOLFMQTT_MULTITHREAD
+    wm_SemUnlock(&client->lockClient);
+#endif
+    if (reap) {
+        MqttClient_Replay_ReleaseWrite(client);
+    }
 }
 #endif
 
@@ -3900,6 +3954,11 @@ static int MqttClient_Replay_Flush(MqttClient* client)
     int pending = 0;
     int resume;
 
+#ifdef WOLFMQTT_NONBLOCK
+    /* Before the checks below: the connection that ended may not have been
+     * replaced yet, and the writer must still be given back. */
+    MqttClient_Replay_ReapCancelled(client);
+#endif
     if (client->protocol_level < MQTT_CONNECT_PROTOCOL_LEVEL_5 ||
             MqttClient_CheckConnectSent(client) != MQTT_CODE_SUCCESS) {
         return MQTT_CODE_SUCCESS;
