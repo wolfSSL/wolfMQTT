@@ -152,8 +152,9 @@ holds deliveries that do not fit its inflight window in a fixed live queue of
 `BROKER_MAX_STATIC_LIVE_MSGS` entries per client, each limited to
 `BROKER_MAX_STATIC_OFFLINE_DATA_LEN` bytes of properties and payload. The queue
 drains in order as PUBACK and PUBCOMP free the window. A delivery that finds
-the queue full, or is too large for an entry, disconnects that subscriber
-(MQTT v5: DISCONNECT with Quota Exceeded 0x97) instead of being dropped. A
+the queue full disconnects that subscriber (MQTT v5: DISCONNECT with Quota
+Exceeded 0x97) so it can resume the backlog later. A delivery too large for an
+entry is dropped and logged instead, and the subscriber stays connected. A
 retained copy sent in response to a SUBSCRIBE is the exception: one that cannot
 be queued is skipped and logged, and the SUBACK is still sent. The queue adds approximately `BROKER_MAX_CLIENTS * BROKER_MAX_STATIC_LIVE_MSGS *
 (topic length + data length)` bytes, about 14 KB with the default limits.

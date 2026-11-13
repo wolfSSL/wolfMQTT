@@ -5649,6 +5649,84 @@ TEST(reconnect_v5_republish_replayed_id_keeps_receive_maximum)
     ASSERT_EQ(MQTT_CODE_ERROR_NETWORK, run_publish_unacked(&pub_a));
     ASSERT_EQ(1, test_client.server_recv_max);
 }
+
+#if WOLFMQTT_MAX_QOS >= 2
+/* [MQTT-4.9.0-2] MQTT 5.0 section 4.9: a QoS 2 message counts against the
+ * server's Receive Maximum until its PUBCOMP. A resumed Session whose message
+ * is at the PUBREL stage re-sends the PUBREL, and that message must hold a
+ * unit until the PUBCOMP arrives. */
+TEST(reconnect_v5_replayed_pubrel_holds_receive_maximum)
+{
+    int rc;
+    int i;
+    MqttConnect connect;
+    MqttPublish publish;
+    static byte payload[] = "x";
+    /* v5 PUBREC for packet id 1, Remaining Length 2: Reason Code omitted
+     * (Success) [MQTT-3.5.2-1]. No PUBCOMP follows on this connection. */
+    static const byte pubrec[] = { 0x50, 0x02, 0x00, 0x01 };
+    /* v5 CONNACK, Session Present 1, Success, Properties length 3 holding
+     * Receive Maximum (0x21) = 2. Remaining Length 6. */
+    static const byte connack[] = {
+        0x20, 0x06, 0x01, 0x00, 0x03, 0x21, 0x00, 0x02
+    };
+    /* v5 PUBCOMP for packet id 1, Reason Code omitted (Success). */
+    static const byte pubcomp[] = { 0x70, 0x02, 0x00, 0x01 };
+
+    rc = test_init_client();
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    test_client.protocol_level = MQTT_CONNECT_PROTOCOL_LEVEL_5;
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, run_initial_connect(&connect));
+    (void)MqttClient_Flags(&test_client, 0,
+        MQTT_CLIENT_FLAG_PERSISTENT_SESSION);
+
+    g_pubrel_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, pubrec, sizeof(pubrec));
+    g_canned_len = (int)sizeof(pubrec);
+    g_canned_pos = 0;
+    init_qos_publish(&publish, MQTT_QOS_2, 1, "t", payload, 1);
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Publish(&test_client, &publish);
+    }
+    ASSERT_TRUE(rc != MQTT_CODE_SUCCESS);
+    ASSERT_TRUE(g_pubrel_written);
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_NetDisconnect(&test_client));
+
+    g_pubrel_written = 0;
+    test_net.write = mock_net_write_accept;
+    test_net.read = mock_net_read_canned;
+    XMEMCPY(g_canned_buf, connack, sizeof(connack));
+    g_canned_len = (int)sizeof(connack);
+    g_canned_pos = 0;
+    XMEMSET(&connect, 0, sizeof(connect));
+    connect.keep_alive_sec = 60;
+    connect.clean_session = 0;
+    connect.client_id = "replay_client";
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = MqttClient_Connect(&test_client, &connect);
+    }
+    g_connect_clean_session = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, rc);
+    /* The PUBREL went out again and its message holds one of the two
+     * units. */
+    ASSERT_TRUE(g_pubrel_written);
+    ASSERT_EQ(1, test_client.server_recv_max);
+
+    /* PUBCOMP completes the message and frees the unit. */
+    XMEMCPY(g_canned_buf, pubcomp, sizeof(pubcomp));
+    g_canned_len = (int)sizeof(pubcomp);
+    g_canned_pos = 0;
+    for (i = 0; i < 20 && g_canned_pos < g_canned_len; i++) {
+        (void)MqttClient_WaitMessage(&test_client, TEST_CMD_TIMEOUT_MS);
+    }
+    ASSERT_EQ(2, test_client.server_recv_max);
+}
+#endif
 #endif
 
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)
@@ -11790,6 +11868,9 @@ void run_mqtt_client_tests(void)
 #endif
     RUN_TEST(reconnect_v5_replay_honors_receive_maximum);
     RUN_TEST(reconnect_v5_republish_replayed_id_keeps_receive_maximum);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(reconnect_v5_replayed_pubrel_holds_receive_maximum);
+#endif
 #endif
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_NONBLOCK)
     RUN_TEST(replay_paused_write_released_by_net_disconnect);

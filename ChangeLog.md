@@ -12,6 +12,56 @@
       `buf[0] = (byte)(topicID >> 8); buf[1] = (byte)topicID;
       publish.topic_name = (char*)buf;`. Received PUBLISH topic IDs use the
       same byte order. See `examples/sn-client/sn-client.c`.
+    - Broker: clients may no longer publish to Topic Names beginning with `$`
+      (MQTT 5.0 section 4.7.2). A v5 QoS 1/2 PUBLISH is answered with Reason
+      Code 0x90, a v5 QoS 0 PUBLISH is dropped and a v3.1.1 client is
+      disconnected. A CONNECT whose Will Topic begins with `$` is refused (v5
+      CONNACK 0x90, v3.1.1 CONNACK 0x03). This stops `$aws/...` and similar
+      topics passing through the broker; define
+      `BROKER_ALLOW_CLIENT_DOLLAR_TOPICS` to restore the old behavior.
+    - Broker: dynamic-memory builds cap allocated clients, including
+      connections that have not sent CONNECT yet, at `BROKER_MAX_DYN_CLIENTS`
+      (default 1024). Further connections are closed on accept.
+    - Broker: in static-memory builds a QoS 1/2 delivery that does not fit a
+      subscriber's in-flight window waits in a per-client live queue of
+      `BROKER_MAX_STATIC_LIVE_MSGS` entries instead of being sent past the
+      v5 Receive Maximum. A subscriber whose live queue is full is
+      disconnected (v5: DISCONNECT 0x97 Quota Exceeded). A delivery larger
+      than a queue entry (`BROKER_MAX_STATIC_OFFLINE_DATA_LEN`) is dropped
+      and logged.
+    - Broker: Subscription Identifiers are not supported. The CONNACK now
+      advertises them as unavailable, and a SUBSCRIBE carrying one is a
+      Protocol Error answered with DISCONNECT 0xA1.
+    - Broker: a v5 client that exceeds the broker's Receive Maximum is
+      disconnected with Reason Code 0x93, and one whose packet fails to
+      decode in a handler gets a reason-coded DISCONNECT before the close.
+    - Broker: v5 retained messages keep their Properties, including across a
+      persistence restart. Retained records with Properties set a flag in the
+      formerly reserved byte and append the Properties after the payload.
+      Records written by earlier releases still load. An earlier release
+      reading the new records loads the message without its Properties.
+    - Broker: new `ws_require_origin` option. With `ws_allowed_origin` set,
+      it also rejects WebSocket requests that carry no Origin header. Off by
+      default.
+    - Client: a v5 PUBACK, PUBREC, PUBREL, PUBCOMP or DISCONNECT with a
+      Reason Code not defined for that packet is now rejected as
+      `MQTT_CODE_ERROR_MALFORMED_DATA`. So are SUBACK and UNSUBACK with Packet
+      Identifier 0 and an UNSUBACK with more reason codes than the ack holds.
+    - Client: in builds with `WOLFMQTT_MAX_QOS` below 2, `MqttClient_Subscribe`
+      and `SN_Client_Subscribe` lower a requested QoS to that cap, and an
+      inbound PUBLISH above it is rejected as
+      `MQTT_CODE_ERROR_MALFORMED_DATA`.
+    - Client: a `MqttClient_Publish` without a publish callback whose
+      non-zero `buffer_len` is shorter than `total_len` now returns
+      `MQTT_CODE_ERROR_BAD_ARG` instead of reading past the buffer.
+    - Client: the TLS minimum DH key size (`WOLF_TLS_DHKEY_BITS_MIN`) is now
+      applied only to the context wolfMQTT creates itself. A context built in
+      the `MqttClient_SetTlsCb` callback keeps its own setting, so set
+      `wolfSSL_CTX_SetMinDhKey_Sz` there when a minimum above wolfSSL's
+      default is required.
+    - MQTT-SN: a REGISTER, QoS 1 PUBLISH or Will update that the gateway
+      answers with a ReturnCode other than Accepted now returns
+      `MQTT_CODE_ERROR_SN_REJECTED` (-22) instead of success.
 
 ### v2.2.0 (10/08/2026)
 Release 2.2.0 has been developed according to wolfSSL's development and QA

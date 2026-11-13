@@ -3122,8 +3122,8 @@ wait_again:
                  * the encode reads these per-object fields instead. */
                 mms_stat->ackPacketType = resp.packet_type;
                 mms_stat->ackPacketId = resp.packet_id;
-                mms_stat->ackSeq = 0;
             #ifndef WOLFMQTT_NO_SESSION_REPLAY
+                mms_stat->ackSeq = 0;
                 if (resp.packet_type == MQTT_PACKET_TYPE_PUBLISH_REL) {
                     mms_stat->ackSeq = MqttClient_Replay_NextSeqSafe(client);
                 }
@@ -3681,11 +3681,14 @@ static int MqttClient_Replay_EncodeNext(MqttClient* client, word16* dropped_id,
     slot = &client->replay[client->replayIdx];
 #ifdef WOLFMQTT_V5
     /* [MQTT-4.9.0-2] A re-sent QoS > 0 PUBLISH counts against the server's
-     * Receive Maximum like a new one. With no unit free, stop here and leave
-     * this and later entries pending, so the original order is kept; they
-     * go out once acknowledgements return units (MqttClient_Replay_Flush). */
+     * Receive Maximum like a new one, and a QoS 2 message resumed at the
+     * PUBREL stage still counts until its PUBCOMP (MQTT 5.0 section 4.9).
+     * With no unit free, stop here and leave this and later entries pending,
+     * so the original order is kept; they go out once acknowledgements
+     * return units (MqttClient_Replay_Flush). */
     if (client->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5 &&
-            !slot->pubrelSent && slot->haveCopy && !slot->onThisConn &&
+            slot->packet_id != 0 &&
+            (slot->pubrelSent || slot->haveCopy) && !slot->onThisConn &&
             !slot->quotaHeld) {
         if (client->server_recv_max == 0) {
             client->replayIdx = MQTT_MAX_REPLAY_MSGS;

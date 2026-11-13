@@ -237,8 +237,8 @@
  * hold while its in-flight window (BROKER_MAX_INFLIGHT_PER_SUB, or the v5
  * Receive Maximum when smaller) is full. Each entry is limited to
  * BROKER_MAX_STATIC_OFFLINE_DATA_LEN bytes of Properties and payload. A
- * delivery that does not fit disconnects the subscriber (v5: Quota Exceeded
- * 0x97) instead of being dropped. */
+ * delivery that finds the queue full disconnects the subscriber (v5: Quota
+ * Exceeded 0x97); one too large for an entry is dropped and logged. */
 #ifndef BROKER_MAX_STATIC_LIVE_MSGS
     #define BROKER_MAX_STATIC_LIVE_MSGS 4
 #endif

@@ -5117,6 +5117,7 @@ static word16 BrokerStaticOutId_Take(MqttBroker* broker, BrokerClient* bc,
  * take yet waits here, in order, instead of being dropped. */
 #define BROKER_STATIC_LIVE_SEND   0
 #define BROKER_STATIC_LIVE_QUEUED 1
+#define BROKER_STATIC_LIVE_FULL   2
 
 /* May another QoS 1/2 PUBLISH be sent to bc now? Bounded by the identifier
  * table and by the v5 Receive Maximum [MQTT-3.3.4-9]. */
@@ -5173,9 +5174,9 @@ static void BrokerStaticLive_RemoveExpired(BrokerClient* bc,
 
 /* Decide how a delivery to connected bc goes out. Returns
  * BROKER_STATIC_LIVE_SEND with *packet_id set (0 for QoS 0) when it may be
- * written now, BROKER_STATIC_LIVE_QUEUED when it was kept for the drain, or a
- * negative code when it can be neither: the queue is full or the message is
- * larger than an entry holds. */
+ * written now, BROKER_STATIC_LIVE_QUEUED when it was kept for the drain,
+ * BROKER_STATIC_LIVE_FULL when the queue has no free entry, or a negative
+ * code when this message cannot be held, such as one larger than an entry. */
 static int BrokerStaticLive_Admit(MqttBroker* broker, BrokerClient* bc,
     const char* topic, const byte* payload, word32 payload_len, MqttQoS qos,
     byte retain
@@ -5202,7 +5203,7 @@ static int BrokerStaticLive_Admit(MqttBroker* broker, BrokerClient* bc,
         }
     }
     if (bc->live_q_count >= BROKER_MAX_STATIC_LIVE_MSGS) {
-        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+        return BROKER_STATIC_LIVE_FULL;
     }
     rc = BrokerStaticOutPub_Fill(&bc->live_q[bc->live_q_count], topic,
         payload, payload_len, qos, retain
@@ -6999,6 +7000,7 @@ static int BrokerRetained_DeliverToClient(MqttBroker* broker,
                     BROKER_FORCE_ZERO(p->payload, p->payload_len);
                     WOLFMQTT_FREE(p->payload);
                 }
+                BrokerRetained_FreeProps(p);
                 WOLFMQTT_FREE(p);
                 if (broker->retained_count > 0) {
                     broker->retained_count--;
@@ -7274,10 +7276,21 @@ static void BrokerClient_PublishWillImmediate(MqttBroker* broker,
                 if (enc_rc == BROKER_STATIC_LIVE_QUEUED) {
                     continue;
                 }
-                if (enc_rc != BROKER_STATIC_LIVE_SEND) {
+                if (enc_rc == BROKER_STATIC_LIVE_FULL) {
                     WBLOG_ERR(broker, "broker: static will queue full "
-                        "sock=%d rc=%d", (int)wc->sock, enc_rc);
+                        "sock=%d", (int)wc->sock);
                     BrokerStaticClient_QuotaClose(broker, wc);
+                    continue;
+                }
+                if (enc_rc != BROKER_STATIC_LIVE_SEND) {
+                    /* Too large for a queue entry while the in-flight
+                     * window is busy. Sending it now would exceed that
+                     * window [MQTT-3.3.4-9] or overtake queued deliveries
+                     * [MQTT-4.6.0-6], so drop this copy as the Session
+                     * queue does; the subscriber is not misbehaving. */
+                    WBLOG_ERR(broker, "broker: static will delivery dropped "
+                        "sock=%d rc=%d (too large for live queue)",
+                        (int)wc->sock, enc_rc);
                     continue;
                 }
 #ifdef WOLFMQTT_V5
@@ -9594,11 +9607,23 @@ static int BrokerHandle_Publish(BrokerClient* bc, int rx_len,
                 if (enqueue_rc == BROKER_STATIC_LIVE_QUEUED) {
                     continue;
                 }
-                if (enqueue_rc != BROKER_STATIC_LIVE_SEND) {
+                if (enqueue_rc == BROKER_STATIC_LIVE_FULL) {
                     WBLOG_ERR(broker,
-                        "broker: static live queue full sock=%d rc=%d",
-                        (int)sub->client->sock, enqueue_rc);
+                        "broker: static live queue full sock=%d",
+                        (int)sub->client->sock);
                     BrokerStaticClient_QuotaClose(broker, sub->client);
+                    continue;
+                }
+                if (enqueue_rc != BROKER_STATIC_LIVE_SEND) {
+                    /* Too large for a queue entry while the in-flight
+                     * window is busy. Sending it now would exceed that
+                     * window [MQTT-3.3.4-9] or overtake queued deliveries
+                     * [MQTT-4.6.0-6], so drop this copy as the Session
+                     * queue does; the subscriber is not misbehaving. */
+                    WBLOG_ERR(broker,
+                        "broker: static live delivery dropped sock=%d rc=%d "
+                        "(too large for live queue)",
+                        (int)sub->client->sock, enqueue_rc);
                     continue;
                 }
                 out_pub.retain = 0;

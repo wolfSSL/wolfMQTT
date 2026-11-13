@@ -74,11 +74,19 @@ static int g_capture_free_seen;
 static size_t g_alloc_fail_size; /* fail the next malloc of exactly this size */
 static void* g_free_watch_ptr;
 static int g_free_watch_count;
+/* Called before each allocation of exactly g_alloc_hook_size bytes while
+ * set, so a test can act at a point inside a broker loop that makes no other
+ * callback. */
+static size_t g_alloc_hook_size;
+static void (*g_alloc_hook)(void);
 
 void* wolfmqtt_test_broker_malloc(size_t size)
 {
     void* ptr;
 
+    if (g_alloc_hook != NULL && size == g_alloc_hook_size) {
+        g_alloc_hook();
+    }
     if (g_alloc_fail_after == 0) {
         g_alloc_fail_after = -1;
         g_alloc_failure_count++;
@@ -434,6 +442,7 @@ static void reset_mock_clients(int n_clients)
     g_accept_fail_rc = 0;
     g_read_timeout_max = 0;
     g_write_timeout_max = 0;
+    g_alloc_hook = NULL;
 #ifndef WOLFMQTT_STATIC_MEMORY
     g_write_publish_hook = NULL;
 #endif
@@ -2587,6 +2596,104 @@ TEST(broker_v5_retained_delivery_keeps_properties)
 }
 #endif
 
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED) && \
+    !defined(WOLFMQTT_STATIC_MEMORY)
+static MqttBroker* g_reap_broker;
+static int g_reap_enqueues;
+
+/* Runs before each retained delivery is queued. At the second one the loop
+ * has passed the first node of the list, so mark that node as a re-entrant
+ * BrokerRetained_Delete does while a delivery loop holds the list, and watch
+ * its Properties copy. */
+static void retained_mark_passed_pending_delete(void)
+{
+    BrokerRetainedMsg* rm;
+
+    g_reap_enqueues++;
+    if (g_reap_enqueues != 2 || g_reap_broker == NULL) {
+        return;
+    }
+    g_alloc_hook = NULL;
+    rm = g_reap_broker->retained;
+    if (rm != NULL && rm->props != NULL) {
+        broker_test_watch_free(rm->props);
+        rm->pending_delete = 1;
+    }
+}
+
+/* A retained message deleted after the delivery loop passed it is freed by
+ * the reap at the end of that delivery. Its Properties copy (MQTT 5.0 section
+ * 3.3.2.3) is freed there too, like at every other retained free site. */
+TEST(broker_v5_retained_deferred_delete_frees_properties)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    static const byte connect_pub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    static const byte connect_sub[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'S'
+    };
+    /* v5 PUBLISH QoS 0 RETAIN, topic "r/1" then "r/2", Properties length 7
+     * holding the User Property "k"="v", payload "z". Remaining Length
+     * 2 + 3 + 1 + 7 + 1 = 14. */
+    static const byte publish_r1[] = {
+        0x31, 0x0E, 0x00, 0x03, 'r', '/', '1',
+        0x07, 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v',
+        'z'
+    };
+    static const byte publish_r2[] = {
+        0x31, 0x0E, 0x00, 0x03, 'r', '/', '2',
+        0x07, 0x26, 0x00, 0x01, 'k', 0x00, 0x01, 'v',
+        'z'
+    };
+    /* v5 SUBSCRIBE packet id 1, Properties length 0, filter "r/#", QoS 0 */
+    static const byte subscribe_r[] = {
+        0x82, 0x09, 0x00, 0x01, 0x00, 0x00, 0x03, 'r', '/', '#', 0x00
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, connect_pub, sizeof(connect_pub));
+    mock_client_input_append(0, publish_r1, sizeof(publish_r1));
+    mock_client_input_append(0, publish_r2, sizeof(publish_r2));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(2, broker.retained_count);
+    ASSERT_TRUE(broker.retained != NULL);
+    ASSERT_TRUE(broker.retained->props != NULL);
+
+    g_reap_broker = &broker;
+    g_reap_enqueues = 0;
+    g_alloc_hook_size = sizeof(BrokerOutPub);
+    g_alloc_hook = retained_mark_passed_pending_delete;
+    mock_client_input_append(1, connect_sub, sizeof(connect_sub));
+    mock_client_input_append(1, subscribe_r, sizeof(subscribe_r));
+    for (i = 0; i < 12; i++) {
+        MqttBroker_Step(&broker);
+    }
+    g_alloc_hook = NULL;
+    g_reap_broker = NULL;
+    ASSERT_EQ(2, g_reap_enqueues);
+    ASSERT_EQ(2, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    /* The reap removed the marked message and released its Properties. */
+    ASSERT_EQ(1, broker.retained_count);
+    ASSERT_EQ(1, broker_test_watched_frees());
+    broker_test_watch_free(NULL);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif
+
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
 /* [MQTT-3.3.1-5] a new RETAIN=1 PUBLISH replaces the retained message for its
  * topic. When the broker cannot keep the new one (static builds bound the
@@ -4237,6 +4344,10 @@ TEST(takeover_will_claimed_before_fanout)
 
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
+/* The QoS 2 flow tests below need a build that accepts QoS 2; one built with
+ * a lower WOLFMQTT_MAX_QOS refuses the PUBLISH instead (see
+ * publish_qos2_above_max_qos_*). */
+#if WOLFMQTT_MAX_QOS >= 2
 TEST(qos2_duplicate_publish_dedup)
 {
     MqttBroker broker;
@@ -4471,6 +4582,7 @@ static size_t build_qos2_pub(byte* out, word16 packet_id)
     out[7] = 'p';
     return 8;
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* Build a v3.1.1 QoS 1 PUBLISH to topic "x" (payload "p") with the given
  * packet_id. Used to flood a slow subscriber's outbound queue. The v3.1.1
@@ -4492,6 +4604,7 @@ static size_t build_qos1_pub(byte* out, word16 packet_id)
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* The per-client cap on in-flight QoS 2 packet IDs (BROKER_MAX_INBOUND_QOS2,
  * default 16) MUST disconnect a client that exceeds it. Without the cap, a
  * misbehaving client could exhaust broker memory by sending many distinct
@@ -4946,6 +5059,7 @@ TEST(qos2_topic_alloc_failure_retransmit_delivered)
     MqttBroker_Free(&broker);
 }
 #endif /* !WOLFMQTT_STATIC_MEMORY */
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* The out_q-cap tests are dynamic-memory-only (they inspect out_q_count and
  * the linked client list); the v5 variant additionally uses the v5-only
@@ -5760,7 +5874,7 @@ TEST(pending_write_does_not_bypass_keepalive)
 #endif /* WOLFMQTT_NONBLOCK */
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
-#ifdef WOLFMQTT_V5
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
 /* v5 variant: same orphan-then-publish-then-disconnect pattern but the
  * PUBLISH carries a property block. Tests the suspected use-after-free in
  * the fan-out path where pub.props is shared across subscribers and then
@@ -10337,6 +10451,85 @@ TEST(static_fanout_full_live_queue_disconnects_quota)
     MqttBroker_Free(&broker);
 }
 
+/* Only a full live queue is a quota violation. A delivery too large for a
+ * queue entry while the in-flight window is busy cannot be sent now without
+ * exceeding Receive Maximum [MQTT-3.3.4-9], so it is dropped; the subscriber
+ * stays connected and keeps receiving later messages in order. */
+TEST(static_fanout_oversize_while_window_busy_keeps_subscriber)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    BrokerClient* sub_bc;
+    int i;
+    int vbi_len;
+    word32 remain;
+    word32 payload_len;
+    size_t pos;
+    PublishInfo first;
+    byte puback[4];
+    byte vbi[MQTT_PACKET_MAX_LEN_BYTES];
+    byte big[1 + MQTT_PACKET_MAX_LEN_BYTES + 5 +
+        BROKER_MAX_STATIC_OFFLINE_DATA_LEN + 1];
+
+    sub_bc = static_setup_recv_max_1(&broker, &net);
+    ASSERT_NOT_NULL(sub_bc);
+    g_clients[0].out_len = 0;
+
+    /* Id 1 takes the only in-flight unit. */
+    static_publish_x_qos1(&broker, 1);
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    first = first_publish_info(g_clients[0].out_buf, g_clients[0].out_len);
+    ASSERT_TRUE(first.found);
+
+    /* v3.1.1 PUBLISH QoS 1 on "x", packet id 2, payload one byte longer than
+     * a queue entry holds. Remaining Length = 2 + 1 (topic) + 2 (id) +
+     * payload. */
+    payload_len = BROKER_MAX_STATIC_OFFLINE_DATA_LEN + 1;
+    remain = 2 + 1 + 2 + payload_len;
+    vbi_len = MqttEncode_Vbi(vbi, remain);
+    ASSERT_TRUE(vbi_len > 0);
+    pos = 0;
+    big[pos++] = 0x32;
+    XMEMCPY(&big[pos], vbi, (size_t)vbi_len);
+    pos += (size_t)vbi_len;
+    big[pos++] = 0x00; big[pos++] = 0x01; big[pos++] = 'x';
+    big[pos++] = 0x00; big[pos++] = 0x02;
+    XMEMSET(&big[pos], 'L', payload_len);
+    pos += payload_len;
+    mock_client_input_append(1, big, pos);
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(sub_bc->connected);
+    ASSERT_FALSE(g_clients[0].closed);
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_DISCONNECT));
+
+    /* Id 3 waits in the live queue behind id 1. */
+    static_publish_x_qos1(&broker, 3);
+    ASSERT_EQ(1, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+
+    /* v5 PUBACK for the first delivery, Reason Code omitted [MQTT-3.4.2.1]:
+     * the queued message goes out next. */
+    puback[0] = 0x40;
+    puback[1] = 0x02;
+    puback[2] = (byte)(first.packet_id >> 8);
+    puback[3] = (byte)(first.packet_id & 0xFF);
+    mock_client_input_append(0, puback, sizeof(puback));
+    for (i = 0; i < 8; i++) {
+        (void)MqttBroker_Step(&broker);
+    }
+    ASSERT_EQ(2, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_TRUE(sub_bc->connected);
+    ASSERT_FALSE(g_clients[1].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
 #ifdef WOLFMQTT_BROKER_RETAINED
 /* A retained copy the live queue cannot hold is skipped, not fatal: it is
  * not a delivery a publisher was acknowledged for, and the SUBSCRIBE must
@@ -10684,7 +10877,7 @@ TEST(publish_offline_fanout_alloc_failure_v311_not_acked)
     MqttBroker_Free(&broker);
 }
 
-#ifdef WOLFMQTT_V5
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
 /* A v5 publisher is told with a failure Reason Code instead (MQTT 5.0
  * section 3.5.2.1). A PUBREC with a Reason Code of 0x80 or greater ends the
  * QoS 2 exchange (section 4.3.3), so the Packet Identifier must not stay
@@ -10779,7 +10972,7 @@ TEST(publish_fanout_alloc_failure_v5_qos2_pubrec_failure)
 #endif /* WOLFMQTT_V5 */
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 
-#ifndef WOLFMQTT_STATIC_MEMORY
+#if !defined(WOLFMQTT_STATIC_MEMORY) && WOLFMQTT_MAX_QOS >= 2
 /* A PUBACK belongs only to a QoS 1 exchange (MQTT 3.1.1 section 4.3.2). A
  * subscriber that answers a QoS 2 delivery with PUBACK must not complete it:
  * the entry keeps its packet identifier and inflight slot until the real
@@ -13177,10 +13370,12 @@ TEST(retained_qos_stored_1_sub_1_delivers_qos1)
     retained_qos_case(MQTT_QOS_1, MQTT_QOS_1, MQTT_QOS_1);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 TEST(retained_qos_stored_2_sub_1_delivers_qos1)
 {
     retained_qos_case(MQTT_QOS_2, MQTT_QOS_1, MQTT_QOS_1);
 }
+#endif
 
 TEST(retained_qos_stored_1_sub_0_delivers_qos0)
 {
@@ -13192,6 +13387,7 @@ TEST(retained_qos_stored_0_sub_1_delivers_qos0)
     retained_qos_case(MQTT_QOS_0, MQTT_QOS_1, MQTT_QOS_0);
 }
 
+#if WOLFMQTT_MAX_QOS >= 2
 /* Pins the QoS 2 outbound wire shape (first byte 0x35, packet_id
  * present). Without this case the QoS 2 outbound branch of
  * BrokerRetained_DeliverToClient never produces QoS 2 on the wire of any
@@ -13208,6 +13404,7 @@ TEST(retained_qos_stored_2_sub_0_delivers_qos0)
 {
     retained_qos_case(MQTT_QOS_2, MQTT_QOS_0, MQTT_QOS_0);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 #ifndef WOLFMQTT_STATIC_MEMORY
 /* [MQTT-3.3.1-9] A successful subscription must receive the matching retained
@@ -13272,7 +13469,186 @@ TEST(retained_delivery_alloc_failure_prevents_success_suback)
 #endif /* !WOLFMQTT_STATIC_MEMORY */
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
+#if WOLFMQTT_MAX_QOS < 2
+/* Behavior of a build whose WOLFMQTT_MAX_QOS is below 2, in place of the
+ * QoS 2 flow tests that need QoS 2 support. */
+
+/* v3.1.1 CONNECT, Clean Session, keep alive 60, ClientId "S". Remaining
+ * Length 10 + 3 = 13. */
+static const byte max_qos_connect_s[] = {
+    0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+    0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'S'
+};
+
+/* MQTT 3.1.1 section 3.9.3 / MQTT 5.0 section 3.9.3: the Server may grant a
+ * lower QoS than requested, and this build never grants above its cap. S
+ * asks for QoS 2 on "x"; the SUBACK return code is the build's maximum. */
+TEST(subscribe_qos2_granted_at_max_qos)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    size_t pos;
+    /* v3.1.1 SUBSCRIBE packet id 1, filter "x", Requested QoS 2.
+     * Remaining Length 2 + 3 + 1 = 6. */
+    static const byte subscribe_x_q2[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x02
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(1);
+    mock_client_input_append(0, max_qos_connect_s, sizeof(max_qos_connect_s));
+    mock_client_input_append(0, subscribe_x_q2, sizeof(subscribe_x_q2));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_clients[0].closed);
+    /* v3.1.1 CONNACK is 4 bytes; the SUBACK follows: 0x90, Remaining
+     * Length 3, packet id 1, return code. */
+    pos = 4;
+    ASSERT_TRUE(g_clients[0].out_len >= pos + 5);
+    ASSERT_EQ(0x90, g_clients[0].out_buf[pos]);
+    ASSERT_EQ(0x03, g_clients[0].out_buf[pos + 1]);
+    ASSERT_EQ(0x00, g_clients[0].out_buf[pos + 2]);
+    ASSERT_EQ(0x01, g_clients[0].out_buf[pos + 3]);
+    ASSERT_EQ(WOLFMQTT_MAX_QOS, (int)g_clients[0].out_buf[pos + 4]);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+/* A v3.1.1 client has no Maximum QoS to be told about, so a QoS 2 PUBLISH it
+ * sends to this build is a protocol violation and the broker closes the
+ * Network Connection (MQTT 3.1.1 section 4.8). It gets no PUBREC and the
+ * message is not delivered to subscriber S. */
+TEST(publish_qos2_above_max_qos_v311_closes)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    /* v3.1.1 CONNECT, Clean Session, ClientId "P" */
+    static const byte connect_p[] = {
+        0x10, 0x0D, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x04, 0x02, 0x00, 0x3C, 0x00, 0x01, 'P'
+    };
+    /* v3.1.1 SUBSCRIBE packet id 1, filter "x", QoS 0 */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* v3.1.1 PUBLISH QoS 2 (0x34), topic "x", packet id 1, payload "p".
+     * Remaining Length 3 + 2 + 1 = 6. */
+    static const byte publish_q2[] = {
+        0x34, 0x06, 0x00, 0x01, 'x', 0x00, 0x01, 'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, max_qos_connect_s, sizeof(max_qos_connect_s));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_p, sizeof(connect_p));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_clients[1].closed);
+
+    mock_client_input_append(1, publish_q2, sizeof(publish_q2));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_EQ(0, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC));
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_FALSE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+
+#ifdef WOLFMQTT_V5
+/* [MQTT-3.2.2-9] A v5 Server that does not support QoS 2 sends Maximum QoS
+ * (0x24) in its CONNACK. A QoS 2 PUBLISH above it is answered with
+ * DISCONNECT 0x9B QoS not supported (MQTT 5.0 section 3.2.2.3.4) and the
+ * connection is closed, without a PUBREC or delivery to subscriber S. */
+TEST(publish_qos2_above_max_qos_v5_disconnects_0x9b)
+{
+    MqttBroker broker;
+    MqttBrokerNet net;
+    int i;
+    int found = 0;
+    size_t connack_end;
+    /* v5 CONNECT, Clean Start, ClientId "P", Properties length 0.
+     * Remaining Length 10 + 1 + 3 = 14. */
+    static const byte connect_p[] = {
+        0x10, 0x0E, 0x00, 0x04, 'M', 'Q', 'T', 'T',
+        0x05, 0x02, 0x00, 0x3C, 0x00, 0x00, 0x01, 'P'
+    };
+    /* v3.1.1 SUBSCRIBE packet id 1, filter "x", QoS 0 */
+    static const byte subscribe_x[] = {
+        0x82, 0x06, 0x00, 0x01, 0x00, 0x01, 'x', 0x00
+    };
+    /* v5 PUBLISH QoS 2 (0x34), topic "x", packet id 1, Properties length
+     * 0, payload "p". Remaining Length 3 + 2 + 1 + 1 = 7. */
+    static const byte publish_q2[] = {
+        0x34, 0x07, 0x00, 0x01, 'x', 0x00, 0x01, 0x00, 'p'
+    };
+
+    install_mock_net(&net);
+    XMEMSET(&broker, 0, sizeof(broker));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Init(&broker, &net));
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttBroker_Start(&broker));
+    reset_mock_clients(2);
+    mock_client_input_append(0, max_qos_connect_s, sizeof(max_qos_connect_s));
+    mock_client_input_append(0, subscribe_x, sizeof(subscribe_x));
+    mock_client_input_append(1, connect_p, sizeof(connect_p));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_FALSE(g_clients[1].closed);
+
+    /* v5 CONNACK: 0x20, one-byte Remaining Length, flags, Reason Code,
+     * then the Properties. Maximum QoS is 0x24 followed by its byte. */
+    ASSERT_TRUE(g_clients[1].out_len >= 5);
+    ASSERT_EQ(0x20, g_clients[1].out_buf[0]);
+    ASSERT_EQ(0x00, g_clients[1].out_buf[3]);
+    connack_end = 2 + (size_t)g_clients[1].out_buf[1];
+    ASSERT_TRUE(connack_end <= g_clients[1].out_len);
+    for (i = 5; (size_t)i + 1 < connack_end; i++) {
+        if (g_clients[1].out_buf[i] == MQTT_PROP_MAX_QOS &&
+                g_clients[1].out_buf[i + 1] == WOLFMQTT_MAX_QOS) {
+            found = 1;
+        }
+    }
+    ASSERT_TRUE(found);
+
+    mock_client_input_append(1, publish_q2, sizeof(publish_q2));
+    for (i = 0; i < 8; i++) {
+        MqttBroker_Step(&broker);
+    }
+    ASSERT_TRUE(g_clients[1].closed);
+    ASSERT_EQ(MQTT_REASON_QOS_NOT_SUPPORTED,
+        first_disconnect_reason(g_clients[1].out_buf, g_clients[1].out_len));
+    ASSERT_EQ(0, count_packets_of_type(g_clients[1].out_buf,
+        g_clients[1].out_len, MQTT_PACKET_TYPE_PUBLISH_REC));
+    ASSERT_EQ(0, count_packets_of_type(g_clients[0].out_buf,
+        g_clients[0].out_len, MQTT_PACKET_TYPE_PUBLISH));
+    ASSERT_FALSE(g_clients[0].closed);
+
+    MqttBroker_Stop(&broker);
+    MqttBroker_Free(&broker);
+}
+#endif /* WOLFMQTT_V5 */
+#endif /* WOLFMQTT_MAX_QOS < 2 */
+
 #if defined(WOLFMQTT_V5) && !defined(WOLFMQTT_STATIC_MEMORY)
+#if WOLFMQTT_MAX_QOS >= 2
 /* QoS 2 dedup state must survive a disconnect/reconnect cycle; a
  * retransmitted PUBLISH must not be re-fanned-out to the subscriber. */
 TEST(qos2_dedup_survives_disconnect_reconnect)
@@ -13369,6 +13745,7 @@ TEST(qos2_dedup_survives_disconnect_reconnect)
     MqttBroker_Stop(&broker);
     MqttBroker_Free(&broker);
 }
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 
 /* [MQTT-3.1.2.11.3]: Receive Maximum = 0 in CONNECT must close, not "unset". */
 TEST(connect_v5_receive_max_zero_protocol_error)
@@ -18767,6 +19144,7 @@ int main(int argc, char** argv)
 #ifdef WOLFMQTT_V5
     RUN_TEST(static_fanout_honors_v5_receive_maximum);
     RUN_TEST(static_fanout_full_live_queue_disconnects_quota);
+    RUN_TEST(static_fanout_oversize_while_window_busy_keeps_subscriber);
 #ifdef WOLFMQTT_BROKER_RETAINED
     RUN_TEST(static_retained_overflow_skips_copy_and_sends_suback);
 #endif
@@ -18824,6 +19202,9 @@ int main(int argc, char** argv)
 #if defined(WOLFMQTT_V5) && defined(WOLFMQTT_BROKER_RETAINED)
     RUN_TEST(broker_v5_retained_delivery_keeps_properties);
     RUN_TEST(broker_v5_retained_replacement_never_serves_stale);
+#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(broker_v5_retained_deferred_delete_frees_properties);
+#endif
 #endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(broker_v5_subscription_identifier_not_supported);
@@ -18872,6 +19253,7 @@ int main(int argc, char** argv)
     RUN_TEST(takeover_will_claimed_before_fanout);
 #endif
 #endif
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(qos2_duplicate_publish_dedup);
     RUN_TEST(qos2_phantom_dup_publish_is_fresh);
     RUN_TEST(qos2_publish_after_pubrel_is_fresh);
@@ -18883,8 +19265,11 @@ int main(int argc, char** argv)
     RUN_TEST(qos2_pubrel_unknown_id_still_pubcomps);
     RUN_TEST(qos2_publish_with_offline_durable_subscriber);
     RUN_TEST(qos2_publish_then_abrupt_close_offline_subscriber);
+#endif /* WOLFMQTT_MAX_QOS >= 2 */
 #ifndef WOLFMQTT_STATIC_MEMORY
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(qos2_topic_alloc_failure_retransmit_delivered);
+#endif
 #ifdef WOLFMQTT_V5
     RUN_TEST(online_qos1_flood_disconnects_slow_v5_subscriber);
 #endif /* WOLFMQTT_V5 */
@@ -18898,10 +19283,12 @@ int main(int argc, char** argv)
     RUN_TEST(publish_qos2_exceeding_sub_tx_buf_not_acked);
 #endif
 #endif
+#if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(outbound_qos2_puback_does_not_complete_delivery);
+#endif
     RUN_TEST(publish_fanout_alloc_failure_v311_not_acked);
     RUN_TEST(publish_offline_fanout_alloc_failure_v311_not_acked);
-#ifdef WOLFMQTT_V5
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(publish_fanout_alloc_failure_v5_qos2_pubrec_failure);
 #endif
     RUN_TEST(drain_stops_when_session_handoff_takes_queue);
@@ -18933,7 +19320,7 @@ int main(int argc, char** argv)
     RUN_TEST(outbound_blocking_partial_failure_reconnect_sets_dup);
 #endif
 #endif /* !WOLFMQTT_STATIC_MEMORY */
-#ifdef WOLFMQTT_V5
+#if defined(WOLFMQTT_V5) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(qos2_publish_v5_props_with_offline_durable_subscriber);
 #endif
     RUN_TEST(pingreq_valid_emits_pingresp);
@@ -19106,17 +19493,26 @@ int main(int argc, char** argv)
 #endif
 #ifdef WOLFMQTT_BROKER_RETAINED
     RUN_TEST(retained_qos_stored_1_sub_1_delivers_qos1);
-    RUN_TEST(retained_qos_stored_2_sub_1_delivers_qos1);
     RUN_TEST(retained_qos_stored_1_sub_0_delivers_qos0);
     RUN_TEST(retained_qos_stored_0_sub_1_delivers_qos0);
+#if WOLFMQTT_MAX_QOS >= 2
+    RUN_TEST(retained_qos_stored_2_sub_1_delivers_qos1);
     RUN_TEST(retained_qos_stored_2_sub_2_delivers_qos2);
     RUN_TEST(retained_qos_stored_2_sub_0_delivers_qos0);
+#endif
 #ifndef WOLFMQTT_STATIC_MEMORY
     RUN_TEST(retained_delivery_alloc_failure_prevents_success_suback);
 #endif
 #endif
+#if WOLFMQTT_MAX_QOS < 2
+    RUN_TEST(subscribe_qos2_granted_at_max_qos);
+    RUN_TEST(publish_qos2_above_max_qos_v311_closes);
 #ifdef WOLFMQTT_V5
-#ifndef WOLFMQTT_STATIC_MEMORY
+    RUN_TEST(publish_qos2_above_max_qos_v5_disconnects_0x9b);
+#endif
+#endif
+#ifdef WOLFMQTT_V5
+#if !defined(WOLFMQTT_STATIC_MEMORY) && WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(qos2_dedup_survives_disconnect_reconnect);
 #endif
 #endif
