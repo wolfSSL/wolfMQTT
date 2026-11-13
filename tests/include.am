@@ -162,7 +162,7 @@ tests_test_broker_connect_SOURCES = \
     src/mqtt_broker_persist.c \
     src/mqtt_broker_persist_posix.c
 tests_test_broker_connect_CFLAGS   = -DWOLFMQTT_BROKER -DWOLFMQTT_BROKER_CUSTOM_NET \
-    -DWOLFMQTT_BROKER_NO_LOG -DNO_MAIN_DRIVER \
+    -DWOLFMQTT_BROKER_NO_LOG -DNO_MAIN_DRIVER -DBROKER_MAX_DYN_CLIENTS=4 \
     '-DWOLFMQTT_BROKER_GET_TIME_S()=wolfmqtt_test_broker_time_s()' \
     '-DBROKER_SLEEP_MS(ms)=do{}while(0)' \
     $(AM_CFLAGS)

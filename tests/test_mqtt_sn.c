@@ -1901,6 +1901,115 @@ TEST(sn_encode_willmsgupd_null_msg_buffer_rejected)
  * 2330.
  * ============================================================================ */
 
+/* MQTT-SN 1.2 section 5.3.10 Table 5 defines ReturnCode values 0x00 to
+ * 0x03; 0x04 to 0xFF are reserved. Each response decoder must reject a
+ * reserved value rather than hand it to the client as a rejection. */
+/* MQTT-SN 1.2 section 6.8: a QoS -1 PUBLISH uses a predefined or short Topic
+ * Id and MsgId 0x0000. The encoder must not emit any other combination. */
+TEST(sn_encode_publish_qos_m1_invalid_combinations_rejected)
+{
+    byte tx_buf[32];
+    byte payload[1] = { 'x' };
+    char topic[2] = { 0x00, 0x01 };
+    SN_Publish pub;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.qos = MQTT_QOS_3;
+    pub.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    pub.topic_name = topic;
+    pub.buffer = payload;
+    pub.total_len = (word32)sizeof(payload);
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, SN_Encode_Publish(tx_buf,
+        (int)sizeof(tx_buf), &pub));
+
+    pub.topic_type = SN_TOPIC_ID_TYPE_PREDEF;
+    pub.packet_id = 1;
+    ASSERT_EQ(MQTT_CODE_ERROR_BAD_ARG, SN_Encode_Publish(tx_buf,
+        (int)sizeof(tx_buf), &pub));
+
+    /* Control: predefined Topic Id with MsgId 0 is valid */
+    pub.packet_id = 0;
+    ASSERT_TRUE(SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &pub) > 0);
+}
+
+/* MQTT-SN 1.2 section 5.4.12: the PUBLISH TopicId is two bytes, most
+ * significant first. SN_Publish.topic_name carries those two bytes as-is for
+ * every Topic Id type, so a decoded PUBLISH can be re-published unchanged.
+ * Fixture: Length 8, PUBLISH, Flags NORMAL QoS 0 (0x00), TopicId 0x0102,
+ * MsgId 0, Data 'x'. */
+TEST(sn_publish_normal_topic_id_is_big_endian_both_ways)
+{
+    static const byte wire[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x00, 0x01,
+                                 0x02, 0x00, 0x00, 'x' };
+    byte rx[sizeof(wire)];
+    byte tx_buf[32];
+    char topic[2] = { 0x01, 0x02 };
+    byte payload[1] = { 'x' };
+    SN_Publish pub;
+    int rc;
+
+    XMEMSET(&pub, 0, sizeof(pub));
+    pub.qos = MQTT_QOS_0;
+    pub.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
+    pub.topic_name = topic;
+    pub.buffer = payload;
+    pub.total_len = (word32)sizeof(payload);
+    rc = SN_Encode_Publish(tx_buf, (int)sizeof(tx_buf), &pub);
+    ASSERT_EQ((int)sizeof(wire), rc);
+    ASSERT_MEM_EQ(wire, tx_buf, sizeof(wire));
+
+    XMEMCPY(rx, wire, sizeof(wire));
+    XMEMSET(&pub, 0, sizeof(pub));
+    rc = SN_Decode_Publish(rx, (int)sizeof(rx), &pub);
+    ASSERT_EQ((int)sizeof(wire), rc);
+    ASSERT_EQ(SN_TOPIC_ID_TYPE_NORMAL, pub.topic_type);
+    ASSERT_EQ(0x01, (byte)pub.topic_name[0]);
+    ASSERT_EQ(0x02, (byte)pub.topic_name[1]);
+}
+
+TEST(sn_decode_reserved_return_code_rejected)
+{
+    /* Length, MsgType, ReturnCode 0x04 */
+    byte connack[] = { 0x03, SN_MSG_TYPE_CONNACK, 0x04 };
+    byte willtopicresp[] = { 0x03, SN_MSG_TYPE_WILLTOPICRESP, 0x04 };
+    byte willmsgresp[] = { 0x03, SN_MSG_TYPE_WILLMSGRESP, 0x04 };
+    /* Length, MsgType, TopicId 1, MsgId 1, ReturnCode 0x04 */
+    byte regack[] = { 0x07, SN_MSG_TYPE_REGACK, 0x00, 0x01, 0x00, 0x01,
+        0x04 };
+    byte puback[] = { 0x07, SN_MSG_TYPE_PUBACK, 0x00, 0x01, 0x00, 0x01,
+        0x04 };
+    /* Length, MsgType, Flags, TopicId 1, MsgId 1, ReturnCode 0x04 */
+    byte suback[] = { 0x08, SN_MSG_TYPE_SUBACK, 0x00, 0x00, 0x01, 0x00,
+        0x01, 0x04 };
+    SN_ConnectAck ca;
+    SN_RegAck ra;
+    SN_SubAck sa;
+    SN_PublishResp pr;
+    byte ret_code = 0;
+
+    XMEMSET(&ca, 0, sizeof(ca));
+    XMEMSET(&ra, 0, sizeof(ra));
+    XMEMSET(&sa, 0, sizeof(sa));
+    XMEMSET(&pr, 0, sizeof(pr));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_ConnectAck(connack,
+        (int)sizeof(connack), &ca));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_WillTopicResponse(
+        willtopicresp, (int)sizeof(willtopicresp), &ret_code));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_WillMsgResponse(
+        willmsgresp, (int)sizeof(willmsgresp), &ret_code));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_RegAck(regack,
+        (int)sizeof(regack), &ra));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_SubscribeAck(suback,
+        (int)sizeof(suback), &sa));
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, SN_Decode_PublishResp(puback,
+        (int)sizeof(puback), SN_MSG_TYPE_PUBACK, &pr));
+
+    /* Control: the highest defined code (Not supported) still decodes */
+    connack[2] = SN_RC_NOTSUPPORTED;
+    ASSERT_EQ(3, SN_Decode_ConnectAck(connack, (int)sizeof(connack), &ca));
+    ASSERT_EQ(SN_RC_NOTSUPPORTED, ca.return_code);
+}
+
 TEST(sn_encode_register_null_topic_string_rejected)
 {
     /* Regression for report 2330: a zero-initialized SN_Register is non-NULL
@@ -2095,6 +2204,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_encode_willmsg_null_msg_buffer_rejected);
     RUN_TEST(sn_encode_willmsgupd_null_msg_buffer_rejected);
 
+    RUN_TEST(sn_decode_reserved_return_code_rejected);
+    RUN_TEST(sn_publish_normal_topic_id_is_big_endian_both_ways);
+    RUN_TEST(sn_encode_publish_qos_m1_invalid_combinations_rejected);
     RUN_TEST(sn_encode_register_null_topic_string_rejected);
     RUN_TEST(sn_encode_register_null_args_rejected);
     RUN_TEST(sn_encode_register_topic_valid);

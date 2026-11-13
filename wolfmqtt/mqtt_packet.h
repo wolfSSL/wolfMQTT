@@ -370,6 +370,12 @@ typedef struct _MqttMsgStat {
     byte   ackReasonCode;
     byte   ackProtocolLevel;
 #endif
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+    /* Session replay order of a staged PUBREL, taken while its PUBREC was
+     * read so PUBRELs replay in PUBREC order (MQTT 3.1.1 and 5.0 section
+     * 4.6) even when two threads send them in the other order. 0 = none. */
+    word32 ackSeq;
+#endif
 } MqttMsgStat;
 
 #ifdef WOLFMQTT_MULTITHREAD
@@ -500,7 +506,10 @@ typedef struct _MqttConnect {
     byte        clean_session;
     const char *client_id;
 
-    /* Protocol version: 4=v3.1.1 (default), 5=v5.0 */
+    /* Protocol version: 4=v3.1.1, 5=v5.0. 0 selects the build default
+     * (MQTT_CONNECT_PROTOCOL_LEVEL: 5 with WOLFMQTT_V5, otherwise 4). In
+     * WOLFMQTT_V5 builds MqttClient_Connect overwrites this field with
+     * client->protocol_level; set client->protocol_level instead. */
     byte protocol_level;
 
     /* Optional Last will and testament */
@@ -656,6 +665,9 @@ typedef struct _MqttUnsubscribeAck {
     byte*     reason_codes;
     word16    reason_code_count;
     byte protocol_level;
+    /* Decoded reason codes (the first MAX_MQTT_TOPICS); reason_codes points
+     * here after a decode so they do not depend on the receive buffer. */
+    byte      reason_codes_buf[MAX_MQTT_TOPICS];
 #endif
 } MqttUnsubscribeAck;
 

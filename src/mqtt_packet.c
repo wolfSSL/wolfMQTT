@@ -969,9 +969,12 @@ int MqttEncode_Props(MqttPacketType packet, MqttProp* props, byte* buf)
                  * property block its own decoder (or a peer) treats as
                  * malformed. */
                 if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
-                        !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                        (cur_prop->data_str.len == 0 ||
+                         !MqttPacket_TopicNameValid(cur_prop->data_str.str,
                             cur_prop->data_str.len,
-                            MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                            MQTT_CONNECT_PROTOCOL_LEVEL_5))) {
+                    /* [MQTT-4.7.3-1] nor be empty: the empty-name Topic
+                     * Alias allowance is for PUBLISH Topic Names only. */
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
             #ifndef WOLFMQTT_NO_UTF8_VALIDATION
@@ -1116,7 +1119,6 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         if (rc < 0) {
             break;
         }
-        cur_prop->type = (MqttPropertyType)prop_type;
         tmp = rc;
         /* The Identifier must fit in the remaining Property Length */
         if ((word32)tmp > prop_len) {
@@ -1127,10 +1129,18 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
         total += tmp;
         prop_len -= tmp;
 
-        if (cur_prop->type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
+        /* Validate before storing: the node is already linked into *props
+         * and, in the static pool, type MQTT_PROP_NONE marks a free slot that
+         * another thread's MqttProps_Add could claim. */
+        if (prop_type >= sizeof(gPropMatrix) / sizeof(gPropMatrix[0])) {
             rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY);
             break;
         }
+        if (prop_type == (word32)MQTT_PROP_NONE) {
+            rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PROPERTY_MISMATCH);
+            break;
+        }
+        cur_prop->type = (MqttPropertyType)prop_type;
 
         /* Validate property type is allowed for packet type */
         if (!(gPropMatrix[cur_prop->type].packet_type_mask & (1 << packet))) {
@@ -1179,7 +1189,6 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     break;
                 }
                 cur_prop->data_byte = *buf++;
-                tmp++;
                 total++;
                 prop_len--;
                 /* Every MQTT 5 Byte property is Boolean-valued (0 or 1), and
@@ -1267,9 +1276,13 @@ int MqttDecode_Props(MqttPacketType packet, MqttProp** props, byte* pbuf,
                     /* [MQTT-3.3.2-14] A Response Topic is a Topic Name and
                      * MUST NOT contain wildcard characters. */
                     if (cur_prop->type == MQTT_PROP_RESP_TOPIC &&
-                            !MqttPacket_TopicNameValid(cur_prop->data_str.str,
+                            (cur_prop->data_str.len == 0 ||
+                             !MqttPacket_TopicNameValid(
+                                cur_prop->data_str.str,
                                 cur_prop->data_str.len,
-                                MQTT_CONNECT_PROTOCOL_LEVEL_5)) {
+                                MQTT_CONNECT_PROTOCOL_LEVEL_5))) {
+                        /* [MQTT-4.7.3-1] nor be empty (the Topic Alias
+                         * allowance is for PUBLISH Topic Names only). */
                         rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                     }
                 }
@@ -1539,6 +1552,12 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
         if (str_len > (size_t)0xFFFF) {
             return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
         }
+        /* [MQTT-4.7.3-1] The Will Topic is at least one character long at
+         * every protocol level; the empty-topic Topic Alias exception in
+         * MqttPacket_TopicNameValid is for PUBLISH only. */
+        if (str_len == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         /* [MQTT-3.1.3.3] Will Topic is a Topic Name: no wildcards */
         if (!MqttPacket_TopicNameValid(mc_connect->lwt_msg->topic_name,
                 (word16)str_len, mc_connect->protocol_level)) {
@@ -1638,10 +1657,8 @@ int MqttEncode_Connect(byte *tx_buf, int tx_buf_len, MqttConnect *mc_connect)
     tx_payload = &tx_buf[header_len];
 
     /* Encode variable header */
-    /* Protocol version */
-    if (mc_connect->protocol_level != 0) {
-        packet.protocol_level = mc_connect->protocol_level;
-    }
+    /* Protocol version (a zero level was normalized to the default above) */
+    packet.protocol_level = mc_connect->protocol_level;
 
     /* Set connection flags */
     if (mc_connect->clean_session) {
@@ -2468,7 +2485,14 @@ int MqttEncode_Publish(byte *tx_buf, int tx_buf_len, MqttPublish *publish,
 
     if (((publish->buffer != NULL) || (use_cb == 1)) &&
         (publish->total_len > 0)) {
-        payload_len = publish->total_len;
+        /* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 1.5.5: check the
+         * Remaining Length in word32 before narrowing to int, so a huge
+         * total_len cannot wrap negative and slip past the limit. */
+        if (variable_len < 0 || publish->total_len >
+                MQTT_PACKET_MAX_REMAIN_LEN - (word32)variable_len) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
+        payload_len = (int)publish->total_len;
     }
 
     /* Encode fixed header */
@@ -2888,6 +2912,12 @@ int MqttDecode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
             if (remain_len > MQTT_DATA_LEN_SIZE) {
                 /* Decode the Reason Code */
                 publish_resp->reason_code = *rx_payload++;
+                /* MQTT 5.0 sections 3.4.2.1 to 3.7.2.1: only the codes
+                 * listed for this packet type are defined. */
+                if (!MqttPacket_PublishRespReasonCodeValid(type,
+                        publish_resp->reason_code)) {
+                    return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+                }
             }
             else {
                 publish_resp->reason_code = MQTT_REASON_SUCCESS;
@@ -2990,6 +3020,12 @@ int MqttEncode_Subscribe(byte *tx_buf, int tx_buf_len,
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         #endif
+            /* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 2.1.4: keep the
+             * sum within the Remaining Length limit so it cannot overflow */
+            if ((word32)remain_len > MQTT_PACKET_MAX_REMAIN_LEN -
+                    ((word32)str_len + MQTT_DATA_LEN_SIZE + 1)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
             remain_len++; /* For QoS */
         }
@@ -3315,6 +3351,11 @@ int MqttDecode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             return tmp;
         }
         rx_payload += tmp;
+        /* [MQTT-2.3.1-1] The acknowledged request's identifier is
+         * non-zero; reject 0 before any properties are decoded. */
+        if (subscribe_ack->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
 
 #ifdef WOLFMQTT_V5
         subscribe_ack->props = NULL;
@@ -3461,6 +3502,12 @@ int MqttEncode_Unsubscribe(byte *tx_buf, int tx_buf_len,
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
             }
         #endif
+            /* MQTT 3.1.1 section 2.2.3 / MQTT 5.0 section 2.1.4: keep the
+             * sum within the Remaining Length limit so it cannot overflow */
+            if ((word32)remain_len > MQTT_PACKET_MAX_REMAIN_LEN -
+                    ((word32)str_len + MQTT_DATA_LEN_SIZE)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
             remain_len += (int)str_len + MQTT_DATA_LEN_SIZE;
         }
         else {
@@ -3719,6 +3766,11 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             return tmp;
         }
         rx_payload += tmp;
+        /* [MQTT-2.3.1-1] The acknowledged request's identifier is
+         * non-zero; reject 0 before any properties are decoded. */
+        if (unsubscribe_ack->packet_id == 0) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_PACKET_ID);
+        }
 #ifdef WOLFMQTT_V5
         unsubscribe_ack->props = NULL;
         if (unsubscribe_ack->protocol_level >= MQTT_CONNECT_PROTOCOL_LEVEL_5) {
@@ -3761,7 +3813,6 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
             if (rx_payload > packet_end) {
                 return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
             }
-            unsubscribe_ack->reason_codes = rx_payload;
             unsubscribe_ack->reason_code_count =
                 (word16)(packet_end - rx_payload);
 
@@ -3769,8 +3820,7 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
              * the SUBACK path; free any decoded v5 props before returning. */
             for (rc_idx = 0; rc_idx < unsubscribe_ack->reason_code_count;
                     rc_idx++) {
-                if (!MqttPacket_UnsubAckReasonCodeValid(
-                        unsubscribe_ack->reason_codes[rc_idx])) {
+                if (!MqttPacket_UnsubAckReasonCodeValid(rx_payload[rc_idx])) {
                     if (unsubscribe_ack->props != NULL) {
                         (void)MqttProps_Free(unsubscribe_ack->props);
                         unsubscribe_ack->props = NULL;
@@ -3778,6 +3828,23 @@ int MqttDecode_UnsubscribeAck(byte *rx_buf, int rx_buf_len,
                     return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
                 }
             }
+            /* Copy into the ack, as the SUBACK return codes are: in
+             * multithread builds the receive buffer is reused by another
+             * reader before the waiting thread looks at the codes. The ack
+             * holds MAX_MQTT_TOPICS codes, so more cannot be represented and
+             * reason_code_count must never exceed what is stored. */
+            if (unsubscribe_ack->reason_code_count > MAX_MQTT_TOPICS) {
+                if (unsubscribe_ack->props != NULL) {
+                    (void)MqttProps_Free(unsubscribe_ack->props);
+                    unsubscribe_ack->props = NULL;
+                }
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+            }
+            XMEMSET(unsubscribe_ack->reason_codes_buf, 0,
+                sizeof(unsubscribe_ack->reason_codes_buf));
+            XMEMCPY(unsubscribe_ack->reason_codes_buf, rx_payload,
+                unsubscribe_ack->reason_code_count);
+            unsubscribe_ack->reason_codes = unsubscribe_ack->reason_codes_buf;
         }
 #endif
     }
@@ -4106,6 +4173,10 @@ int MqttDecode_Disconnect(byte *rx_buf, int rx_buf_len, MqttDisconnect *disc)
 
         /* Decode variable header */
         disc->reason_code = *rx_payload++;
+        /* [MQTT-3.14.2-1] The Reason Code must be one of Table 3-10 */
+        if (!MqttPacket_DisconnectReasonCodeValid(disc->reason_code)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
 
         if (remain_len > 1) {
             int props_tmp;
@@ -4471,16 +4542,18 @@ int MqttProps_Free(MqttProp *head)
     }
 #endif
     while (head != NULL) {
-#ifndef WOLFMQTT_DYN_PROP
-        head->type = MQTT_PROP_NONE; /* available */
-        head = head->next;
-#else
         MqttProp *tmp;
 
         tmp = head->next;
+        /* Wipe the whole record so no pointer, length or value of the
+         * released property (e.g. v5 Authentication Data) is left behind.
+         * In the static pool this also marks the slot available, since
+         * MQTT_PROP_NONE is zero. */
+        CLIENT_FORCE_ZERO(head, sizeof(MqttProp));
+#ifdef WOLFMQTT_DYN_PROP
         WOLFMQTT_FREE(head);
-        head = tmp;
 #endif
+        head = tmp;
     }
 #if !defined(WOLFMQTT_DYN_PROP) && defined(WOLFMQTT_MULTITHREAD)
     (void)wm_SemUnlock(&clientPropStack_lock);
@@ -4632,13 +4705,12 @@ int MqttPacket_Read(MqttClient *client, byte* rx_buf, int rx_buf_len,
              * whose last allowed byte still sets the continuation bit, so i can
              * never reach MQTT_PACKET_MAX_LEN_BYTES at this point. */
 
-            /* Try and decode remaining length */
-            if (rx_buf_len < (client->packet.header_len - (i + 1))) {
-                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
-            }
+            /* Try and decode remaining length. header->len starts after the
+             * one type/flags byte, and the entry check guarantees rx_buf_len
+             * covers a full fixed header, so the bound is rx_buf_len - 1 (as
+             * in MqttDecode_FixedHeader). */
             rc = MqttDecode_Vbi(header->len,
-                    &remain_len_u32,
-                    rx_buf_len - (client->packet.header_len - (i + 1)));
+                    &remain_len_u32, (word32)(rx_buf_len - 1));
             if (rc < 0) { /* Indicates error */
                 return MqttPacket_HandleNetError(client, rc);
             }

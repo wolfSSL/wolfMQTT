@@ -86,6 +86,13 @@
     #define BROKER_LISTEN_BACKLOG  128
 #endif
 
+/* Dynamic-memory builds: maximum number of allocated clients, counting
+ * accepted connections that have not sent CONNECT yet. Further accepted
+ * sockets are closed without allocating a client. */
+#ifndef BROKER_MAX_DYN_CLIENTS
+    #define BROKER_MAX_DYN_CLIENTS   1024
+#endif
+
 /* Static allocation limits */
 #ifndef BROKER_MAX_CLIENTS
     #define BROKER_MAX_CLIENTS       8
@@ -191,7 +198,8 @@
  *   -DBROKER_DEFAULT_AVG_MSG_SZ=N     to retune the derivation.
  *
  * Dynamic mode applies this to each client queue. Static mode applies it
- * while draining a persistent Session carrier. */
+ * while draining a persistent Session carrier and to the live queue of a
+ * connected Session without one (BROKER_MAX_STATIC_LIVE_MSGS). */
 #ifndef BROKER_DEFAULT_AVG_MSG_SZ
     #define BROKER_DEFAULT_AVG_MSG_SZ 256
 #endif
@@ -224,6 +232,18 @@
 #endif
 #if BROKER_MAX_STATIC_ORPHAN_SESSIONS < 1
     #error BROKER_MAX_STATIC_ORPHAN_SESSIONS must be at least 1
+#endif
+/* QoS 1/2 deliveries a connected Session without a persistent carrier can
+ * hold while its in-flight window (BROKER_MAX_INFLIGHT_PER_SUB, or the v5
+ * Receive Maximum when smaller) is full. Each entry is limited to
+ * BROKER_MAX_STATIC_OFFLINE_DATA_LEN bytes of Properties and payload. A
+ * delivery that finds the queue full disconnects the subscriber (v5: Quota
+ * Exceeded 0x97); one too large for an entry is dropped and logged. */
+#ifndef BROKER_MAX_STATIC_LIVE_MSGS
+    #define BROKER_MAX_STATIC_LIVE_MSGS 4
+#endif
+#if BROKER_MAX_STATIC_LIVE_MSGS < 1
+    #error BROKER_MAX_STATIC_LIVE_MSGS must be at least 1
 #endif
 #if BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB < 1
     #error BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB must be at least 1
@@ -756,6 +776,18 @@ typedef struct BrokerClient {
 #endif
     word16        will_props_len;
 #endif
+#ifdef WOLFMQTT_V5
+    /* A DISCONNECT has been written (or started) on this connection, so an
+     * error close must not send another. */
+    byte          disconnect_sent;
+#endif
+#ifdef WOLFMQTT_STATIC_MEMORY
+    /* QoS 1/2 deliveries waiting, in order, for the in-flight window of a
+     * Session without a persistent carrier (BROKER_MAX_STATIC_LIVE_MSGS).
+     * Entries are QUEUED only; once sent they are tracked in out_inflight. */
+    int                live_q_count;
+    BrokerStaticOutPub live_q[BROKER_MAX_STATIC_LIVE_MSGS];
+#endif
 } BrokerClient;
 
 /* -------------------------------------------------------------------------- */
@@ -794,6 +826,17 @@ typedef struct BrokerRetainedMsg {
     word32  expiry_sec;                 /* v5 message expiry (0=none) */
     MqttQoS qos;                        /* [MQTT-3.3.1-5] stored QoS */
     byte    pending_delete;             /* deferred free during delivery */
+#ifdef WOLFMQTT_V5
+    /* The message's forwardable PUBLISH Properties (MQTT 5.0 section 3.3.2.3)
+     * other than the Message Expiry Interval, which expiry_sec holds, as
+     * encoded. props_len 0 = none. */
+    word16  props_len;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    props[BROKER_MAX_WILL_PROPS_LEN];
+#else
+    byte*   props;
+#endif
+#endif
 } BrokerRetainedMsg;
 #endif /* WOLFMQTT_BROKER_RETAINED */
 
@@ -898,7 +941,8 @@ typedef struct MqttBroker {
     const char *ws_tls_ca;
     /* Optional exact Origin allowlist for browser WebSocket connections. When
      * non-NULL, a request whose HTTP Origin header is present and does not
-     * match is rejected (CSWSH defense). NULL = no Origin enforcement. */
+     * match is rejected (CSWSH defense). NULL = no Origin enforcement. A
+     * request with no Origin is allowed unless ws_require_origin is set. */
     const char *ws_allowed_origin;
 #endif
 #ifdef WOLFMQTT_BROKER_PERSIST
@@ -944,6 +988,13 @@ typedef struct MqttBroker {
      * MqttBroker_Free, so restored v5 queue properties can be decoded when
      * no client is connected. */
     byte props_ref;
+#endif
+#ifdef ENABLE_MQTT_WEBSOCKET
+    /* With ws_allowed_origin set, also reject a WebSocket request that has no
+     * Origin header. 0 (default) lets such requests through, since native
+     * non-browser clients usually omit Origin; set it when only browsers
+     * connect, so the allowlist cannot be bypassed by leaving Origin out. */
+    byte ws_require_origin;
 #endif
 } MqttBroker;
 
@@ -1089,6 +1140,10 @@ WOLFMQTT_LOCAL int BrokerOutPub_DecodeProps(BrokerOutPub* e, const byte* buf,
  * Defined in mqtt_broker.c; shared with the persistence layer. */
 WOLFMQTT_LOCAL const char* BrokerLog_Sanitize(const char* src);
 #endif
+
+/* 1 when Topic Filter filter matches Topic Name topic (MQTT 5.0 section
+ * 4.7). Defined in mqtt_broker.c; exposed for the broker unit tests. */
+WOLFMQTT_LOCAL int BrokerTopicMatch(const char* filter, const char* topic);
 
 /* CLI wrapper interface */
 WOLFMQTT_API int wolfmqtt_broker(int argc, char** argv);

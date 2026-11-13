@@ -203,7 +203,20 @@ enum MqttClientFlags {
      * in that window, so the other send APIs refuse. Managed by the library -
      * set by MqttClient_Connect, cleared when the CONNACK is processed and by
      * MqttSocket_Connect and MqttSocket_Disconnect. */
-    MQTT_CLIENT_FLAG_AUTH_PENDING = 0x01 << 11
+    MQTT_CLIENT_FLAG_AUTH_PENDING = 0x01 << 11,
+    /* The last v5 CONNECT written had a zero (or absent) Session Expiry
+     * Interval, so a non-zero one in the Client's DISCONNECT would be a
+     * Protocol Error (MQTT 5.0 section 3.14.2.2.2). Managed by the library -
+     * set or cleared by MqttClient_Connect. */
+    MQTT_CLIENT_FLAG_CONNECT_EXPIRY_ZERO = 0x01 << 12,
+    /* Application-settable, before MqttClient_Connect. A v5 CONNACK that
+     * reports Session Present = 1 when this client holds no Session State
+     * for the ClientId (e.g. after a process restart) is refused with
+     * MQTT_CODE_ERROR_SERVER_PROP, so the application can reconnect with
+     * Clean Start = 1 ([MQTT-3.2.2-4]). Off by default: Session State lives
+     * only in memory, so a restarted client always lacks it. Needs a build
+     * that tracks the Session ClientId (session replay or QoS 2). */
+    MQTT_CLIENT_FLAG_STRICT_SESSION = 0x01 << 13
 };
 /*! \brief      Sets flags in the MqttClient structure. To be used from
                 the application before calling MqttClient_NetConnect.
@@ -330,6 +343,15 @@ typedef struct _MqttSk {
     #if (MQTT_MAX_REPLAY_PAYLOAD < 1)
         #error "MQTT_MAX_REPLAY_PAYLOAD must be at least 1"
     #endif
+    /* Encoded v5 PUBLISH properties kept for replay; a PUBLISH whose
+     * properties encode to more is not retained, like an oversized
+     * payload. */
+    #ifndef MQTT_MAX_REPLAY_PROPS
+        #define MQTT_MAX_REPLAY_PROPS 64
+    #endif
+    #if (MQTT_MAX_REPLAY_PROPS < 1)
+        #error "MQTT_MAX_REPLAY_PROPS must be at least 1"
+    #endif
 #endif
 
 typedef struct _MqttReplayMsg {
@@ -357,6 +379,25 @@ typedef struct _MqttReplayMsg {
      * only the latter are the old Session's to discard or re-send. Cleared on
      * every entry when a handshake starts. */
     byte    onThisConn;
+    /* Send order [MQTT-4.6.0-1]: taken from MqttClient.replay_seq when the
+     * PUBLISH is first recorded, and again when its PUBREC arrives so a
+     * PUBREL replays in PUBREC order. */
+    word32  seq;
+    /* Still to be re-sent by the Session replay in progress. */
+    byte    replayPending;
+#ifdef WOLFMQTT_V5
+    /* The re-sent PUBLISH holds one unit of the server's Receive Maximum,
+     * returned by its PUBACK / PUBCOMP or a failing PUBREC [MQTT-4.9.0-2]. */
+    byte    quotaHeld;
+    /* The PUBLISH Properties as encoded (no Property Length), so a v5
+     * replay is the same message [MQTT-4.4.0-1]. props_len 0 = none. */
+    word32  props_len;
+#ifdef WOLFMQTT_STATIC_MEMORY
+    byte    props[MQTT_MAX_REPLAY_PROPS];
+#else
+    byte*   props;      /* heap-owned, NULL when props_len is 0 */
+#endif
+#endif
 } MqttReplayMsg;
 #endif /* !WOLFMQTT_NO_SESSION_REPLAY */
 
@@ -538,9 +579,8 @@ typedef struct _MqttClient {
     /* Unacknowledged outbound QoS > 0 messages retained for [MQTT-4.4.0-1]
      * replay after a CleanSession 0 reconnect. */
     MqttReplayMsg replay[MQTT_MAX_REPLAY_MSGS];
-    /* Next replay slot to send; MQTT_MAX_REPLAY_MSGS when none is pending.
-     * Kept on the client so a nonblocking replay can resume where it left
-     * off. */
+    /* Replay slot being sent; MQTT_MAX_REPLAY_MSGS when none is. Kept on the
+     * client so a nonblocking replay can resume a partly written slot. */
     int replayIdx;
 #endif
 
@@ -558,6 +598,18 @@ typedef struct _MqttClient {
     wm_Sem decodeDone;
     word16 decodeWaiters; /* threads waiting on decodeDone, under lockClient */
 #endif
+#ifndef WOLFMQTT_NO_SESSION_REPLAY
+    word32 replay_seq; /* last send order given to a replay entry */
+    /* Write state for re-sending the rest of a resumed Session's messages
+     * after the CONNECT returned (a v5 replay waits for Receive Maximum
+     * quota), and the flag that lets one caller at a time do it. */
+    MqttMsgStat replay_stat;
+    byte replay_busy;
+    /* The connection ended while another thread owned the paused re-send
+     * write: that owner releases it on its next call (MqttClient_Replay_Flush)
+     * instead of a non-owner scrubbing its frame and unlocking its lockSend. */
+    byte replay_cancel;
+#endif
 } MqttClient;
 
 #ifdef WOLFMQTT_SN
@@ -571,7 +623,15 @@ typedef struct _MqttClient {
                             (uninitialized is okay)
  *  \param      net         Pointer to MqttNet structure that has been
                             initialized with callback pointers and context
- *  \param      msg_cb       Pointer to message callback function
+ *  \param      msg_cb       Pointer to message callback function. NULL is
+                            allowed for a publish-only client, but then an
+                            inbound PUBLISH (e.g. queued traffic on a resumed
+                            persistent Session) is not delivered and the wait
+                            returns MQTT_CODE_ERROR_CALLBACK. A QoS 1/2 PUBLISH
+                            is also not acknowledged, so the server keeps it
+                            and redelivers it later rather than losing it. A
+                            client that may receive QoS > 0 messages should
+                            set a callback.
  *  \param      tx_buf      Pointer to transmit buffer used during encoding
  *  \param      tx_buf_len  Maximum length of the transmit buffer
  *  \param      rx_buf      Pointer to receive buffer used during decoding
@@ -898,6 +958,9 @@ WOLFMQTT_API int MqttClient_Disconnect(
  *  \return     MQTT_CODE_SUCCESS,
                 MQTT_CODE_ERROR_STAT if CONNECT has not been sent on this
                 Network Connection [MQTT-3.1.0-1],
+                MQTT_CODE_ERROR_BAD_ARG (nothing sent) if a v5 disconnect
+                carries a non-zero Session Expiry Interval after the CONNECT
+                carried a zero or absent one (MQTT 5.0 section 3.14.2.2.2),
                 or MQTT_CODE_ERROR_* (see enum MqttPacketResponseCodes)
  */
 WOLFMQTT_API int MqttClient_Disconnect_ex(
@@ -1095,6 +1158,8 @@ WOLFMQTT_LOCAL void MqttClient_RespList_EndProcessing(MqttClient *client,
         MqttPendResp *resp);
 WOLFMQTT_LOCAL int MqttClient_RespList_RemoveIdle(MqttClient *client,
         MqttPendResp *rmResp);
+WOLFMQTT_LOCAL int MqttClient_RespList_RemoveOwned(MqttClient *client,
+        MqttPendResp *rmResp, int rc);
 #endif
 WOLFMQTT_LOCAL int MqttPacket_HandleNetError(MqttClient *client, int rc);
 #if WOLFMQTT_MAX_QOS >= 2

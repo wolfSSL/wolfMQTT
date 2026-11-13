@@ -297,8 +297,12 @@ typedef struct _SN_Publish {
     byte        topic_type;
     byte        return_code;
 
-    const char *topic_name;   /* Pointer is valid only when
-                                 msg_new set in callback */
+    const char *topic_name;   /* The 2-byte TopicId, most significant
+                                 byte first as on the wire (MQTT-SN 1.2
+                                 section 5.4.12), for every topic_type:
+                                 short name, predefined or normal topic
+                                 ID. When received, the pointer is valid
+                                 only while msg_new is set in callback */
     word16      topic_name_len;
     word32      total_len;    /* Payload total length */
     byte       *buffer;       /* Payload buffer */

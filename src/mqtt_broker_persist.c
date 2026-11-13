@@ -211,9 +211,8 @@ static INLINE int wmqb_read_header(const byte* buf, word32 buf_len,
     return 0;
 }
 
-#if defined(WOLFMQTT_BROKER_PERSIST_ENCRYPT) || \
-    !defined(WOLFMQTT_STATIC_MEMORY)
-/* Volatile wipe the compiler cannot elide, for plaintext about to be freed. */
+/* Volatile wipe the compiler cannot elide, for plaintext about to be freed
+ * and for stack copies of client identifiers. */
 static void wmqb_force_zero(void* mem, word32 len)
 {
     volatile byte* p = (volatile byte*)mem;
@@ -225,7 +224,6 @@ static void wmqb_force_zero(void* mem, word32 len)
         len--;
     }
 }
-#endif
 
 #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
 
@@ -937,6 +935,34 @@ int BrokerPersist_DelSubs(MqttBroker* broker, const char* client_id)
  *
  * Key is the topic bytes. */
 #ifdef WOLFMQTT_BROKER_RETAINED
+/* Retained record flags byte (formerly reserved, written as 0) */
+#define WMQB_RETAINED_FLAG_PROPS 0x01
+
+#ifdef WOLFMQTT_V5
+/* Locate the Properties of a retained record whose payload ended at p. A
+ * record without WMQB_RETAINED_FLAG_PROPS has none. Returns 0, or
+ * MALFORMED_DATA when the block runs past the record. */
+static int wmqb_retained_props(byte flags, const byte* p, const byte* end,
+    const byte** props, word16* props_len)
+{
+    *props = NULL;
+    *props_len = 0;
+    if ((flags & WMQB_RETAINED_FLAG_PROPS) == 0) {
+        return 0;
+    }
+    if ((word32)(end - p) < 2) {
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    *props_len = wmqb_r_u16(p);
+    if (*props_len == 0 || (word32)(end - p) - 2 < *props_len) {
+        *props_len = 0;
+        return MQTT_CODE_ERROR_MALFORMED_DATA;
+    }
+    *props = p + 2;
+    return 0;
+}
+#endif
+
 int BrokerPersist_PutRetained(MqttBroker* broker,
     const struct BrokerRetainedMsg* rm)
 {
@@ -963,6 +989,14 @@ int BrokerPersist_PutRetained(MqttBroker* broker,
     payload = m->payload;
 
     body_len = 1 + 1 + 8 + 4 + 2 + topic_len + 4 + payload_len;
+#ifdef WOLFMQTT_V5
+    /* Flag bit WMQB_RETAINED_FLAG_PROPS: the message's Properties follow
+     * the payload as a 2-byte length and the encoded block. A record
+     * without the flag (or from a v3.1.1 build) has none. */
+    if (m->props_len > 0) {
+        body_len += 2 + (word32)m->props_len;
+    }
+#endif
     total_len = WMQB_HDR_LEN + body_len;
     buf = (byte*)WOLFMQTT_MALLOC(total_len);
     if (buf == NULL) {
@@ -971,7 +1005,11 @@ int BrokerPersist_PutRetained(MqttBroker* broker,
     wmqb_write_header(buf, BROKER_PERSIST_NS_RETAINED, body_len);
     p = &buf[WMQB_HDR_LEN];
     *p++ = (byte)m->qos;
+#ifdef WOLFMQTT_V5
+    *p++ = (m->props_len > 0) ? WMQB_RETAINED_FLAG_PROPS : 0;
+#else
     *p++ = 0;
+#endif
     wmqb_w_u64(p, (word64)m->store_time); p += 8;
     wmqb_w_u32(p, m->expiry_sec); p += 4;
     wmqb_w_u16(p, topic_len); p += 2;
@@ -980,6 +1018,13 @@ int BrokerPersist_PutRetained(MqttBroker* broker,
     if (payload_len > 0 && payload != NULL) {
         XMEMCPY(p, payload, payload_len);
     }
+#ifdef WOLFMQTT_V5
+    p += payload_len;
+    if (m->props_len > 0) {
+        wmqb_w_u16(p, m->props_len); p += 2;
+        XMEMCPY(p, m->props, m->props_len);
+    }
+#endif
 
     rc = wmqb_kv_put_commit(broker, BROKER_PERSIST_NS_RETAINED,
         (const byte*)topic, topic_len, buf, total_len);
@@ -1047,10 +1092,11 @@ int BrokerPersist_PutOutPub(MqttBroker* broker, const char* client_id,
     const struct BrokerOutPub* e)
 {
 #ifdef WOLFMQTT_STATIC_MEMORY
-    /* BrokerOutPub is dynamic-memory only; static-memory builds keep
-     * synchronous fan-out and therefore have no outbound queue to
-     * persist. The function symbol still exists so static and dynamic
-     * builds share the same ABI. */
+    /* BrokerOutPub is dynamic-memory only. Static-memory builds hold
+     * offline QoS>0 messages in BrokerStaticOrphanSession.out_q
+     * (BrokerStaticOutPub), and those entries are not persisted, so this
+     * function is a no-op there. The symbol still exists so static and
+     * dynamic builds share the same ABI. */
     (void)broker; (void)client_id; (void)e;
     return 0;
 #else
@@ -1178,7 +1224,7 @@ static int wmqb_static_delq_iter_cb(const byte* key, word16 key_len,
     (void)blob;
     (void)blob_len;
 
-    if (key_len < (word16)(dq->cid_len + 1) ||
+    if ((word32)key_len < (word32)dq->cid_len + 1u ||
             XMEMCMP(key, dq->cid, dq->cid_len) != 0 ||
             key[dq->cid_len] != 0x00) {
         return 0;
@@ -1268,18 +1314,25 @@ int BrokerPersist_DelOutQueue(MqttBroker* broker, const char* client_id)
             rc = h->kv_iter(h->ctx, BROKER_PERSIST_NS_OUTQ,
                 wmqb_static_delq_iter_cb, &ctx);
             if (ctx.error != 0) {
-                return ctx.error;
+                rc = ctx.error;
+                break;
             }
             if (!ctx.found) {
-                return (rc != 0) ? rc : deleted;
+                if (rc == 0) {
+                    rc = deleted;
+                }
+                break;
             }
             rc = wmqb_kv_del_commit(broker, BROKER_PERSIST_NS_OUTQ,
                 ctx.key, ctx.key_len);
             if (rc != 0) {
-                return rc;
+                break;
             }
             deleted++;
         }
+        /* ctx.key starts with the client identifier */
+        wmqb_force_zero(&ctx, (word32)sizeof(ctx));
+        return rc;
     }
 #else
     {
@@ -1502,25 +1555,29 @@ static int wmqb_static_prune_expired_sessions(MqttBroker* broker)
         rc = wmqb_kv_iter(broker, BROKER_PERSIST_NS_SESSION,
             wmqb_static_find_expired_session_cb, &ctx);
         if (ctx.error != 0) {
-            return ctx.error;
+            rc = ctx.error;
+            break;
         }
         if (!ctx.found) {
-            return rc;
+            break;
         }
         rc = BrokerPersist_DelOutQueue(broker, ctx.client_id);
         if (rc < 0) {
-            return rc;
+            break;
         }
         rc = BrokerPersist_DelSubs(broker, ctx.client_id);
         if (rc != 0) {
-            return rc;
+            break;
         }
         rc = wmqb_kv_del_commit(broker, BROKER_PERSIST_NS_SESSION,
             (const byte*)ctx.client_id, ctx.key_len);
         if (rc != 0) {
-            return rc;
+            break;
         }
     }
+    /* ctx.client_id holds the selected session's identifier */
+    wmqb_force_zero(&ctx, (word32)sizeof(ctx));
+    return rc;
 }
 
 static BrokerStaticOrphanSession* wmqb_restore_create_orphan(
@@ -1703,6 +1760,11 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
     word64 store_time;
     word32 expiry;
     byte qos;
+    byte flags;
+#ifdef WOLFMQTT_V5
+    word16 props_len = 0;
+    const byte* props = NULL;
+#endif
 
     rc = wmqb_read_header(blob, blob_len, BROKER_PERSIST_NS_RETAINED,
             &body_len);
@@ -1715,7 +1777,7 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         return MQTT_CODE_ERROR_MALFORMED_DATA;
     }
     qos = *p++;
-    p++; /* _reserved */
+    flags = *p++;
     store_time = wmqb_r_u64(p); p += 8;
     expiry = wmqb_r_u32(p); p += 4;
     topic_len = wmqb_r_u16(p); p += 2;
@@ -1763,6 +1825,20 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
         if (payload_len > 0) {
             XMEMCPY(slot->payload, p, payload_len);
         }
+        p += payload_len;
+    #ifdef WOLFMQTT_V5
+        if (wmqb_retained_props(flags, p, end, &props, &props_len) != 0 ||
+                props_len > BROKER_MAX_WILL_PROPS_LEN) {
+            XMEMSET(slot, 0, sizeof(*slot));
+            return MQTT_CODE_ERROR_MALFORMED_DATA;
+        }
+        if (props_len > 0) {
+            XMEMCPY(slot->props, props, props_len);
+        }
+        slot->props_len = props_len;
+    #else
+        (void)flags;
+    #endif
         slot->payload_len = payload_len;
         slot->qos = (MqttQoS)qos;
         slot->store_time = (WOLFMQTT_BROKER_TIME_T)store_time;
@@ -1810,6 +1886,32 @@ static int wmqb_decode_and_insert_retained(MqttBroker* broker,
             }
             XMEMCPY(m->payload, p, payload_len);
         }
+        p += payload_len;
+    #ifdef WOLFMQTT_V5
+        rc = wmqb_retained_props(flags, p, end, &props, &props_len);
+        if (rc == 0 && props_len > 0) {
+            m->props = (byte*)WOLFMQTT_MALLOC(props_len);
+            if (m->props == NULL) {
+                rc = MQTT_CODE_ERROR_MEMORY;
+            }
+            else {
+                XMEMCPY(m->props, props, props_len);
+                m->props_len = props_len;
+            }
+        }
+        if (rc != 0) {
+            wmqb_force_zero(m->topic, (word32)topic_len + 1);
+            WOLFMQTT_FREE(m->topic);
+            if (m->payload != NULL) {
+                wmqb_force_zero(m->payload, payload_len);
+                WOLFMQTT_FREE(m->payload);
+            }
+            WOLFMQTT_FREE(m);
+            return rc;
+        }
+    #else
+        (void)flags;
+    #endif
         m->payload_len = payload_len;
         m->qos = (MqttQoS)qos;
         m->store_time = (WOLFMQTT_BROKER_TIME_T)store_time;
@@ -2367,6 +2469,7 @@ static void wmqb_free_ended_list(struct wmqb_ended_session* head)
 
     while (cur != NULL) {
         next = cur->next;
+        wmqb_force_zero(cur->key, cur->key_len); /* key is the ClientId */
         WOLFMQTT_FREE(cur->key);
         WOLFMQTT_FREE(cur);
         cur = next;
@@ -2412,6 +2515,8 @@ static void wmqb_restore_drop_ended(MqttBroker* broker,
                     on->key_len) != 0) {
                 on->owner->outq_err = 1;
             }
+            /* OUTQ keys start with the ClientId */
+            wmqb_force_zero(on->key, on->key_len);
             WOLFMQTT_FREE(on->key);
             WOLFMQTT_FREE(on);
             on = on_next;
@@ -2442,9 +2547,11 @@ static void wmqb_restore_drop_ended(MqttBroker* broker,
                         "broker: persist drop ended session failed "
                         "client_id=%s rc=%d", BrokerLog_Sanitize(cid), rc);
                 }
+                wmqb_force_zero(cid, (word32)cur->key_len + 1);
                 WOLFMQTT_FREE(cid);
             }
         }
+        wmqb_force_zero(cur->key, cur->key_len);
         WOLFMQTT_FREE(cur->key);
         WOLFMQTT_FREE(cur);
         cur = next;
@@ -2698,8 +2805,9 @@ static void wmqb_restore_expiry_sweep(MqttBroker* broker)
 /* Walks each namespace, collects every key into a heap-grown list, then      */
 /* deletes them one by one. Two-pass to avoid mutating the backend during     */
 /* iteration. Only attempts the wipe when the backend implements both         */
-/* kv_iter and kv_del; otherwise logs a warning and returns - new records    */
-/* will overwrite by key as they arrive.                                      */
+/* kv_iter and kv_del; otherwise it deletes nothing and logs no warning (the  */
+/* caller still re-stamps META), so old records stay in place and new records */
+/* overwrite by key as they arrive.                                           */
 /* -------------------------------------------------------------------------- */
 #ifndef WOLFMQTT_STATIC_MEMORY
 /* wmqb_wipe_key struct defined above (shared with DelOutQueue). */
@@ -2835,6 +2943,19 @@ int BrokerPersist_Restore(MqttBroker* broker)
     }
     h = broker->persist;
 
+    /* A missing required hook is a configuration error. Reject it here:
+     * wmqb_meta_check reports it as BAD_ARG, which below means a schema
+     * mismatch and would wipe every valid record. */
+    if (h->kv_get == NULL || h->kv_put == NULL
+    #ifdef WOLFMQTT_BROKER_PERSIST_ENCRYPT
+            || h->derive_key == NULL
+    #endif
+            ) {
+        WMQB_LOG_ERR(broker,
+            "broker: persist hooks incomplete - aborting restore");
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
+
     rc = wmqb_meta_check(broker, &meta_present);
     if (rc == MQTT_CODE_ERROR_MALFORMED_DATA ||
             rc == MQTT_CODE_ERROR_BAD_ARG) {
@@ -2842,9 +2963,11 @@ int BrokerPersist_Restore(MqttBroker* broker)
          * policy: iterate every namespace, delete every record
          * (dynamic memory builds only; static builds skip the wipe
          * in wmqb_wipe_all), restamp META. New records get written
-         * fresh as activity resumes. (BAD_ARG = header magic / schema
-         * version mismatch from wmqb_read_header; MALFORMED_DATA =
-         * decrypt or size failure from wmqb_kv_get_decrypt_meta.) */
+         * fresh as activity resumes. (MALFORMED_DATA = unreadable
+         * header or META: short read, bad magic, body_len past the
+         * buffer, or decrypt/size failure from wmqb_kv_get_decrypt_meta;
+         * BAD_ARG = schema version, record kind or wrap_mode mismatch
+         * from wmqb_read_header.) */
         WMQB_LOG_ERR(broker,
             "broker: persist schema mismatch - wiping all records");
         rc = wmqb_wipe_all(broker);
