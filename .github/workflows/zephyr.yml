@@ -63,6 +63,15 @@ jobs:
         working-directory: zephyr
         run: west update -n -o=--depth=1
 
+      # wolfSSL refuses to build on Zephyr without a chosen entropy device
+      # unless weak entropy is explicitly accepted. qemu_x86 has none, so opt
+      # in for this emulator test only, as wolfSSL's own Zephyr CI does.
+      - name: Opt in to test-only QEMU entropy
+        run: |
+          settings=zephyr/modules/crypto/wolfssl/zephyr/user_settings.h
+          test -f "$settings"
+          sed -i '1i#define WOLFSSL_ACCEPT_WEAK_ENTROPY /* QEMU test only */' "$settings"
+
       - name: Export zephyr
         working-directory: zephyr
         run: west zephyr-export

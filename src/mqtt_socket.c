@@ -580,11 +580,17 @@ int MqttSocket_Connect(MqttClient *client, const char* host, word16 port,
             PRINTF("Warning: TLS set to VERIFY_NONE. Use MqttClient_SetTlsCb "
                 "to set peer verification in production");
         #endif
+        #ifndef NO_DH
+            /* Only for the library's own context: a context the TLS callback
+             * built keeps its own minimum DH key size rather than having it
+             * lowered to this default. */
+            if (wolfSSL_CTX_SetMinDhKey_Sz(client->tls.ctx,
+                    WOLF_TLS_DHKEY_BITS_MIN) != WOLFSSL_SUCCESS) {
+                rc = MQTT_CODE_ERROR_TLS_CONNECT;
+                goto exit;
+            }
+        #endif
         }
-
-    #ifndef NO_DH
-        wolfSSL_CTX_SetMinDhKey_Sz(client->tls.ctx, WOLF_TLS_DHKEY_BITS_MIN);
-    #endif
 
         /* Setup the IO callbacks */
         wolfSSL_CTX_SetIORecv(client->tls.ctx, MqttSocket_TlsSocketReceive);

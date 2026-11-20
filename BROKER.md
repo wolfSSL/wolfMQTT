@@ -85,6 +85,10 @@ All broker features are enabled by default and can be disabled at build time to 
 
 The maximum QoS the broker negotiates is capped by `--enable-max-qos=<0,1,2>` (default 2). Setting it to 1 or 0 compiles out the QoS 2 state machine and shrinks the broker.
 
+Clients may not publish to Topic Names that begin with `$`, which MQTT reserves for the server (section 4.7.2): an MQTT v5 QoS 1/2 PUBLISH is answered with Reason Code 0x90 (Topic Name invalid), a v5 QoS 0 PUBLISH is dropped, and an MQTT v3.1.1 client is disconnected. A CONNECT whose Will Topic begins with `$` is refused (MQTT v5 CONNACK 0x90, MQTT v3.1.1 CONNACK 0x03). Define `BROKER_ALLOW_CLIENT_DOLLAR_TOPICS` to forward them like any other topic.
+
+In dynamic-memory builds the number of allocated clients, including connections that have not sent CONNECT yet, is capped by `BROKER_MAX_DYN_CLIENTS` (default 1024); further connections are closed on accept.
+
 `WOLFMQTT_NO_STDIO` turns `PRINTF` into a no-op, so it implies `WOLFMQTT_BROKER_NO_LOG` and the broker log calls are stripped. A port that supplies its own `PRINTF` through `WOLFMQTT_CUSTOM_PRINTF` keeps its logging.
 
 ## Static memory tuning
@@ -108,6 +112,7 @@ When built with `WOLFMQTT_STATIC_MEMORY`, the broker uses fixed-size arrays inst
 | `BROKER_MAX_STATIC_ORPHAN_SESSIONS` | `BROKER_MAX_CLIENTS` | Persistent sessions with a bounded offline queue |
 | `BROKER_MAX_STATIC_OFFLINE_MSGS_PER_SUB` | 8 | Queued QoS 1/2 messages per static persistent session |
 | `BROKER_MAX_STATIC_OFFLINE_DATA_LEN` | 256 | Maximum property and payload bytes per queued message |
+| `BROKER_MAX_STATIC_LIVE_MSGS` | 4 | QoS 1/2 deliveries a connected static non-persistent session can hold while its inflight window is full |
 | `BROKER_RX_BUF_SZ` | 4096 | Per-client receive buffer size |
 | `BROKER_TX_BUF_SZ` | 4096 | Per-client transmit buffer size |
 | `BROKER_TIMEOUT_MS` | 1000 | `select()` timeout |
@@ -141,6 +146,18 @@ Sessions must retain messages whose property and payload bytes exceed 256.
 The per-subscriber inflight window is bounded by `BROKER_MAX_INFLIGHT_PER_SUB`
 and, for MQTT v5, the client's Receive Maximum. Define
 `BROKER_MAX_INFLIGHT_PER_SUB=1` to force strict serial delivery.
+
+In static-memory builds a connected Session without a persistent carrier
+holds deliveries that do not fit its inflight window in a fixed live queue of
+`BROKER_MAX_STATIC_LIVE_MSGS` entries per client, each limited to
+`BROKER_MAX_STATIC_OFFLINE_DATA_LEN` bytes of properties and payload. The queue
+drains in order as PUBACK and PUBCOMP free the window. A delivery that finds
+the queue full disconnects that subscriber (MQTT v5: DISCONNECT with Quota
+Exceeded 0x97) so it can resume the backlog later. A delivery too large for an
+entry is dropped and logged instead, and the subscriber stays connected. A
+retained copy sent in response to a SUBSCRIBE is the exception: one that cannot
+be queued is skipped and logged, and the SUBACK is still sent. The queue adds approximately `BROKER_MAX_CLIENTS * BROKER_MAX_STATIC_LIVE_MSGS *
+(topic length + data length)` bytes, about 14 KB with the default limits.
 
 ## Persistence
 
@@ -231,5 +248,7 @@ The CONNECT-handler unit test (`tests/test_broker_connect`) is part of `make che
 The wolfMQTT broker targets embedded and edge use cases. It is intentionally smaller in scope than full-featured server brokers such as Mosquitto or EMQX: there is no clustering, no bridging, no plugin/ACL framework, and no dynamic configuration reload. For large-scale or feature-rich deployments use a dedicated server broker; for a small, auditable, optionally-TLS broker that runs without threads or a heap, wolfMQTT is a good fit.
 
 Fan-out of a PUBLISH to its subscribers is not atomic. If the broker runs out of memory part-way through queueing copies of a QoS 1 or QoS 2 message, subscribers already served keep their copy and the publisher is not told the message was accepted: an MQTT v5 publisher receives a PUBACK or PUBREC with Reason Code 0x80, and an MQTT v3.1.1 publisher is disconnected. For a v3.1.1 QoS 2 publisher with a persistent session, the retransmitted PUBLISH is then treated as a duplicate, so subscribers that missed the original fan-out do not receive it.
+
+MQTT v5 Shared Subscriptions and Subscription Identifiers are not supported. The CONNACK advertises both as unavailable; a SUBSCRIBE carrying a Subscription Identifier is a Protocol Error and the client is disconnected with Reason Code 0xA1.
 
 A single MQTT v5 packet may carry at most `MQTT_MAX_PROPS` (default 30) properties. The MQTT specification sets no such limit, but the broker rejects a packet with more properties as it would a malformed one. For a DISCONNECT this means the connection is treated as closed abnormally, so the client's Will Message is published even when the Reason Code is 0x00 (Normal disconnection). A DISCONNECT within the limit whose properties cannot be allocated because the broker is out of memory is still handled according to its Reason Code.

@@ -257,6 +257,20 @@ static int SN_Client_HandlePacket(MqttClient* client, SN_MsgType packet_type,
             if (rc <= 0) {
                 return rc;
             }
+            /* MQTT-SN 1.2 section 6.8: QoS -1 is client-to-gateway only, so
+             * a gateway PUBLISH carrying it is malformed. Reject it before
+             * delivery; the acknowledgement below would answer it with a
+             * PUBREC as if it were QoS 2. */
+            if (p_pub->qos == MQTT_QOS_3) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+        #if WOLFMQTT_MAX_QOS < 2
+            /* Above this build's cap there is no duplicate suppression, and
+             * the client never subscribes above it: a protocol error. */
+            if (p_pub->qos > WOLFMQTT_MAX_QOS) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
+        #endif
 
             /* Notify the application before acquiring the response writer so
              * the callback may safely call a client send API. MQTT_MSG_WAIT
@@ -731,6 +745,18 @@ wait_again:
                 return rc;
             }
 
+        #ifdef WOLFMQTT_MULTITHREAD
+            /* Another reader can complete this response after the check above
+             * but before this waiter acquires lockRecv. Recheck while holding
+             * lockRecv; no reader can change the result after this point. */
+            rc = MqttClient_CheckPendResp(client, wait_type, wait_packet_id);
+            if (rc != MQTT_CODE_ERROR_NOT_FOUND &&
+                    rc != MQTT_CODE_CONTINUE) {
+                MqttReadStop(client, mms_stat);
+                return rc;
+            }
+        #endif
+
             mms_stat->read = MQTT_MSG_WAIT;
         }
         FALL_THROUGH;
@@ -1132,10 +1158,7 @@ int SN_Client_SearchGW(MqttClient *client, SN_SearchGw *search)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &search->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &search->pendResp, rc);
 #endif
 
     /* reset state */
@@ -1193,10 +1216,7 @@ static int SN_WillTopic(MqttClient *client, SN_Will *will)
         #endif
 
         #ifdef WOLFMQTT_MULTITHREAD
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &will->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
         #endif
 
             if (rc != 0) {
@@ -1324,10 +1344,7 @@ static int SN_WillMessage(MqttClient *client, SN_Will *will)
         #endif
 
         #ifdef WOLFMQTT_MULTITHREAD
-            if (wm_SemLock(&client->lockClient) == 0) {
-                MqttClient_RespList_Remove(client, &will->pendResp);
-                wm_SemUnlock(&client->lockClient);
-            }
+            rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
         #endif
 
             if (rc != 0) {
@@ -1570,10 +1587,7 @@ int SN_Client_Connect(MqttClient *client, SN_Connect *mc_connect)
 #endif
 
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &mc_connect->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &mc_connect->pendResp, rc);
 #endif
 
     /* reset state */
@@ -1674,11 +1688,14 @@ int SN_Client_WillTopicUpdate(MqttClient *client, SN_Will *will)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &will->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
 #endif
+    /* MQTT-SN 1.2 sections 5.4.23 and 5.4.25: a ReturnCode other than
+     * Accepted rejects the update. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            will->resp.topicResp.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+    }
 
     /* reset state */
     will->stat.write = MQTT_MSG_BEGIN;
@@ -1797,11 +1814,14 @@ int SN_Client_WillMsgUpdate(MqttClient *client, SN_Will *will)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &will->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &will->pendResp, rc);
 #endif
+    /* MQTT-SN 1.2 sections 5.4.23 and 5.4.25: a ReturnCode other than
+     * Accepted rejects the update. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            will->resp.msgResp.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+    }
 
     /* reset state */
     will->stat.write = MQTT_MSG_BEGIN;
@@ -1820,6 +1840,14 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
     }
 
     if (subscribe->stat.write == MQTT_MSG_BEGIN) {
+    #if WOLFMQTT_MAX_QOS < 2
+        /* This build has no QoS 2 duplicate suppression, so never request
+         * more than its cap (MQTT-SN 1.2 section 6.7). */
+        if (subscribe->qos > WOLFMQTT_MAX_QOS &&
+                subscribe->qos <= MQTT_QOS_2) {
+            subscribe->qos = WOLFMQTT_MAX_QOS;
+        }
+    #endif
         /* Take write ownership; a write already in progress on this thread is
          * reported as MQTT_CODE_CONTINUE instead of deadlocking on lockSend. */
         rc = MqttWriteStart(client, &subscribe->stat);
@@ -1881,10 +1909,7 @@ int SN_Client_Subscribe(MqttClient *client, SN_Subscribe *subscribe)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &subscribe->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &subscribe->pendResp, rc);
 #endif
 
     /* reset state */
@@ -2041,13 +2066,18 @@ int SN_Client_Publish(MqttClient *client, SN_Publish *publish)
                     break;
             #endif
             #ifdef WOLFMQTT_MULTITHREAD
-                if (wm_SemLock(&client->lockClient) == 0) {
-                    MqttClient_RespList_Remove(client, &publish->pendResp);
-                    wm_SemUnlock(&client->lockClient);
-                }
+                rc = MqttClient_RespList_RemoveOwned(client,
+                    &publish->pendResp, rc);
             #endif
 
                 publish->return_code = publish->resp.return_code;
+                /* MQTT-SN 1.2 section 5.4.13: a PUBACK ReturnCode other than
+                 * Accepted rejects the PUBLISH (e.g. an unknown TopicId after
+                 * a gateway restart, which needs a new REGISTER). */
+                if (rc == MQTT_CODE_SUCCESS && publish->qos == MQTT_QOS_1 &&
+                        publish->return_code != SN_RC_ACCEPTED) {
+                    rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+                }
             }
 
             break;
@@ -2148,10 +2178,8 @@ int SN_Client_Unsubscribe(MqttClient *client, SN_Unsubscribe *unsubscribe)
         return rc;
 #endif
     #ifdef WOLFMQTT_MULTITHREAD
-        if (wm_SemLock(&client->lockClient) == 0) {
-            MqttClient_RespList_Remove(client, &unsubscribe->pendResp);
-            wm_SemUnlock(&client->lockClient);
-        }
+        rc = MqttClient_RespList_RemoveOwned(client,
+            &unsubscribe->pendResp, rc);
     #endif
 
     /* reset state */
@@ -2229,11 +2257,14 @@ int SN_Client_Register(MqttClient *client, SN_Register *regist)
         return rc;
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &regist->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &regist->pendResp, rc);
 #endif
+    /* MQTT-SN 1.2 section 5.4.11: a REGACK ReturnCode other than Accepted
+     * rejects the registration; regack.topicId is not usable then. */
+    if (rc == MQTT_CODE_SUCCESS &&
+            regist->regack.return_code != SN_RC_ACCEPTED) {
+        rc = MQTT_TRACE_ERROR(MQTT_CODE_ERROR_SN_REJECTED);
+    }
 
     /* reset state */
     regist->stat.write = MQTT_MSG_BEGIN;
@@ -2364,10 +2395,7 @@ int SN_Client_Ping(MqttClient *client, SN_PingReq *ping)
     }
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &ping->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &ping->pendResp, rc);
 #endif
 
     /* reset state */
@@ -2487,10 +2515,13 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
         if (disconnect->sleepTmr != 0) {
             rc = wm_SemLock(&client->lockClient);
             if (rc == 0) {
-                /* inform other threads of expected response */
+                /* inform other threads of expected response. Register
+                 * the request itself so whichever thread reads the
+                 * acknowledgment sees its non-zero sleepTmr and does not
+                 * report it to disconnect_cb as a gateway disconnect. */
                 rc = MqttClient_RespList_Add(client,
                         (MqttPacketType)SN_MSG_TYPE_DISCONNECT, 0,
-                        &disconnect->pendResp, NULL);
+                        &disconnect->pendResp, disconnect);
                 wm_SemUnlock(&client->lockClient);
             }
             if (rc != 0) {
@@ -2531,10 +2562,7 @@ int SN_Client_Disconnect_ex(MqttClient *client, SN_Disconnect *disconnect)
     }
 #endif
 #ifdef WOLFMQTT_MULTITHREAD
-    if (wm_SemLock(&client->lockClient) == 0) {
-        MqttClient_RespList_Remove(client, &disconnect->pendResp);
-        wm_SemUnlock(&client->lockClient);
-    }
+    rc = MqttClient_RespList_RemoveOwned(client, &disconnect->pendResp, rc);
 #endif
 
     /* reset state */

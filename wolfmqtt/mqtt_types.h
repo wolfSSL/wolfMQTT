@@ -252,6 +252,11 @@ enum MqttPacketResponseCodes {
                                                code >= 0x80; see
                                                MqttPublish.resp.reason_code for
                                                the specific reason. */
+    MQTT_CODE_ERROR_SN_REJECTED = -22, /* MQTT-SN gateway rejected a
+                                          REGISTER, QoS 1 PUBLISH or Will
+                                          update with a ReturnCode other
+                                          than Accepted; see the request's
+                                          return_code for the reason. */
 
     MQTT_CODE_CONTINUE = -101,
     MQTT_CODE_STDIN_WAKE = -102,

@@ -53,6 +53,9 @@ static int mStopRead = 0;
 /* Locals */
 static int mNumMsgsRecvd;
 static word16 topicID;
+/* topicID as SN_Publish.topic_name carries it: the two wire bytes, most
+ * significant first (MQTT-SN 1.2 section 5.4.12) */
+static byte topicIdBe[2];
 
 
 #ifdef USE_WINDOWS_API
@@ -229,6 +232,8 @@ static int client_register(MQTTCtx *mqttCtx)
         if ((rc == 0) && (regist.regack.return_code == SN_RC_ACCEPTED)) {
             /* Topic ID is returned in RegAck */
             topicID = regist.regack.topicId;
+            topicIdBe[0] = (byte)(topicID >> 8);
+            topicIdBe[1] = (byte)topicID;
         }
         PRINTF("....MQTT-SN Register Ack: rc = %d, topic id = %d",
                 regist.regack.return_code, regist.regack.topicId);
@@ -431,7 +436,7 @@ static void *waitMessage_task(void *param)
                 mqttCtx->publishSN.qos = mqttCtx->qos;
                 mqttCtx->publishSN.duplicate = 0;
                 mqttCtx->publishSN.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
-                mqttCtx->publishSN.topic_name = (char*)&topicID;
+                mqttCtx->publishSN.topic_name = (char*)topicIdBe;
                 if (mqttCtx->publishSN.qos > MQTT_QOS_0) {
                     mqttCtx->publishSN.packet_id = mqtt_get_packetid();
                 }
@@ -496,7 +501,7 @@ static void *publish_task(void *param)
     publish.topic_type = SN_TOPIC_ID_TYPE_NORMAL;
 
     /* Use the topic ID saved from the subscribe */
-    publish.topic_name = (char*)&topicID;
+    publish.topic_name = (char*)topicIdBe;
     if ((publish.qos == MQTT_QOS_1) ||
         (publish.qos == MQTT_QOS_2)) {
         publish.packet_id = mqtt_get_packetid_threadsafe();

@@ -130,6 +130,7 @@ typedef struct SnMtOnlyRaceCtx {
     int incoming_delivered;
     int subscribe_done;
     int subscribe_done_while_writer_active;
+    int publish_done; /* the writer thread's publish returned */
     int sync_error;
     int subscribe_rc;
     int publish_rc;
@@ -301,7 +302,10 @@ static int mock_read(void *ctx, byte* buf, int buf_len, int timeout_ms)
         }
         g_mt_only_race->reader_waiting = 1;
         sync_rc = pthread_cond_broadcast(&g_mt_only_race->cond);
-        while (sync_rc == 0 && !g_mt_only_race->writer_active) {
+        /* A publish that returns without writing never sets writer_active;
+         * stop waiting then so the test fails instead of hanging. */
+        while (sync_rc == 0 && !g_mt_only_race->writer_active &&
+                !g_mt_only_race->publish_done) {
             sync_rc = pthread_cond_wait(&g_mt_only_race->cond,
                 &g_mt_only_race->mutex);
         }
@@ -583,6 +587,18 @@ static int sn_client_init(int continues_cfg)
     return rc;
 }
 
+#ifdef WOLFMQTT_TEST_SN_MT_ONLY_THREADS
+/* These tests drive MqttClient_Publish on the SN client only to hold
+ * lockSend. [MQTT-3.1.0-1] refuses any PUBLISH before CONNECT has been sent,
+ * so mark it sent as a connected client would be. Returns nonzero on
+ * success. */
+static int mqtt_mt_only_mark_connect_sent(void)
+{
+    return (MqttClient_Flags(&g_client, 0, MQTT_CLIENT_FLAG_CONNECT_SENT) &
+        MQTT_CLIENT_FLAG_CONNECT_SENT) != 0;
+}
+#endif
+
 /* Drive SN_Client_Connect until it returns something other than CONTINUE, or
  * until we exceed a sane iteration cap. Returns the terminal code and the
  * number of iterations through *iters. */
@@ -664,8 +680,9 @@ static int sn_ping_pump(SN_PingReq* ping, int* iters)
 
 /* Build a NORMAL-topic-ID publish. topicId must outlive every SN_Client_Publish
  * call: SN_Encode_Publish reads the 2-byte topic ID through publish->topic_name,
- * so the caller owns the storage and passes its address here. */
-static void sn_publish_setup(SN_Publish* p, const word16* topicId, MqttQoS qos)
+ * so the caller owns the storage. It holds the TopicId as on the wire, most
+ * significant byte first (MQTT-SN 1.2 section 5.4.12). */
+static void sn_publish_setup(SN_Publish* p, const byte* topicId, MqttQoS qos)
 {
     XMEMSET(p, 0, sizeof(*p));
     p->retain = 0;
@@ -1400,14 +1417,14 @@ TEST(sn_subscribe_rejected)
 TEST(sn_publish_qos1_no_continue)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
 
     mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
 
     rc = sn_publish_pump(&pub, NULL);
 
@@ -1419,13 +1436,59 @@ TEST(sn_publish_qos1_no_continue)
     ASSERT_NO_PENDRESP();
 }
 
+/* MQTT-SN 1.2 sections 5.4.11 and 5.4.13: a REGACK or PUBACK carrying a
+ * ReturnCode other than Accepted (here 0x02, Rejected: invalid topic ID) is a
+ * rejection, and the API must say so instead of returning success. Frames:
+ * PUBACK / REGACK, Length 7, TopicId, MsgId, ReturnCode 0x02. */
+TEST(sn_publish_qos1_rejected_returns_error)
+{
+    static const byte puback_reject[] = { 0x07, SN_MSG_TYPE_PUBACK,
+                                          0x00, SN_TEST_PUB_TOPIC_ID,
+                                          0x00, SN_TEST_PUB_PACKET_ID,
+                                          SN_RC_INVTOPICNAME };
+    SN_Publish pub;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
+    int rc;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, puback_reject, (int)sizeof(puback_reject));
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
+    rc = sn_publish_pump(&pub, NULL);
+    ASSERT_EQ(MQTT_CODE_ERROR_SN_REJECTED, rc);
+    ASSERT_EQ(SN_RC_INVTOPICNAME, pub.return_code);
+    ASSERT_NO_PENDRESP();
+}
+
+TEST(sn_register_rejected_returns_error)
+{
+    static const byte regack_reject[] = { 0x07, SN_MSG_TYPE_REGACK,
+                                          0x00, 0x00, 0x00, 0x07,
+                                          SN_RC_NOTSUPPORTED };
+    SN_Register regist;
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    mock_net_push(&g_mock, regack_reject, (int)sizeof(regack_reject));
+    XMEMSET(&regist, 0, sizeof(regist));
+    regist.topicName = "wolf/reg";
+    regist.packet_id = 7;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Register(&g_client, &regist);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_SN_REJECTED, rc);
+    ASSERT_EQ(SN_RC_NOTSUPPORTED, regist.regack.return_code);
+    ASSERT_NO_PENDRESP();
+}
+
 /* Happy path, QoS 2: the gateway answers PUBREC then PUBCOMP. The client must
  * send PUBREL in between (so >= 2 writes) and converge to SUCCESS with no
  * dangling pending response. Runs in every SN build. */
 TEST(sn_publish_qos2_no_continue)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
@@ -1433,7 +1496,7 @@ TEST(sn_publish_qos2_no_continue)
     mock_net_push(&g_mock, PUBREC_FRAME,  (int)sizeof(PUBREC_FRAME));
     mock_net_push(&g_mock, PUBCOMP_FRAME, (int)sizeof(PUBCOMP_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_2);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_2);
 
     rc = sn_publish_pump(&pub, NULL);
 
@@ -1452,12 +1515,12 @@ TEST(sn_publish_qos2_no_continue)
 TEST(sn_publish_qos0_no_pendresp)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_0);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_0);
 
     rc = sn_publish_pump(&pub, NULL);
 
@@ -1594,6 +1657,59 @@ TEST(sn_wait_message_reads_each_packet_once)
     ASSERT_EQ(0x22, g_sn_wait_last_byte);
 }
 
+
+/* MQTT-SN 1.2 section 6.8: QoS -1 is a client-to-gateway send-and-forget
+ * flow, so a PUBLISH with QoS bits 0b11 from the gateway is malformed. It
+ * must be neither delivered nor answered (the QoS 2 PUBREC branch would
+ * otherwise catch it). Frame: Length 8, PUBLISH, Flags QoS 0b11 + predefined
+ * Topic Id (0x61), TopicId 1, MsgId 0, Data 'x'. */
+TEST(sn_inbound_qos_m1_publish_rejected)
+{
+    static const byte pub[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x61, 0x00, 0x01,
+                                0x00, 0x00, 'x' };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_record_delivery;
+    g_sn_wait_deliveries = 0;
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_sn_wait_deliveries);
+    ASSERT_EQ(0, g_mock.out_len);
+}
+
+#if WOLFMQTT_MAX_QOS < 2
+/* A build capped below QoS 2 has no QoS 2 duplicate suppression, so an
+ * inbound QoS 2 PUBLISH is a protocol error: neither delivered nor answered.
+ * Frame: Length 8, PUBLISH, Flags QoS 0b10 + predefined Topic Id (0x41),
+ * TopicId 1, MsgId 5, Data 'x'. */
+TEST(sn_inbound_publish_above_build_max_qos_rejected)
+{
+    static const byte pub[] = { 0x08, SN_MSG_TYPE_PUBLISH, 0x41, 0x00, 0x01,
+                                0x00, 0x05, 'x' };
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0 /* no CONTINUE */));
+    g_client.msg_cb = sn_record_delivery;
+    g_sn_wait_deliveries = 0;
+    mock_net_push(&g_mock, pub, (int)sizeof(pub));
+
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_WaitMessage(&g_client, 1000);
+    }
+    ASSERT_EQ(MQTT_CODE_ERROR_MALFORMED_DATA, rc);
+    ASSERT_EQ(0, g_sn_wait_deliveries);
+    ASSERT_EQ(0, g_mock.out_len);
+}
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
 static int g_sn_qos2_deliveries;
 
@@ -2031,6 +2147,17 @@ static void* sn_mt_only_publish_thread(void* arg)
     SnMtOnlyRaceCtx* race = (SnMtOnlyRaceCtx*)arg;
 
     race->publish_rc = MqttClient_Publish(&g_client, &race->publish);
+    if (pthread_mutex_lock(&race->mutex) != 0) {
+        race->sync_error = 1;
+        return NULL;
+    }
+    race->publish_done = 1;
+    if (pthread_cond_broadcast(&race->cond) != 0) {
+        race->sync_error = 1;
+    }
+    if (pthread_mutex_unlock(&race->mutex) != 0) {
+        race->sync_error = 1;
+    }
     return NULL;
 }
 
@@ -2058,6 +2185,7 @@ TEST(sn_subscribe_waits_for_mt_only_automatic_reply_writer)
     race.publish.buffer = &payload;
     race.publish.total_len = sizeof(payload);
     g_client.msg_cb = sn_mt_only_accept_publish;
+    ASSERT_TRUE(mqtt_mt_only_mark_connect_sent());
     g_mt_only_race = &race;
     mock_net_push(&g_mock, SN_PUBLISH_QOS1_FRAME,
         (int)sizeof(SN_PUBLISH_QOS1_FRAME));
@@ -2074,7 +2202,8 @@ TEST(sn_subscribe_waits_for_mt_only_automatic_reply_writer)
     ASSERT_EQ(0, pthread_create(&publish_thread, NULL,
         sn_mt_only_publish_thread, &race));
     ASSERT_EQ(0, pthread_mutex_lock(&race.mutex));
-    while (!race.incoming_delivered && !race.sync_error) {
+    while (!race.incoming_delivered && !race.sync_error &&
+            !race.publish_done) {
         ASSERT_EQ(0, pthread_cond_wait(&race.cond, &race.mutex));
     }
     ASSERT_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
@@ -2209,6 +2338,9 @@ TEST(mqtt_mt_only_stream_callback_reentrant_send_does_not_deadlock)
 
         (void)alarm(2);
         rc = sn_client_init(0);
+        if (rc == MQTT_CODE_SUCCESS && !mqtt_mt_only_mark_connect_sent()) {
+            rc = MQTT_CODE_ERROR_SYSTEM;
+        }
         if (rc == MQTT_CODE_SUCCESS) {
             XMEMSET(&publish, 0, sizeof(publish));
             publish.topic_name = "reentrant/topic";
@@ -2255,7 +2387,7 @@ TEST(mqtt_mt_only_stream_callback_sn_wait_does_not_spin)
 
         (void)alarm(2);
         rc = sn_client_init(0);
-        if (rc != MQTT_CODE_SUCCESS) {
+        if (rc != MQTT_CODE_SUCCESS || !mqtt_mt_only_mark_connect_sent()) {
             _exit(1);
         }
         g_client.msg_cb = sn_accept_incoming_publish;
@@ -2313,13 +2445,13 @@ static int sn_send_from_incoming_publish(MqttClient* client, MqttMessage* msg,
     byte msg_new, byte msg_done)
 {
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
 
     (void)msg;
     (void)msg_new;
     (void)msg_done;
     g_incoming_publish_calls++;
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_0);
     g_reentrant_send_rc = SN_Client_Publish(client, &publish);
     return g_reentrant_send_rc;
 }
@@ -2329,12 +2461,12 @@ static int sn_send_from_incoming_register(word16 topic_id,
 {
     MqttClient* client = (MqttClient*)ctx;
     SN_Publish publish;
-    word16 publish_topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte publish_topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
 
     (void)topic_id;
     (void)topic_name;
     g_incoming_register_calls++;
-    sn_publish_setup(&publish, &publish_topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, publish_topic_id, MQTT_QOS_0);
     g_reentrant_send_rc = SN_Client_Publish(client, &publish);
     return g_reentrant_send_rc;
 }
@@ -2475,17 +2607,61 @@ TEST(sn_disconnect_chunked_write_completes_exact_frame)
 }
 #endif
 
+#if defined(WOLFMQTT_NONBLOCK) && defined(WOLFMQTT_DISCONNECT_CB)
+static int g_sn_disconnect_cb_calls;
+static int sn_disconnect_cb_count(MqttClient* client, int error_code,
+    void* ctx)
+{
+    (void)client; (void)error_code; (void)ctx;
+    g_sn_disconnect_cb_calls++;
+    return 0;
+}
+
+/* MQTT-SN 1.2 section 6.14: the gateway answers a DISCONNECT carrying a
+ * Duration with a DISCONNECT that acknowledges the sleep request. That reply
+ * is not a gateway-initiated disconnect, so the disconnect callback must not
+ * fire for it. */
+TEST(sn_sleep_disconnect_ack_does_not_fire_disconnect_cb)
+{
+    /* DISCONNECT with Duration 10: Length 4, MsgType, Duration (2 bytes) */
+    static const byte sleep_frame[] = { 0x04, SN_MSG_TYPE_DISCONNECT,
+        0x00, 0x0A };
+    /* Gateway acknowledgment: Length 2, MsgType */
+    static const byte ack_frame[] = { 0x02, SN_MSG_TYPE_DISCONNECT };
+    SN_Disconnect disconnect;
+    int rc;
+    int i;
+
+    ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
+    g_sn_disconnect_cb_calls = 0;
+    ASSERT_EQ(MQTT_CODE_SUCCESS, MqttClient_SetDisconnectCallback(&g_client,
+        sn_disconnect_cb_count, NULL));
+    mock_net_push(&g_mock, ack_frame, (int)sizeof(ack_frame));
+
+    XMEMSET(&disconnect, 0, sizeof(disconnect));
+    disconnect.sleepTmr = 10;
+    rc = MQTT_CODE_CONTINUE;
+    for (i = 0; i < 20 && rc == MQTT_CODE_CONTINUE; i++) {
+        rc = SN_Client_Disconnect_ex(&g_client, &disconnect);
+    }
+    ASSERT_TRUE(rc >= 0);
+    ASSERT_MEM_EQ(sleep_frame, g_mock.out, sizeof(sleep_frame));
+    ASSERT_EQ(0, g_sn_disconnect_cb_calls);
+    ASSERT_NO_PENDRESP();
+}
+#endif
+
 /* A publish object must be reusable after a terminal write error: the failed
  * send resets its state so the next attempt re-encodes instead of resuming a
  * cleared, zero-length write. */
 TEST(sn_publish_reusable_after_write_error)
 {
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_0);
     g_mock.write_fail_rc = MQTT_CODE_ERROR_NETWORK;
     rc = SN_Client_Publish(&g_client, &publish);
     ASSERT_TRUE(rc < 0);
@@ -2708,7 +2884,7 @@ TEST(sn_pingreq_zero_progress_releases_writer)
 {
     MqttMsgStat other_stat;
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
@@ -2717,7 +2893,7 @@ TEST(sn_pingreq_zero_progress_releases_writer)
      * which clears the cumulative write.total. Validate that invariant, then
      * plant a stale nonzero total explicitly so the following zero-progress
      * response must judge its own progress rather than inherit this value. */
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_0);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_0);
     ASSERT_EQ(MQTT_CODE_SUCCESS, SN_Client_Publish(&g_client, &publish));
     ASSERT_EQ(0, (int)g_client.write.total);
     ASSERT_TRUE(g_mock.out_len > 0);
@@ -2997,14 +3173,14 @@ TEST(sn_subscribe_rejected_nonblock)
 TEST(sn_publish_qos1_nonblock_pendresp_lifecycle)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc, iters = 0;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(1 /* one CONTINUE per frame */));
 
     mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
 
     /* First call sends PUBLISH and the armed CONTINUE forces an in-flight
      * return before the PUBACK is delivered. */
@@ -3041,14 +3217,14 @@ TEST(sn_publish_qos1_nonblock_pendresp_lifecycle)
 TEST(sn_publish_qos1_many_continues)
 {
     SN_Publish pub;
-    word16 topicId = SN_TEST_PUB_TOPIC_ID;
+    byte topicId[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc, iters = 0;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(3 /* three CONTINUE per frame */));
 
     mock_net_push(&g_mock, PUBACK_FRAME, (int)sizeof(PUBACK_FRAME));
 
-    sn_publish_setup(&pub, &topicId, MQTT_QOS_1);
+    sn_publish_setup(&pub, topicId, MQTT_QOS_1);
 
     rc = sn_publish_pump(&pub, &iters);
 
@@ -3161,11 +3337,11 @@ TEST(sn_willmsgupd_zero_write_returns_network_error)
 TEST(sn_publish_qos1_zero_write_returns_network_error)
 {
     SN_Publish publish;
-    word16 topic_id = SN_TEST_PUB_TOPIC_ID;
+    byte topic_id[2] = { 0x00, SN_TEST_PUB_TOPIC_ID };
     int rc;
 
     ASSERT_EQ(MQTT_CODE_SUCCESS, sn_client_init(0));
-    sn_publish_setup(&publish, &topic_id, MQTT_QOS_1);
+    sn_publish_setup(&publish, topic_id, MQTT_QOS_1);
     g_mock.write_zero_count = 1;
 
     rc = SN_Client_Publish(&g_client, &publish);
@@ -3778,6 +3954,8 @@ int main(int argc, char** argv)
     RUN_TEST(sn_subscribe_no_continue);
     RUN_TEST(sn_subscribe_rejected);
     RUN_TEST(sn_publish_qos1_no_continue);
+    RUN_TEST(sn_publish_qos1_rejected_returns_error);
+    RUN_TEST(sn_register_rejected_returns_error);
     RUN_TEST(sn_publish_qos2_no_continue);
     RUN_TEST(sn_publish_qos0_no_pendresp);
 #if defined(WOLFMQTT_NONBLOCK) || defined(WOLFMQTT_MULTITHREAD)
@@ -3792,6 +3970,10 @@ int main(int argc, char** argv)
     RUN_TEST(sn_unsubscribe_no_continue);
     RUN_TEST(sn_publish_incoming_null_msg_cb_errors_no_ack);
     RUN_TEST(sn_wait_message_reads_each_packet_once);
+    RUN_TEST(sn_inbound_qos_m1_publish_rejected);
+#if WOLFMQTT_MAX_QOS < 2
+    RUN_TEST(sn_inbound_publish_above_build_max_qos_rejected);
+#endif
 #if WOLFMQTT_MAX_QOS >= 2
     RUN_TEST(sn_qos2_retransmit_not_delivered_twice);
     RUN_TEST(sn_qos2_full_table_refuses_new_id);
@@ -3832,6 +4014,9 @@ int main(int argc, char** argv)
     RUN_TEST(sn_publish_auto_reply_resumes_partial_write);
     RUN_TEST(sn_register_auto_reply_resumes_partial_write);
     RUN_TEST(sn_disconnect_chunked_write_completes_exact_frame);
+#ifdef WOLFMQTT_DISCONNECT_CB
+    RUN_TEST(sn_sleep_disconnect_ack_does_not_fire_disconnect_cb);
+#endif
 #if defined(WOLFMQTT_MULTITHREAD) && !defined(WOLFMQTT_ALLOW_NODATA_UNLOCK)
     RUN_TEST(sn_register_partial_write_retains_send_state);
     RUN_TEST(sn_register_partial_write_second_send_not_deadlocked);
