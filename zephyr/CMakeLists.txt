@@ -1,3 +1,6 @@
+# This module adds its sources to the application, so it has no
+# ZEPHYR_CURRENT_LIBRARY. Generate the SBOM with:
+#   scripts/sbom-port.sh zephyr --compdb <build>/compile_commands.json
 if(CONFIG_WOLFMQTT)
   zephyr_include_directories(${ZEPHYR_CURRENT_MODULE_DIR})
   zephyr_include_directories(${ZEPHYR_CURRENT_MODULE_DIR}/zephyr)

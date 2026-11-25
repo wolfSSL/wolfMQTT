@@ -431,3 +431,36 @@ message("\tMultithread:         ${ENABLE_MULTITHREAD}")
 message("\tCurl:                ${ENABLE_CURL}")
 message("\tBroker:              ${WOLFMQTT_BROKER}")
 message("-----------------------------------------------")
+
+####################################################
+# SBOM
+####################################################
+# Same generator as `make sbom`. Hashes the installed wolfmqtt library
+# and reads the generated wolfmqtt/options.h.
+#   cmake -B build -DWOLFMQTT_TLS=no
+#   cmake --build build --target sbom
+if(WOLFMQTT_TLS)
+    set(_WOLFMQTT_SBOM_DEP_WOLFSSL yes)
+else()
+    set(_WOLFMQTT_SBOM_DEP_WOLFSSL no)
+endif()
+set(WOLFMQTT_SBOM_LICENSE "GPL-3.0-or-later" CACHE STRING
+    "SPDX licence expression recorded in the SBOM")
+set(WOLFMQTT_SBOM_LICENSE_TEXT "" CACHE FILEPATH
+    "Licence text for a LicenseRef-* value of WOLFMQTT_SBOM_LICENSE")
+include(${CMAKE_CURRENT_SOURCE_DIR}/tools/sbom/build/sbom.cmake)
+set(_wolfmqtt_sbom_args
+    NAME wolfmqtt
+    VERSION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/wolfmqtt/version.h
+    VERSION_MACRO LIBWOLFMQTT_VERSION_STRING
+    STAGE_TARGET wolfmqtt
+    VALIDATE
+    OPTIONS_H ${OPTION_FILE}
+    LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+    LICENSE_OVERRIDE ${WOLFMQTT_SBOM_LICENSE}
+    ROOT ${CMAKE_CURRENT_SOURCE_DIR}
+    DEP_WOLFSSL ${_WOLFMQTT_SBOM_DEP_WOLFSSL})
+if(NOT WOLFMQTT_SBOM_LICENSE_TEXT STREQUAL "")
+    list(APPEND _wolfmqtt_sbom_args LICENSE_TEXT ${WOLFMQTT_SBOM_LICENSE_TEXT})
+endif()
+wolfssl_compliance_tooling_add_sbom(${_wolfmqtt_sbom_args})

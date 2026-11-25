@@ -1,0 +1,234 @@
+name: SBOM Test
+
+# Exercises each wolfMQTT SBOM route:
+#   * Autotools  -> make sbom
+#   * CMake      -> cmake --build --target sbom, install-sbom, uninstall-sbom
+#   * Zephyr     -> scripts/sbom-port.sh zephyr (stub compile_commands.json)
+#   * ESP-IDF, QNX, Harmony, STM32Cube -> scripts/sbom-port.sh compdb
+#   * Visual Studio .sln and Arduino -> scripts/sbom-port.sh
+#   * TLS        -> make sbom with a wolfSSL build, dependency recorded
+#   * drift      -> tools/sbom matches the pinned wolfssl-compliance-tooling rev
+#
+# The library hash depends on the compiler. gcc and clang do not produce
+# byte-identical documents on the --lib path. The same compiler and the same
+# SOURCE_DATE_EPOCH do.
+
+on:
+  push:
+    branches: [ 'master', 'main', 'release/**' ]
+  pull_request:
+    branches: [ '**' ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: wolfMQTT SBOM (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: autotools
+            kind: autotools
+          - name: cmake
+            kind: cmake
+          - name: ports
+            kind: ports
+          - name: tls
+            kind: tls
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential autoconf automake libtool pkg-config cmake \
+            python3 python3-venv python3-pip
+          python3 -m venv "$RUNNER_TEMP/sbom-venv"
+          "$RUNNER_TEMP/sbom-venv/bin/pip" install --quiet spdx-tools
+          echo "$RUNNER_TEMP/sbom-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Vendored generator is present
+        run: test -x tools/sbom/gen-sbom && test -x tools/sbom/sbom-driver
+
+      - name: Autotools SBOM (no TLS)
+        if: matrix.kind == 'autotools'
+        run: |
+          ./autogen.sh
+          ./configure --disable-tls --disable-examples
+          make -j"$(nproc)" sbom
+          python3 tools/sbom/validate_sbom.py \
+            --name-prefix wolfmqtt \
+            wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json
+          test -f wolfmqtt-*.spdx
+          rm -f wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
+          SOURCE_DATE_EPOCH=1700000000 make sbom
+          sha256sum wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json > /tmp/a.sums
+          rm -f wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json wolfmqtt-*.spdx
+          SOURCE_DATE_EPOCH=1700000000 make sbom
+          sha256sum wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json > /tmp/b.sums
+          diff /tmp/a.sums /tmp/b.sums
+
+      - name: CMake SBOM
+        if: matrix.kind == 'cmake'
+        run: |
+          cmake -S . -B build -DWOLFMQTT_TLS=no -DWOLFMQTT_EXAMPLES=no \
+            -DWOLFMQTT_UNIT_TESTS=no
+          cmake --build build --target sbom
+          python3 tools/sbom/validate_sbom.py \
+            --name-prefix wolfmqtt \
+            build/wolfmqtt-*.cdx.json build/wolfmqtt-*.spdx.json
+          stage="$PWD/stage"
+          DESTDIR="$stage" cmake --build build --target install-sbom
+          docs="$(find "$stage" -type f \
+            \( -name 'wolfmqtt-*.cdx.json' -o -name 'wolfmqtt-*.spdx.json' \
+               -o -name 'wolfmqtt-*.spdx' \) | wc -l)"
+          if [ "$docs" -ne 3 ]; then
+            echo "ERROR: install-sbom did not install the three SBOM files." >&2
+            find "$stage" -type f >&2 || true
+            exit 1
+          fi
+          DESTDIR="$stage" cmake --build build --target uninstall-sbom
+          left="$(find "$stage" -type f | wc -l)"
+          if [ "$left" -ne 0 ]; then
+            echo "ERROR: uninstall-sbom left files under $stage." >&2
+            find "$stage" -type f >&2
+            exit 1
+          fi
+
+      - name: Zephyr, compdb, Visual Studio, and Arduino routes
+        if: matrix.kind == 'ports'
+        run: |
+          stub="$RUNNER_TEMP/compdb"
+          mkdir -p "$stub/CMakeFiles/app.dir/src"
+          python3 - <<PY
+          import json, os
+          root = os.getcwd()
+          out = os.path.join("$stub", "compile_commands.json")
+          entry = {
+              "directory": root,
+              "file": "src/mqtt_client.c",
+              "output": "CMakeFiles/app.dir/src/mqtt_client.c.obj",
+              "command": "cc -c -DWOLFMQTT_ZEPHYR -I. -o CMakeFiles/app.dir/src/mqtt_client.c.obj src/mqtt_client.c",
+          }
+          with open(out, "w") as f:
+              json.dump([entry], f)
+          PY
+          scripts/sbom-port.sh zephyr --compdb "$stub/compile_commands.json" \
+            --cdx-out zephyr.cdx.json --spdx-out zephyr.spdx.json
+          python3 tools/sbom/validate_sbom.py --name-prefix wolfmqtt \
+            zephyr.cdx.json zephyr.spdx.json
+          python3 - <<'PY'
+          import json
+          cdx = json.load(open("zephyr.cdx.json"))
+          names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
+          assert any(n.endswith("WOLFMQTT_ZEPHYR") for n in names), names
+          print("zephyr macro ok")
+          PY
+
+          python3 - <<PY
+          import json, os
+          root = os.getcwd()
+          out = os.path.join("$stub", "esp.json")
+          entry = {
+              "directory": root,
+              "file": "src/mqtt_client.c",
+              "command": "cc -c -DWOLFMQTT_USER_SETTINGS -I. src/mqtt_client.c",
+          }
+          with open(out, "w") as f:
+              json.dump([entry], f)
+          PY
+          scripts/sbom-port.sh compdb "$stub/esp.json" \
+            --cdx-out compdb.cdx.json --spdx-out compdb.spdx.json
+          python3 tools/sbom/validate_sbom.py --name-prefix wolfmqtt \
+            compdb.cdx.json compdb.spdx.json
+
+          scripts/sbom-port.sh visual-studio \
+            --cdx-out vs.cdx.json --spdx-out vs.spdx.json
+          python3 tools/sbom/validate_sbom.py --name-prefix wolfmqtt \
+            vs.cdx.json vs.spdx.json
+          python3 - <<'PY'
+          import json
+          cdx = json.load(open("vs.cdx.json"))
+          names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
+          assert any(n.endswith("ENABLE_MQTT_TLS") for n in names), names
+          print("visual studio macro ok")
+          PY
+
+          scripts/sbom-port.sh arduino \
+            --cdx-out arduino.cdx.json --spdx-out arduino.spdx.json
+          python3 tools/sbom/validate_sbom.py --name-prefix wolfmqtt \
+            arduino.cdx.json arduino.spdx.json
+
+      - name: Build wolfSSL and record it as a dependency
+        if: matrix.kind == 'tls'
+        run: |
+          git clone --depth 1 https://github.com/wolfSSL/wolfssl.git "$RUNNER_TEMP/wolfssl"
+          cd "$RUNNER_TEMP/wolfssl"
+          ./autogen.sh
+          ./configure --prefix="$RUNNER_TEMP/wolfssl-inst" \
+            --disable-examples --disable-crypttests --disable-asm
+          make -j"$(nproc)"
+          make install
+          cd "$GITHUB_WORKSPACE"
+          ./autogen.sh
+          ./configure --disable-examples \
+            --with-libwolfssl-prefix="$RUNNER_TEMP/wolfssl-inst"
+          make -j"$(nproc)" sbom WOLFSSL_DIR="$RUNNER_TEMP/wolfssl"
+          python3 tools/sbom/validate_sbom.py \
+            --name-prefix wolfmqtt \
+            wolfmqtt-*.cdx.json wolfmqtt-*.spdx.json
+          python3 - <<'PY'
+          import glob, json
+          d = json.load(open(glob.glob("wolfmqtt-*.spdx.json")[0]))
+          names = {p["name"] for p in d["packages"]}
+          assert "wolfssl" in names, names
+          rels = [(r["spdxElementId"], r["relationshipType"], r["relatedSpdxElement"])
+                  for r in d["relationships"]]
+          assert ("SPDXRef-Package-wolfmqtt", "DEPENDS_ON",
+                  "SPDXRef-Package-wolfssl") in rels, rels
+          cdx = json.load(open(glob.glob("wolfmqtt-*.cdx.json")[0]))
+          m = cdx["metadata"]["component"]
+          ids = [lic.get("license", {}).get("id") for lic in m.get("licenses", [])]
+          assert "GPL-3.0-or-later" in ids, ids
+          assert m.get("hashes"), "library hash missing"
+          print("tls dependency ok", m["name"], m.get("version"))
+          PY
+
+  compliance_tooling_drift:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned wolfssl-compliance-tooling revision
+        id: pin
+        run: |
+          rev="$(tr -d '[:space:]' < tools/sbom/.wolfssl-compliance-tooling-rev)"
+          if [ -z "$rev" ]; then
+            echo "ERROR: tools/sbom/.wolfssl-compliance-tooling-rev is empty." >&2
+            exit 1
+          fi
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Check out wolfssl-compliance-tooling at the pinned revision
+        uses: actions/checkout@v4
+        with:
+          repository: wolfSSL/wolfssl-compliance-tooling
+          ref: ${{ steps.pin.outputs.rev }}
+          path: .wolfssl-compliance-tooling-src
+
+      - name: Drift check
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/.wolfssl-compliance-tooling-src"
+          python3 .wolfssl-compliance-tooling-src/tools/wolfssl-compliance-tooling-sync \
+            --check --src .wolfssl-compliance-tooling-src --dest .

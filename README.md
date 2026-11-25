@@ -123,6 +123,10 @@ make
 
 Support for Zephyr is available in the [zephyr](zephyr) directory. For instructions on how to build for Zephyr, see the [README.md](zephyr/README.md).
 
+### SBOM
+
+`make sbom` (Autotools) and `cmake --build build --target sbom` (CMake) write a CycloneDX 1.6 file and an SPDX 2.3 file for `libwolfmqtt`. The other build routes (Zephyr, ESP-IDF, Visual Studio, Arduino, QNX, Harmony, STM32Cube) use `scripts/sbom-port.sh`. See [docs/SBOM.md](docs/SBOM.md). The command needs `python3` and `pyspdxtools` (`pip install spdx-tools`).
+
 ## Architecture
 
 The library has three components.
