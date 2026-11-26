@@ -131,18 +131,52 @@ jobs:
           import json
           cdx = json.load(open("zephyr.cdx.json"))
           names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
+          comps = [c.get("name", "") for c in cdx.get("components", [])]
           assert any(n.endswith("WOLFMQTT_ZEPHYR") for n in names), names
+          assert "wolfssl" not in comps, comps
           print("zephyr macro ok")
+          PY
+
+          cat > "$stub/user_settings.h" <<'EOF'
+          #define ENABLE_MQTT_TLS
+          #define WOLFMQTT_PORT_SETTINGS 1
+          EOF
+          python3 - <<PY
+          import json, os
+          root = os.getcwd()
+          stub = "$stub"
+          out = os.path.join(stub, "zephyr-settings.json")
+          entry = {
+              "directory": root,
+              "file": "src/mqtt_client.c",
+              "output": "CMakeFiles/app.dir/src/mqtt_client.c.obj",
+              "command": "cc -c -DWOLFMQTT_ZEPHYR -I%s -o CMakeFiles/app.dir/src/mqtt_client.c.obj src/mqtt_client.c" % stub,
+          }
+          with open(out, "w") as f:
+              json.dump([entry], f)
+          PY
+          scripts/sbom-port.sh zephyr --compdb "$stub/zephyr-settings.json" \
+            --cdx-out zephyr-tls.cdx.json --spdx-out zephyr-tls.spdx.json
+          python3 - <<'PY'
+          import json
+          cdx = json.load(open("zephyr-tls.cdx.json"))
+          names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
+          comps = [c.get("name", "") for c in cdx.get("components", [])]
+          assert any(n.endswith("WOLFMQTT_PORT_SETTINGS") for n in names), names
+          assert any(n.endswith("ENABLE_MQTT_TLS") for n in names), names
+          assert "wolfssl" in comps, comps
+          print("zephyr settings ok")
           PY
 
           python3 - <<PY
           import json, os
           root = os.getcwd()
-          out = os.path.join("$stub", "esp.json")
+          stub = "$stub"
+          out = os.path.join(stub, "esp.json")
           entry = {
               "directory": root,
               "file": "src/mqtt_client.c",
-              "command": "cc -c -DWOLFMQTT_USER_SETTINGS -I. src/mqtt_client.c",
+              "command": "cc -c -DWOLFMQTT_USER_SETTINGS -I%s src/mqtt_client.c" % stub,
           }
           with open(out, "w") as f:
               json.dump([entry], f)
@@ -151,6 +185,15 @@ jobs:
             --cdx-out compdb.cdx.json --spdx-out compdb.spdx.json
           python3 tools/sbom/validate_sbom.py --name-prefix wolfmqtt \
             compdb.cdx.json compdb.spdx.json
+          python3 - <<'PY'
+          import json
+          cdx = json.load(open("compdb.cdx.json"))
+          names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
+          comps = [c.get("name", "") for c in cdx.get("components", [])]
+          assert any(n.endswith("WOLFMQTT_PORT_SETTINGS") for n in names), names
+          assert "wolfssl" in comps, comps
+          print("compdb settings ok")
+          PY
 
           scripts/sbom-port.sh visual-studio \
             --cdx-out vs.cdx.json --spdx-out vs.spdx.json
@@ -161,13 +204,33 @@ jobs:
           cdx = json.load(open("vs.cdx.json"))
           names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
           assert any(n.endswith("ENABLE_MQTT_TLS") for n in names), names
+          assert any(n.endswith("WOLFMQTT_PROPERTY_CB") for n in names), names
           print("visual studio macro ok")
           PY
 
-          scripts/sbom-port.sh arduino \
+          cat > "$stub/arduino-options.h" <<'EOF'
+          #define ENABLE_MQTT_TLS
+          #define WOLFMQTT_ARDUINO 1
+          EOF
+          if scripts/sbom-port.sh arduino \
+              --cdx-out arduino-missing.cdx.json --spdx-out arduino-missing.spdx.json
+          then
+            echo "ERROR: arduino mode accepted a missing --options-h." >&2
+            exit 1
+          fi
+          scripts/sbom-port.sh arduino --options-h "$stub/arduino-options.h" \
             --cdx-out arduino.cdx.json --spdx-out arduino.spdx.json
           python3 tools/sbom/validate_sbom.py --name-prefix wolfmqtt \
             arduino.cdx.json arduino.spdx.json
+          python3 - <<'PY'
+          import json
+          cdx = json.load(open("arduino.cdx.json"))
+          names = [p.get("name", "") for p in cdx["metadata"]["component"].get("properties", [])]
+          comps = [c.get("name", "") for c in cdx.get("components", [])]
+          assert any(n.endswith("WOLFMQTT_ARDUINO") for n in names), names
+          assert "wolfssl" in comps, comps
+          print("arduino options ok")
+          PY
 
       - name: Build wolfSSL and record it as a dependency
         if: matrix.kind == 'tls'

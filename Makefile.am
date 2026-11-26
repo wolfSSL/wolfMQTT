@@ -173,6 +173,8 @@ EXTRA_DIST += tools/sbom/frontends/compdb_sbom.py
 EXTRA_DIST += tools/sbom/frontends/iar_sbom.py
 EXTRA_DIST += tools/sbom/frontends/included_sources.py
 EXTRA_DIST += tools/sbom/frontends/zephyr_sbom.py
+EXTRA_DIST += scripts/sbom-port.sh
+EXTRA_DIST += docs/SBOM.md
 
 include tools/sbom/sbom.am
 

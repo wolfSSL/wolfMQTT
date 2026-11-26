@@ -43,14 +43,14 @@ These builds do not install `libwolfmqtt` through Autotools or the top-level CMa
 | Microchip Harmony | XC32 | `scripts/sbom-port.sh compdb <build>/compile_commands.json` |
 | STM32Cube | the Cube toolchain | `scripts/sbom-port.sh compdb <build>/compile_commands.json` |
 | Visual Studio `.sln` | MSVC | `scripts/sbom-port.sh visual-studio` |
-| Arduino | the board compiler | `scripts/sbom-port.sh arduino` |
+| Arduino | the board compiler | `scripts/sbom-port.sh arduino --options-h <build>/wolfmqtt/options.h` |
 
-Zephyr adds the wolfMQTT sources to the application (`target_sources(app ...)`). The script passes `--target app`. Enable `CMAKE_EXPORT_COMPILE_COMMANDS` in the west build. `zephyr_sbom.py` writes a source inventory unless you pass `--user-settings` or `--options-h`. The wolfMQTT script copies the `-D` macros from the compile commands into a header and passes that header, so `WOLFMQTT_ZEPHYR` and the Kconfig macros are recorded. Pass `--user-settings` yourself when the module has a settings header. That path replaces the copied `-D` header.
+Zephyr adds the wolfMQTT sources to the application (`target_sources(app ...)`). The script passes `--target app`. Enable `CMAKE_EXPORT_COMPILE_COMMANDS` in the west build. When the compile command names a wolfMQTT settings header (`-include`, `-imacros`, or `user_settings.h` on a `-I` path), the script passes `--user-settings` and `--hostcc cc`. The frontend records the macros that header and the `-D` flags add on top of `autoconf.h`. When the command has no settings header, the script copies the `-D` macros into a header and passes `--options-h`. Pass `--user-settings` yourself when the header is included only from a C file. `--dep-wolfssl` is `yes` when those macros define `ENABLE_MQTT_TLS`.
 
-ESP-IDF, QNX, Harmony, and STM32Cube: produce `compile_commands.json` from the IDE build (CMake export, or `bear -- make`). The script keeps the wolfMQTT library sources.
+ESP-IDF, QNX, Harmony, and STM32Cube: produce `compile_commands.json` from the IDE build (CMake export, or `bear -- make`). The script keeps the wolfMQTT library sources. When a compile command names `user_settings.h` or `wolfSSL.I-CUBE-wolfMQTT_conf.h`, the script passes `--settings-h` and `--include-dir` so the host compiler expands that header. `--dep-wolfssl` follows `ENABLE_MQTT_TLS`.
 
-The Visual Studio script records `wolfmqtt/vs_settings.h` and the five sources in `wolfmqtt.vcxproj`. It lists sources because that project file does not produce a library this host can hash. A CMake Visual Studio build uses `cmake --build build --target sbom` and hashes the library.
+The Visual Studio script preprocesses `wolfmqtt/vs_settings.h` with the host compiler and `-D_WIN32`. `HAVE_CONFIG_H` stays unset, so `WOLFMQTT_PROPERTY_CB` under `#ifdef WOLFMQTT_V5` is recorded. The script lists the five sources in `wolfmqtt.vcxproj` because that project file does not produce a library this host can hash. A CMake Visual Studio build uses `cmake --build build --target sbom` and hashes the library.
 
-The Arduino script records `wolfmqtt/options.h.in` and every `src/*.c` file that `IDE/ARDUINO/wolfmqtt-arduino.sh` copies. Wrap a real Arduino build with a compilation database and use the `compdb` mode when you need the board's macros.
+The Arduino script requires `--options-h`. Pass the `wolfmqtt/options.h` from the Arduino build. `wolfmqtt/options.h.in` is the empty Autotools template. The script records every `src/*.c` file that `IDE/ARDUINO/wolfmqtt-arduino.sh` copies. `--dep-wolfssl` follows `ENABLE_MQTT_TLS` in the header you pass. Wrap a real Arduino build with a compilation database and use the `compdb` mode when you need the board's macros.
 
 Add `--cdx-out` and `--spdx-out` to choose the output paths. The default is the current directory.
