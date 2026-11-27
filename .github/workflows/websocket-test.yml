@@ -38,20 +38,28 @@ jobs:
         
     - name: Create Mosquitto config
       run: |
-        echo "listener 11883" > mosquitto.conf
-        echo "protocol mqtt" >> mosquitto.conf
-        echo "listener 18080" >> mosquitto.conf
-        echo "protocol websockets" >> mosquitto.conf
-        echo "listener 18081" >> mosquitto.conf
-        echo "protocol websockets" >> mosquitto.conf
-        echo "cafile scripts/broker_test/ca-cert.pem" >> mosquitto.conf
-        echo "certfile scripts/broker_test/server-cert.pem" >> mosquitto.conf
-        echo "keyfile scripts/broker_test/server-key.pem" >> mosquitto.conf
-        echo "allow_anonymous true" >> mosquitto.conf
-        
+        # Ubuntu 26.04 confines the packaged broker. A relative config path
+        # in the workspace fails to open. Keep the files under /etc/mosquitto.
+        sudo mkdir -p /etc/mosquitto/certs
+        sudo cp scripts/broker_test/ca-cert.pem /etc/mosquitto/certs/
+        sudo cp scripts/broker_test/server-cert.pem /etc/mosquitto/certs/
+        sudo cp scripts/broker_test/server-key.pem /etc/mosquitto/certs/
+        sudo tee /etc/mosquitto/ci-websocket.conf >/dev/null <<'EOF'
+        listener 11883
+        protocol mqtt
+        listener 18080
+        protocol websockets
+        listener 18081
+        protocol websockets
+        cafile /etc/mosquitto/certs/ca-cert.pem
+        certfile /etc/mosquitto/certs/server-cert.pem
+        keyfile /etc/mosquitto/certs/server-key.pem
+        allow_anonymous true
+        EOF
+
     - name: Start Mosquitto broker
       run: |
-        mosquitto -c mosquitto.conf -v -d
+        sudo mosquitto -c /etc/mosquitto/ci-websocket.conf -v -d
         # Wait for broker to start
         sleep 2
         

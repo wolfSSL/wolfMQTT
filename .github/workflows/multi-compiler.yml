@@ -13,18 +13,23 @@ concurrency:
 jobs:
   compiler_test:
     name: ${{ matrix.cc }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         # Range endpoints of each compiler family; the middle versions
         # (gcc-12, clang-15) rarely surface anything the endpoints miss.
+        # Ubuntu 26.04 has no clang-14 package. ubuntu-24.04 still ships it.
         include:
           - cc: gcc-11
+            os: ubuntu-latest
           - cc: gcc-13
+            os: ubuntu-latest
           - cc: clang-14
+            os: ubuntu-24.04
           - cc: clang-17
+            os: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
