@@ -269,6 +269,30 @@ static void client_disconnect(MQTTCtx *mqttCtx)
     client_cleanup(mqttCtx);
 }
 
+
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB)
+/* Called for each decoded packet that carries properties. Records whether
+ * the server's CONNACK allows Subscription Identifiers (MQTT 5.0 section
+ * 3.2.2.3.12), which the subscribe step below honors. */
+static int mqtt_property_cb(MqttClient *client, MqttProp *head, void *ctx)
+{
+    MqttProp *prop;
+    MQTTCtx* mqttCtx;
+
+    (void)ctx;
+    if ((client == NULL) || (client->ctx == NULL)) {
+        return MQTT_CODE_ERROR_BAD_ARG;
+    }
+    mqttCtx = (MQTTCtx*)client->ctx;
+    for (prop = head; prop != NULL; prop = prop->next) {
+        if (prop->type == MQTT_PROP_SUBSCRIPTION_ID_AVAIL) {
+            mqttCtx->subId_not_avail = (prop->data_byte == 0);
+        }
+    }
+    return MQTT_CODE_SUCCESS;
+}
+#endif
+
 static int multithread_test_init(MQTTCtx *mqttCtx)
 {
     int rc = MQTT_CODE_SUCCESS;
@@ -330,6 +354,14 @@ static int multithread_test_init(MQTTCtx *mqttCtx)
     /* setup disconnect callback */
     rc = MqttClient_SetDisconnectCallback(&mqttCtx->client,
         mqtt_disconnect_cb, NULL);
+    if (rc != MQTT_CODE_SUCCESS) {
+        client_exit(mqttCtx);
+    }
+#endif
+#if defined(WOLFMQTT_V5) && defined(WOLFMQTT_PROPERTY_CB)
+    /* Learn from the CONNACK whether Subscription Identifiers may be sent */
+    rc = MqttClient_SetPropertyCallback(&mqttCtx->client,
+        mqtt_property_cb, NULL);
     if (rc != MQTT_CODE_SUCCESS) {
         client_exit(mqttCtx);
     }

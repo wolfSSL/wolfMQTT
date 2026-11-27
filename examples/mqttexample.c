@@ -283,6 +283,13 @@ void mqtt_init_ctx(MQTTCtx* mqttCtx)
     mqttCtx->max_packet_size = DEFAULT_MAX_PKT_SZ;
     mqttCtx->topic_alias = 1;
     mqttCtx->topic_alias_max = 1;
+#ifndef WOLFMQTT_PROPERTY_CB
+    /* Without a property callback the CONNACK's Subscription Identifier
+     * Available (MQTT 5.0 section 3.2.2.3.12) cannot be seen, so do not send
+     * one: a server that does not support them treats it as a Protocol
+     * Error. */
+    mqttCtx->subId_not_avail = 1;
+#endif
 #endif
 #ifdef WOLFMQTT_DEFAULT_TLS
     mqttCtx->use_tls = WOLFMQTT_DEFAULT_TLS;

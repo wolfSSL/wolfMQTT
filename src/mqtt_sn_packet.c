@@ -460,6 +460,14 @@ int SN_Decode_WillTopicReq(byte *rx_buf, int rx_buf_len)
 /* An empty WILLTOPIC message is a WILLTOPIC message without Flags and
    WillTopic field (i.e. it is exactly 2 octets long). It is used by a client
    to delete the Will topic and the Will message stored in the server */
+/* An MQTT-SN packet is at most SN_PACKET_MAX_LEN bytes, so a longer string
+ * can never be encoded. Checked on the size_t length, before it is narrowed
+ * to int, so a huge string cannot wrap negative past the packet checks. */
+static int SN_StrLenValid(const char* str)
+{
+    return (XSTRLEN(str) <= (size_t)SN_PACKET_MAX_LEN) ? 1 : 0;
+}
+
 int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
 {
     int total_len;
@@ -481,6 +489,9 @@ int SN_Encode_WillTopic(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     /* Determine packet length */
     if (willTopic != NULL) {
         /* Will Topic is a string */
+        if (!SN_StrLenValid(willTopic->willTopic)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len += (int)XSTRLEN(willTopic->willTopic);
 
         /* Flags */
@@ -636,6 +647,9 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
     /* Determine packet length */
     if (willTopic != NULL) {
         /* Will Topic is a string */
+        if (!SN_StrLenValid(willTopic->willTopic)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len += (int)XSTRLEN(willTopic->willTopic);
 
         /* Flags */
@@ -685,6 +699,14 @@ int SN_Encode_WillTopicUpdate(byte *tx_buf, int tx_buf_len, SN_Will *willTopic)
 
 }
 
+/* MQTT-SN 1.2 section 5.3.10 Table 5: ReturnCode values 0x04 to 0xFF are
+ * reserved. Returns 1 for a defined value. */
+static int SN_ReturnCodeValid(byte code)
+{
+    return (code == SN_RC_ACCEPTED || code == SN_RC_CONGESTION ||
+            code == SN_RC_INVTOPICNAME || code == SN_RC_NOTSUPPORTED);
+}
+
 int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
 {
     int total_len;
@@ -711,6 +733,9 @@ int SN_Decode_WillTopicResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     }
 
     /* Return Code */
+    if (!SN_ReturnCodeValid(*rx_payload)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
     *ret_code = *rx_payload;
 
     /* Return total length of packet */
@@ -796,6 +821,9 @@ int SN_Decode_WillMsgResponse(byte *rx_buf, int rx_buf_len, byte *ret_code)
     }
 
     /* Return Code */
+    if (!SN_ReturnCodeValid(*rx_payload)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+    }
     *ret_code = *rx_payload;
 
     /* Return total length of packet */
@@ -830,6 +858,9 @@ int SN_Decode_ConnectAck(byte *rx_buf, int rx_buf_len,
 
     /* Decode variable header */
     if (connect_ack) {
+        if (!SN_ReturnCodeValid(*rx_payload)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         connect_ack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -853,6 +884,9 @@ int SN_Encode_Register(byte *tx_buf, int tx_buf_len, SN_Register *regist)
 
     /* Determine packet length */
     /* Topic name is a string */
+    if (!SN_StrLenValid(regist->topicName)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+    }
     total_len = (int)XSTRLEN(regist->topicName);
 
     /* Length, MsgType, TopicID (2), and packet_id (2) */
@@ -1060,6 +1094,9 @@ int SN_Decode_RegAck(byte *rx_buf, int rx_buf_len, SN_RegAck *regack)
         rx_payload += rc;
 
         /* Decode return code */
+        if (!SN_ReturnCodeValid(*rx_payload)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         regack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -1090,6 +1127,9 @@ int SN_Encode_Subscribe(byte *tx_buf, int tx_buf_len, SN_Subscribe *subscribe)
     /* Determine packet length */
     if (subscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
+        if (!SN_StrLenValid(subscribe->topicNameId)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len = (int)XSTRLEN(subscribe->topicNameId);
     }
     else {
@@ -1192,6 +1232,9 @@ int SN_Decode_SubscribeAck(byte* rx_buf, int rx_buf_len,
             return rc;
         }
         rx_payload += rc;
+        if (!SN_ReturnCodeValid(*rx_payload)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+        }
         subscribe_ack->return_code = *rx_payload++;
     }
     (void)rx_payload;
@@ -1216,6 +1259,14 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     }
     if (tx_buf_len < 0) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_OUT_OF_BUFFER);
+    }
+    /* MQTT-SN 1.2 section 6.8: QoS -1 (MQTT_QOS_3) uses a predefined or
+     * short Topic Id and MsgId 0x0000. */
+    if (publish->qos == MQTT_QOS_3 &&
+            ((publish->topic_type != SN_TOPIC_ID_TYPE_PREDEF &&
+              publish->topic_type != SN_TOPIC_ID_TYPE_SHORT) ||
+             publish->packet_id != 0)) {
+        return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
 
     /* publish->total_len is a caller-supplied word32. Reject any payload large
@@ -1270,19 +1321,13 @@ int SN_Encode_Publish(byte *tx_buf, int tx_buf_len, SN_Publish *publish)
     if (publish->topic_name == NULL) {
         return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
     }
-    if ((publish->topic_type == SN_TOPIC_ID_TYPE_SHORT) ||
-        (publish->topic_type == SN_TOPIC_ID_TYPE_PREDEF)) {
-        /* A short topic name is 2 chars; a predefined topic ID is a 2-byte
-         * identifier, not a name */
-        XMEMCPY(tx_payload, publish->topic_name, 2);
-        tx_payload += 2;
-    }
-    else {
-        /* Topic ID */
-        word16 topic_id;
-        XMEMCPY(&topic_id, publish->topic_name, sizeof(topic_id));
-        tx_payload += MqttEncode_Num(tx_payload, topic_id);
-    }
+    /* MQTT-SN 1.2 section 5.4.12: topic_name holds the 2-byte TopicId as
+     * sent on the wire (most significant byte first) for every Topic Id
+     * type: a short topic name, a predefined or a normal (registered) topic
+     * ID. SN_Decode_Publish returns it the same way, so a received PUBLISH
+     * can be re-published unchanged. */
+    XMEMCPY(tx_payload, publish->topic_name, 2);
+    tx_payload += 2;
 
     tx_payload += MqttEncode_Num(tx_payload, publish->packet_id);
 
@@ -1481,6 +1526,9 @@ int SN_Decode_PublishResp(byte* rx_buf, int rx_buf_len, byte type,
         rx_payload += rc;
 
         if (type == SN_MSG_TYPE_PUBACK) {
+            if (!SN_ReturnCodeValid(*rx_payload)) {
+                return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_MALFORMED_DATA);
+            }
             publish_resp->return_code = *rx_payload++;
         }
     }
@@ -1513,6 +1561,9 @@ int SN_Encode_Unsubscribe(byte *tx_buf, int tx_buf_len,
     /* Determine packet length */
     if (unsubscribe->topic_type == SN_TOPIC_ID_TYPE_NORMAL) {
         /* Topic name is a string */
+        if (!SN_StrLenValid(unsubscribe->topicNameId)) {
+            return MQTT_TRACE_ERROR(MQTT_CODE_ERROR_BAD_ARG);
+        }
         total_len = (int)XSTRLEN(unsubscribe->topicNameId);
     }
     else {
