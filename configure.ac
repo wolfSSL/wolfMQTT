@@ -571,6 +571,16 @@ AC_SUBST([AM_CPPFLAGS])
 AC_SUBST([AM_CFLAGS])
 AC_SUBST([AM_LDFLAGS])
 
+# Tools for the SBOM targets in tools/sbom/sbom.am. GIT sets
+# SOURCE_DATE_EPOCH. Each one is optional. The sbom target reports a
+# clear error when a required tool is missing.
+AC_PATH_PROG([PYTHON3], [python3])
+AC_PATH_PROG([PYSPDXTOOLS], [pyspdxtools])
+AC_PATH_PROG([GIT], [git])
+AC_SUBST([PYTHON3])
+AC_SUBST([PYSPDXTOOLS])
+AC_SUBST([GIT])
+
 # FINAL
 AC_CONFIG_FILES([Makefile])
 AC_CONFIG_FILES([wolfmqtt/version.h])

@@ -431,3 +431,57 @@ message("\tMultithread:         ${ENABLE_MULTITHREAD}")
 message("\tCurl:                ${ENABLE_CURL}")
 message("\tBroker:              ${WOLFMQTT_BROKER}")
 message("-----------------------------------------------")
+
+####################################################
+# SBOM
+####################################################
+# Same generator as `make sbom`. Hashes the installed wolfmqtt library
+# and reads the generated wolfmqtt/options.h.
+#   cmake -B build -DWOLFMQTT_TLS=no
+#   cmake --build build --target sbom
+if(WOLFMQTT_TLS)
+    set(_WOLFMQTT_SBOM_DEP_WOLFSSL yes)
+else()
+    set(_WOLFMQTT_SBOM_DEP_WOLFSSL no)
+endif()
+set(WOLFMQTT_SBOM_LICENSE "GPL-3.0-or-later" CACHE STRING
+    "SPDX licence expression recorded in the SBOM")
+set(WOLFMQTT_SBOM_LICENSE_TEXT "" CACHE FILEPATH
+    "Licence text for a LicenseRef-* value of WOLFMQTT_SBOM_LICENSE")
+include(${CMAKE_CURRENT_SOURCE_DIR}/tools/sbom/build/sbom.cmake)
+set(_wolfmqtt_sbom_args
+    NAME wolfmqtt
+    VERSION_FILE ${CMAKE_CURRENT_SOURCE_DIR}/wolfmqtt/version.h
+    VERSION_MACRO LIBWOLFMQTT_VERSION_STRING
+    STAGE_TARGET wolfmqtt
+    VALIDATE
+    OPTIONS_H ${OPTION_FILE}
+    LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+    LICENSE_OVERRIDE ${WOLFMQTT_SBOM_LICENSE}
+    ROOT ${CMAKE_CURRENT_SOURCE_DIR}
+    DEP_WOLFSSL ${_WOLFMQTT_SBOM_DEP_WOLFSSL})
+if(NOT WOLFMQTT_SBOM_LICENSE_TEXT STREQUAL "")
+    list(APPEND _wolfmqtt_sbom_args LICENSE_TEXT ${WOLFMQTT_SBOM_LICENSE_TEXT})
+endif()
+# Record the wolfSSL version when this build points at a source tree or
+# an install prefix. pkg-config supplies WOLFSSL_VERSION for the other path.
+if(_WOLFMQTT_SBOM_DEP_WOLFSSL STREQUAL "yes")
+    set(_WOLFMQTT_WOLFSSL_VERSION_H "")
+    if(WITH_WOLFSSL_TREE AND EXISTS "${WITH_WOLFSSL_TREE}/wolfssl/version.h")
+        set(_WOLFMQTT_WOLFSSL_VERSION_H "${WITH_WOLFSSL_TREE}/wolfssl/version.h")
+    elseif(WITH_WOLFSSL AND EXISTS "${WITH_WOLFSSL}/include/wolfssl/version.h")
+        set(_WOLFMQTT_WOLFSSL_VERSION_H "${WITH_WOLFSSL}/include/wolfssl/version.h")
+    elseif(WITH_WOLFSSL AND EXISTS "${WITH_WOLFSSL}/wolfssl/version.h")
+        set(_WOLFMQTT_WOLFSSL_VERSION_H "${WITH_WOLFSSL}/wolfssl/version.h")
+    endif()
+    if(_WOLFMQTT_WOLFSSL_VERSION_H)
+        file(STRINGS "${_WOLFMQTT_WOLFSSL_VERSION_H}" _WOLFMQTT_WOLFSSL_VERSION_LINE
+            REGEX "^#define[ \t]+LIBWOLFSSL_VERSION_STRING[ \t]+\"")
+        if(_WOLFMQTT_WOLFSSL_VERSION_LINE MATCHES "\"([^\"]+)\"")
+            list(APPEND _wolfmqtt_sbom_args DEP_VERSION "wolfssl=${CMAKE_MATCH_1}")
+        endif()
+    elseif(WOLFSSL_VERSION)
+        list(APPEND _wolfmqtt_sbom_args DEP_VERSION "wolfssl=${WOLFSSL_VERSION}")
+    endif()
+endif()
+wolfssl_compliance_tooling_add_sbom(${_wolfmqtt_sbom_args})

@@ -136,6 +136,48 @@ merge-clean:
 	@find ./ | $(GREP) \.BASE | xargs rm -f
 	@find ./ | $(GREP) \~$$ | xargs rm -f
 
+# SBOM. The recipe is the vendored wolfssl-compliance-tooling snapshot in
+# tools/sbom/, pinned by tools/sbom/.wolfssl-compliance-tooling-rev.
+# wolfMQTT is a library that links wolfSSL when TLS is enabled.
+# Feature macros live in the generated wolfmqtt/options.h.
+SBOM_PKGNAME      = wolfmqtt
+SBOM_LICENSE_FILE = $(srcdir)/LICENSE
+SBOM_OPTIONS_H    = $(abs_builddir)/wolfmqtt/options.h
+# Per-file headers grant GPL version 3 or any later version. The LICENSE
+# file is the GPL-3 text, which does not say "or later", so name the
+# expression here. A commercial build can override this.
+SBOM_LICENSE_OVERRIDE ?= GPL-3.0-or-later
+if HAVE_LIBWOLFSSL
+SBOM_DEP_WOLFSSL = yes
+else
+SBOM_DEP_WOLFSSL = no
+endif
+
+EXTRA_DIST += tools/sbom/sbom-driver
+EXTRA_DIST += tools/sbom/sbom-driver.py
+EXTRA_DIST += tools/sbom/gen-sbom
+EXTRA_DIST += tools/sbom/sbom.am
+EXTRA_DIST += tools/sbom/validate_sbom.py
+EXTRA_DIST += tools/sbom/README.md
+EXTRA_DIST += tools/sbom/VERSION
+EXTRA_DIST += tools/sbom/.wolfssl-compliance-tooling-rev
+EXTRA_DIST += tools/sbom/build/install-sbom.cmake
+EXTRA_DIST += tools/sbom/build/sbom-fail.cmake
+EXTRA_DIST += tools/sbom/build/sbom-paths.cmake
+EXTRA_DIST += tools/sbom/build/sbom-validate.cmake
+EXTRA_DIST += tools/sbom/build/sbom-with-sde.cmake
+EXTRA_DIST += tools/sbom/build/sbom.cmake
+EXTRA_DIST += tools/sbom/build/sbom.mk
+EXTRA_DIST += tools/sbom/build/uninstall-sbom.cmake
+EXTRA_DIST += tools/sbom/frontends/compdb_sbom.py
+EXTRA_DIST += tools/sbom/frontends/iar_sbom.py
+EXTRA_DIST += tools/sbom/frontends/included_sources.py
+EXTRA_DIST += tools/sbom/frontends/zephyr_sbom.py
+EXTRA_DIST += scripts/sbom-port.sh
+EXTRA_DIST += docs/SBOM.md
+
+include tools/sbom/sbom.am
+
 # Make sure these directories exist
 dist-hook:
 	$(MKDIR_P) $(distdir)/examples/mqttsimple

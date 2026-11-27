@@ -59,7 +59,9 @@ jobs:
         # -Wno-error=incompatible-pointer-types and -Wno-error=discarded-qualifiers
         # work around libwebsockets openssl-x509.c calling wolfSSL compat APIs
         # with the wrong const/type (fixed on libwebsockets main, not in any release).
-        cmake .. -DLWS_WITH_WOLFSSL=1 -DLWS_WOLFSSL_INCLUDE_DIRS=/usr/local/include/wolfssl -DLWS_WOLFSSL_LIBRARIES=/usr/local/lib/libwolfssl.so -DLWS_WITH_EXTERNAL_POLL=1 -DLWS_WITHOUT_TESTAPPS=ON -DCMAKE_C_FLAGS="-Wno-error=sign-conversion -Wno-error=incompatible-pointer-types -Wno-error=discarded-qualifiers"
+        # libwebsockets v4.3.3 sets cmake_minimum_required below 3.5.
+        # CMake 4 on Ubuntu 26.04 rejects that. 3.5 is the oldest policy it accepts.
+        cmake .. -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DLWS_WITH_WOLFSSL=1 -DLWS_WOLFSSL_INCLUDE_DIRS=/usr/local/include/wolfssl -DLWS_WOLFSSL_LIBRARIES=/usr/local/lib/libwolfssl.so -DLWS_WITH_EXTERNAL_POLL=1 -DLWS_WITHOUT_TESTAPPS=ON -DCMAKE_C_FLAGS="-Wno-error=sign-conversion -Wno-error=incompatible-pointer-types -Wno-error=discarded-qualifiers"
         make
         sudo make install
 
@@ -91,21 +93,23 @@ jobs:
 
     - name: Create Mosquitto config
       run: |
-        echo "listener 11883" > mosquitto.conf
-        echo "protocol mqtt" >> mosquitto.conf
-        echo "listener 18080" >> mosquitto.conf
-        echo "protocol websockets" >> mosquitto.conf
-        echo "listener 18081" >> mosquitto.conf
-        echo "protocol websockets" >> mosquitto.conf
-        echo "cafile scripts/broker_test/ca-cert.pem" >> mosquitto.conf
-        echo "certfile scripts/broker_test/server-cert.pem" >> mosquitto.conf
-        echo "keyfile scripts/broker_test/server-key.pem" >> mosquitto.conf
-        echo "allow_anonymous true" >> mosquitto.conf
+        certs="$GITHUB_WORKSPACE/wolfmqtt/scripts/broker_test"
+        cat > "$GITHUB_WORKSPACE/mosquitto.conf" <<EOF
+        listener 11883
+        protocol mqtt
+        listener 18080
+        protocol websockets
+        listener 18081
+        protocol websockets
+        cafile ${certs}/ca-cert.pem
+        certfile ${certs}/server-cert.pem
+        keyfile ${certs}/server-key.pem
+        allow_anonymous true
+        EOF
 
     - name: Start Mosquitto broker
-      working-directory: ./wolfmqtt
       run: |
-        mosquitto -c ../mosquitto.conf -v -d
+        mosquitto -c "$GITHUB_WORKSPACE/mosquitto.conf" -v -d
         # Wait for broker to start
         sleep 2
 
